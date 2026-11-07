@@ -1,0 +1,1861 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>:root{color-scheme:light}body{margin:0;font:14px system-ui}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>Kuramoto オフィス</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: 俯瞰したオフィスの床(固定座標のステージを幅に合わせて縮尺)+ 右に 1 枚だけ開く引き出し */
+:root {
+  --design: #B0306E; --design-soft: #FBE4F0;
+  --bg: #E9ECEF; --floor: #F1F3F5; --floor-line: #E2E6EA; --surface: #FFFFFF; --ink: #1C232A; --muted: #5A6570;
+  --line: #CDD4DA; --table: #FBFBFC; --table-edge: #C3CBD2; --laptop: #A3ADB6; --route: #B6C0C8;
+  --dev: #2F67D4; --dev-soft: #E3ECFB; --review: #C95A22; --review-soft: #FBE8DD;
+  --lead: #7A45C2; --lead-soft: #EEE5F9; --ok: #17845C; --ok-soft: #DDF2E8;
+  --warn: #9A6200; --warn-soft: #FFF0C9; --danger: #B42F2F; --danger-soft: #FBE3E3;
+  --shadow: 0 1px 2px rgba(20,30,40,.08), 0 4px 14px rgba(20,30,40,.06);
+  --f-display: 'Zen Maru Gothic', 'Hiragino Maru Gothic ProN', sans-serif;
+  --f-body: 'Zen Kaku Gothic New', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  --f-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12161A; --floor: #191E23; --floor-line: #20262C; --surface: #1F252B; --ink: #E7ECF0; --muted: #9AA6B1;
+  --line: #333C45; --table: #262D34; --table-edge: #3B454E; --laptop: #59646E; --route: #3E4851;
+  --dev: #77A2F2; --dev-soft: #1F2E4A; --review: #F0915E; --review-soft: #45291B;
+  --lead: #B58DEB; --lead-soft: #33264A; --ok: #4CC593; --ok-soft: #183A2D;
+  --warn: #F2C04D; --warn-soft: #3D3016; --danger: #F07C7C; --danger-soft: #4A2222;
+  --design: #F07AB8; --design-soft: #4A1F36;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.3); color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #12161A; --floor: #191E23; --floor-line: #20262C; --surface: #1F252B; --ink: #E7ECF0; --muted: #9AA6B1;
+  --line: #333C45; --table: #262D34; --table-edge: #3B454E; --laptop: #59646E; --route: #3E4851;
+  --dev: #77A2F2; --dev-soft: #1F2E4A; --review: #F0915E; --review-soft: #45291B;
+  --lead: #B58DEB; --lead-soft: #33264A; --ok: #4CC593; --ok-soft: #183A2D;
+  --warn: #F2C04D; --warn-soft: #3D3016; --danger: #F07C7C; --danger-soft: #4A2222;
+  --design: #F07AB8; --design-soft: #4A1F36;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.3); color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 14px; line-height: 1.55; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--dev); outline-offset: 2px; }
+
+.app { max-width: 1440px; margin: 0 auto; padding-block: 16px 32px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 14px; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.brand { display: flex; align-items: baseline; gap: 8px; }
+.brand b { font-family: var(--f-display); font-size: 22px; }
+.brand span { color: var(--muted); font-size: 12px; }
+.ws { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-size: 13px; }
+.ws code { font-family: var(--f-mono); font-size: 12px; }
+.tabs { display: inline-flex; padding: 3px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+.tabs button { height: 30px; padding: 0 14px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-weight: 500; }
+.tabs button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
+.spacer { flex: 1; }
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.btn { position: relative; height: 36px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-weight: 500; font-size: 13px; }
+.btn[aria-expanded="true"] { border-color: var(--ink); background: var(--ink); color: var(--surface); }
+.btn .badge { position: absolute; top: -7px; right: -7px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; background: var(--lead); color: var(--surface); font-size: 11px; font-weight: 700; display: grid; place-items: center; font-family: var(--f-mono); }
+
+.layout { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.main { flex: 999 1 640px; min-width: 0; }
+.drawer { flex: 1 1 360px; min-width: 0; max-width: 440px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); display: flex; flex-direction: column; }
+@media (max-width: 1000px) { .drawer { max-width: none; } }
+.drawer > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.drawer h2 { margin: 0; font-family: var(--f-display); font-size: 16px; }
+.x { width: 32px; height: 32px; border-radius: 8px; border: 0; background: transparent; color: var(--muted); font-size: 18px; }
+
+/* オフィス */
+.stage-wrap { position: relative; width: 100%; border-radius: 16px; overflow: hidden; background: var(--floor); border: 1px solid var(--line); }
+.stage { position: absolute; left: 0; top: 0; width: 1240px; height: 700px; transform-origin: 0 0;
+  background-image: linear-gradient(var(--floor-line) 1px, transparent 1px), linear-gradient(90deg, var(--floor-line) 1px, transparent 1px); background-size: 40px 40px; }
+.abs { position: absolute; }
+.routes { position: absolute; left: 0; top: 0; width: 1240px; height: 700px; pointer-events: none; }
+.table { position: absolute; height: 82px; border-radius: 14px; background: var(--table); border: 1px solid var(--table-edge); box-shadow: 0 6px 0 -1px var(--table-edge); z-index: 20; }
+.floor-label { position: absolute; z-index: 35; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; font-size: 13px; white-space: nowrap; }
+.floor-label .team { font-family: var(--f-display); font-weight: 700; font-size: 15px; }
+.floor-label .meta { color: var(--muted); font-variant-numeric: tabular-nums; }
+.chip { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 12px; font-weight: 500; }
+.chip.warn { background: var(--warn-soft); color: var(--warn); }
+.chip.hot { background: var(--danger-soft); color: var(--danger); }
+.chip.ver { background: var(--bg); color: var(--muted); font-family: var(--f-mono); font-size: 11px; border: 1px solid var(--line); }
+.route-label { position: absolute; z-index: 6; font-size: 11px; color: var(--muted); background: var(--floor); padding: 0 4px; }
+
+.tray { position: absolute; z-index: 30; width: 60px; height: 76px; }
+.tray .base { position: absolute; left: 0; bottom: 0; width: 60px; height: 12px; border-radius: 3px; background: var(--muted); opacity: .5; }
+.tray .paper { position: absolute; left: 5px; width: 50px; height: 7px; border-radius: 1px; background: var(--surface); border: 1px solid var(--muted); }
+.tray .count { position: absolute; right: -12px; bottom: 6px; min-width: 26px; height: 26px; padding: 0 7px; border-radius: 13px; display: grid; place-items: center; font-family: var(--f-mono); font-size: 13px; color: var(--surface); }
+
+.person { position: absolute; width: 84px; height: 104px; z-index: 10; transition: opacity .5s, transform .5s; }
+.person svg { display: block; width: 100%; height: 100%; }
+.person.work svg { animation: type 1.1s ease-in-out infinite; }
+.person.arrive { animation: arrive .7s cubic-bezier(.2,1.4,.4,1) both; }
+.person.leave { opacity: 0; transform: translateY(14px) scale(.8); }
+.puff { position: absolute; left: 50%; top: 50%; width: 90px; height: 90px; margin: -45px 0 0 -45px; border-radius: 50%; border: 3px solid currentColor; opacity: 0; pointer-events: none; animation: puff .8s ease-out; }
+@keyframes type { 0%,100% { transform: translateY(0); } 50% { transform: translateY(1.5px); } }
+@keyframes arrive { from { transform: translateY(-30px) scale(.4); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes puff { 0% { transform: scale(.3); opacity: .8; } 100% { transform: scale(1.3); opacity: 0; } }
+
+.laptop { position: absolute; z-index: 25; width: 46px; height: 28px; border-radius: 5px 5px 2px 2px; background: var(--laptop); transition: box-shadow .4s, opacity .4s; }
+.laptop::after { content: ""; position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; margin: -4px 0 0 -4px; border-radius: 50%; background: var(--table); opacity: .7; }
+.laptop.on { box-shadow: 0 0 0 3px var(--glow), 0 0 18px 2px var(--glow); }
+
+.tag { position: absolute; z-index: 40; width: 140px; display: flex; flex-direction: column; align-items: center; gap: 3px; pointer-events: none; }
+.tag .name { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 11px; background: var(--surface); border: 1px solid var(--line); font-size: 12px; white-space: nowrap; box-shadow: var(--shadow); }
+.tag .name b { font-weight: 700; }
+.tag .name .t { font-family: var(--f-mono); font-size: 11px; }
+.tag .name .help { font-size: 10px; font-weight: 700; padding: 0 5px; border-radius: 4px; }
+.tag .name .redo { font-size: 10px; font-weight: 700; padding: 0 5px; border-radius: 4px; background: var(--warn-soft); color: var(--warn); }
+.tag .bar { width: 56px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.tag .bar i { display: block; height: 100%; border-radius: 2px; }
+.tag.idle .name { color: var(--muted); box-shadow: none; }
+.zz { font-family: var(--f-display); font-weight: 700; color: var(--muted); animation: zz 2.4s ease-in-out infinite; }
+@keyframes zz { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+
+.bubble { position: absolute; z-index: 60; transform: translateX(-50%); padding: 8px 12px; border-radius: 12px; background: var(--ink); color: var(--surface); font-size: 13.5px; font-weight: 500; line-height: 1.4; white-space: nowrap; box-shadow: var(--shadow); animation: pop .25s ease-out; }
+.bubble::after { content: ""; position: absolute; left: 50%; bottom: -6px; margin-left: -6px; border: 6px solid transparent; border-bottom: 0; border-top-color: var(--ink); }
+@keyframes pop { from { transform: translateX(-50%) scale(.7); opacity: 0; } to { transform: translateX(-50%) scale(1); opacity: 1; } }
+
+.flight { position: absolute; z-index: 80; transition: left 1s cubic-bezier(.45,.05,.55,.95), top 1s cubic-bezier(.45,.05,.55,.95); }
+.flight .doc { display: flex; align-items: center; gap: 4px; padding: 4px 7px; border-radius: 6px; background: var(--surface); border: 1.5px solid var(--c); box-shadow: var(--shadow); font-family: var(--f-mono); font-size: 11px; color: var(--ink); animation: hop 1s ease-in-out; white-space: nowrap; }
+.flight .doc i { width: 10px; height: 12px; border-radius: 1px; background: var(--c); opacity: .85; }
+@keyframes hop { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-26px); } }
+
+.shelf { position: absolute; z-index: 20; border-radius: 12px; background: var(--table); border: 1px solid var(--table-edge); box-shadow: 0 6px 0 -1px var(--table-edge); padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.shelf .title { font-size: 12px; color: var(--muted); }
+.shelf .title b { color: var(--ink); font-family: var(--f-display); font-size: 14px; margin-right: 4px; }
+.mrow { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 5px 6px 5px 8px; border-radius: 7px; background: var(--surface); border: 1px solid var(--line); font-size: 12px; }
+.mrow .id { font-family: var(--f-mono); font-size: 11px; }
+.mrow button { height: 26px; padding: 0 9px; border-radius: 6px; border: 0; background: var(--ok); color: var(--surface); font-size: 12px; font-weight: 700; }
+.mrow.bad { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+.outbox { position: absolute; z-index: 20; border-radius: 12px; border: 1px dashed var(--table-edge); padding: 10px 12px; font-size: 12px; color: var(--muted); }
+.outbox b { color: var(--ink); font-family: var(--f-display); font-size: 14px; margin-right: 4px; }
+.outbox .stack { display: flex; flex-wrap: wrap-reverse; gap: 3px; margin-top: 6px; }
+.outbox .stack span { width: 16px; height: 12px; border-radius: 2px; background: var(--ok-soft); border: 1px solid var(--ok); }
+
+.log { position: absolute; z-index: 50; left: 24px; top: 470px; width: 330px; padding: 12px 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.log h3 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: 500; }
+.log ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.log li { font-size: 12.5px; line-height: 1.45; display: grid; grid-template-columns: 40px 1fr; gap: 6px; }
+.log li time { font-family: var(--f-mono); font-size: 11px; color: var(--muted); padding-top: 1px; }
+.log li:first-child { font-weight: 500; }
+
+/* ボード */
+.board-wrap { overflow-x: auto; padding-bottom: 6px; }
+.board { display: grid; gap: 10px; min-width: 980px; }
+.col { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-height: 420px; }
+.col h3 { margin: 0; display: flex; justify-content: space-between; font-size: 13px; }
+.col h3 span { font-family: var(--f-mono); color: var(--muted); font-weight: 500; }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--bg); display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.card .id { font-family: var(--f-mono); font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; }
+.card .who { font-size: 11px; font-weight: 500; }
+
+/* モニタリング */
+.mon { padding: 14px; display: flex; flex-direction: column; gap: 16px; }
+.kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.kpi { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.kpi .l { font-size: 12px; color: var(--muted); }
+.kpi .v { font-family: var(--f-mono); font-size: 22px; line-height: 1.3; }
+.kpi .n { font-size: 11px; color: var(--muted); }
+.mon h3 { margin: 0 0 6px; font-size: 13px; }
+.row { display: grid; grid-template-columns: 96px 1fr 34px; gap: 8px; align-items: center; font-size: 12px; margin-bottom: 5px; }
+.row .track { height: 10px; border-radius: 3px; background: var(--bg); overflow: hidden; }
+.row .track i { display: block; height: 100%; border-radius: 3px; transition: width .4s; }
+.row .num { font-family: var(--f-mono); text-align: right; }
+table.vt { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+table.vt th, table.vt td { text-align: left; padding: 5px 4px; border-bottom: 1px solid var(--line); }
+table.vt th { color: var(--muted); font-weight: 500; }
+
+/* 方針 */
+.pol { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.pol .seg { display: inline-flex; flex-wrap: wrap; padding: 3px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); align-self: flex-start; }
+.pol .seg button { white-space: nowrap; height: 30px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-weight: 500; font-size: 13px; }
+.pol .seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.pol label.h { display: block; font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+.pol .hint { font-size: 12px; color: var(--muted); }
+.pol textarea { width: 100%; min-height: 150px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; font-size: 13px; line-height: 1.6; resize: vertical; }
+.pol .opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.pol .opts label { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-size: 13px; cursor: pointer; }
+.pol .opts input { accent-color: var(--ink); }
+.pol .fixed { font-size: 12px; color: var(--muted); padding: 8px 10px; border-radius: 8px; background: var(--bg); border: 1px dashed var(--line); }
+.pol .save { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pol .save button { height: 38px; padding: 0 16px; border-radius: 8px; border: 0; background: var(--ink); color: var(--surface); font-weight: 700; }
+.pol .saved { font-size: 12px; color: var(--ok); }
+.pol ol.hist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.pol ol.hist li { display: grid; grid-template-columns: 30px 44px 1fr; gap: 6px; color: var(--muted); }
+.pol ol.hist li b { font-family: var(--f-mono); color: var(--ink); font-weight: 500; }
+
+/* リーダーとの会話 */
+.chat-list { height: 470px; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.msg { max-width: 92%; font-size: 13px; line-height: 1.5; }
+.msg.lead { align-self: flex-start; }
+.msg.lead .who { font-size: 11px; color: var(--lead); font-weight: 700; margin-bottom: 2px; }
+.msg.lead .body { background: var(--lead-soft); padding: 8px 11px; border-radius: 4px 12px 12px 12px; }
+.msg.lead .body .kind { display: inline-block; font-size: 11px; font-weight: 700; padding: 0 6px; border-radius: 4px; margin-right: 4px; }
+.msg.me { align-self: flex-end; background: var(--ink); color: var(--surface); padding: 8px 11px; border-radius: 12px 4px 12px 12px; }
+.ask { margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.ask .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.ask .acts button { height: 32px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); font-size: 12.5px; }
+.ask .acts button.primary { background: var(--lead); border-color: var(--lead); color: var(--surface); }
+.ask .acts button.go { background: var(--ok); border-color: var(--ok); color: var(--surface); }
+.ask .done { font-size: 12px; color: var(--ok); font-weight: 500; }
+.compose { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+.compose input { flex: 1; min-width: 0; height: 40px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; font-size: 13px; }
+.compose button { height: 40px; padding: 0 14px; border-radius: 8px; border: 0; background: var(--lead); color: var(--surface); font-weight: 700; }
+.note { font-size: 11px; color: var(--muted); padding: 0 14px 10px; }
+/* あなたの対応 */
+.inbox { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+.inbox > header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.inbox h2 { margin: 0; font-family: var(--f-display); font-size: 17px; }
+.inbox .cnt { font-family: var(--f-mono); font-size: 13px; padding: 1px 8px; border-radius: 999px; background: var(--ink); color: var(--surface); }
+.inbox .sub { font-size: 12px; color: var(--muted); }
+.inbox .more { margin-left: auto; height: 30px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); font-size: 12px; }
+.inbox .empty { font-size: 13px; color: var(--muted); padding: 6px 2px; }
+.items { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 10px; }
+.item { border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: var(--bg); }
+.item.decide { border-color: var(--warn); background: var(--warn-soft); }
+.item.merge { border-color: var(--ok); background: var(--ok-soft); }
+.item .top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.item .kind { font-weight: 700; font-size: 11px; padding: 1px 7px; border-radius: 5px; color: var(--surface); }
+.item.decide .kind { background: var(--warn); }
+.item.merge .kind { background: var(--ok); }
+.item .where { color: var(--muted); }
+.item .due { margin-left: auto; font-family: var(--f-mono); font-size: 11px; color: var(--warn); font-weight: 500; }
+.item .q { font-size: 15px; font-weight: 700; line-height: 1.45; }
+.item dl { margin: 0; display: grid; grid-template-columns: 76px 1fr; gap: 3px 8px; font-size: 12.5px; line-height: 1.5; }
+.item dt { color: var(--muted); }
+.item dd { margin: 0; }
+.item .choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.item .choices button { min-height: 36px; padding: 4px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-size: 13px; font-weight: 500; text-align: left; }
+.item .choices button.rec { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+.item .choices button.rec small { font-weight: 400; opacity: .8; margin-left: 4px; }
+.item .choices button.go { background: var(--ok); border-color: var(--ok); color: var(--surface); font-weight: 700; }
+.item .links { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; }
+.item .links button { border: 0; background: none; padding: 0; color: var(--dev); text-decoration: underline; font-size: 12px; }
+.item .links span { color: var(--muted); }
+/* 効率と調整 */
+.eff { display: inline-flex; align-items: center; gap: 10px; height: 32px; padding: 0 12px; border-radius: 999px; background: var(--ink); color: var(--surface); font-size: 12px; font-variant-numeric: tabular-nums; }
+.eff b { font-family: var(--f-mono); font-size: 13px; }
+.knobs { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); }
+.knob { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; font-size: 13px; }
+.knob input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--ink); }
+.knob output { font-family: var(--f-mono); font-size: 13px; font-weight: 500; }
+.knob .hint { grid-column: 1 / -1; }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; }
+.chart .tip { position: absolute; pointer-events: none; padding: 4px 8px; border-radius: 6px; background: var(--ink); color: var(--surface); font-size: 11px; font-family: var(--f-mono); white-space: nowrap; transform: translate(-50%, -110%); }
+.chip.neck { background: var(--danger); color: var(--surface); }
+/* 本部 */
+.crumb { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+.crumb button { height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-weight: 500; }
+.crumb button[aria-current="page"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.crumb .sep { color: var(--muted); }
+.home { display: flex; flex-direction: column; gap: 16px; }
+.home h2 { margin: 0; font-family: var(--f-display); font-size: 18px; }
+.home .lead-in { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+.projects { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 330px), 1fr)); gap: 12px; }
+.proj { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.proj .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.proj .name { font-family: var(--f-display); font-size: 17px; font-weight: 700; }
+.proj .state { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+.proj .repos { display: flex; flex-wrap: wrap; gap: 6px; }
+.proj .repo { font-family: var(--f-mono); font-size: 11.5px; padding: 2px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); }
+.proj .repo i { font-style: normal; font-family: var(--f-body); color: var(--muted); margin-left: 4px; }
+.proj .nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.proj .nums div { border-radius: 8px; background: var(--bg); padding: 6px 8px; }
+.proj .nums .l { font-size: 11px; color: var(--muted); }
+.proj .nums .v { font-family: var(--f-mono); font-size: 16px; }
+.proj .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.proj .acts button { height: 36px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-weight: 500; font-size: 13px; }
+.proj .acts button.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.proj.new { border-style: dashed; align-items: center; justify-content: center; min-height: 200px; color: var(--muted); }
+.proj.new button { height: 40px; padding: 0 16px; border-radius: 10px; border: 0; background: var(--ink); color: var(--surface); font-weight: 700; }
+.agg { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.agg .rowi { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 8px 4px; border-top: 1px solid var(--line); font-size: 13px; }
+.agg .rowi:first-of-type { border-top: 0; }
+.agg .rowi .k { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 5px; color: var(--surface); }
+.agg .rowi .pj { color: var(--muted); font-size: 12px; margin-right: 6px; }
+.agg .rowi button { height: 32px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); font-size: 12.5px; }
+.form { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 14px; max-width: 760px; }
+.form label.h { font-weight: 700; font-size: 13px; display: block; margin-bottom: 4px; }
+.form input[type=text], .form select { height: 40px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; font-size: 14px; }
+.form .rrow { display: grid; grid-template-columns: 1fr 140px 40px; gap: 8px; align-items: center; margin-bottom: 6px; }
+.form .rrow input { font-family: var(--f-mono); font-size: 13px; }
+.form .ok { font-size: 11px; color: var(--ok); }
+.form .bad { font-size: 11px; color: var(--danger); }
+.form .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.form .btns button { height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-weight: 500; }
+.form .btns button.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); font-weight: 700; }
+.req { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-start; }
+.req .talk { flex: 1 1 360px; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; display: flex; flex-direction: column; }
+.req .doc { flex: 999 1 480px; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+.req .doc header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.req .doc h2 { margin: 0; font-family: var(--f-display); font-size: 18px; }
+.req .doc h3 { margin: 0 0 4px; font-size: 14px; }
+.req .doc ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 3px; font-size: 14px; }
+.req .doc li.new { background: var(--warn-soft); border-radius: 4px; }
+.req .doc .empty { color: var(--muted); font-size: 13px; }
+.req .doc .open li { color: var(--warn); }
+.req .doc .foot { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; border-top: 1px solid var(--line); padding-top: 12px; }
+.req .doc .foot button { height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-weight: 500; }
+.req .doc .foot button.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); font-weight: 700; }
+.req .doc .foot button:disabled { opacity: .45; cursor: not-allowed; }
+.msg.arch { align-self: flex-start; }
+.msg.arch .who { font-size: 11px; color: var(--dev); font-weight: 700; margin-bottom: 2px; }
+.msg.arch .body { background: var(--dev-soft); padding: 8px 11px; border-radius: 4px 12px 12px 12px; }
+.req .doc .build li b { font-size: 11px; padding: 0 6px; border-radius: 4px; margin-right: 6px; color: var(--surface); }
+.req .doc .data li { font-family: var(--f-mono); font-size: 12.5px; }
+.msg.plan .who { font-size: 11px; color: var(--ok); font-weight: 700; margin-bottom: 2px; }
+.msg.plan { align-self: flex-start; }
+.msg.plan .body { background: var(--ok-soft); padding: 8px 11px; border-radius: 4px 12px 12px 12px; }
+.sugg { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 10px; }
+.sugg button { min-height: 32px; padding: 4px 10px; border-radius: 16px; border: 1px dashed var(--line); background: var(--bg); font-size: 12.5px; text-align: left; }
+/* 企画スタジオ */
+.studio { display: flex; flex-direction: column; gap: 12px; }
+.gates { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; }
+.gate { flex: 1 1 150px; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); text-align: left; cursor: pointer; }
+.gate[aria-current="step"] { border-color: var(--ink); box-shadow: inset 0 -3px 0 var(--ink); }
+.gate .n { font-size: 11px; color: var(--muted); }
+.gate .t { font-weight: 700; font-size: 14px; }
+.gate .st { font-size: 12px; font-weight: 500; }
+.gate .st.ok { color: var(--ok); } .gate .st.wip { color: var(--warn); }
+.gate.hand { flex: 0 1 170px; justify-content: center; align-items: center; background: var(--ink); color: var(--surface); border-color: var(--ink); font-weight: 700; }
+.gate.hand:disabled { opacity: .35; cursor: not-allowed; }
+.sbody { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+.strio { flex: 1 1 300px; min-width: 0; max-width: 380px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; display: flex; flex-direction: column; }
+.strio .chat-list { height: 520px; }
+.msg.design .who { font-size: 11px; color: var(--design); font-weight: 700; margin-bottom: 2px; }
+.msg.design { align-self: flex-start; } .msg.design .body { background: var(--design-soft); padding: 8px 11px; border-radius: 4px 12px 12px 12px; }
+.swork { flex: 999 1 560px; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+.swork > header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.swork h2 { margin: 0; font-family: var(--f-display); font-size: 18px; }
+.swork .agree { margin-left: auto; height: 38px; padding: 0 14px; border-radius: 8px; border: 0; background: var(--ok); color: var(--surface); font-weight: 700; }
+.swork .agree:disabled { opacity: .4; cursor: not-allowed; }
+.reqi { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; }
+.reqi .nm { font-weight: 700; }
+.reqi .ac { grid-column: 1 / -1; font-size: 13px; background: var(--bg); border-radius: 6px; padding: 6px 8px; }
+.reqi .ac b { font-size: 11px; color: var(--muted); margin-right: 6px; }
+.reqi .links { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.okc { font-size: 12px; font-weight: 700; color: var(--ok); }
+.flowwrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.flowwrap svg { display: block; min-width: 760px; width: 100%; height: auto; }
+.fnode { cursor: pointer; }
+.fnode rect { fill: var(--surface); stroke: var(--table-edge); stroke-width: 1.5; }
+.fnode.sel rect { stroke: var(--ink); stroke-width: 2.5; }
+.fnode.err rect { fill: var(--danger-soft); stroke: var(--danger); }
+.fnode.q rect { fill: var(--warn-soft); stroke: var(--warn); stroke-dasharray: 4 3; }
+.fnode text { fill: var(--ink); font-size: 13px; }
+.fnode .sub { fill: var(--muted); font-size: 10.5px; }
+.fedge { fill: none; stroke: var(--muted); stroke-width: 1.6; }
+.fedge.alt { stroke: var(--warn); stroke-dasharray: 5 4; }
+.flabel { fill: var(--muted); font-size: 11px; paint-order: stroke; stroke: var(--bg); stroke-width: 5px; stroke-linejoin: round; }
+.issue { border: 1px solid var(--warn); background: var(--warn-soft); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.issue .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.issue button { min-height: 34px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-size: 13px; text-align: left; }
+.issue button.rec { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.scrlist { display: flex; gap: 6px; flex-wrap: wrap; }
+.scrlist button { height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-size: 13px; }
+.scrlist button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.scrlist button .d { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-left: 6px; }
+.variants { display: flex; flex-wrap: wrap; gap: 18px; }
+.variant { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.variant .vh { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.variant .vh button { height: 30px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); font-size: 12px; }
+.variant .vh button.on { background: var(--ok); color: var(--surface); border-color: var(--ok); }
+.phone { position: relative; width: 230px; height: 440px; border-radius: 28px; border: 8px solid #20262C; background: #FFFFFF; color: #1C232A; overflow: hidden; cursor: crosshair; font-size: 12px; box-shadow: var(--shadow); }
+.phone .pin { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: var(--design); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; border: 2px solid #fff; pointer-events: none; }
+.phone .pin.done { background: var(--ok); }
+.ph-top { height: 44px; display: flex; align-items: center; padding: 0 12px; font-weight: 700; border-bottom: 1px solid #E5E7EB; font-size: 13px; }
+.ph-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.ph-chips { display: flex; gap: 5px; } .ph-chips span { padding: 4px 8px; border-radius: 12px; background: #EEF1F4; font-size: 11px; } .ph-chips span.on { background: #1C232A; color: #fff; }
+.ph-row { display: flex; justify-content: space-between; align-items: center; padding: 8px; border: 1px solid #E5E7EB; border-radius: 8px; }
+.ph-row small { color: #6B7280; }
+.ph-btn { display: block; text-align: center; padding: 10px; border-radius: 8px; background: #2F67D4; color: #fff; font-weight: 700; }
+.ph-btn.ghost { background: #EEF1F4; color: #1C232A; }
+.ph-mini { font-size: 10.5px; color: #6B7280; }
+.ph-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; text-align: center; font-size: 10.5px; }
+.ph-cal span { padding: 5px 0; border-radius: 5px; } .ph-cal span.av { background: #E3ECFB; color: #2F67D4; font-weight: 700; } .ph-cal span.on { background: #2F67D4; color: #fff; }
+.ph-sheet { position: absolute; left: 0; right: 0; bottom: 0; background: #fff; border-radius: 16px 16px 0 0; box-shadow: 0 -6px 18px rgba(0,0,0,.18); padding: 14px 12px; display: flex; flex-direction: column; gap: 8px; }
+.ph-dim { position: absolute; inset: 44px 0 0 0; background: rgba(0,0,0,.25); }
+.pins-list { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.pins-list .pc { display: grid; grid-template-columns: 24px 1fr; gap: 8px; align-items: start; }
+.pins-list .pc i { font-style: normal; width: 22px; height: 22px; border-radius: 50%; background: var(--design); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+.pins-list .pc i.done { background: var(--ok); }
+.pinform { display: flex; gap: 6px; } .pinform input { flex: 1; min-width: 0; height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; font-size: 13px; }
+.pinform button { height: 36px; padding: 0 12px; border-radius: 8px; border: 0; background: var(--design); color: #fff; font-weight: 700; }
+.rule { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.rule.off { opacity: .55; }
+.rule .rh { display: flex; align-items: center; gap: 8px; }
+.rule .rh b { flex: 1; font-size: 14px; }
+.rule .rd { font-size: 12.5px; color: var(--muted); }
+.rule .rc { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
+.rule .rc select { height: 30px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; font-size: 12px; }
+.rule .rn { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ruleform { display: grid; gap: 8px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; }
+.ruleform input, .ruleform select { height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; font-size: 13px; min-width: 0; }
+.ruleform .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ruleform button { height: 36px; border-radius: 8px; border: 0; background: var(--ink); color: var(--surface); font-weight: 700; }
+.skipbtn { height: 34px; padding: 0 12px; border-radius: 8px; border: 1px dashed var(--line); background: var(--surface); font-size: 12.5px; color: var(--muted); }
+.skipask { border: 1px solid var(--line); background: var(--bg); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.skipask .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.skipask button { height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); font-size: 13px; }
+.skipask button.go { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.skipped { border: 1px dashed var(--line); border-radius: 10px; padding: 18px; text-align: center; color: var(--muted); display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.gate .st.skip { color: var(--muted); }
+.gate .st.dele { color: var(--dev); }
+.delegated { border: 1px solid var(--dev); background: var(--dev-soft); border-radius: 10px; padding: 10px 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.handed { border: 1px solid var(--ok); background: var(--ok-soft); border-radius: 10px; padding: 12px 14px; font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
+.handed table { width: 100%; border-collapse: collapse; font-size: 12px; } .handed td, .handed th { text-align: left; padding: 4px; border-bottom: 1px solid var(--line); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+@media (prefers-reduced-motion: reduce) {
+  .person.work svg, .zz, .flight .doc, .person.arrive, .bubble, .puff { animation: none !important; }
+  .flight { transition-duration: .01s; }
+}
+</style>
+
+<div class="app">
+  <div class="bar">
+    <div class="brand"><b>Kuramoto</b><span>蔵元</span></div>
+    <nav class="crumb" aria-label="場所"><button type="button" id="nav-home">本部</button><span class="sep pctx">/</span><button type="button" id="nav-proj" class="pctx">acme ショップ</button></nav>
+    <div class="tabs pctx" role="group" aria-label="表示">
+      <button type="button" id="tab-office" aria-pressed="true">オフィス</button>
+      <button type="button" id="tab-board" aria-pressed="false">ボード</button>
+    </div>
+    <div class="spacer"></div>
+    <span class="eff pctx" id="eff" title="完成 = レビューを通って merge できる状態になったもの">—</span>
+    <span class="pill pctx" hidden><span id="status-you">—</span></span>
+    <button class="btn pctx" type="button" id="btn-form" aria-expanded="false" aria-controls="drawer-form">編成</button>
+    <button class="btn pctx" type="button" id="btn-pol" aria-expanded="false" aria-controls="drawer-pol">チームの方針</button>
+    <button class="btn pctx" type="button" id="btn-mon" aria-expanded="false" aria-controls="drawer-mon">モニタリング</button>
+    <button class="btn pctx" type="button" id="btn-chat" aria-expanded="false" aria-controls="drawer-chat">リーダーと話す<span class="badge" id="ask-badge" hidden>0</span></button>
+  </div>
+
+  <section class="home" id="view-home" aria-label="本部"></section>
+  <section id="view-new" aria-label="プロジェクトを作る" hidden></section>
+  <section id="view-req" aria-label="要件定義" hidden></section>
+  <section class="studio" id="view-studio" aria-label="企画スタジオ" hidden></section>
+
+  <div id="project-ctx" hidden>
+  <section class="inbox" id="inbox" aria-label="あなたの対応" aria-live="polite"></section>
+
+  <div class="layout">
+    <div class="main">
+      <section id="view-office" aria-label="オフィス">
+        <div class="stage-wrap" id="stage-wrap"><div class="stage" id="stage"></div></div>
+      </section>
+      <section id="view-board" aria-label="ボード" hidden>
+        <div class="board-wrap"><div class="board" id="board"></div></div>
+      </section>
+    </div>
+
+    <aside class="drawer" id="drawer-form" hidden aria-label="編成">
+      <header><h2>編成</h2><button class="x" type="button" data-close="form" aria-label="閉じる">×</button></header>
+      <div class="pol" id="form"></div>
+    </aside>
+
+    <aside class="drawer" id="drawer-pol" hidden aria-label="チームの方針">
+      <header><h2>チームの方針</h2><button class="x" type="button" data-close="pol" aria-label="閉じる">×</button></header>
+      <div class="pol" id="pol"></div>
+    </aside>
+
+    <aside class="drawer" id="drawer-mon" hidden aria-label="モニタリング">
+      <header><h2>モニタリング</h2><button class="x" type="button" data-close="mon" aria-label="閉じる">×</button></header>
+      <div class="mon" id="mon"></div>
+    </aside>
+
+    <aside class="drawer" id="drawer-chat" hidden aria-label="チームリーダー">
+      <header><h2>チームリーダー マキ</h2><button class="x" type="button" data-close="chat" aria-label="閉じる">×</button></header>
+      <div class="chat-list" id="chat-list"></div>
+      <form class="compose" id="compose">
+        <label for="chat-input" class="sr">リーダーへのメッセージ</label>
+        <input id="chat-input" type="text" autocomplete="off" placeholder="例: #13 どうなってる? / 管理画面に CSV 出力を足したい">
+        <button type="submit">送る</button>
+      </form>
+      <div class="note">モックです。リーダーの返事は決め打ちです。</div>
+    </aside>
+  </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const W = 1240, H = 700;
+  // ================= 役割と編成 =================
+  const ROLES = {
+    dev:    { name: '開発',         c: 'var(--dev)',    soft: 'var(--dev-soft)',    dur: [10000, 15000], redo: [5000, 8000], tok: 900 },
+    review: { name: 'レビュー',     c: 'var(--review)', soft: 'var(--review-soft)', dur: [5000, 8000], tok: 500 },
+    sec:    { name: 'セキュリティ', c: 'var(--danger)', soft: 'var(--danger-soft)', dur: [3000, 5000], tok: 400 },
+    qa:     { name: 'QA',           c: 'var(--ok)',     soft: 'var(--ok-soft)',     dur: [4000, 6000], tok: 450 }
+  };
+  const ORDER = ['dev', 'review', 'sec', 'qa'];
+  const CREW = [
+    { n: 'ハル', skin: '#F2C7A5', hair: '#2E2420', style: 0, shirt: '#3D4A5C' }, { n: 'ソラ', skin: '#E0B08A', hair: '#5A3B26', style: 1, shirt: '#6B7F99' },
+    { n: 'ミナ', skin: '#F6D3B8', hair: '#1F1A17', style: 2, shirt: '#8C6A9E' }, { n: 'トモ', skin: '#D7A47E', hair: '#1F1A17', style: 3, shirt: '#46566B' },
+    { n: 'リク', skin: '#E8BC97', hair: '#3A2A22', style: 0, shirt: '#5E6B45' }, { n: 'ユイ', skin: '#F2C7A5', hair: '#6B4A33', style: 2, shirt: '#7D5A5A' },
+    { n: 'ケイ', skin: '#C9946C', hair: '#1E1B19', style: 3, shirt: '#4F5D52' }, { n: 'ユウ', skin: '#F2C7A5', hair: '#7A4E2D', style: 0, shirt: '#A0644A' },
+    { n: 'レン', skin: '#E8BC97', hair: '#2E2420', style: 1, shirt: '#55606E' }, { n: 'アキ', skin: '#D7A47E', hair: '#2B2220', style: 1, shirt: '#4A5866' }
+  ];
+  const SLOTS = { 1: [{ x: 30, y: 200, w: 1030 }], 2: [{ x: 30, y: 200, w: 566 }, { x: 660, y: 200, w: 400 }] };
+  const LIMITS = { 1: [8], 2: [6, 4] };
+  const unit = (name, roles, max) => ({ name, roles, max, summonAt: 2, idleSec: 5 });
+  const PRESETS = {
+    split: { label: '分業(既定)', note: '開発とレビューを別の島に分ける', pull: 'down', units: [unit('開発チーム', ['dev'], 4), unit('レビューチーム', ['review'], 3)] },
+    dual:  { label: '兼任', note: '全員が開発もレビューもする。自分の PR はレビューしない', pull: 'down', units: [unit('開発チーム', ['dev', 'review'], 7)] },
+    qa:    { label: '分業 + QA', note: 'レビューの後に動作確認を足す', pull: 'down', units: [unit('開発チーム', ['dev'], 4), unit('品質チーム', ['review', 'qa'], 4)] },
+    sec:   { label: '兼任 + セキュリティ', note: 'レビューは兼任、セキュリティだけ専任', pull: 'down', units: [unit('開発チーム', ['dev', 'review'], 5), unit('セキュリティ', ['sec'], 2)] }
+  };
+  const cloneUnits = (us) => us.map((u, i) => Object.assign({}, u, { roles: u.roles.slice(), id: 'u' + (++unitSeq), crewOff: i === 0 ? 0 : 6, lastSummon: -9999 }));
+  let unitSeq = 0;
+  const FORM = { v: 1, preset: 'split', pull: 'down', units: cloneUnits(PRESETS.split.units), hist: [{ v: 1, at: '11/01', what: '分業(既定)・下流優先' }] };
+  const activeStages = () => ORDER.filter((r) => FORM.units.some((u) => u.roles.includes(r)));
+  const nextStage = (st) => { const a = activeStages(); return a[a.indexOf(st) + 1] || 'merge'; };
+  const unitOfRole = (r) => FORM.units.find((u) => u.roles.includes(r));
+  const unitById = (id) => FORM.units.find((u) => u.id === id);
+  const unitColor = (u) => u.roles.length === 1 ? ROLES[u.roles[0]].c : 'var(--ink)';
+  const slotOf = (u) => SLOTS[FORM.units.length][FORM.units.indexOf(u)];
+  const formLabel = () => FORM.units.map((u) => u.name + '(' + u.roles.map((r) => ROLES[r].name).join('+') + ' ×' + u.max + ')').join(' / ') + '・' + (FORM.pull === 'down' ? '下流優先' : '着手優先');
+
+  const LEAD = { desk: { x: 420, y: 500, w: 380 }, seat: 660, look: { n: 'マキ', skin: '#F6D3B8', hair: '#2B2220', style: 1, shirt: '#5B4A7A' } };
+  const SHELF = { x: 1086, y: 140, w: 140 };
+  const OUT = { x: 1086, y: 600, w: 140 };
+  const ARCH = { desk: { x: 830, y: 500, w: 236 }, seat: 930, look: { n: 'レイ', skin: '#E0B08A', hair: '#2B2220', style: 3, shirt: '#2F4058' } };
+  const TITLES = ['ログイン画面のエラー表示', 'カート画面の数量変更', '注文履歴の CSV 出力', 'パスワード再設定メール', '商品検索のページング', '在庫切れの表示', '管理画面の権限チェック', 'ギフト包装の選択', 'お気に入り一覧', '配送先の住所補完', 'クーポン適用の上限', 'レビュー投稿のスパム対策', '商品画像の遅延読み込み', '会員退会フロー', '注文確定メールの再送', '売上レポートの日次集計', 'ポイント失効の通知', 'セール価格の予約反映'];
+  const ASKS = [
+    { for: '注文履歴の CSV 出力', q: 'CSV の文字コードをどうするか', opts: ['UTF-8(BOM 付き)', 'UTF-8(BOM なし)', 'Shift_JIS'], why: 'Excel でそのまま開けるため', impact: 'ダウンロードした CSV が文字化けするかどうか。後から変えられる', heavy: false },
+    { for: '会員退会フロー', q: '退会した会員のデータを何日残すか', opts: ['30 日', '90 日', 'すぐに消す'], why: '利用規約の記載(30 日)に合わせるため', impact: '個人情報の扱い。「すぐに消す」は後から戻せない', heavy: true },
+    { for: '決済失敗時のリトライ', q: '決済に失敗したとき、何回までやり直すか', opts: ['3 回', '5 回', 'やり直さない'], why: '決済代行の推奨値のため', impact: '多すぎると二重請求の問い合わせが増える。設定値なので後から変えられる', heavy: true },
+    { for: 'お気に入り一覧', q: 'お気に入りに入れるボタンの文言を「保存」と「登録」のどちらにするか', opts: ['保存', '登録'], why: '他の画面に揃えるため', impact: '見た目だけ。後から変えられる', heavy: false }
+  ].map((a) => Object.assign(a, { rec: a.opts[0] + '(' + a.why.replace(/ため$/, '') + ')' }));
+  const ASK_LIMIT = 60000;
+  function askFor(t) {
+    const hit = ASKS.find((a) => a.for === t.title);
+    if (hit) return hit;
+    const a = { q: '「' + t.title + '」の動きを既存の画面に揃えるか、新しい動きにするか', opts: ['既存の画面に揃える', '新しい動きにする'], why: '利用者が迷わないため', impact: '画面の動きが変わるだけ。後から変えられる', heavy: false };
+    a.rec = a.opts[0] + '(利用者が迷わない)'; return a;
+  }
+
+
+  // ---- 方針(役割ごと。ここで書けるのは「重視すること」の層だけ) ----
+  const POL = {
+    dev: { v: 1, model: 'claude-opus-5-5', effort: 'high', text: '・テストを先に書く。既存のテストを壊さない\n・1 PR は 1 チケット。差分は 400 行以内を目安に\n・既存の命名と書き方に揃える', opts: { tests: true, small: true }, hist: [{ v: 1, at: '11/01', what: '初期設定' }] },
+    review: { v: 1, model: 'claude-opus-5-5', effort: 'high', maxRounds: 2, text: '・正しさとセキュリティを最優先に見る\n・テストの抜けは必ず指摘する\n・好みの問題(書き方の揺れ)は指摘しない', strict: 1, hist: [{ v: 1, at: '11/01', what: '初期設定' }] },
+    sec: { v: 1, model: 'claude-opus-5-5', effort: 'high', text: '・認証・認可・入力の扱い・秘密情報の漏れを見る\n・指摘には攻撃の手順を一行で添える', hist: [{ v: 1, at: '11/01', what: '初期設定' }] },
+    qa: { v: 1, model: 'claude-sonnet-5-5', effort: 'medium', text: '・要件の受け入れ条件どおりに動くかを確かめる\n・見つけた不具合には再現手順を付ける', hist: [{ v: 1, at: '11/01', what: '初期設定' }] },
+    arch: { v: 1, model: 'claude-opus-5-5', effort: 'xhigh', must: 1, text: '・新しいサービスや表は安易に作らない。既存で済むなら既存を使う\n・作らない選択肢を必ず検討し、代わりの手段と一緒に示す\n・戻せない変更(データの消去・公開済みの約束の変更)は責任者に上げる', hist: [{ v: 1, at: '11/01', what: '初期設定' }] },
+    lead: { v: 1, model: 'claude-opus-5-5', effort: 'medium', text: '・仕様・契約・セキュリティ・取り消せない操作は責任者に聞く\n・それ以外は推奨で決めて、決めたことを報告する', esc: 1, hist: [{ v: 1, at: '11/01', what: '初期設定' }] }
+  };
+  const MODELS = {
+    'claude-fable-5-1':  { name: 'Fable 5.1',  price: '$10 / $50',    note: 'いちばん賢い。難しい設計や長い作業向け', speed: 1.35, cost: 2.5,  quality: -0.08 },
+    'claude-opus-5-5':   { name: 'Opus 5.5',   price: '$4 / $20',     note: '既定。開発とレビューの主力',            speed: 1,    cost: 1,    quality: 0 },
+    'claude-sonnet-5-5': { name: 'Sonnet 5.5', price: '$2 / $10',     note: '日常の開発向けで速い',                  speed: 0.8,  cost: 0.5,  quality: 0.06 },
+    'claude-haiku-5-5':  { name: 'Haiku 5.5',  price: '$0.10 / $0.50', note: '軽い作業向け。判断の要る仕事には不向き', speed: 0.55, cost: 0.03, quality: 0.18 }
+  };
+  const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+  const STRICT = ['重要なものだけ', '標準', '細かく'];
+  const ESC = ['重いものだけ', '中以上', 'なんでも聞く'];
+  const MUST = ['すべての変更', '複数リポジトリ・約束・データに触れる変更', '任意'];
+
+  const EF = { low: .6, medium: .8, high: 1, xhigh: 1.25, max: 1.6 };
+  // ---- 開発ルール(プロジェクトごと) ----
+  const JIRA = { key: 'SHOP' };
+  const jiraOf = (t) => JIRA.key ? JIRA.key + '-' + (t.id + 90) : '';
+  const WHERE = ['ブランチ名・コミット・PR タイトル', 'PR タイトル・本文', 'コミット', '変更したファイル', 'コード'];
+  const CHECKS = { pattern: '形式で確かめる(トークン 0)', ai: 'AI が読んで確かめる' };
+  const ONFAIL = { autofix: '持ち主が自動で直す', review: 'レビューで指摘する', block: '直すまで先に進めない' };
+  const RULES = [
+    { id: 'jira', name: 'Jira の課題番号をそろえる', desc: 'ブランチ名・コミット・PR タイトルに、チケットの Jira 番号(例: SHOP-121)を入れる', where: WHERE[0], check: 'pattern', pattern: '[A-Z]+-[0-9]+', onFail: 'autofix', on: true, hits: 0, fixed: 0 },
+    { id: 'scope', name: 'PR 本文の先頭に対象を書く', desc: '本文の最初に「何の部分の変更か・何が変わらないか」を書き、タイトルの先頭にも [対象] を付ける', where: WHERE[1], check: 'ai', onFail: 'autofix', on: true, hits: 0, fixed: 0 },
+    { id: 'mig', name: 'マイグレーションは単独の PR にする', desc: 'DB のマイグレーションを含む PR には、他の変更を混ぜない', where: WHERE[3], check: 'pattern', pattern: 'migrations/ だけ', onFail: 'block', on: false, hits: 0, fixed: 0 },
+    { id: 'commit', name: 'コミットの 1 行目は 50 字以内', desc: 'コミットメッセージの 1 行目を 50 字以内にする', where: WHERE[2], check: 'pattern', pattern: '^.{1,50}$', onFail: 'autofix', on: false, hits: 0, fixed: 0 }
+  ];
+
+  // ---- 状態 ----
+  let T = 0, seq = 1, nextTicket = 31, nextReq = 16000, lastGuide = -99999;
+  const tasks = [], members = {}, flights = [], bubbles = [], events = [], chat = [];
+  const stats = { ruleHits: 0, ruleFixed: 0, archChecks: 0, done: 0, doneAt: [], simTok: 0, simAsks: 0, series: [], marks: [], tok: 412000, redoMs: 0, allMs: 0, recur: 1, asks: 0, decided: 0, summons: 0, merged: 3, conflicts: 0, byVer: {}, byForm: {} };
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const clock = () => '9:' + String(12 + Math.floor(T / 60000)).padStart(2, '0');
+  const byId = (id) => tasks.find((t) => t.id === id);
+  const allMembers = () => Object.values(members).flat();
+  const formStat = () => stats.byForm[FORM.v] = stats.byForm[FORM.v] || { label: formLabel(), done: 0, lead: 0, active: 0, tok: 0, asks: 0, allMs: 0, redoMs: 0 };
+
+  function addTask(stage, extra) { const t = Object.assign({ id: nextTicket, title: TITLES[(nextTicket - 31) % TITLES.length], stage, worker: null, owner: null, rounds: 0, landAt: 0, conflict: false, born: T, activeMs: 0 }, extra || {}); nextTicket++; tasks.push(t); return t; }
+  function addMember(u, idx, base, state) {
+    const m = { id: seq++, unit: u.id, idx, base, look: CREW[(u.crewOff + idx) % CREW.length], state: state || 'idle', since: T, task: null, role: null, remaining: 0, total: 1, polV: {} };
+    (members[u.id] = members[u.id] || []).push(m); return m;
+  }
+  function log(text) { events.unshift({ at: clock(), text }); if (events.length > 4) events.pop(); }
+  function say(key, text, ms) { const i = bubbles.findIndex((b) => b.key === key); if (i >= 0) bubbles.splice(i, 1); bubbles.push({ key, text, until: T + (ms || 2600) }); }
+  function leadSays(html, extra) { chat.push(Object.assign({ who: 'lead', html }, extra || {})); renderChat(); }
+  function element(tag, cls, parent, html) {
+    const e = tag === 'svg' ? document.createElementNS('http://www.w3.org/2000/svg', 'svg') : document.createElement(tag);
+    if (cls) e.setAttribute('class', cls); if (html != null) e.innerHTML = html;
+    (parent || document.getElementById('stage')).appendChild(e); return e;
+  }
+  function place(e, x, y) { e.style.left = x + 'px'; e.style.top = y + 'px'; }
+
+  // ---- 位置 ----
+  const trayPos = (u) => { const sl = slotOf(u); return { x: sl.x + 16, y: sl.y - 4 }; };
+  const leadTray = { x: LEAD.desk.x + 16, y: LEAD.desk.y - 4 };
+  function anchor(stage) {
+    if (ROLES[stage]) { const p = trayPos(unitOfRole(stage)); return { x: p.x + 4, y: p.y + 10 }; }
+    if (stage === 'ask') return { x: leadTray.x + 4, y: leadTray.y + 10 };
+    if (stage === 'merge') return { x: SHELF.x + 30, y: SHELF.y + 20 };
+    return { x: OUT.x + 40, y: OUT.y + 10 };
+  }
+  const seatGap = (u) => Math.min(120, (slotOf(u).w - 100) / u.max);
+  const personPos = (m) => { const u = unitById(m.unit), sl = slotOf(u); return { x: sl.x + 88 + m.idx * seatGap(u), y: sl.y - 86 }; };
+  const leadPos = { x: LEAD.seat, y: LEAD.desk.y - 86 };
+  function send(t, stage, from, color) {
+    t.stage = stage; t.worker = null; t.landAt = T + 1000;
+    flights.push({ id: seq++, label: '#' + t.id, from, to: anchor(stage), c: color, born: T, el: null });
+  }
+  // 次の工程へ。merge 待ちに着いたら完成として記録する
+  function forward(t, from, m) {
+    const nx = nextStage(m.role);
+    if (nx === 'merge') {
+      stats.done += 1; stats.doneAt.push(T);
+      const f = formStat(); f.done += 1; f.lead += T - t.born; f.active += t.activeMs;
+    }
+    send(t, nx, from, ROLES[m.role].c);
+    return nx;
+  }
+  const stageName = (st) => ROLES[st] ? ROLES[st].name : st === 'merge' ? 'merge 待ち' : st;
+
+  // ---- 初期状態: 開発に仕事が溜まって応援 2 人。merge 待ちが 2 件 ----
+  {
+    const [U0, U1] = FORM.units;
+    members[U0.id] = []; members[U1.id] = [];
+    addMember(U0, 0, true); addMember(U0, 1, false); addMember(U0, 2, false); addMember(U1, 0, true);
+  }
+  ['dev', 'dev', 'dev', 'dev', 'dev', 'dev', 'dev', 'review', 'review', 'review', 'review', 'dev', 'merge', 'merge'].forEach((st) => { const t = addTask(st); t.born = -rnd(20000, 90000); t.activeMs = st === 'dev' ? 0 : rnd(6000, 12000); });
+  const startWork = (m, t, role, done) => { m.task = t; m.role = role; t.worker = m.id; if (role === 'dev') t.owner = t.owner || m.id; m.state = 'work'; m.total = rnd(...ROLES[role].dur); m.remaining = m.total * (1 - done); m.polV[role] = POL[role].v; };
+  {
+    const d = members[FORM.units[0].id], r = members[FORM.units[1].id];
+    startWork(d[0], tasks[0], 'dev', .7); startWork(d[1], tasks[1], 'dev', .35); startWork(d[2], tasks[2], 'dev', .1);
+    startWork(r[0], tasks[7], 'review', .5);
+    tasks.filter((t) => t.stage === 'review' && !t.owner).forEach((t, i) => { t.owner = d[i % 3].id; });
+    tasks[11].rounds = 1; tasks[11].owner = d[0].id;
+    tasks[12].owner = d[1].id; tasks[13].owner = d[0].id;
+  }
+  tasks.forEach((t) => { const o = allMembers().find((x) => x.id === t.owner); if (o) t.ownerName = o.look.n; });
+  const firstAsk = addTask('ask', { title: '決済失敗時のリトライ', rounds: 2, ask: ASKS[2], askedAt: 0, owner: members[FORM.units[0].id][0].id, ownerName: 'ハル', born: -80000 });
+  stats.summons = 2; stats.asks = 1;
+  log('応援のソラとミナが開発チームに入りました');
+  log('リーダー: #' + firstAsk.id + ' は責任者の判断が要るので聞きました');
+  leadSays('おはようございます。<b>acme/shop-web</b> で ' + tasks.length + ' 件を進めています。開発に仕事が溜まっているので、応援を 2 人呼んでいます。');
+  leadSays('#' + firstAsk.id + '「' + firstAsk.title + '」で判断をお願いします。', { ask: firstAsk.id });
+
+  // ---- シミュレーション ----
+  function finish(m) {
+    const t = m.task, role = m.role, me = personPos(m), from = { x: me.x + 20, y: me.y + 40 };
+    m.task = null; m.state = 'idle'; m.since = T;
+    const owner = allMembers().find((x) => x.id === t.owner) || (t.ownerName ? { look: { n: t.ownerName } } : null);
+    const back = (msg, logMsg) => { t.rounds += 1; send(t, 'dev', from, ROLES[role].c); say(m.id, msg); log(m.look.n + ': ' + logMsg + '。' + (owner ? owner.look.n : '開発') + 'に戻しました'); };
+    if (role === 'dev') {
+      const redo = t.rounds > 0 || t.conflict;
+      t.devModel = POL.dev.model;
+      const viol = RULES.filter((r) => r.on && Math.random() < (r.check === 'pattern' ? .1 : .16) + MODELS[POL.dev.model].quality * .5);
+      let blocked = null;
+      viol.forEach((r) => {
+        r.hits += 1; stats.ruleHits += 1;
+        if (r.onFail === 'autofix') { r.fixed += 1; stats.ruleFixed += 1; const d = r.check === 'pattern' ? 150 : 1500; stats.tok += d; stats.simTok += d; formStat().tok += d; say(m.id, '#' + t.id + ' ルールに合わせて直しました'); log(m.look.n + ': #' + t.id + ' は「' + r.name + '」を満たしていなかったので、出す前に直しました'); }
+        else if (r.onFail === 'review') { t.ruleIssue = r.name; }
+        else blocked = r;
+      });
+      if (blocked) { t.worker = null; t.landAt = T + 600; say(m.id, '#' + t.id + ' ルール違反で止まりました'); log('#' + t.id + ' は「' + blocked.name + '」に反するため先に進めません。' + m.look.n + 'が直します'); return; }
+      const nx = forward(t, from, m);
+      say(m.id, t.conflict ? '#' + t.id + ' 衝突を解きました' : redo ? '#' + t.id + ' 直しました' : '#' + t.id + ' できました');
+      log(m.look.n + ': #' + t.id + (t.conflict ? ' の衝突を解いて' : redo ? ' を直して' : ' を実装して') + stageName(nx) + 'へ');
+      t.conflict = false;
+      return;
+    }
+    if (role === 'review') {
+      if (t.ruleIssue) { const rn = t.ruleIssue; delete t.ruleIssue; back('#' + t.id + ' ルール違反があります', '#' + t.id + ' は「' + rn + '」を満たしていない'); return; }
+      const v = POL.review.v; const rec = stats.byVer[v] = stats.byVer[v] || { n: 0, found: 0 }; rec.n += 1;
+      if (t.rounds >= POL.review.maxRounds) { rec.found += 1; toAsk(t, from, m); return; }
+      const pr = Math.min(.95, Math.max(.05, [[.3, .12], [.55, .3], [.8, .5]][POL.review.strict][t.rounds === 0 ? 0 : 1] + MODELS[t.devModel || 'claude-opus-5-5'].quality - (t.designed ? .15 : 0)));
+      if (Math.random() < pr) {
+        rec.found += 1;
+        const n = 1 + Math.floor(Math.random() * 3);
+        const again = t.rounds >= 1 && Math.random() < .4; if (again) stats.recur += 1;
+        back(again ? '#' + t.id + ' 前と同じ指摘です' : '#' + t.id + ' 指摘 ' + n + ' 件', '#' + t.id + ' に指摘 ' + n + ' 件' + (again ? '(再発)' : ''));
+      } else { const nx = forward(t, from, m); say(m.id, '#' + t.id + ' 問題なし'); log(m.look.n + ': #' + t.id + ' は問題なし。' + stageName(nx) + 'へ'); }
+      return;
+    }
+    if (role === 'sec') {
+      if (Math.random() < .16 - (t.designed ? .08 : 0)) back('#' + t.id + ' 認可の抜けがあります', '#' + t.id + ' にセキュリティの指摘 1 件');
+      else { const nx = forward(t, from, m); say(m.id, '#' + t.id + ' 安全です'); log(m.look.n + ': #' + t.id + ' はセキュリティ上の問題なし。' + stageName(nx) + 'へ'); }
+      return;
+    }
+    if (role === 'qa') {
+      if (Math.random() < .2 + MODELS[t.devModel || 'claude-opus-5-5'].quality) back('#' + t.id + ' 動きが要件と違います', '#' + t.id + ' の動作確認で不具合 1 件');
+      else { const nx = forward(t, from, m); say(m.id, '#' + t.id + ' 動作 OK'); log(m.look.n + ': #' + t.id + ' は受け入れ条件どおり。' + stageName(nx) + 'へ'); }
+    }
+  }
+  function toAsk(t, from, m) {
+    t.ask = askFor(t); t.askedAt = T;
+    send(t, 'ask', from, 'var(--lead)');
+    say(m.id, '#' + t.id + ' は判断が要ります'); log(m.look.n + ': #' + t.id + ' は判断が要るのでリーダーへ');
+    const decideP = [.85, .6, .1][POL.lead.esc];
+    setTimeout(() => {
+      if (!t.ask.heavy && Math.random() < decideP) {
+        stats.decided += 1;
+        say('lead', '#' + t.id + ' は推奨で決めます');
+        log('リーダー: #' + t.id + ' は影響が小さいので推奨で決めました');
+        leadSays('<span class="kind" style="background:var(--warn-soft);color:var(--warn)">推奨で決めた点</span>#' + t.id + ' の「' + t.ask.q + '」は、影響が小さいので「' + t.ask.rec + '」で決めました。');
+        returnToOwner(t, '推奨で決めた内容');
+      } else {
+        stats.asks += 1; stats.simAsks += 1; formStat().asks += 1;
+        say('lead', '責任者に判断を仰ぎます');
+        log('リーダー: #' + t.id + ' は責任者の判断が要るので聞きました');
+        leadSays('#' + t.id + '「' + t.title + '」で判断をお願いします。', { ask: t.id });
+      }
+    }, 1500);
+  }
+  function returnToOwner(t, why) {
+    send(t, 'dev', { x: leadPos.x + 20, y: leadPos.y + 40 }, 'var(--lead)');
+    log('リーダー: #' + t.id + ' を' + why + 'つきで持ち主に戻しました');
+  }
+  function answerAsk(t, auto, choice) {
+    if (t.stage !== 'ask') return;
+    const pick = choice != null ? t.ask.opts[choice] : t.ask.opts[0];
+    t.answer = pick;
+    const c = chat.find((x) => x.ask === t.id && !x.answered); if (c) c.answered = auto ? '返事が無かったので推奨(' + pick + ')で進めました' : '「' + pick + '」で進めます';
+    if (!auto) log('責任者: #' + t.id + ' は「' + pick + '」に決めました');
+    say('lead', auto ? '期限が来たので推奨で進めます' : '判断を持ち主に伝えます');
+    if (auto) leadSays('#' + t.id + ' は返事が無かったので、推奨どおり「' + t.ask.rec + '」で進めました。');
+    returnToOwner(t, auto ? '推奨(期限切れ)' : '責任者の判断');
+    renderChat();
+  }
+  function doMerge(id) {
+    const t = byId(id); if (!t || t.stage !== 'merge' || T < t.landAt || t.conflict) return;
+    // 押した瞬間にもう一度 merge できるかを確かめる
+    if (Math.random() < .12) { conflictBack(t, 'main が先に進んでいた'); renderChat(); return; }
+    t.stage = 'done'; stats.merged += 1;
+    flights.push({ id: seq++, label: '#' + t.id, from: { x: SHELF.x + 20, y: SHELF.y + 40 }, to: anchor('done'), c: 'var(--ok)', born: T, el: null });
+    log('責任者: #' + t.id + ' を merge しました');
+    chat.filter((c) => c.guide && !c.answered && c.guide.includes(t.id)).forEach((c) => { c.guide = c.guide.filter((x) => x !== t.id); if (!c.guide.length) c.answered = 'すべて merge しました'; });
+    // merge をきっかけに残りの merge 待ちの衝突を調べ直す
+    tasks.filter((x) => x.stage === 'merge' && x.id !== t.id && T >= x.landAt && !x.conflict).forEach((x) => {
+      if (Math.random() < .25) { x.conflict = true; x.conflictAt = T; x.cause = t.id; stats.conflicts += 1; log('#' + x.id + ' が #' + t.id + ' の merge と衝突しました'); }
+    });
+    renderChat();
+  }
+  function conflictBack(t, why) {
+    t.conflict = true; stats.conflicts += 1;
+    const owner = allMembers().find((x) => x.id === t.owner);
+    send(t, 'dev', { x: SHELF.x + 20, y: SHELF.y + 40 }, 'var(--danger)');
+    log('#' + t.id + ' は衝突(' + why + ')。' + (owner ? owner.look.n : '開発チーム') + 'に戻しました');
+  }
+  // 島が持つ役割の工程から仕事を取る。下流優先なら仕掛かりを先に片付ける
+  function pickFor(m, u) {
+    const order = (FORM.pull === 'down' ? ORDER.slice().reverse() : ORDER).filter((r) => u.roles.includes(r));
+    for (const r of order) {
+      let q = tasks.filter((t) => t.stage === r && !t.worker && T >= t.landAt);
+      if (r !== 'dev') { q = q.filter((t) => t.owner !== m.id); if (q.length) return { t: q[0], role: r }; continue; }
+      const alive = new Set(allMembers().filter((x) => x.state !== 'leave').map((x) => x.id));
+      let i = q.findIndex((t) => t.owner === m.id);                       // 自分の PR の直しを先に
+      if (i < 0) i = q.findIndex((t) => !t.owner);                           // 次に新しいチケット
+      if (i < 0) i = q.findIndex((t) => !alive.has(t.owner) || T - t.landAt > 7000); // 持ち主がいない・手が回らないものは引き継ぐ
+      if (i < 0) continue;
+      const t = q[i];
+      if (t.owner && t.owner !== m.id) { say(m.id, '#' + t.id + ' 引き継ぎます'); log(m.look.n + ': #' + t.id + ' を引き継ぎました'); }
+      t.owner = m.id; t.ownerName = m.look.n;
+      return { t, role: 'dev' };
+    }
+    return null;
+  }
+  const queueOf = (u) => tasks.filter((t) => u.roles.includes(t.stage) && !t.worker && T >= t.landAt);
+
+  function step(dt) {
+    T += dt;
+    FORM.units.forEach((u) => {
+      const list = members[u.id] = members[u.id] || [];
+      list.forEach((m) => {
+        if (m.state === 'arrive' && T - m.since > 900) { m.state = 'idle'; m.since = T; }
+        if (m.state === 'work') {
+          const r = m.role, d = ROLES[r].tok * MODELS[POL[r].model].cost * EF[POL[r].effort] * dt / 1000, f = formStat();
+          stats.tok += d; stats.simTok += d; f.tok += d; f.allMs += dt; stats.allMs += dt;
+          m.task.activeMs += dt; m.remaining -= dt;
+          if (r === 'dev' && (m.task.rounds > 0 || m.task.conflict)) { stats.redoMs += dt; f.redoMs += dt; }
+          if (m.remaining <= 0) finish(m);
+        }
+      });
+      list.filter((m) => m.state === 'idle').forEach((m) => {
+        const got = pickFor(m, u); if (!got) return;
+        const t = got.t, r = got.role;
+        m.task = t; m.role = r; t.worker = m.id; m.state = 'work';
+        const redo = r === 'dev' && (t.rounds > 0 || t.conflict);
+        m.total = rnd(...(redo ? ROLES.dev.redo : ROLES[r].dur)) * MODELS[POL[r].model].speed; m.remaining = m.total;
+        if (m.polV[r] && m.polV[r] !== POL[r].v) say(m.id, ROLES[r].name + 'の方針 v' + POL[r].v + ' を読みました');
+        m.polV[r] = POL[r].v;
+        if (r === 'dev' && !redo && !t.designed && (POL.arch.must === 0 || (POL.arch.must === 1 && t.id % 3 === 0))) {
+          t.designed = true; stats.archChecks += 1; m.total += 2500 * MODELS[POL.arch.model].speed; m.remaining = m.total;
+          const d = 1200 * MODELS[POL.arch.model].cost; stats.simTok += d; stats.tok += d; formStat().tok += d;
+          say('arch', '#' + t.id + ' はデータに触れるので設計を確認'); log('レイ: #' + t.id + ' はデータに触れるため、着手前に設計を確認しました');
+        }
+      });
+      const qn = queueOf(u).length, here = list.filter((m) => m.state !== 'leave').length;
+      if (qn >= u.summonAt && here < u.max && T - u.lastSummon > 3000) {
+        const used = list.filter((m) => m.state !== 'leave').map((m) => m.idx); const idx = Array.from({ length: u.max }, (_, i) => i).find((i) => !used.includes(i));
+        if (idx != null) {
+          const m = addMember(u, idx, false, 'arrive'); u.lastSummon = T; stats.summons += 1;
+          say(m.id, '応援に来ました'); log(m.look.n + 'が応援で' + u.name + 'に入りました(待ち ' + qn + ' 件)');
+        }
+      }
+      list.filter((m) => !m.base && m.state === 'idle' && (T - m.since > u.idleSec * 1000 || m.idx >= u.max)).forEach((m) => { m.state = 'leave'; m.since = T; log(m.look.n + (m.idx >= u.max ? 'は席が減ったので' : 'は手が空いたので') + u.name + 'を離れました'); });
+      for (let i = list.length - 1; i >= 0; i--) if (list[i].state === 'leave' && T - list[i].since > 600) list.splice(i, 1);
+    });
+    tasks.filter((t) => t.stage === 'ask' && T - t.askedAt > ASK_LIMIT && chat.some((c) => c.ask === t.id && !c.answered)).forEach((t) => answerAsk(t, true));
+    tasks.filter((t) => t.stage === 'merge' && t.conflict && T - t.conflictAt > 1800).forEach((t) => { t.conflict = true; conflictBack(t, '#' + t.cause + ' の merge'); });
+    const ready = tasks.filter((t) => t.stage === 'merge' && T >= t.landAt && !t.conflict);
+    if (ready.length >= 2 && T - lastGuide > 30000) {
+      lastGuide = T;
+      const order = ready.slice().sort((a, b) => a.rounds - b.rounds).map((t) => t.id);
+      say('lead', 'merge できる PR が ' + order.length + ' 件あります');
+      leadSays('merge できる PR が ' + order.length + ' 件あります。衝突しにくい順に ' + order.map((i) => '#' + i).join(' → ') + ' がおすすめです。', { guide: order });
+    }
+    if (T >= nextReq) {
+      nextReq = T + 35000;
+      const t = addTask('dev'); t.landAt = T + 1000; t.born = T;
+      flights.push({ id: seq++, label: '#' + t.id, from: { x: leadPos.x + 20, y: leadPos.y + 40 }, to: anchor('dev'), c: 'var(--lead)', born: T, el: null });
+      say('lead', '新しい依頼を開発チームへ'); log('リーダー: 責任者の依頼を #' + t.id + ' として登録しました');
+    }
+    for (let i = bubbles.length - 1; i >= 0; i--) if (T > bubbles[i].until) bubbles.splice(i, 1);
+  }
+
+
+  // ---- 編成を変える ----
+  function applyForm(units, pull, presetKey, what) {
+    allMembers().forEach((m) => { if (m.task) m.task.worker = null; });
+    Object.keys(members).forEach((k) => delete members[k]);
+    FORM.units = cloneUnits(units); FORM.pull = pull; FORM.preset = presetKey; FORM.v += 1;
+    FORM.hist.push({ v: FORM.v, at: '11/07', what });
+    // 編成から消えた工程にあったチケットは、次の工程へ送る
+    tasks.filter((t) => ORDER.includes(t.stage) && !activeStages().includes(t.stage)).forEach((t) => { const a = activeStages(); t.stage = a.find((r) => ORDER.indexOf(r) > ORDER.indexOf(t.stage)) || 'merge'; });
+    FORM.units.forEach((u) => { members[u.id] = []; addMember(u, 0, true); });
+    stats.marks.push({ T, label: '編成 v' + FORM.v });
+    formStat();
+    buildFloor();
+    log('責任者: 編成を v' + FORM.v + '(' + what + ')に変えました');
+  }
+
+  // ---- 描画: オフィス ----
+  const stage = document.getElementById('stage'), wrap = document.getElementById('stage-wrap');
+  function avatar(look, chair, asleep) {
+    const hair = {
+      0: '<path d="M25 38 C23 21 33 15 42 15 C52 15 61 21 59 38 C56 29 50 26 42 26 C34 26 28 30 25 38Z"/>',
+      1: '<path d="M23 44 C20 21 32 14 42 14 C53 14 64 21 61 44 L60 50 C58 42 58 31 52 28 C46 31 36 31 30 28 C26 33 26 42 24 50Z"/>',
+      2: '<path d="M25 38 C23 21 33 15 42 15 C52 15 61 21 59 38 C56 29 50 26 42 26 C34 26 28 30 25 38Z"/><circle cx="42" cy="13" r="7"/>',
+      3: '<path d="M24 37 L27 22 L33 26 L37 15 L43 23 L49 14 L53 25 L60 37 C54 30 48 27 42 27 C36 27 30 30 24 37Z"/>'
+    }[look.style];
+    const eyes = asleep
+      ? '<path d="M33 40 q3 2.4 6 0 M45 40 q3 2.4 6 0" fill="none" stroke="#2A2320" stroke-width="1.8" stroke-linecap="round"/>'
+      : '<circle cx="36" cy="41" r="2.1" fill="#2A2320"/><circle cx="48" cy="41" r="2.1" fill="#2A2320"/>';
+    const mouth = asleep ? '<circle cx="42" cy="48" r="1.6" fill="#2A2320"/>' : '<path d="M38.5 47 q3.5 2.6 7 0" fill="none" stroke="#2A2320" stroke-width="1.6" stroke-linecap="round"/>';
+    return '<svg viewBox="0 0 84 104" aria-hidden="true">'
+      + '<rect x="16" y="42" width="52" height="62" rx="14" fill="' + chair + '" opacity=".95"/>'
+      + '<path d="M17 104 C17 76 28 66 42 66 C56 66 67 76 67 104Z" fill="' + look.shirt + '"/>'
+      + '<path d="M36 66 L42 76 L48 66Z" fill="' + look.skin + '"/>'
+      + '<rect x="37" y="54" width="10" height="13" rx="3" fill="' + look.skin + '"/>'
+      + '<circle cx="42" cy="38" r="18" fill="' + look.skin + '"/>'
+      + '<g fill="' + look.hair + '">' + hair + '</g>'
+      + '<circle cx="31.5" cy="45" r="2.8" fill="#E9897E" opacity=".45"/><circle cx="52.5" cy="45" r="2.8" fill="#E9897E" opacity=".45"/>'
+      + eyes + mouth + '</svg>';
+  }
+
+
+  // 床: 編成から組み立てる部分
+  const arrow = (d) => '<path d="' + d + '" fill="none" stroke="var(--route)" stroke-width="3" stroke-dasharray="2 9" stroke-linecap="round" marker-end="url(#ah)"/>';
+  let floorEls = [], deco = { labels: {}, trays: {} };
+  function buildFloor() {
+    floorEls.forEach((e) => e.remove()); floorEls = [];
+    for (const [, n] of nodes) { n.p.remove(); n.tag.remove(); n.lap.remove(); }
+    nodes.clear();
+    const routes = element('svg', 'routes'); routes.setAttribute('viewBox', '0 0 ' + W + ' ' + H); routes.setAttribute('aria-hidden', 'true'); floorEls.push(routes);
+    const two = FORM.units.length === 2;
+    routes.innerHTML = '<defs><marker id="ah" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="var(--route)"/></marker></defs>'
+      + (two ? arrow('M600 226 L652 226') + arrow('M652 268 L602 268') : '') + arrow('M1066 226 L1080 226')
+      + arrow('M470 496 C430 420 330 380 310 300') + arrow('M1150 470 L1150 552');
+    if (two) { const rl = element('div', 'route-label'); rl.textContent = '差し戻し'; place(rl, 600, 276); floorEls.push(rl); }
+    deco.labels = { lead: deco.labels.lead }; deco.trays = { ask: deco.trays.ask };
+    FORM.units.forEach((u) => {
+      const sl = slotOf(u);
+      const t = element('div', 'table'); place(t, sl.x, sl.y); t.style.width = sl.w + 'px'; t.style.borderTop = '4px solid ' + unitColor(u); floorEls.push(t);
+      const lb = element('div', 'floor-label'); place(lb, sl.x + 96, sl.y + 36); lb.style.width = (sl.w - 110) + 'px'; floorEls.push(lb); deco.labels[u.id] = lb;
+      const tr = element('div', 'tray'); const tp = trayPos(u); place(tr, tp.x, tp.y); floorEls.push(tr); deco.trays[u.id] = tr;
+    });
+  }
+  const ldesk = element('div', 'table'); place(ldesk, LEAD.desk.x, LEAD.desk.y); ldesk.style.width = LEAD.desk.w + 'px'; ldesk.style.borderTop = '4px solid var(--lead)';
+  deco.labels.lead = element('div', 'floor-label'); place(deco.labels.lead, LEAD.desk.x + 96, LEAD.desk.y + 46);
+  deco.trays.ask = element('div', 'tray'); place(deco.trays.ask, leadTray.x, leadTray.y);
+  const shelf = element('div', 'shelf'); place(shelf, SHELF.x, SHELF.y); shelf.style.width = SHELF.w + 'px';
+  shelf.addEventListener('click', (e) => { const b = e.target.closest('[data-merge]'); if (b) doMerge(Number(b.dataset.merge)); });
+  const outbox = element('div', 'outbox'); place(outbox, OUT.x, OUT.y); outbox.style.width = OUT.w + 'px';
+  const logBox = element('div', 'log');
+  const leadEl = element('div', 'person'); place(leadEl, leadPos.x, leadPos.y); leadEl.innerHTML = avatar(LEAD.look, 'var(--lead)', false);
+  const leadTag = element('div', 'tag'); place(leadTag, leadPos.x - 28, leadPos.y - 28);
+  const leadLap = element('div', 'laptop'); place(leadLap, LEAD.seat + 19, LEAD.desk.y + 8); leadLap.style.setProperty('--glow', 'var(--lead-soft)'); leadLap.classList.add('on');
+
+  const adesk = element('div', 'table'); place(adesk, ARCH.desk.x, ARCH.desk.y); adesk.style.width = ARCH.desk.w + 'px'; adesk.style.borderTop = '4px solid var(--ink)';
+  const archLabel = element('div', 'floor-label'); place(archLabel, ARCH.desk.x + 16, ARCH.desk.y + 40);
+  const archPos = { x: ARCH.seat, y: ARCH.desk.y - 86 };
+  const archEl = element('div', 'person'); place(archEl, archPos.x, archPos.y);
+  const archTag = element('div', 'tag'); place(archTag, archPos.x - 28, archPos.y - 28);
+  const archLap = element('div', 'laptop'); place(archLap, ARCH.seat + 19, ARCH.desk.y + 8); archLap.style.setProperty('--glow', 'var(--dev-soft)');
+  let archAsleep = null;
+  const nodes = new Map();
+  buildFloor();
+  function renderOffice() {
+    const archBusy = bubbles.some((b) => b.key === 'arch');
+    if (archAsleep !== !archBusy) { archAsleep = !archBusy; archEl.innerHTML = avatar(ARCH.look, 'var(--ink)', archAsleep); }
+    archEl.classList.toggle('work', archBusy); archLap.classList.toggle('on', archBusy);
+    archTag.className = 'tag' + (archBusy ? '' : ' idle'); archTag.innerHTML = '<span class="name"><b>レイ</b>アーキテクト<span class="chip ver" style="height:18px">' + MODELS[POL.arch.model].name + ' · v' + POL.arch.v + '</span>' + (archBusy ? '' : ' <span class="zz">z</span>') + '</span>';
+    archLabel.innerHTML = '<span class="team">アーキテクト</span><span class="meta">設計の確認 ' + stats.archChecks + ' 件</span>';
+    const alive = new Set();
+    FORM.units.forEach((u) => (members[u.id] || []).forEach((m) => {
+      alive.add(m.id);
+      let n = nodes.get(m.id);
+      const p = personPos(m), sl = slotOf(u);
+      if (!n) {
+        n = { p: element('div', 'person'), tag: element('div', 'tag'), lap: element('div', 'laptop'), asleep: null };
+        n.p.style.transition = 'left .5s, opacity .5s, transform .5s'; n.lap.style.transition = 'left .5s, box-shadow .4s, opacity .4s'; n.tag.style.transition = 'left .5s, top .5s';
+        if (m.state === 'arrive') { const puff = element('div', 'puff', n.p); puff.style.color = unitColor(u); }
+        nodes.set(m.id, n);
+      }
+      const gap = seatGap(u), sc = Math.min(1, gap / 104);
+      place(n.p, p.x + (84 - 84 * sc) / 2, p.y + (104 - 104 * sc)); n.p.style.width = 84 * sc + 'px'; n.p.style.height = 104 * sc + 'px';
+      place(n.tag, p.x - 28, p.y - 28 - (gap < 116 && m.idx % 2 ? 26 : 0)); place(n.lap, p.x + 42 * sc - 23, sl.y + 8);
+      const asleep = m.state === 'idle' && m.base;
+      if (n.asleep !== asleep) { const puff = n.p.querySelector('.puff'); n.p.innerHTML = avatar(m.look, unitColor(u), asleep); if (puff) n.p.appendChild(puff); n.asleep = asleep; }
+      n.p.classList.toggle('work', m.state === 'work');
+      n.p.classList.toggle('arrive', m.state === 'arrive');
+      n.p.classList.toggle('leave', m.state === 'leave');
+      n.lap.classList.toggle('on', m.state === 'work');
+      if (m.role) n.lap.style.setProperty('--glow', ROLES[m.role].soft);
+      n.lap.style.opacity = m.state === 'leave' ? '0' : '1';
+      const helper = !m.base && m.state !== 'leave' ? '<span class="help" style="background:var(--bg);color:var(--muted)">応援</span>' : '';
+      if (m.state === 'work') {
+        const t = m.task, R = ROLES[m.role], pct = Math.max(4, Math.min(100, Math.round((1 - m.remaining / m.total) * 100)));
+        const redo = m.role === 'dev' && t.conflict ? '<span class="redo">衝突</span>' : m.role === 'dev' && t.rounds > 0 ? '<span class="redo">直し' + t.rounds + '</span>' : '';
+        const roleChip = u.roles.length > 1 ? '<span class="help" style="background:' + R.soft + ';color:' + R.c + '">' + R.name + '</span>' : '';
+        n.tag.className = 'tag';
+        n.tag.innerHTML = '<span class="name"><b>' + m.look.n + '</b><span class="t">#' + t.id + '</span>' + roleChip + redo + helper + '</span><span class="bar"><i style="width:' + pct + '%;background:' + R.c + '"></i></span>';
+      } else if (m.state === 'leave') {
+        n.tag.className = 'tag idle'; n.tag.innerHTML = '<span class="name">おつかれさま</span>';
+      } else {
+        n.tag.className = 'tag idle';
+        n.tag.innerHTML = '<span class="name"><b>' + m.look.n + '</b>' + (m.base ? '待機中 <span class="zz">z</span>' : '手すき') + helper + '</span>';
+      }
+    }));
+    for (const [id, n] of nodes) if (!alive.has(id)) { n.p.remove(); n.tag.remove(); n.lap.remove(); nodes.delete(id); }
+
+    const landed = (st) => tasks.filter((t) => t.stage === st && !t.worker && T >= t.landAt).length;
+    const qs = FORM.units.map((u) => queueOf(u).length);
+    FORM.units.forEach((u, i) => {
+      const q = qs[i], here = (members[u.id] || []).filter((m) => m.state !== 'leave').length;
+      drawTray(deco.trays[u.id], q, unitColor(u));
+      const neck = q >= 3 && q === Math.max(...qs) && FORM.units.length > 1;
+      const level = neck ? '<span class="chip neck">ボトルネック</span>' : q >= 5 ? '<span class="chip hot">溜まっています</span>' : q >= 3 ? '<span class="chip warn">溜まり気味</span>' : '';
+      deco.labels[u.id].innerHTML = '<span class="team" style="color:' + unitColor(u) + '">' + u.name + '</span>'
+        + u.roles.map((r) => '<span class="chip" style="background:' + ROLES[r].soft + ';color:' + ROLES[r].c + '">' + ROLES[r].name + '</span>').join('')
+        + '<span class="meta">' + here + '/' + u.max + ' 人 · 待ち ' + q + ' 件</span>' + level;
+    });
+    const asks = landed('ask');
+    drawTray(deco.trays.ask, asks, 'var(--lead)');
+    const waitingYou = chat.filter((c) => c.ask && !c.answered).length;
+    deco.labels.lead.innerHTML = '<span class="team" style="color:var(--lead)">リーダー</span><span class="meta">判断待ち ' + asks + ' 件</span>' + (waitingYou ? '<span class="chip warn">責任者の返事待ち ' + waitingYou + '</span>' : '');
+    leadEl.classList.toggle('work', bubbles.some((b) => b.key === 'lead'));
+    leadTag.className = 'tag'; leadTag.innerHTML = '<span class="name"><b>マキ</b>リーダー<span class="chip ver" style="height:18px">' + MODELS[POL.lead.model].name + ' · v' + POL.lead.v + '</span></span>';
+
+    const inMerge = tasks.filter((t) => t.stage === 'merge' && T >= t.landAt);
+    shelf.innerHTML = '<div class="title"><b>merge 待ち</b>' + inMerge.length + ' 件</div>'
+      + inMerge.slice(0, 7).map((t) => t.conflict
+        ? '<div class="mrow bad"><span class="id">#' + t.id + '</span><span>衝突</span></div>'
+        : '<div class="mrow"><span class="id">#' + t.id + '</span><button type="button" data-merge="' + t.id + '">merge</button></div>').join('')
+      + (inMerge.length > 7 ? '<div class="title">ほか ' + (inMerge.length - 7) + ' 件</div>' : '')
+      + '<div class="title">押すのは責任者</div>';
+    outbox.innerHTML = '<b>merge 済み</b>' + stats.merged + ' 件<div class="stack">' + Array.from({ length: Math.min(stats.merged, 40) }, () => '<span></span>').join('') + '</div>';
+
+    stage.querySelectorAll('.bubble').forEach((b) => b.remove());
+    bubbles.forEach((b) => {
+      let x, y;
+      if (b.key === 'lead') { x = leadPos.x + 42; y = leadPos.y - 66; }
+      else if (b.key === 'arch') { x = archPos.x + 42; y = archPos.y - 66; }
+      else { const m = allMembers().find((mm) => mm.id === b.key); if (!m) return; const p = personPos(m); x = p.x + 42; y = p.y - 66; }
+      const e = element('div', 'bubble'); e.textContent = b.text; place(e, x, y);
+    });
+
+    for (let i = flights.length - 1; i >= 0; i--) {
+      const f = flights[i];
+      if (!f.el) {
+        f.el = element('div', 'flight', stage, '<span class="doc"><i></i>' + f.label + '</span>');
+        f.el.style.setProperty('--c', f.c); place(f.el, f.from.x, f.from.y);
+        requestAnimationFrame(() => requestAnimationFrame(() => place(f.el, f.to.x, f.to.y)));
+      }
+      if (T - f.born > 1050) { f.el.remove(); flights.splice(i, 1); }
+    }
+
+    logBox.innerHTML = '<h3>いまの出来事</h3><ol>' + events.map(() => '<li><time></time><span></span></li>').join('') + '</ol>';
+    logBox.querySelectorAll('li').forEach((li, i) => { li.querySelector('time').textContent = events[i].at; li.querySelector('span').textContent = events[i].text; });
+  }
+  function drawTray(tray, n, color) {
+    let h = '<span class="base"></span>';
+    for (let i = 0; i < Math.min(n, 10); i++) h += '<span class="paper" style="bottom:' + (12 + i * 6) + 'px"></span>';
+    if (n) h += '<span class="count" style="background:' + color + '">' + n + '</span>';
+    tray.innerHTML = h;
+  }
+
+  // ---- 描画: あなたの対応 ----
+  let inboxSig = '', inboxAll = false;
+  function inboxItems() {
+    const all = allMembers();
+    const decide = tasks.filter((t) => t.stage === 'ask' && chat.some((c) => c.ask === t.id && !c.answered))
+      .sort((a, b) => a.askedAt - b.askedAt)
+      .map((t) => ({ kind: 'decide', t, owner: all.find((m) => m.id === t.owner) }));
+    const ready = tasks.filter((t) => t.stage === 'merge' && T >= t.landAt && !t.conflict).sort((a, b) => a.rounds - b.rounds);
+    const merge = ready.map((t, i) => ({ kind: 'merge', t, order: i + 1, owner: all.find((m) => m.id === t.owner) }));
+    return decide.concat(merge);
+  }
+  function renderInbox() {
+    const items = inboxItems();
+    const sig = items.map((x) => x.kind + x.t.id).join(',') + '|' + inboxAll;
+    const box = document.getElementById('inbox');
+    if (sig !== inboxSig) {
+      inboxSig = sig;
+      const nd = items.filter((x) => x.kind === 'decide').length, nm = items.length - nd;
+      const shown = inboxAll ? items : items.slice(0, 3);
+      box.innerHTML = '<header><h2>あなたの対応</h2><span class="cnt">' + items.length + '</span>'
+        + '<span class="sub">' + (items.length ? '判断 ' + nd + ' 件 · merge ' + nm + ' 件。チームの中で片付くものはここに出ません' : '') + '</span>'
+        + (items.length > 3 ? '<button type="button" class="more" data-more>' + (inboxAll ? '上位 3 件だけ表示' : 'すべて表示(' + items.length + ' 件)') + '</button>' : '') + '</header>'
+        + (items.length ? '<div class="items">' + shown.map(itemHtml).join('') + '</div>' : '<div class="empty">今あなたが対応することはありません。チームは自分たちで進めています。</div>');
+    }
+    box.querySelectorAll('[data-due]').forEach((e) => {
+      const t = byId(Number(e.dataset.due)); if (!t) return;
+      const left = Math.max(0, Math.ceil((ASK_LIMIT - (T - t.askedAt)) / 1000));
+      e.textContent = 'あと ' + left + ' 秒で推奨に決定';
+    });
+    const n = items.length;
+    document.getElementById('status-you').textContent = n ? 'あなたの対応 ' + n + ' 件' : 'あなたの対応なし';
+    document.getElementById('status-you').parentElement.style.borderColor = n ? 'var(--warn)' : 'var(--line)';
+  }
+  function itemHtml(x) {
+    const t = x.t, own = x.owner ? x.owner.look.n : (t.ownerName || '—');
+    if (x.kind === 'decide') {
+      const a = t.ask;
+      return '<article class="item decide"><div class="top"><span class="kind">判断</span><span class="where">#' + t.id + ' ' + t.title + ' · 持ち主 ' + own + ' · レビュー ' + t.rounds + ' 往復で決まらず</span><span class="due" data-due="' + t.id + '"></span></div>'
+        + '<div class="q">' + a.q + '</div>'
+        + '<dl><dt>推奨</dt><dd>' + a.opts[0] + '。' + a.why + '</dd><dt>間違えると</dt><dd>' + a.impact + '</dd><dt>返事が無いと</dt><dd>期限が来たらリーダーが推奨で進めます</dd></dl>'
+        + '<div class="choices">' + a.opts.map((o, i) => '<button type="button" data-choose="' + t.id + ':' + i + '"' + (i === 0 ? ' class="rec"' : '') + '>' + o + (i === 0 ? '<small>推奨</small>' : '') + '</button>').join('') + '</div>'
+        + '<div class="links"><button type="button" data-talk="' + t.id + '">リーダーと相談する</button><span>証拠: GitHub の PR #' + t.id + ' のレビュー指摘(モックでは開きません)</span></div></article>';
+    }
+    return '<article class="item merge"><div class="top"><span class="kind">merge</span><span class="where">推奨 ' + x.order + ' 番目 · 持ち主 ' + own + '</span></div>'
+      + '<div class="q">#' + t.id + ' ' + t.title + '</div>'
+      + '<dl><dt>確認済み</dt><dd>レビュー済み(' + t.rounds + ' 往復)· CI 緑 · 衝突なし(' + clock() + ' 時点)</dd><dt>押すと</dt><dd>main に入り、残りの merge 待ちの衝突を確かめ直します</dd></dl>'
+      + '<div class="choices"><button type="button" class="go" data-merge="' + t.id + '">merge する</button></div>'
+      + '<div class="links"><span>差分: GitHub の PR #' + t.id + '(モックでは開きません)</span></div></article>';
+  }
+  document.getElementById('inbox').addEventListener('click', (e) => {
+    const ch = e.target.closest('[data-choose]'), mg = e.target.closest('[data-merge]'), tk = e.target.closest('[data-talk]'), mo = e.target.closest('[data-more]');
+    if (ch) { const [id, i] = ch.dataset.choose.split(':').map(Number); const t = byId(id); chat.push({ who: 'me', text: '#' + id + ' は「' + t.ask.opts[i] + '」で' }); answerAsk(t, false, i); renderInbox(); }
+    if (mg) { doMerge(Number(mg.dataset.merge)); renderInbox(); }
+    if (tk) { toggle('chat', true); const inp = document.getElementById('chat-input'); inp.value = '#' + tk.dataset.talk + ' について: '; inp.focus(); }
+    if (mo) { inboxAll = !inboxAll; renderInbox(); }
+  });
+
+  // ---- 描画: ボード ----
+  function renderBoard() {
+    const COLS = activeStages().map((r) => [r, r === 'dev' ? '開発(未着手・直し含む)' : ROLES[r].name]).concat([['ask', '判断待ち'], ['merge', 'merge 待ち'], ['done', '完了']]);
+    const all = allMembers(), board = document.getElementById('board');
+    board.style.gridTemplateColumns = 'repeat(' + COLS.length + ', minmax(170px, 1fr))';
+    board.innerHTML = COLS.map(([k, label]) => {
+      const list = tasks.filter((t) => t.stage === k);
+      return '<div class="col"><h3>' + label + '<span>' + list.length + '</span></h3>' + list.map((t) => {
+        const w = all.find((m) => m.id === t.worker), o = all.find((m) => m.id === t.owner);
+        const who = w ? '<span class="who" style="color:' + ROLES[w.role || 'dev'].c + '">' + w.look.n + ' が' + ROLES[w.role || 'dev'].name + '中</span>' : (o || t.ownerName) && k !== 'done' ? '<span class="who" style="color:var(--muted)">持ち主: ' + (o ? o.look.n : t.ownerName) + '</span>' : '';
+        return '<div class="card"><span class="id"><span>#' + t.id + (JIRA.key ? ' · ' + jiraOf(t) : '') + '</span><span>' + (t.conflict ? '衝突' : t.rounds ? '往復 ' + t.rounds : '') + '</span></span><span>' + t.title + '</span>' + who + '</div>';
+      }).join('') + '</div>';
+    }).join('');
+  }
+
+  // ---- 描画: モニタリング ----
+  const kfmt = (v) => v >= 1000 ? Math.round(v / 1000) + 'k' : String(Math.round(v * 10) / 10);
+  function lineChart(id, key, fmt, color) {
+    const pts = stats.series.filter((d) => d[key] != null);
+    const Wc = 380, Hc = 120, L = 34, R = 46, Tp = 18, B = 18;
+    if (pts.length < 2) return '<div class="hint" style="font-size:12px;color:var(--muted)">完成が 1 件出るとグラフが出ます</div>';
+    const t0 = pts[0].T, t1 = Math.max(pts[pts.length - 1].T, t0 + 1), vmax = Math.max(...pts.map((d) => d[key])) * 1.15 || 1;
+    const X = (t) => L + (t - t0) / (t1 - t0) * (Wc - L - R), Y = (v) => Tp + (1 - v / vmax) * (Hc - Tp - B);
+    const d = pts.map((p, i) => (i ? 'L' : 'M') + X(p.T).toFixed(1) + ' ' + Y(p[key]).toFixed(1)).join(' ');
+    const last = pts[pts.length - 1];
+    const marks = stats.marks.filter((m) => m.T >= t0 && m.T <= t1).map((m) => '<line x1="' + X(m.T) + '" x2="' + X(m.T) + '" y1="' + Tp + '" y2="' + (Hc - B) + '" stroke="var(--muted)" stroke-dasharray="3 3" stroke-width="1"/><text x="' + (X(m.T) + 3) + '" y="' + (Tp - 6) + '" font-size="10" fill="var(--muted)">' + m.label + '</text>').join('');
+    return '<div class="chart" data-chart="' + id + '"><svg viewBox="0 0 ' + Wc + ' ' + Hc + '" role="img" aria-label="' + id + 'の推移">'
+      + '<line x1="' + L + '" x2="' + (Wc - R) + '" y1="' + (Hc - B) + '" y2="' + (Hc - B) + '" stroke="var(--line)"/>'
+      + '<line x1="' + L + '" x2="' + (Wc - R) + '" y1="' + Y(vmax / 2) + '" y2="' + Y(vmax / 2) + '" stroke="var(--line)" stroke-dasharray="2 4"/>'
+      + '<text x="' + (L - 4) + '" y="' + (Y(vmax / 2) + 3) + '" font-size="10" fill="var(--muted)" text-anchor="end">' + fmt(vmax / 2) + '</text>'
+      + '<text x="' + (L - 4) + '" y="' + (Hc - B + 3) + '" font-size="10" fill="var(--muted)" text-anchor="end">0</text>'
+      + marks + '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linejoin="round"/>'
+      + '<circle cx="' + X(last.T) + '" cy="' + Y(last[key]) + '" r="4" fill="' + color + '" stroke="var(--surface)" stroke-width="2"/>'
+      + '<text x="' + (X(last.T) + 8) + '" y="' + (Y(last[key]) + 4) + '" font-size="11" fill="var(--ink)" font-family="IBM Plex Mono, monospace">' + fmt(last[key]) + '</text>'
+      + '<rect x="' + L + '" y="0" width="' + (Wc - L - R) + '" height="' + Hc + '" fill="transparent" data-hit="' + id + '"/>'
+      + '</svg><span class="tip" hidden></span></div>';
+  }
+  let chartSig = '';
+  function renderMon() {
+    const q = (st) => tasks.filter((t) => t.stage === st).length;
+    const reviewed = tasks.filter((t) => t.rounds > 0 || ['merge', 'done'].includes(t.stage));
+    const avg = reviewed.length ? (reviewed.reduce((a, t) => a + t.rounds, 0) / reviewed.length).toFixed(1) : '0.0';
+    const rate = stats.allMs ? Math.round(stats.redoMs / stats.allMs * 100) : 0;
+    const rows = activeStages().map((r) => [ROLES[r].name + '待ち', q(r), ROLES[r].c]).concat([['判断待ち', q('ask'), 'var(--lead)'], ['merge 待ち', q('merge'), 'var(--ok)']]);
+    const max = Math.max(6, ...rows.map((r) => r[1]));
+    const vers = Object.keys(stats.byVer).sort((a, b) => a - b);
+    const tpc = stats.done ? stats.simTok / stats.done : null, apc = stats.done ? stats.simAsks / stats.done : null;
+    const thru = stats.doneAt.filter((t) => T - t < 60000).length;
+    const sig = stats.series.length + ':' + stats.marks.length;
+    const monEl = document.getElementById('mon');
+    if (sig !== chartSig || !monEl.querySelector('#mon-rest')) {
+      chartSig = sig;
+      monEl.innerHTML = '<div><h3>生産効率</h3><div class="kpis" id="mon-eff"></div></div>'
+        + '<div><h3>完成 1 件あたりのトークン</h3>' + lineChart('トークン', 'tpc', kfmt, 'var(--dev)') + '</div>'
+        + '<div><h3>完成 1 件あたりのあなたの判断</h3>' + lineChart('判断', 'apc', (v) => v.toFixed(2), 'var(--lead)') + '</div>'
+        + '<div id="mon-rest"></div>';
+    }
+    monEl.querySelector('#mon-eff').innerHTML =
+      '<div class="kpi"><div class="l">トークン / 完成</div><div class="v">' + (tpc == null ? '—' : kfmt(tpc)) + '</div><div class="n">少ないほど良い</div></div>'
+      + '<div class="kpi"><div class="l">あなたの判断 / 完成</div><div class="v">' + (apc == null ? '—' : apc.toFixed(2)) + '</div><div class="n">少ないほど良い</div></div>'
+      + '<div class="kpi"><div class="l">完成</div><div class="v">' + stats.done + '</div><div class="n">直近 1 分 ' + thru + ' 件</div></div>'
+      + '<div class="kpi"><div class="l">いまのボトルネック</div><div class="v" style="font-size:16px;line-height:1.9">' + bottleneck() + '</div><div class="n">待ちが一番多い島</div></div>';
+    monEl.querySelector('#mon-rest').innerHTML = formTable()
+      + '<div class="kpis">'
+      + '<div class="kpi"><div class="l">平均レビュー往復</div><div class="v">' + avg + '</div><div class="n">1 件あたり</div></div>'
+      + '<div class="kpi"><div class="l">手戻り率</div><div class="v">' + rate + '%</div><div class="n">直しと衝突解消の時間 ÷ 全体</div></div>'
+      + '<div class="kpi"><div class="l">再発</div><div class="v">' + stats.recur + '</div><div class="n">直した指摘がまた出た</div></div>'
+      + '<div class="kpi"><div class="l">ルール違反</div><div class="v">' + stats.ruleHits + '</div><div class="n">自動で直した ' + stats.ruleFixed + ' 件</div></div>'
+      + '<div class="kpi"><div class="l">衝突</div><div class="v">' + stats.conflicts + '</div><div class="n">merge 待ちから戻った</div></div>'
+      + '<div class="kpi"><div class="l">責任者への質問</div><div class="v">' + stats.asks + '</div><div class="n">リーダーが自分で決めた ' + stats.decided + ' 件</div></div>'
+      + '<div class="kpi"><div class="l">トークン</div><div class="v">' + Math.round(stats.tok / 1000) + 'k</div><div class="n">待機中は増えない</div></div>'
+      + '</div><div><h3>どこに溜まっているか</h3>'
+      + rows.map((r) => '<div class="row"><span>' + r[0] + '</span><span class="track"><i style="width:' + Math.round(r[1] / max * 100) + '%;background:' + r[2] + '"></i></span><span class="num">' + r[1] + '</span></div>').join('')
+      + '</div><div><h3>レビュー方針の版ごとの結果</h3><table class="vt"><thead><tr><th>版</th><th>厳しさ</th><th>レビュー</th><th>指摘あり</th></tr></thead><tbody>'
+      + (vers.length ? vers.map((v) => { const r = stats.byVer[v], h = POL.review.hist.find((x) => x.v === Number(v)); return '<tr><td>v' + v + '</td><td>' + (h && h.strict != null ? STRICT[h.strict] : STRICT[1]) + '</td><td>' + r.n + '</td><td>' + Math.round(r.found / r.n * 100) + '%</td></tr>'; }).join('') : '<tr><td colspan="4">まだレビューがありません</td></tr>')
+      + '</tbody></table></div>';
+  }
+  function bottleneck() {
+    const q = {}; activeStages().forEach((r) => { q[r] = tasks.filter((t) => t.stage === r && !t.worker).length; }); q.ask = tasks.filter((t) => t.stage === 'ask').length;
+    const k = Object.keys(q).sort((a, b) => q[b] - q[a])[0];
+    return q[k] < 3 ? 'なし' : (ROLES[k] ? ROLES[k].name : '判断待ち');
+  }
+  const flowOf = (f) => f && f.lead ? Math.round(f.active / f.lead * 100) : null;
+  function formTable() {
+    const vs = Object.keys(stats.byForm).map(Number).sort((a, b) => a - b);
+    return '<div><h3>編成の版ごとの比較</h3><div style="overflow-x:auto"><table class="vt"><thead><tr><th>版</th><th>編成</th><th>完成</th><th>リードタイム</th><th>フロー効率</th><th>tok / 完成</th><th>判断 / 完成</th><th>手戻り</th></tr></thead><tbody>'
+      + vs.map((v) => { const f = stats.byForm[v]; return '<tr' + (v === FORM.v ? ' style="font-weight:700"' : '') + '><td>v' + v + '</td><td style="min-width:200px">' + f.label + '</td><td>' + f.done + '</td><td>' + (f.done ? Math.round(f.lead / f.done / 1000) + ' 秒' : '—') + '</td><td>' + (flowOf(f) == null ? '—' : flowOf(f) + '%') + '</td><td>' + (f.done ? kfmt(f.tok / f.done) : '—') + '</td><td>' + (f.done ? (f.asks / f.done).toFixed(2) : '—') + '</td><td>' + (f.allMs ? Math.round(f.redoMs / f.allMs * 100) + '%' : '—') + '</td></tr>'; }).join('')
+      + '</tbody></table></div><div class="hint" style="font-size:12px;color:var(--muted);margin-top:4px">フロー効率 = 作業された時間 ÷ 着手から完成までの時間。待ちが減るほど上がる</div></div>';
+  }
+  document.getElementById('mon').addEventListener('mousemove', (e) => {
+    const hit = e.target.closest('[data-hit]'); const box = e.target.closest('.chart'); if (!box) return;
+    const tip = box.querySelector('.tip'); if (!hit) { tip.hidden = true; return; }
+    const key = box.dataset.chart === 'トークン' ? 'tpc' : 'apc', pts = stats.series.filter((d) => d[key] != null); if (pts.length < 2) return;
+    const r = box.getBoundingClientRect(), fx = (e.clientX - r.left) / r.width;
+    const p = pts[Math.min(pts.length - 1, Math.max(0, Math.round((fx * 380 - 34) / (380 - 80) * (pts.length - 1))))];
+    tip.hidden = false; tip.style.left = (e.clientX - r.left) + 'px'; tip.style.top = (e.clientY - r.top) + 'px';
+    tip.textContent = Math.round(p.T / 1000) + '秒 · ' + (key === 'tpc' ? kfmt(p[key]) + ' トークン' : p[key].toFixed(2) + ' 回');
+  });
+  document.getElementById('mon').addEventListener('mouseleave', () => { document.querySelectorAll('#mon .tip').forEach((t) => { t.hidden = true; }); });
+
+  // ---- 描画: 方針 ----
+  let polTab = 'rules', polSaved = '';
+  function renderPol() {
+    const p = POL[polTab];
+    const tabs = [['rules', '開発ルール'], ['dev', '開発'], ['review', 'レビュー'], ['sec', 'セキュリティ'], ['qa', 'QA'], ['arch', 'アーキ'], ['lead', 'リーダー']];
+    if (polTab === 'rules') { renderRules(tabs); return; }
+    let extra = '';
+    if (polTab === 'review') extra = '<div><span class="h" style="font-size:13px;font-weight:700">指摘の厳しさ</span><div class="opts" role="radiogroup" aria-label="指摘の厳しさ">' + STRICT.map((s, i) => '<label><input type="radio" name="strict" value="' + i + '"' + (p.strict === i ? ' checked' : '') + '>' + s + '</label>').join('') + '</div></div>';
+    if (polTab === 'arch') extra = '<div><span class="h" style="font-size:13px;font-weight:700">設計を必須にする範囲</span><div class="opts" role="radiogroup" aria-label="設計を必須にする範囲">' + MUST.map((s, i) => '<label><input type="radio" name="must" value="' + i + '"' + (p.must === i ? ' checked' : '') + '>' + s + '</label>').join('') + '</div><div class="hint">設計にかけるトークンと、それで減る手戻りのトレードオフ</div></div>';
+    if (polTab === 'lead') extra = '<div><span class="h" style="font-size:13px;font-weight:700">責任者に聞く範囲</span><div class="opts" role="radiogroup" aria-label="責任者に聞く範囲">' + ESC.map((s, i) => '<label><input type="radio" name="esc" value="' + i + '"' + (p.esc === i ? ' checked' : '') + '>' + s + '</label>').join('') + '</div></div>';
+    if (polTab === 'dev') extra = '<div><span class="h" style="font-size:13px;font-weight:700">守らせること</span><div class="opts"><label><input type="checkbox" name="tests"' + (p.opts.tests ? ' checked' : '') + '>テスト必須</label><label><input type="checkbox" name="small"' + (p.opts.small ? ' checked' : '') + '>小さな PR</label></div></div>';
+    const mdl = '<div><span class="h" style="font-size:13px;font-weight:700">モデル</span><div class="opts" style="flex-direction:column;align-items:stretch">'
+      + Object.keys(MODELS).map((id) => { const m = MODELS[id]; return '<label style="height:auto;padding:6px 10px;align-items:flex-start"><input type="radio" name="model" value="' + id + '"' + (p.model === id ? ' checked' : '') + ' style="margin-top:4px"><span><b>' + m.name + '</b> <span style="font-family:var(--f-mono);font-size:11px;color:var(--muted)">' + m.price + '</span><br><span style="font-size:12px;color:var(--muted)">' + m.note + '</span></span></label>'; }).join('')
+      + '</div><div class="hint">価格は 100 万トークンあたりの入力 / 出力(2026-10-06 時点)。応援メンバーも同じモデルで動きます。</div></div>'
+      + '<div><label class="h" for="pol-effort">考える深さ(effort)</label><select id="pol-effort" style="height:36px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:inherit;font-size:13px">'
+      + EFFORTS.map((e) => '<option value="' + e + '"' + (p.effort === e ? ' selected' : '') + '>' + e + '</option>').join('') + '</select><div class="hint">深いほど丁寧になり、時間とトークンが増えます。</div></div>';
+    const knob = (key, label, min, max, unit, hint) => '<div class="knob"><label for="k-' + key + '">' + label + '</label><output id="o-' + key + '">' + p[key] + unit + '</output><input type="range" id="k-' + key + '" data-knob="' + key + '" data-unit="' + unit + '" min="' + min + '" max="' + max + '" value="' + p[key] + '"><span class="hint">' + hint + '</span></div>';
+    const knobs = (polTab === 'review' ? '<div class="knobs">' + knob('maxRounds', '責任者に上げるまでの往復', 1, 5, ' 往復', '少ないとあなたの判断が増え、多いと手戻りのトークンが増える') + '</div>' : '')
+      + (ROLES[polTab] ? '<div class="hint" style="font-size:12px;color:var(--muted)">この役割を持つメンバーが、この役割の仕事をするときに使う設定です。人数と島の割り当ては「編成」で変えます。' + (unitOfRole(polTab) ? '' : ' 今の編成にはこの役割がいません。') + '</div>' : '');
+    document.getElementById('pol').innerHTML =
+      '<div class="seg" role="group" aria-label="チーム">' + tabs.map(([k, l]) => '<button type="button" data-pt="' + k + '" aria-pressed="' + (k === polTab) + '">' + l + '</button>').join('') + '</div>'
+      + knobs + mdl
+      + '<div><label class="h" for="pol-text">重視すること</label><textarea id="pol-text">' + p.text.replace(/</g, '&lt;') + '</textarea><div class="hint">このチームのメンバーが仕事を始めるたびに読みます。</div></div>'
+      + extra
+      + '<div class="fixed">ツールの使い方や報告の形などの基本指示は Kuramoto が固定で持っています。ここで変えられるのは「重視すること」だけです。</div>'
+      + '<div class="save"><button type="button" id="pol-save">v' + (p.v + 1) + ' として保存</button><span class="saved">' + polSaved + '</span></div>'
+      + '<div><span class="hint">保存先: このプロジェクト(<code style="font-family:var(--f-mono)">acme/shop-web</code>)の設定。版ごとに Kuramoto 内に残り、リポジトリには何も書きません。</span></div>'
+      + '<div><span class="h" style="font-size:13px;font-weight:700">履歴</span><ol class="hist">' + p.hist.slice().reverse().map((h) => '<li><b>v' + h.v + '</b><span>' + h.at + '</span><span>' + h.what + '</span></li>').join('') + '</ol></div>';
+  }
+  let ruleMsg = '';
+  const esc = (x) => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  function renderRules(tabs) {
+    const opt = (obj, cur) => Object.keys(obj).map((k) => '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + obj[k] + '</option>').join('');
+    document.getElementById('pol').innerHTML =
+      '<div class="seg" role="group" aria-label="チーム">' + tabs.map(([k, l]) => '<button type="button" data-pt="' + k + '" aria-pressed="' + (k === polTab) + '">' + l + '</button>').join('') + '</div>'
+      + '<div class="hint" style="font-size:12px;color:var(--muted)">このプロジェクトだけの小さな決まりごとです。全員が仕事のたびに守り、出す前に確かめます。形式で確かめられるものは AI を使わずに確かめます。</div>'
+      + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><label for="jira-key" style="font-size:13px;font-weight:700">Jira のプロジェクトキー</label><input id="jira-key" type="text" value="' + JIRA.key + '" placeholder="例: SHOP" style="width:110px;height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:var(--f-mono)"><span style="font-size:12px;color:var(--muted)">チケットは ' + (JIRA.key ? JIRA.key + '-121' : '番号なし') + ' のように番号を持ちます</span></div>'
+      + RULES.map((r, i) => '<div class="rule' + (r.on ? '' : ' off') + '"><div class="rh"><input type="checkbox" data-ron="' + i + '"' + (r.on ? ' checked' : '') + ' aria-label="' + esc(r.name) + 'を使う"><b>' + esc(r.name) + '</b></div><div class="rd">' + esc(r.desc) + '</div>'
+        + '<div class="rc"><span class="chip ver">' + esc(r.where) + '</span><select data-rcheck="' + i + '" aria-label="確かめ方">' + opt(CHECKS, r.check) + '</select><select data-rfail="' + i + '" aria-label="守れていなかったら">' + opt(ONFAIL, r.onFail) + '</select></div>'
+        + (r.check === 'pattern' && r.pattern ? '<div class="rn">形式: <code style="font-family:var(--f-mono)">' + esc(r.pattern) + '</code></div>' : '')
+        + '<div class="rn" data-rcount="' + i + '">違反 ' + r.hits + ' 件 · 自動で直した ' + r.fixed + ' 件</div></div>').join('')
+      + '<form class="ruleform" id="ruleform"><b style="font-size:13px">ルールを足す</b><label class="sr" for="rf-name">名前</label><input id="rf-name" placeholder="例: ブランチ名は feature/<Jira 番号>-<短い説明>" required><label class="sr" for="rf-desc">中身</label><input id="rf-desc" placeholder="何を守るか(1 文)">'
+      + '<div class="two"><select id="rf-where" aria-label="どこに効くか">' + WHERE.map((w) => '<option>' + w + '</option>').join('') + '</select><select id="rf-check" aria-label="確かめ方">' + opt(CHECKS, 'pattern') + '</select></div>'
+      + '<div class="two"><input id="rf-pat" placeholder="形式(正規表現など。任意)"><select id="rf-fail" aria-label="守れていなかったら">' + opt(ONFAIL, 'autofix') + '</select></div><button type="submit">足す</button><span class="saved" style="font-size:12px;color:var(--ok)">' + esc(ruleMsg) + '</span></form>';
+  }
+  document.getElementById('pol').addEventListener('change', (e) => {
+    const d = e.target.dataset;
+    if (e.target.id === 'jira-key') { JIRA.key = e.target.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, ''); log('責任者: Jira のプロジェクトキーを ' + (JIRA.key || '(なし)') + ' にしました'); renderPol(); }
+    if (d.ron != null) { const r = RULES[d.ron]; r.on = e.target.checked; log('責任者: ルール「' + r.name + '」を' + (r.on ? '有効' : '無効') + 'にしました'); stats.marks.push({ T, label: 'ルール' }); renderPol(); }
+    if (d.rcheck != null) { RULES[d.rcheck].check = e.target.value; renderPol(); }
+    if (d.rfail != null) { RULES[d.rfail].onFail = e.target.value; renderPol(); }
+  });
+  document.getElementById('pol').addEventListener('submit', (e) => {
+    if (e.target.id !== 'ruleform') return; e.preventDefault();
+    const v = (id) => document.getElementById(id).value.trim();
+    if (!v('rf-name')) return;
+    RULES.push({ id: 'c' + RULES.length, name: v('rf-name'), desc: v('rf-desc') || v('rf-name'), where: v('rf-where'), check: v('rf-check'), pattern: v('rf-pat'), onFail: v('rf-fail'), on: true, hits: 0, fixed: 0 });
+    ruleMsg = '「' + v('rf-name') + '」を足しました。次に出す PR から確かめます';
+    log('責任者: ルール「' + v('rf-name') + '」を足しました'); stats.marks.push({ T, label: 'ルール' });
+    renderPol();
+  });
+  document.getElementById('pol').addEventListener('input', (e) => {
+    const k = e.target.dataset && e.target.dataset.knob; if (!k) return;
+    document.getElementById('o-' + k).textContent = e.target.value + e.target.dataset.unit;
+  });
+  document.getElementById('pol').addEventListener('click', (e) => {
+    const tb = e.target.closest('[data-pt]'); if (tb) { polTab = tb.dataset.pt; polSaved = ''; renderPol(); return; }
+    if (e.target.id !== 'pol-save') return;
+    const p = POL[polTab], root = document.getElementById('pol');
+    const changes = [];
+    root.querySelectorAll('[data-knob]').forEach((inp) => {
+      const k = inp.dataset.knob, v = Number(inp.value), names = { max: '最大人数', summonAt: '応援を呼ぶ待ち件数', idleSec: '帰るまで', maxRounds: '上げるまでの往復' };
+      if (v !== p[k]) { p[k] = v; changes.push(names[k] + 'を ' + v + inp.dataset.unit.trim() + ' に'); }
+    });
+    const mr = root.querySelector('input[name="model"]:checked'); if (mr && mr.value !== p.model) { p.model = mr.value; changes.push('モデルを ' + MODELS[p.model].name + ' に'); }
+    const ef = root.querySelector('#pol-effort').value; if (ef !== p.effort) { p.effort = ef; changes.push('考える深さを ' + ef + ' に'); }
+    const text = root.querySelector('#pol-text').value.trim(); if (text !== p.text) { p.text = text; changes.push('重視することを変更'); }
+    const rs = root.querySelector('input[name="strict"]:checked'); if (rs && Number(rs.value) !== p.strict) { p.strict = Number(rs.value); changes.push('厳しさを「' + STRICT[p.strict] + '」に'); }
+    const mu = root.querySelector('input[name="must"]:checked'); if (mu && Number(mu.value) !== p.must) { p.must = Number(mu.value); changes.push('設計の必須範囲を「' + MUST[p.must] + '」に'); }
+    const re = root.querySelector('input[name="esc"]:checked'); if (re && Number(re.value) !== p.esc) { p.esc = Number(re.value); changes.push('聞く範囲を「' + ESC[p.esc] + '」に'); }
+    if (polTab === 'dev') { ['tests', 'small'].forEach((k) => { const v = root.querySelector('input[name="' + k + '"]').checked; if (v !== p.opts[k]) { p.opts[k] = v; changes.push((k === 'tests' ? 'テスト必須' : '小さな PR') + (v ? 'を有効' : 'を無効')); } }); }
+    if (!changes.length) { polSaved = '変更がありません'; renderPol(); return; }
+    p.v += 1; p.hist.push({ v: p.v, at: '11/07', what: changes.join('、'), strict: p.strict });
+    stats.marks.push({ T, label: ({ dev: '開発', review: 'レビュー', sec: 'セキュリティ', qa: 'QA', arch: 'アーキ', lead: 'リーダー' })[polTab] + ' v' + p.v });
+    polSaved = 'v' + p.v + ' を保存しました。次に仕事を始めるメンバーから反映します';
+    const name = polTab === 'lead' ? 'リーダー' : polTab === 'arch' ? 'アーキテクト' : ROLES[polTab].name;
+    log('責任者: ' + name + 'の方針を v' + p.v + ' に更新しました');
+    if (polTab === 'lead') say('lead', '方針 v' + p.v + ' を読みました');
+    renderPol();
+  });
+
+  // ---- 描画: 編成 ----
+  let fd = null, formMsg = '';
+  const draftFromForm = () => ({ preset: FORM.preset, pull: FORM.pull, units: FORM.units.map((u) => ({ name: u.name, roles: u.roles.slice(), max: u.max, summonAt: u.summonAt, idleSec: u.idleSec })) });
+  function formErrors(d) {
+    const errs = [], seen = {};
+    if (!d.units.some((u) => u.roles.includes('dev'))) errs.push('開発の役割を持つ島が要ります');
+    d.units.forEach((u) => { if (!u.roles.length) errs.push('「' + u.name + '」に役割がありません'); u.roles.forEach((r) => { if (seen[r]) errs.push(ROLES[r].name + 'は 1 つの島にだけ置けます'); seen[r] = true; }); });
+    return errs;
+  }
+  function renderForm() {
+    if (!fd) fd = draftFromForm();
+    const lim = LIMITS[fd.units.length], errs = formErrors(fd);
+    const sl = (i, key, label, min, max, unitTxt) => '<div class="knob"><label for="f-' + i + key + '">' + label + '</label><output>' + fd.units[i][key] + unitTxt + '</output><input type="range" id="f-' + i + key + '" data-fu="' + i + '" data-fk="' + key + '" min="' + min + '" max="' + max + '" value="' + fd.units[i][key] + '"></div>';
+    document.getElementById('form').innerHTML =
+      '<div><span class="h" style="font-size:13px;font-weight:700">よく使う編成</span><div class="opts" style="flex-direction:column;align-items:stretch">'
+      + Object.keys(PRESETS).map((k) => '<label style="height:auto;padding:6px 10px;align-items:flex-start"><input type="radio" name="preset" value="' + k + '"' + (fd.preset === k ? ' checked' : '') + ' style="margin-top:4px"><span><b>' + PRESETS[k].label + '</b><br><span style="font-size:12px;color:var(--muted)">' + PRESETS[k].note + '</span></span></label>').join('')
+      + '</div></div>'
+      + fd.units.map((u, i) => '<div class="knobs"><div style="display:flex;gap:8px;align-items:center"><label class="sr" for="f-' + i + 'name">島の名前</label><input type="text" id="f-' + i + 'name" data-fn="' + i + '" value="' + u.name + '" style="flex:1;height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:inherit;font-weight:700">'
+        + (fd.units.length > 1 ? '<button type="button" class="x" data-fdel="' + i + '" aria-label="この島を消す">×</button>' : '') + '</div>'
+        + '<div class="opts">' + ORDER.map((r) => '<label><input type="checkbox" data-fr="' + i + '" value="' + r + '"' + (u.roles.includes(r) ? ' checked' : '') + '>' + ROLES[r].name + '</label>').join('') + '</div>'
+        + sl(i, 'max', '最大人数', 1, lim[i], ' 人') + sl(i, 'summonAt', '応援を呼ぶ待ち件数', 1, 6, ' 件') + sl(i, 'idleSec', '手すきで帰るまで', 2, 30, ' 秒') + '</div>').join('')
+      + (fd.units.length < 2 ? '<button type="button" id="f-add" style="height:34px;border-radius:8px;border:1px dashed var(--line);background:var(--bg)">+ 島を足す(2 つまで)</button>' : '')
+      + '<div><span class="h" style="font-size:13px;font-weight:700">仕事の取り方</span><div class="opts">'
+      + [['down', '下流優先(仕掛かりを先に片付ける)'], ['start', '着手優先(新しいチケットから取る)']].map(([k, l]) => '<label><input type="radio" name="pull" value="' + k + '"' + (fd.pull === k ? ' checked' : '') + '>' + l + '</label>').join('') + '</div>'
+      + '<div class="hint">兼任していても、自分が実装した PR は自分でレビュー・確認しません。</div></div>'
+      + (errs.length ? '<div class="bad" style="font-size:12px;color:var(--danger)">' + errs.join('<br>') + '</div>' : '')
+      + '<div class="save"><button type="button" id="f-apply"' + (errs.length ? ' disabled style="opacity:.45"' : '') + '>編成 v' + (FORM.v + 1) + ' を適用</button><span class="saved">' + formMsg + '</span></div>'
+      + '<div class="hint">適用すると席替えをします。作業中のチケットは待ちに戻り、新しい編成のメンバーが引き取ります。</div>'
+      + '<div id="form-table">' + formTable() + '</div>'
+      + '<div class="fixed">今は同じ流れの上で編成を切り替えて比べます。将来は、同じ要件を別々の編成のチームに並べて作らせて比べる(ベンチマーク)ことを想定しています。</div>';
+  }
+  const fv = document.getElementById('form');
+  fv.addEventListener('input', (e) => {
+    const d = e.target.dataset;
+    if (d.fu != null) { fd.units[d.fu][d.fk] = Number(e.target.value); fd.preset = 'custom'; e.target.previousElementSibling.textContent = e.target.value + ({ max: ' 人', summonAt: ' 件', idleSec: ' 秒' })[d.fk]; }
+    if (d.fn != null) { fd.units[d.fn].name = e.target.value; fd.preset = 'custom'; }
+  });
+  fv.addEventListener('change', (e) => {
+    const d = e.target.dataset;
+    if (e.target.name === 'preset') { const P = PRESETS[e.target.value]; fd = { preset: e.target.value, pull: P.pull, units: P.units.map((u) => Object.assign({}, u, { roles: u.roles.slice() })) }; formMsg = ''; renderForm(); }
+    if (e.target.name === 'pull') { fd.pull = e.target.value; }
+    if (d.fr != null) { const u = fd.units[d.fr]; u.roles = ORDER.filter((r) => r === e.target.value ? e.target.checked : u.roles.includes(r)); fd.preset = 'custom'; renderForm(); }
+  });
+  fv.addEventListener('click', (e) => {
+    if (e.target.id === 'f-add') { fd.units.push({ name: '新しい島', roles: [], max: 2, summonAt: 2, idleSec: 5 }); fd.units[0].max = Math.min(fd.units[0].max, LIMITS[2][0]); fd.preset = 'custom'; renderForm(); }
+    const del = e.target.closest('[data-fdel]'); if (del) { fd.units.splice(Number(del.dataset.fdel), 1); fd.preset = 'custom'; renderForm(); }
+    if (e.target.id === 'f-apply' && !formErrors(fd).length) {
+      const what = (PRESETS[fd.preset] ? PRESETS[fd.preset].label : 'カスタム') + '・' + (fd.pull === 'down' ? '下流優先' : '着手優先');
+      applyForm(fd.units, fd.pull, fd.preset, what);
+      formMsg = '編成 v' + FORM.v + ' を適用しました'; fd = null; renderForm();
+    }
+  });
+
+  // ---- 描画: リーダーとの会話 ----
+  function renderChat() {
+    const list = document.getElementById('chat-list');
+    list.innerHTML = '';
+    chat.forEach((c) => {
+      if (c.who === 'me') { const d = element('div', 'msg me', list); d.textContent = c.text; return; }
+      const d = element('div', 'msg lead', list, '<div class="who">マキ(リーダー)</div><div class="body">' + c.html + '</div>');
+      const body = d.querySelector('.body');
+      if (c.ask) {
+        const t = byId(c.ask);
+        element('div', 'ask', body, '<div>' + t.ask.q + '</div><div><b>推奨:</b> ' + t.ask.rec + '</div>'
+          + (c.answered ? '<div class="done">' + c.answered + '</div>' : '<div class="acts"><button type="button" class="primary" data-ok="' + t.id + '">推奨で進める</button><button type="button" data-re="' + t.id + '">返事を書く</button></div><div style="font-size:11px;color:var(--muted)">返事が無ければ期限で推奨に進めます</div>'));
+      }
+      if (c.guide) {
+        element('div', 'ask', body, c.answered ? '<div class="done">' + c.answered + '</div>' : '<div class="acts"><button type="button" class="go" data-order="' + c.guide.join(',') + '">この順で merge する</button></div><div style="font-size:11px;color:var(--muted)">押した時点で merge できるかを確かめ直します</div>');
+      }
+    });
+    list.scrollTop = list.scrollHeight;
+    const open = chat.filter((c) => c.ask && !c.answered).length;
+    const badge = document.getElementById('ask-badge'); badge.hidden = !open; badge.textContent = open;
+  }
+  document.getElementById('chat-list').addEventListener('click', (e) => {
+    const ok = e.target.closest('[data-ok]'), re = e.target.closest('[data-re]'), od = e.target.closest('[data-order]');
+    if (ok) { const t = byId(Number(ok.dataset.ok)); chat.push({ who: 'me', text: '#' + t.id + ' は推奨どおりで' }); answerAsk(t, false); }
+    if (re) { const inp = document.getElementById('chat-input'); inp.value = '#' + re.dataset.re + ' は '; inp.focus(); }
+    if (od) { const ids = od.dataset.order.split(',').map(Number); chat.push({ who: 'me', text: ids.map((i) => '#' + i).join(' → ') + ' の順で merge' }); ids.forEach((id, i) => setTimeout(() => doMerge(id), i * 1300)); renderChat(); }
+  });
+  document.getElementById('compose').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const inp = document.getElementById('chat-input'), text = inp.value.trim(); if (!text) return;
+    inp.value = ''; chat.push({ who: 'me', text }); renderChat();
+    setTimeout(() => {
+      const hit = text.match(/#(\d+)/), t = hit && byId(Number(hit[1]));
+      const where = { dev: '開発チーム', review: 'レビューチーム', ask: '判断待ち', merge: 'merge 待ち', done: '完了' };
+      if (t && t.stage === 'ask' && /推奨|それで|OK|はい/i.test(text)) { answerAsk(t, false); leadSays('承知しました。#' + t.id + ' を持ち主に戻しました。'); return; }
+      if (t) { const o = allMembers().find((m) => m.id === t.owner); leadSays('#' + t.id + '「' + t.title + '」は今「' + where[t.stage] + '」にあります。' + (o ? '持ち主は' + o.look.n + 'で、' : '') + 'レビュー往復は ' + t.rounds + ' 回です。'); return; }
+      const nt = addTask('dev', { title: text.length > 24 ? text.slice(0, 24) + '…' : text }); nt.landAt = T + 1000;
+      flights.push({ id: seq++, label: '#' + nt.id, from: { x: leadPos.x + 20, y: leadPos.y + 40 }, to: anchor('dev'), c: 'var(--lead)', born: T, el: null });
+      say('lead', '新しい依頼を開発チームへ'); log('リーダー: 責任者の依頼を #' + nt.id + ' として登録しました');
+      leadSays('#' + nt.id + ' として登録して、開発チームに渡しました。');
+    }, 700);
+  });
+
+  // ---- 切り替え ----
+  let view = 'office';
+  function setView(v) {
+    view = v;
+    document.getElementById('view-office').hidden = v !== 'office';
+    document.getElementById('view-board').hidden = v !== 'board';
+    document.getElementById('tab-office').setAttribute('aria-pressed', v === 'office');
+    document.getElementById('tab-board').setAttribute('aria-pressed', v === 'board');
+    if (v === 'office') fit(); else renderBoard();
+    try { localStorage.setItem('kuramoto-view', v); } catch (e) {}
+  }
+  document.getElementById('tab-office').onclick = () => setView('office');
+  document.getElementById('tab-board').onclick = () => setView('board');
+  const DRAWERS = ['form', 'pol', 'mon', 'chat'];
+  function toggle(name, force) {
+    const open = force != null ? force : document.getElementById('drawer-' + name).hidden;
+    DRAWERS.forEach((d) => { const on = open && d === name; document.getElementById('drawer-' + d).hidden = !on; document.getElementById('btn-' + d).setAttribute('aria-expanded', on); });
+    if (open && name === 'mon') renderMon(); if (open && name === 'chat') renderChat(); if (open && name === 'pol') renderPol(); if (open && name === 'form') renderForm();
+    requestAnimationFrame(fit);
+  }
+  DRAWERS.forEach((d) => { document.getElementById('btn-' + d).onclick = () => toggle(d); });
+  document.querySelectorAll('[data-close]').forEach((b) => { b.onclick = () => toggle(b.dataset.close, false); });
+
+  function fit() { const s = Math.min(1.15, wrap.clientWidth / W); stage.style.transform = 'scale(' + s + ')'; wrap.style.height = Math.round(H * s) + 'px'; }
+  new ResizeObserver(fit).observe(wrap);
+  function status() {
+    const all = allMembers().filter((m) => m.state !== 'leave'), on = all.filter((m) => m.state === 'work').length;
+    const st = document.getElementById('status-text'); if (st) st.textContent = '作業中 ' + on + ' / ' + (all.length + 1) + ' 人 · 応援 ' + all.filter((m) => !m.base).length + ' 人';
+  }
+
+  // ================= 本部 =================
+  const REPO_ROLES = ['フロント', 'API', 'インフラ', 'その他'];
+  const PROJECTS = [
+    { id: 'shop', name: 'acme ショップ', live: true, status: '稼働中', repos: [{ r: 'acme/shop-web', role: 'フロント' }, { r: 'acme/shop-api', role: 'API' }],
+      req: { v: 3, confirmed: true, sec: {
+        purpose: ['会員がスマホから迷わず買い物を終えられる'],
+        users: ['会員(スマホが 8 割)', '店舗スタッフ(在庫と注文の確認)'],
+        features: ['商品検索とページング', 'カートと数量変更', '決済と失敗時のやり直し', '注文履歴と CSV 出力', '会員退会'],
+        domain: ['用語: 注文 = 会員が決済まで終えた買い物 1 回分', '集約: 注文(明細を含む)。会員と商品は参照するだけ', 'ルール: 決済が確定するまで在庫は引き当てるだけで減らさない', '状態: 注文 = カート → 決済待ち → 確定 → 出荷済み / キャンセル', '境界: 注文と在庫は shop-api、画面の状態は shop-web が持つ'],
+        build: ['作る|商品検索とページング — shop-api の検索に足す', '既存を使う|決済 — 決済代行の SDK をそのまま使う', '作らない|独自のレコメンド — 今回は人気順で代替'],
+        data: ['orders(既存): 変更なし', 'members(既存): withdrawn_at を追加(戻せる)'],
+        out: ['ポイント制度の刷新', '多言語対応'], decided: ['退会後のデータは 30 日残す'],
+        open: [] } }, chat: [] },
+    { id: 'admin', name: 'acme 管理画面', live: false, status: '要件定義中', repos: [{ r: 'acme/admin-console', role: 'フロント' }, { r: 'acme/shop-api', role: 'API' }],
+      req: { v: 1, confirmed: false, sec: {
+        purpose: ['店舗スタッフが在庫と注文を 1 画面で捌ける'],
+        users: ['店舗スタッフ', '本部の運営担当'],
+        features: ['在庫の一括更新', '注文のステータス変更'],
+        domain: ['用語: 入荷 = 店舗に届いた商品をまとめて在庫に足すこと', 'ルール: 在庫は 0 未満にならない', '境界: 在庫の正本は shop-api。管理画面は書き換えの口を呼ぶだけ'],
+        build: ['既存を使う|注文のステータス変更 — shop-api の既存 API を使う。新しいサービスは作らない', '作る|在庫の一括更新 — shop-api に一括更新の口を足す'],
+        data: ['stock(既存): 変更なし', 'stock_imports(新規): 取り込みの履歴(戻せる)'],
+        out: ['会計システムとの連携'], decided: [],
+        open: ['在庫を CSV で取り込む必要があるか', '権限は店舗単位か本部一括か'] } },
+      chat: [{ who: 'arch', text: '注文のステータス変更は shop-api に既にある口で足ります。管理画面のために新しいサービスは作りません。' }, { who: 'plan', text: '前回の続きです。未決が 2 件あります。「在庫を CSV で取り込む必要があるか」から決めましょう。' }], stats: { asks: 0, tok: '—', ans: 2 } }
+  ];
+  PROJECTS.push({ id: 'resv', name: 'acme 予約サイト', live: false, status: '企画中', studio: true, repos: [{ r: 'acme/reserve-web', role: 'フロント' }, { r: 'acme/shop-api', role: 'API' }],
+    req: { v: 2, confirmed: false, sec: { purpose: [], users: [], features: [], domain: [], build: [], data: [], out: [], decided: [], open: [] } }, chat: [] });
+  let ctx = 'home', reqPid = null, draft = null;
+  const SECS = [['purpose', '目的'], ['users', '使う人'], ['features', '必須の機能'], ['domain', 'ドメインモデル(アーキテクト)'], ['build', '作る / 既存を使う / 作らない(アーキテクト)'], ['data', 'データ設計(アーキテクト)'], ['out', 'やらないこと'], ['decided', '決まったこと'], ['open', '未決']];
+
+  function setCtx(c, pid) {
+    ctx = c;
+    document.getElementById('view-home').hidden = c !== 'home';
+    document.getElementById('view-new').hidden = c !== 'new';
+    document.getElementById('view-req').hidden = c !== 'req';
+    document.getElementById('view-studio').hidden = c !== 'studio';
+    document.getElementById('project-ctx').hidden = c !== 'project';
+    document.querySelectorAll('.pctx').forEach((e) => { e.hidden = c !== 'project'; });
+    document.getElementById('nav-home').setAttribute('aria-current', c === 'home' ? 'page' : 'false');
+    document.getElementById('nav-proj').setAttribute('aria-current', c === 'project' ? 'page' : 'false');
+    if (c === 'home') renderHome();
+    if (c === 'new') renderNew();
+    if (c === 'req') { reqPid = pid; renderReq(); }
+    if (c === 'studio') renderStudio();
+    if (c === 'project') { fit(); renderOffice(); renderInbox(); }
+    window.scrollTo(0, 0);
+  }
+  document.getElementById('nav-home').onclick = () => setCtx('home');
+  document.getElementById('nav-proj').onclick = () => setCtx('project');
+
+  function renderHome() {
+    const shopItems = inboxItems();
+    const nd = shopItems.filter((x) => x.kind === 'decide').length, nm = shopItems.length - nd;
+    const rows = shopItems.slice(0, 4).map((x) => '<div class="rowi"><span class="k" style="background:' + (x.kind === 'decide' ? 'var(--warn)' : 'var(--ok)') + '">' + (x.kind === 'decide' ? '判断' : 'merge') + '</span><span><span class="pj">acme ショップ</span>' + (x.kind === 'decide' ? x.t.ask.q : '#' + x.t.id + ' ' + x.t.title + ' を merge できます') + '</span><button type="button" data-open="shop">開く</button></div>').join('')
+      + '<div class="rowi"><span class="k" style="background:var(--warn)">要件</span><span><span class="pj">acme 管理画面</span>企画担当が未決 ' + PROJECTS[1].req.sec.open.length + ' 件の確認を待っています</span><button type="button" data-req="admin">開く</button></div>'
+      + (studioOpen() ? '<div class="rowi"><span class="k" style="background:var(--design)">企画</span><span><span class="pj">acme 予約サイト</span>' + studioOpen() + '</span><button type="button" data-studio="resv">開く</button></div>' : '');
+    const card = (pj) => {
+      const live = pj.live;
+      const eff = live && stats.done ? kfmt(stats.simTok / stats.done) : '—';
+      const ans = live ? shopItems.length : (pj.req.sec.open.length);
+      const stCol = pj.status === '稼働中' ? 'background:var(--ok-soft);color:var(--ok)' : 'background:var(--warn-soft);color:var(--warn)';
+      return '<article class="proj"><div class="head"><span class="name">' + pj.name + '</span><span class="state" style="' + stCol + '">' + pj.status + '</span></div>'
+        + '<div class="repos">' + pj.repos.map((r) => '<span class="repo">' + r.r + '<i>' + r.role + '</i></span>').join('') + '</div>'
+        + '<div class="nums"><div><div class="l">あなたの対応</div><div class="v">' + ans + '</div></div><div><div class="l">1 件あたり</div><div class="v">' + eff + '</div></div><div><div class="l">要件</div><div class="v">v' + pj.req.v + '</div></div></div>'
+        + '<div style="font-size:12px;color:var(--muted)">' + (live ? '作業中 ' + allMembers().filter((m) => m.state === 'work').length + ' 人 · ボトルネック: ' + bottleneck() : 'チームはまだ動いていません。要件が確定するとリーダーがチケットに分けます') + '</div>'
+        + '<div class="acts">' + (live ? '<button type="button" class="primary" data-open="' + pj.id + '">オフィスを開く</button>' : '') + (pj.studio ? '<button type="button" class="primary" data-studio="' + pj.id + '">企画スタジオを開く</button>' : '<button type="button" class="' + (live ? '' : 'primary') + '" data-req="' + pj.id + '">要件を開く</button>') + '</div></article>';
+    };
+    document.getElementById('view-home').innerHTML =
+      '<div><h2>本部</h2><p class="lead-in">プロジェクトごとにチームがいて、互いの文脈は混ざりません。ここでは全体を見渡し、新しいプロジェクトを作ります。</p></div>'
+      + '<section class="agg" aria-label="全プロジェクトのあなたの対応"><div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"><h2 style="font-size:16px">あなたの対応(全プロジェクト)</h2><span class="sub" style="font-size:12px;color:var(--muted)">判断 ' + nd + ' · merge ' + nm + ' · 要件 1</span></div>' + rows + '</section>'
+      + '<div class="projects">' + PROJECTS.map(card).join('') + '<article class="proj new"><div>チームを 1 つ立ち上げます</div><button type="button" id="btn-new">+ プロジェクトを作る</button></article></div>';
+  }
+  document.getElementById('view-home').addEventListener('click', (e) => {
+    const o = e.target.closest('[data-open]'), r = e.target.closest('[data-req]');
+    if (o) setCtx('project');
+    if (r) setCtx('req', r.dataset.req);
+    if (e.target.closest('[data-studio]')) setCtx('studio');
+    if (e.target.id === 'btn-new') { draft = { name: '', repos: [{ r: '', role: 'フロント' }] }; setCtx('new'); }
+  });
+
+  // ---- プロジェクトを作る ----
+  const repoOk = (r) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r);
+  function renderNew() {
+    document.getElementById('view-new').innerHTML = '<div class="form"><div><h2 style="margin:0;font-family:var(--f-display);font-size:18px">プロジェクトを作る</h2><p class="lead-in" style="margin:4px 0 0;color:var(--muted);font-size:13px">1 つのプロジェクトに 1 つのチームが付きます。プロダクトを構成するリポジトリをまとめて登録してください。</p></div>'
+      + '<div><label class="h" for="np-name">名前</label><input type="text" id="np-name" placeholder="例: acme 予約サイト" value="' + draft.name.replace(/"/g, '&quot;') + '" style="width:100%"></div>'
+      + '<div><span class="h" style="font-weight:700;font-size:13px">GitHub のリポジトリ</span>'
+      + draft.repos.map((r, i) => '<div class="rrow"><label class="sr" for="np-r' + i + '">リポジトリ ' + (i + 1) + '</label><input type="text" id="np-r' + i + '" data-ri="' + i + '" placeholder="owner/repo" value="' + r.r + '"><select data-rr="' + i + '" aria-label="役割">' + REPO_ROLES.map((x) => '<option' + (x === r.role ? ' selected' : '') + '>' + x + '</option>').join('') + '</select><button type="button" class="x" data-rm="' + i + '" aria-label="削除">×</button></div><div class="' + (r.r ? (repoOk(r.r) ? 'ok' : 'bad') : '') + '" style="margin:-2px 0 6px">' + (r.r ? (repoOk(r.r) ? '書式 OK(実際は GitHub に存在と権限を確かめます)' : 'owner/repo の形で入力してください') : '') + '</div>').join('')
+      + '<button type="button" id="np-add" style="height:34px;padding:0 12px;border-radius:8px;border:1px dashed var(--line);background:var(--bg)">+ リポジトリを足す</button></div>'
+      + '<div class="btns"><button type="button" class="primary" id="np-next">次へ: 要件定義</button><button type="button" id="np-cancel">やめる</button></div></div>';
+  }
+  const nv = document.getElementById('view-new');
+  nv.addEventListener('change', (e) => {
+    if (e.target.id === 'np-name') draft.name = e.target.value;
+    if (e.target.dataset.ri != null) { draft.repos[e.target.dataset.ri].r = e.target.value.trim(); renderNew(); }
+    if (e.target.dataset.rr != null) draft.repos[e.target.dataset.rr].role = e.target.value;
+  });
+  nv.addEventListener('click', (e) => {
+    if (e.target.id === 'np-add') { draft.name = document.getElementById('np-name').value; draft.repos.push({ r: '', role: 'API' }); renderNew(); }
+    const rm = e.target.closest('[data-rm]'); if (rm && draft.repos.length > 1) { draft.repos.splice(Number(rm.dataset.rm), 1); renderNew(); }
+    if (e.target.id === 'np-cancel') setCtx('home');
+    if (e.target.id === 'np-next') {
+      draft.name = document.getElementById('np-name').value.trim() || '新しいプロジェクト';
+      const repos = draft.repos.filter((r) => repoOk(r.r));
+      if (!repos.length) { draft.repos[0].r = draft.repos[0].r || 'acme/'; renderNew(); return; }
+      const pj = { id: 'p' + Date.now(), name: draft.name, live: false, status: '要件定義中', repos,
+        req: { v: 0, confirmed: false, sec: { purpose: [], users: [], features: [], domain: [], build: [], data: [], out: [], decided: [], open: [] } }, step: 0,
+        chat: [{ who: 'plan', text: '企画担当のサキです。「' + draft.name + '」の要件を一緒にまとめます。まず、何のためのものですか?' }] };
+      PROJECTS.push(pj); setCtx('req', pj.id);
+    }
+  });
+
+  // ---- 要件定義(企画担当と対話) ----
+  const STEPS = [
+    { sec: 'purpose', next: '誰が使いますか?(複数なら「、」で区切ってください)', sugg: ['利用者がスマホから予約を 1 分で終えられる'] },
+    { sec: 'users', next: '最初に必須の機能を教えてください(「、」で区切って 3〜5 個)', sugg: ['一般の利用者、店舗のスタッフ'] },
+    { sec: 'features', next: '今回はやらないことはありますか?', sugg: ['空き枠の検索、予約、予約の変更とキャンセル、リマインドメール'] },
+    { sec: 'out', next: null, sugg: ['決済、多言語対応'] }
+  ];
+  function suggFor(q) {
+    const paren = q.match(/\(([^()]*)\)$/); if (paren) return paren[1].split(/\s*\/\s*/);
+    const either = q.match(/(\S+?)か(\S+?)か$/); if (either && !/必要|見られる/.test(q)) return [either[1].replace(/^.*は/, ''), either[2]];
+    return ['はい', 'いいえ'];
+  }
+  // アーキテクトが機能ごとに「作る / 既存を使う / 作らない」とデータ設計を出す
+  function archReview(pj, feats) {
+    const build = [], data = [], qs = [];
+    pj.archQ = pj.archQ || {};
+    feats.forEach((f) => {
+      if (/メール|通知/.test(f)) build.push('既存を使う|' + f + ' — 既存のメール送信の仕組みを使う。新しく作らない');
+      else if (/変更/.test(f)) {
+        build.push('作らない(提案)|' + f + ' の「変更」 — キャンセルして予約し直せば代わりになる');
+        const q = '「' + f + '」の変更は作らず、キャンセルと予約し直しで代えてよいか(はい / いいえ、作る)';
+        qs.push(q);
+        pj.archQ[q] = (ans) => {
+          const i = pj.req.sec.build.findIndex((x) => x.startsWith('作らない(提案)|' + f)); const no = /はい/.test(ans);
+          if (i >= 0) pj.req.sec.build[i] = (no ? '作らない|' + f + ' の「変更」 — キャンセルと予約し直しで代える' : '作る|' + f + ' — 変更の口を足す');
+          if (no) { pj.dropWhenAsked = '予約の変更は'; }
+        };
+      } else build.push('作る|' + f);
+    });
+    const api = (pj.repos.find((r) => r.role === 'API') || pj.repos[0]).r;
+    const web = (pj.repos.find((r) => r.role === 'フロント') || pj.repos[0]).r;
+    const domain = ['用語: 枠 = 店舗が予約を受け付ける時間帯。定員を持つ', '用語: 予約 = 会員が枠を 1 つ押さえたもの', '集約: 予約。会員と枠は参照するだけ(枠の定員は枠の集約が守る)',
+      'ルール: 1 つの枠の確定した予約数は定員を超えない', 'ルール: 会員は同じ枠を 2 回予約できない',
+      '状態: 予約 = 確定 → キャンセル(仮押さえを持つかは未決)', '境界: 予約と枠は ' + api + (web !== api ? '、画面の入力途中の状態は ' + web : '') + ' が持つ'];
+    const mq = '予約に「仮押さえ」(決済や確認の間だけ枠を押さえる状態)を持つか(持たない / 持つ)';
+    qs.push(mq);
+    pj.archQ[mq] = (ans) => { const i = pj.req.sec.domain.findIndex((x) => x.startsWith('状態: 予約')); if (i >= 0) pj.req.sec.domain[i] = /持たない/.test(ans) ? '状態: 予約 = 確定 → キャンセル' : '状態: 予約 = 仮押さえ(10 分で自動解除)→ 確定 → キャンセル'; if (!/持たない/.test(ans)) pj.req.sec.data.push('reservations: status に held を追加、held_until 列を追加'); };
+    pj.req.sec.domain.push(...domain); pj.fresh = (pj.fresh || []).concat(domain);
+    data.push('slots(新規): id, store_id, starts_at, capacity', 'reservations(新規): id, member_id, slot_id, status, created_at', 'members(既存): 変更なし');
+    const dq = '予約を新しい表(reservations)で持つか、既存の注文の表に載せるか(新しい表にする / 注文の表に載せる)';
+    qs.push(dq);
+    pj.archQ[dq] = (ans) => { if (/注文/.test(ans)) { pj.req.sec.data = pj.req.sec.data.filter((x) => !x.startsWith('reservations')); pj.req.sec.data.push('orders(既存): kind 列を追加して予約も載せる(戻しにくい)'); } };
+    data.push('マイグレーション: 追加だけ(戻せる)');
+    pj.req.sec.build.push(...build); pj.req.sec.data.push(...data); pj.req.sec.open.push(...qs);
+    pj.fresh = (pj.fresh || []).concat(build, data, qs);
+    pj.chat.push({ who: 'arch', text: 'アーキテクトのレイです。まずドメインを整理しました(用語・まとまり・守るルール・状態・境界)。それをもとに、機能ごとの「作る / 既存を使う / 作らない」とデータ設計を書いています。' + api + ' に足す形で、新しいサービスは作りません。あなたに決めてほしい点を ' + qs.length + ' つ未決に入れています。' });
+  }
+  function renderReq() {
+    const pj = PROJECTS.find((x) => x.id === reqPid); if (!pj) return setCtx('home');
+    const step = pj.step != null ? STEPS[pj.step] : null;
+    const sugg = step ? step.sugg : pj.req.sec.open.length ? suggFor(pj.req.sec.open[0]) : [];
+    const changed = pj.dirty;
+    document.getElementById('view-req').innerHTML = '<div class="req">'
+      + '<section class="talk" aria-label="企画とアーキテクトとの会話"><div style="padding:12px 14px;border-bottom:1px solid var(--line)"><h2 style="margin:0;font-family:var(--f-display);font-size:16px">企画 サキ · アーキテクト レイ</h2><div style="font-size:12px;color:var(--muted)">' + pj.name + ' のチームの一員。他のプロジェクトの話は知りません</div></div>'
+      + '<div class="chat-list" id="req-chat" style="height:520px">' + pj.chat.map((c) => c.who === 'me' ? '<div class="msg me"></div>' : c.who === 'arch' ? '<div class="msg arch"><div class="who">レイ(アーキテクト)</div><div class="body"></div></div>' : '<div class="msg plan"><div class="who">サキ(企画)</div><div class="body"></div></div>').join('') + '</div>'
+      + (sugg.length ? '<div class="sugg">' + sugg.map((x) => '<button type="button" data-sg>' + x + '</button>').join('') + '</div>' : '')
+      + '<form class="compose" id="req-form"><label for="req-in" class="sr">企画担当へのメッセージ</label><input id="req-in" type="text" autocomplete="off" placeholder="答えを書く"><button type="submit" style="background:var(--ok)">送る</button></form></section>'
+      + '<section class="doc" aria-label="要件"><header><h2>' + pj.name + ' の要件</h2><span class="chip ver">' + (pj.req.v ? 'v' + pj.req.v : '下書き') + (changed ? ' + 変更あり' : '') + '</span>' + (pj.req.confirmed ? '<span class="chip" style="background:var(--ok-soft);color:var(--ok)">確定済み</span>' : '') + '</header>'
+      + '<div class="repos" style="display:flex;gap:6px;flex-wrap:wrap">' + pj.repos.map((r) => '<span class="repo" style="font-family:var(--f-mono);font-size:11.5px;padding:2px 8px;border-radius:6px;background:var(--bg);border:1px solid var(--line)">' + r.r + ' · ' + r.role + '</span>').join('') + '</div>'
+      + SECS.map(([k, l]) => '<div class="' + (k === 'open' ? 'open' : k === 'build' ? 'build' : k === 'data' ? 'data' : '') + '"><h3>' + l + (k === 'open' && pj.req.sec.open.length ? '(' + pj.req.sec.open.length + ' 件)' : '') + '</h3>' + ((pj.req.sec[k] || []).length ? '<ul>' + pj.req.sec[k].map((x) => '<li' + ((pj.fresh || []).includes(x) ? ' class="new"' : '') + '></li>').join('') + '</ul>' : '<div class="empty">' + (k === 'open' ? '未決はありません' : 'まだありません') + '</div>') + '</div>').join('')
+      + '<div class="foot"><button type="button" id="req-save"' + (changed ? '' : ' disabled') + '>v' + (pj.req.v + 1) + ' として保存</button>'
+      + '<button type="button" class="primary" id="req-go"' + (pj.req.v && !changed && !pj.req.sec.open.length && !pj.req.confirmed ? '' : ' disabled') + '>確定してリーダーに渡す</button>'
+      + '<span style="font-size:12px;color:var(--muted)">' + (pj.req.sec.open.length ? '未決(作らない判断・データ設計を含む)が残っているうちは確定できません' : pj.req.confirmed ? 'リーダーがチケットに分けて進めています' : '確定すると、リーダーが機能をチケットに分けます') + '</span></div></section></div>';
+    // 文字列は textContent で入れる
+    const nodes = document.querySelectorAll('#req-chat .msg');
+    pj.chat.forEach((c, i) => { const n = nodes[i]; (n.querySelector('.body') || n).textContent = c.text; });
+    const lis = document.querySelectorAll('#view-req .doc li'); let i = 0;
+    const BC = { '作る': 'var(--dev)', '既存を使う': 'var(--ok)', '作らない': 'var(--muted)', '作らない(提案)': 'var(--warn)' };
+    SECS.forEach(([k]) => (pj.req.sec[k] || []).forEach((x) => {
+      const li = lis[i++];
+      if (k === 'build' && x.includes('|')) { const [tag, rest] = x.split('|'); li.innerHTML = '<b></b><span></span>'; li.querySelector('b').textContent = tag; li.querySelector('b').style.background = BC[tag] || 'var(--muted)'; li.querySelector('span').textContent = rest; }
+      else li.textContent = x;
+    }));
+    const box = document.getElementById('req-chat'); box.scrollTop = box.scrollHeight;
+  }
+  function reqAnswer(text) {
+    const pj = PROJECTS.find((x) => x.id === reqPid);
+    pj.chat.push({ who: 'me', text });
+    const parts = text.split(/[、,]/).map((x) => x.trim()).filter(Boolean);
+    pj.fresh = [];
+    if (pj.step != null) {
+      const st = STEPS[pj.step];
+      pj.req.sec[st.sec].push(...parts); pj.fresh = parts; pj.dirty = true;
+      if (st.sec === 'features') archReview(pj, parts);
+      if (st.next) { pj.step += 1; pj.chat.push({ who: 'plan', text: '書き留めました。次に、' + st.next }); }
+      else {
+        pj.step = null;
+        const q = ['予約の変更はいつまで受け付けるか(前日まで / 当日の 1 時間前まで)', '店舗のスタッフは他の店舗の予約も見られるか'];
+        pj.req.sec.open.push(...q); pj.fresh = pj.fresh.concat(q);
+        pj.chat.push({ who: 'plan', text: 'ありがとうございます。私からも決めておきたい点が 2 つあるので「未決」に足しました。アーキテクトの分と合わせて、上から 1 つずつ答えてください。まず「' + pj.req.sec.open[0] + '」。' });
+      }
+    } else if (pj.req.sec.open.length) {
+      const q = pj.req.sec.open.shift();
+      const dropAfter = () => {
+        if (!pj.dropWhenAsked) return;
+        const k = pj.req.sec.open.findIndex((x) => x.startsWith(pj.dropWhenAsked));
+        if (k >= 0) { const gone = pj.req.sec.open.splice(k, 1)[0]; const why = '「' + gone.replace(/\([^()]*\)$/, '') + '」は、変更を作らないと決めたので不要になりました'; pj.req.sec.decided.push(why); pj.fresh.push(why); pj.chat.push({ who: 'arch', text: '変更を作らないので、' + why.replace(/^「/, '「') + '。未決から外しました。' }); }
+        pj.dropWhenAsked = null;
+      };
+      setTimeout(() => {}, 0);
+      const f = q.replace(/\([^()]*\)$/, '').replace(/(かどうか|か)$/, '') + ' → ' + text;
+      pj.req.sec.decided.push(f); pj.fresh = [f]; pj.dirty = true;
+      if (pj.archQ && pj.archQ[q]) { pj.archQ[q](text); pj.chat.push({ who: 'arch', text: '反映しました。作る / 作らないとデータ設計を更新しています。' }); dropAfter(); }
+      pj.chat.push({ who: 'plan', text: pj.req.sec.open.length ? '決まりました。次は「' + pj.req.sec.open[0] + '」です。' : 'これで未決はなくなりました。保存して版を作ったら、確定してリーダーに渡せます。' });
+    } else {
+      pj.chat.push({ who: 'plan', text: '承知しました。要件に反映するかどうか、リーダーとも相談しておきます(モックの応答です)。' });
+    }
+    renderReq();
+  }
+  const rv = document.getElementById('view-req');
+  rv.addEventListener('submit', (e) => { e.preventDefault(); const inp = document.getElementById('req-in'); const t = inp.value.trim(); if (t) reqAnswer(t); });
+  rv.addEventListener('click', (e) => {
+    const pj = PROJECTS.find((x) => x.id === reqPid);
+    if (e.target.closest('[data-sg]')) reqAnswer(e.target.closest('[data-sg]').textContent);
+    if (e.target.id === 'req-save') { pj.req.v += 1; pj.dirty = false; pj.fresh = []; pj.chat.push({ who: 'plan', text: 'v' + pj.req.v + ' として保存しました。' }); renderReq(); }
+    if (e.target.id === 'req-go') {
+      pj.req.confirmed = true; pj.status = '立ち上げ中';
+      const n = pj.req.sec.features.length * 2;
+      pj.chat.push({ who: 'plan', text: 'v' + pj.req.v + ' を確定してリーダーに渡しました。リーダーが機能を ' + n + ' 件のチケットに分けています。どのチケットも要件 v' + pj.req.v + ' のどの項目から来たかを持っています。' });
+      renderReq();
+    }
+  });
+
+  // ================= 企画スタジオ =================
+  const SG = {
+    stage: 'flow', handed: false, selNode: 'S3', scr: 'search', pinDraft: null,
+    gates: { req: { v: 2, agreed: true }, flow: { v: 1, agreed: false }, screen: { v: 1, agreed: false }, model: { v: 1, agreed: false } },
+    req: [
+      { id: 'R1', name: '空き枠を探す', ac: '店舗と日付を選ぶと、残りのある枠だけが時間の順に並ぶ', screens: ['search'], ok: true },
+      { id: 'R2', name: '予約する', ac: '残りのある枠を選んで確定すると予約が確定し、確認メールが届く。確定の直前に満席になったら確定しない', screens: ['confirm', 'done'], ok: true },
+      { id: 'R3', name: '予約をキャンセルする', ac: '前日までなら予約一覧からキャンセルでき、枠の残りが 1 つ戻る(変更は作らず、キャンセルと予約し直しで代える)', screens: ['list'], ok: true },
+      { id: 'R4', name: 'リマインド', ac: '前日の 18 時に、予約内容のメールが届く(既存のメール送信を使う)', screens: [], ok: true }
+    ],
+    flowIssue: { open: true, choice: null },
+    screens: {
+      search: { name: '空き枠を探す', variants: ['A', 'B'], pick: null, agreed: false, pins: [] },
+      confirm: { name: '予約の確認', variants: ['A', 'B'], pick: 'A', agreed: false, pins: [{ x: 50, y: 78, text: '確定ボタンの下に、キャンセルの期限も書いてほしい', done: false }] },
+      done: { name: '予約完了', variants: ['A'], pick: 'A', agreed: true, pins: [] },
+      list: { name: '予約一覧とキャンセル', variants: ['A'], pick: 'A', agreed: true, pins: [] }
+    },
+    chats: {
+      req: [{ who: 'plan', text: '要件は v2 で合意済みです。受け入れ条件は、QA がそのまま確認に使える書き方にしています。' }],
+      flow: [{ who: 'design', text: 'デザイナーのミオです。画面と遷移を図にしました。「予約の確認」で確定を押す直前に満席になった場合の行き先が決まっていません。図の黄色い「?」です。' }, { who: 'arch', text: 'データ上は、確定の時点で定員を確かめ直すので、満席なら確定は失敗します。その後どこに戻すかは画面の判断です。' }],
+      screen: [{ who: 'design', text: '「空き枠を探す」は 2 案あります。A は日付のタブとリスト、B はカレンダーです。気になるところは、画面の上を押してコメントを付けてください。' }],
+      model: [{ who: 'arch', text: 'ドメインモデルとデータ設計です。予約は新しい表で持ち、shop-api に足します。新しいサービスは作りません。' }]
+    }
+  };
+  const studioOpen = () => {
+    const g = SG.gates; if (SG.handed) return '';
+    const n = Object.keys(g).filter((k) => !g[k].agreed).length;
+    return n ? '合意待ちの段階が ' + n + ' つあります(ユーザーフローの未決 1 件など)' : 'すべての段階が合意済み。チームに渡せます';
+  };
+  const STAGES = [['req', '要件'], ['flow', 'ユーザーフロー'], ['screen', '画面デザイン'], ['model', 'ドメインとデータ']];
+  const SKIP_EFFECT = {
+    flow: '画面のつながりと例外(満席・未ログインなど)を、開発が画面を作りながら決めます。抜けはテストや QA で見つかることが多く、そこからの手戻りになります。',
+    screen: '画面の見た目と配置を、開発が要件から直接作ります。合意のない画面がそのまま出来上がるので、見た目の直しは実装後になります。',
+    model: 'ドメインとデータ設計を、開発が実装しながら決めます。アーキテクトは着手前の設計確認でだけ見ます。後から表や約束を変えると手戻りが大きくなりやすく、戻せない変更に気づくのも遅れます。'
+  };
+  const DELEGATE = {
+    flow: 'デザイナーのミオが、要件から画面のつながりと例外を決めて版を作ります。あなたには決めた内容を報告します。',
+    screen: 'デザイナーのミオが、各画面の案を 1 つに決めて版を作ります。あなたには選んだ案と理由を報告します。',
+    model: 'アーキテクトのレイが、ドメインモデルとデータ設計(表・列・マイグレーション)を決めて版を作ります。あなたには決めた内容を報告します。'
+  };
+  const WHO_OF = { flow: 'design', screen: 'design', model: 'arch' };
+  let skipAsk = null;
+  const WHO = { plan: ['サキ(企画)', 'plan'], design: ['ミオ(デザイナー)', 'design'], arch: ['レイ(アーキテクト)', 'arch'] };
+
+  function phoneHTML(scr, v) {
+    if (scr === 'search' && v === 'A') return '<div class="ph-top">空き枠を探す</div><div class="ph-body"><div class="ph-mini">acme 渋谷店</div><div class="ph-chips"><span class="on">今日</span><span>明日</span><span>土</span><span>日</span></div>'
+      + ['10:00|残り 2', '11:30|残り 1', '14:00|残り 4', '16:30|残り 3'].map((r) => { const [a, b] = r.split('|'); return '<div class="ph-row"><span><b>' + a + '</b><br><small>' + b + '</small></span><span class="ph-btn" style="padding:6px 10px">選ぶ</span></div>'; }).join('') + '</div>';
+    if (scr === 'search' && v === 'B') return '<div class="ph-top">空き枠を探す</div><div class="ph-body"><div class="ph-mini">acme 渋谷店 · 11 月</div><div class="ph-cal">' + ['月', '火', '水', '木', '金', '土', '日'].map((d) => '<span class="ph-mini">' + d + '</span>').join('')
+      + Array.from({ length: 28 }, (_, i) => '<span class="' + (i === 9 ? 'on' : [3, 5, 9, 10, 12, 16, 17, 19, 23, 24].includes(i) ? 'av' : '') + '">' + (i + 1) + '</span>').join('') + '</div>'
+      + '<div class="ph-mini">10 日の空き</div><div class="ph-chips"><span class="on">10:00</span><span>14:00</span><span>16:30</span></div><span class="ph-btn">この枠で進む</span></div>';
+    if (scr === 'confirm' && v === 'A') return '<div class="ph-top">予約の確認</div><div class="ph-body"><div class="ph-row"><span><small>店舗</small><br><b>acme 渋谷店</b></span></div><div class="ph-row"><span><small>日時</small><br><b>11/10(月) 10:00</b></span></div><div class="ph-row"><span><small>人数</small><br><b>1 名</b></span></div><div style="height:40px"></div><span class="ph-btn">予約を確定する</span>'
+      + (SG.screens.confirm.pins[0] && SG.screens.confirm.pins[0].done ? '<div class="ph-mini" style="text-align:center">キャンセルは前日の 23:59 まで</div>' : '') + '</div>';
+    if (scr === 'confirm' && v === 'B') return '<div class="ph-top">空き枠を探す</div><div class="ph-body"><div class="ph-row"><b>10:00</b></div><div class="ph-row"><b>11:30</b></div></div><div class="ph-dim"></div><div class="ph-sheet"><b>この枠で予約しますか</b><div class="ph-mini">acme 渋谷店 · 11/10(月) 10:00 · 1 名</div><span class="ph-btn">予約を確定する</span><span class="ph-btn ghost">やめる</span></div>';
+    if (scr === 'done') return '<div class="ph-top">予約完了</div><div class="ph-body" style="align-items:center;text-align:center;padding-top:40px"><div style="width:56px;height:56px;border-radius:50%;background:#DDF2E8;color:#17845C;display:grid;place-items:center;font-size:28px;font-weight:700">✓</div><b style="font-size:15px">予約しました</b><div class="ph-mini">11/10(月) 10:00 · acme 渋谷店<br>確認メールを送りました</div><span class="ph-btn" style="width:100%">予約一覧へ</span><span class="ph-btn ghost" style="width:100%">カレンダーに追加</span></div>';
+    return '<div class="ph-top">予約一覧</div><div class="ph-body">' + ['11/10(月) 10:00|渋谷店', '11/18(火) 14:00|新宿店'].map((r) => { const [a, b] = r.split('|'); return '<div class="ph-row"><span><b>' + a + '</b><br><small>' + b + '</small></span><span class="ph-btn ghost" style="padding:6px 8px">キャンセル</span></div>'; }).join('') + '<div class="ph-mini">前日を過ぎた予約はキャンセルできません</div></div>';
+  }
+
+  function flowSVG() {
+    const N = { S1: [20, 40, 'トップ', '会員'], S2: [220, 40, '空き枠を探す', 'R1'], S3: [420, 40, '予約の確認', 'R2'], S4: [620, 40, '予約完了', 'R2'], S5: [420, 200, 'ログイン', '既存'], S6: [20, 300, '予約一覧', 'R3'], S7: [220, 300, 'キャンセル確認', 'R3'] };
+    const c = SG.flowIssue.choice;
+    if (SG.flowIssue.open) N.Q = [620, 200, '?', '満席になったら'];
+    if (c === 'err') N.E1 = [620, 200, '満席のお知らせ', 'エラー'];
+    const box = (k) => { const [x, y, t, sub] = N[k]; const cls = 'fnode' + (SG.selNode === k ? ' sel' : '') + (k === 'Q' ? ' q' : '') + (k === 'E1' ? ' err' : ''); return '<g class="' + cls + '" data-node="' + k + '" tabindex="0" role="button" aria-label="' + t + '"><rect x="' + x + '" y="' + y + '" width="124" height="54" rx="10"/><text x="' + (x + 12) + '" y="' + (y + 24) + '" font-weight="700">' + t + '</text><text class="sub" x="' + (x + 12) + '" y="' + (y + 42) + '">' + sub + '</text></g>'; };
+    const mid = (k, side) => { const [x, y] = N[k]; return side === 'r' ? [x + 124, y + 27] : side === 'l' ? [x, y + 27] : side === 'b' ? [x + 62, y + 54] : [x + 62, y]; };
+    const edge = (a, sa, b, sb, label, alt, bend) => { const [x1, y1] = mid(a, sa), [x2, y2] = mid(b, sb); const cx = (x1 + x2) / 2 + (bend || 0), cy = (y1 + y2) / 2 + (bend ? 30 : 0); return '<path class="fedge' + (alt ? ' alt' : '') + '" d="M' + x1 + ' ' + y1 + ' Q' + cx + ' ' + cy + ' ' + x2 + ' ' + y2 + '" marker-end="url(#fa' + (alt ? '2' : '') + ')"/>' + (label ? '<text class="flabel" text-anchor="middle" x="' + cx + '" y="' + (cy - 6) + '">' + label + '</text>' : ''); };
+    let e = edge('S1', 'r', 'S2', 'l', '予約する') + edge('S2', 'r', 'S3', 'l', '枠を選ぶ') + edge('S3', 'r', 'S4', 'l', '確定')
+      + edge('S3', 'b', 'S5', 't', '未ログイン → ログイン後に戻る', true) + edge('S5', 'r', 'S3', 'r', '', true, 50)
+      + edge('S1', 'b', 'S6', 't', '予約を見る') + edge('S6', 'r', 'S7', 'l', 'キャンセル') + edge('S7', 'b', 'S6', 'b', '完了', false, 1);
+    if (SG.flowIssue.open) e += edge('S3', 'r', 'Q', 't', '確定の直前に満席', true, 40);
+    if (c === 'suggest') e += '<path class="fedge alt" d="M450 94 Q370 160 300 94" marker-end="url(#fa2)"/><text class="flabel" text-anchor="middle" x="330" y="150">満席: 近い枠を 3 つ出して戻す</text>';
+    if (c === 'err') e += edge('S3', 'r', 'E1', 't', '満席', true, 40) + '<path class="fedge alt" d="M620 227 Q420 190 300 94" marker-end="url(#fa2)"/><text class="flabel" text-anchor="middle" x="420" y="196">探し直す</text>';
+    return '<svg viewBox="0 0 770 410" role="img" aria-label="ユーザーフローの図"><defs><marker id="fa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker><marker id="fa2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--warn)"/></marker></defs>' + e + Object.keys(N).map(box).join('') + '</svg>';
+  }
+
+  function modelSVG() {
+    const ent = (x, y, name, rows, isNew) => '<g><rect x="' + x + '" y="' + y + '" width="170" height="' + (34 + rows.length * 18) + '" rx="10" fill="var(--surface)" stroke="' + (isNew ? 'var(--dev)' : 'var(--table-edge)') + '" stroke-width="1.5"/><text x="' + (x + 12) + '" y="' + (y + 22) + '" font-weight="700" fill="var(--ink)" font-size="13">' + name + (isNew ? '  <tspan fill="var(--dev)" font-size="10.5">新規</tspan>' : '  <tspan fill="var(--muted)" font-size="10.5">既存</tspan>') + '</text>'
+      + rows.map((r, i) => '<text x="' + (x + 12) + '" y="' + (y + 44 + i * 18) + '" fill="var(--muted)" font-size="11" font-family="IBM Plex Mono, monospace">' + r + '</text>').join('') + '</g>';
+    const line = (d, l, lx, ly) => '<path d="' + d + '" fill="none" stroke="var(--muted)" stroke-width="1.5"/><text x="' + lx + '" y="' + ly + '" fill="var(--muted)" font-size="11">' + l + '</text>';
+    return '<svg viewBox="0 0 770 300" role="img" aria-label="ドメインモデルの図">'
+      + line('M200 70 L300 70', '1 — n', 230, 62) + line('M470 70 L570 70', '1 — n', 500, 62) + line('M655 190 L655 130', 'n — 1', 662, 165)
+      + ent(30, 40, '店舗', ['id', 'name'], false) + ent(300, 40, '枠 Slot', ['id, store_id', 'starts_at', 'capacity'], true)
+      + ent(570, 40, '予約 Reservation', ['id, slot_id', 'member_id', 'status'], true) + ent(570, 190, '会員', ['id', 'email'], false)
+      + '<text x="30" y="230" fill="var(--ink)" font-size="12" font-weight="700">守るルール</text>'
+      + ['1 つの枠の確定した予約数は capacity を超えない(確定時に確かめ直す)', '会員は同じ枠を 2 回予約できない', '予約の状態: 確定 → キャンセル(前日まで)'].map((r, i) => '<text x="30" y="' + (252 + i * 18) + '" fill="var(--muted)" font-size="12">・' + r + '</text>').join('')
+      + '</svg>';
+  }
+
+  const stageDone = (k) => SG.gates[k].agreed || SG.gates[k].skipped || SG.gates[k].delegated;
+  function skipBar(k) {
+    const name = STAGES.find((x) => x[0] === k)[1];
+    if (SG.gates[k].delegated) return '';
+    if (skipAsk === k + ':skip') return '<div class="skipask"><b>' + name + 'を省くと</b><span>' + SKIP_EFFECT[k] + '</span><div class="acts"><button type="button" class="go" data-skipgo="' + k + '">省いて進める</button><button type="button" data-skipno>やめる</button></div></div>';
+    if (skipAsk === k + ':dele') return '<div class="skipask"><b>' + name + 'をお任せにすると</b><span>' + DELEGATE[k] + '戻せない変更(データの消去・公開済みの約束の変更など)だけは、お任せでもあなたに聞きます。後から合意する進め方に戻せます。</span><div class="acts"><button type="button" class="go" data-delego="' + k + '">お任せにする</button><button type="button" data-skipno>やめる</button></div></div>';
+    return '<div style="display:flex;gap:8px;flex-wrap:wrap"><span style="font-size:12px;color:var(--muted);align-self:center">進め方:</span><button type="button" class="skipbtn" data-dele="' + k + '">お任せにする</button><button type="button" class="skipbtn" data-skip="' + k + '">この段階を省く</button></div>';
+  }
+  const delegatedBar = (k) => SG.gates[k].delegated ? '<div class="delegated"><b>お任せ中</b><span>' + (WHO_OF[k] === 'arch' ? 'レイ' : 'ミオ') + 'が決めた v' + SG.gates[k].v + ' です。戻せない変更はありませんでした。</span><button type="button" class="skipbtn" data-undele="' + k + '" style="margin-left:auto">自分で確かめる(合意する進め方に戻す)</button></div>' : '';
+  function skippedHTML(k, label) {
+    return '<header><h2>' + label + '</h2></header><div class="skipped"><b style="color:var(--ink)">この段階は省いています</b><span>' + SKIP_EFFECT[k] + '</span><button type="button" class="skipbtn" data-unskip="' + k + '">省くのをやめて、この段階を作る</button></div>';
+  }
+  function stageAgreeable(k) {
+    if (k === 'flow') return !SG.flowIssue.open;
+    if (k === 'screen') return Object.values(SG.screens).every((x) => x.agreed);
+    return true;
+  }
+  function renderStudio() {
+    const g = SG.gates, allOk = Object.keys(g).every(stageDone);
+    const gateBtn = (k, label, i) => { const x = g[k]; const st = x.skipped ? '<span class="st skip">省略</span>' : x.delegated ? '<span class="st dele">お任せ v' + x.v + '</span>' : x.agreed ? '<span class="st ok">合意済み v' + x.v + '</span>' : '<span class="st wip">' + (k === 'flow' && SG.flowIssue.open ? '未決 1' : k === 'screen' ? Object.values(SG.screens).filter((s) => !s.agreed).length + ' 画面が合意待ち' : '下書き v' + x.v) + '</span>'; return '<button type="button" class="gate" data-stage="' + k + '"' + (SG.stage === k ? ' aria-current="step"' : '') + '><span class="n">' + (i + 1) + '</span><span class="t">' + label + '</span>' + st + '</button>'; };
+    const chat = SG.chats[SG.stage];
+    let work = '';
+    if (SG.handed) work = handedHTML();
+    else if (g[SG.stage] && g[SG.stage].skipped) work = skippedHTML(SG.stage, STAGES.find((x) => x[0] === SG.stage)[1]);
+    else if (SG.stage === 'req') work = '<header><h2>要件 v2</h2><span class="okc">4 項目すべて合意</span></header>' + SG.req.map((r) => '<div class="reqi"><span class="nm">' + r.id + ' ' + r.name + '</span><span class="okc">' + (r.ok ? '✓ 合意' : '') + '</span><div class="ac"><b>受け入れ条件</b>' + r.ac + '</div><div class="links">画面: ' + (r.screens.length ? r.screens.map((x) => SG.screens[x].name).join('、') : 'なし') + ' · フロー・テストに引き継がれます</div></div>').join('');
+    else if (SG.stage === 'flow') {
+      const N = { S1: 'トップ', S2: '空き枠を探す', S3: '予約の確認', S4: '予約完了', S5: 'ログイン', S6: '予約一覧', S7: 'キャンセル確認', Q: '未決: 満席になったら', E1: '満席のお知らせ' };
+      work = delegatedBar('flow') + '<header><h2>ユーザーフロー v' + g.flow.v + '</h2><button type="button" class="agree" data-agree="flow"' + (stageAgreeable('flow') && !g.flow.agreed ? '' : ' disabled') + '>' + (g.flow.agreed ? '合意済み' : 'この版に合意する') + '</button></header>'
+        + '<div class="flowwrap">' + flowSVG() + '</div>'
+        + (SG.flowIssue.open ? '<div class="issue"><b>未決: 確定ボタンを押す直前に満席になったら、どこへ戻すか</b><span>R2 の受け入れ条件「確定の直前に満席になったら確定しない」の続きです。間違えると、利用者が予約できたと思い込んだり、最初からやり直しになったりします。</span><div class="acts"><button type="button" class="rec" data-flowc="suggest">近い枠を 3 つ出して「空き枠を探す」に戻す(推奨)</button><button type="button" data-flowc="err">満席のお知らせを出して探し直してもらう</button></div></div>' : '<div class="okc">未決はありません。決めた内容は要件 R2 の受け入れ条件にも書き足しました</div>')
+        + '<div style="font-size:13px;color:var(--muted)">選択中: <b style="color:var(--ink)">' + (N[SG.selNode] || '') + '</b> · 図の四角を押すと選べます。実線は通常の流れ、黄色い点線は分岐と例外です。</div>'
+        + (g.flow.agreed ? '' : skipBar('flow'));
+    } else if (SG.stage === 'screen') {
+      const sc = SG.screens[SG.scr];
+      work = delegatedBar('screen') + '<header><h2>画面デザイン v' + g.screen.v + '</h2><button type="button" class="agree" data-agree="screen"' + (stageAgreeable('screen') && !g.screen.agreed ? '' : ' disabled') + '>' + (g.screen.agreed ? '合意済み' : 'すべての画面に合意する') + '</button></header>'
+        + '<div class="scrlist" role="group" aria-label="画面">' + Object.keys(SG.screens).map((k) => '<button type="button" data-scr="' + k + '" aria-pressed="' + (k === SG.scr) + '">' + SG.screens[k].name + '<span class="d" style="background:' + (SG.screens[k].agreed ? 'var(--ok)' : 'var(--warn)') + '"></span></button>').join('') + '</div>'
+        + '<div class="variants">' + sc.variants.map((v) => '<div class="variant"><div class="vh"><b>案 ' + v + '</b>' + (sc.variants.length > 1 ? '<button type="button" data-pick="' + v + '" class="' + (sc.pick === v ? 'on' : '') + '">' + (sc.pick === v ? 'この案に決定' : 'この案にする') + '</button>' : '') + '</div><div class="phone" data-phone="' + v + '">' + phoneHTML(SG.scr, v) + (sc.pick === v || sc.variants.length === 1 ? sc.pins.map((p, i) => '<span class="pin' + (p.done ? ' done' : '') + '" style="left:' + p.x + '%;top:' + p.y + '%">' + (i + 1) + '</span>').join('') : '') + '</div></div>').join('') + '</div>'
+        + '<div class="pins-list"><b>コメント(画面の上を押すと付けられます)</b>' + (sc.pins.length ? sc.pins.map((p, i) => '<div class="pc"><i class="' + (p.done ? 'done' : '') + '">' + (i + 1) + '</i><span>' + p.text + (p.done ? ' <span class="okc">v2 で対応済み</span>' : '') + '</span></div>').join('') : '<span style="color:var(--muted)">まだありません</span>') + '</div>'
+        + (SG.pinDraft ? '<form class="pinform" id="pinform"><label class="sr" for="pin-in">コメント</label><input id="pin-in" type="text" placeholder="この場所へのコメント" autocomplete="off"><button type="submit">付ける</button></form>' : '')
+        + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" class="agree" style="margin-left:0;background:var(--ink)" data-scragree' + (sc.agreed || (sc.variants.length > 1 && !sc.pick) || sc.pins.some((p) => !p.done) ? ' disabled' : '') + '>' + (sc.agreed ? 'この画面は合意済み' : 'この画面に合意する') + '</button><span style="font-size:12px;color:var(--muted)">' + (sc.variants.length > 1 && !sc.pick ? '案を 1 つ選んでください' : sc.pins.some((p) => !p.done) ? '対応待ちのコメントがあります' : '') + '</span></div>'
+        + (g.screen.agreed ? '' : skipBar('screen'));
+    } else {
+      work = delegatedBar('model') + '<header><h2>ドメインとデータ v' + g.model.v + '</h2><button type="button" class="agree" data-agree="model"' + (g.model.agreed ? ' disabled' : '') + '>' + (g.model.agreed ? '合意済み' : 'この版に合意する') + '</button></header><div class="flowwrap">' + modelSVG() + '</div>'
+        + '<div style="font-size:13px">作る / 既存を使う / 作らない: 枠と予約の表を shop-api に足す · 会員とメール送信は既存を使う · 予約の変更は作らない(キャンセルと予約し直しで代える)</div>'
+        + (g.model.agreed ? '' : skipBar('model'));
+    }
+    document.getElementById('view-studio').innerHTML =
+      '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"><h2 style="margin:0;font-family:var(--f-display);font-size:18px">acme 予約サイト · 企画スタジオ</h2><span style="font-size:12px;color:var(--muted)">段階ごとに合意した版を残し、すべて合意したらチームに渡します</span></div>'
+      + '<nav class="gates" aria-label="段階">' + STAGES.map(([k, l], i) => gateBtn(k, l, i)).join('') + '<button type="button" class="gate hand" id="st-hand"' + (allOk && !SG.handed ? '' : ' disabled') + '>' + (SG.handed ? '渡しました' : 'チームに渡す') + '</button></nav>'
+      + '<div class="sbody"><section class="strio" aria-label="企画の 3 人との会話"><div style="padding:12px 14px;border-bottom:1px solid var(--line)"><b style="font-family:var(--f-display)">企画 サキ · デザイナー ミオ · アーキテクト レイ</b></div><div class="chat-list" id="st-chat">'
+      + chat.map((c) => c.who === 'me' ? '<div class="msg me"></div>' : '<div class="msg ' + WHO[c.who][1] + '"><div class="who">' + WHO[c.who][0] + '</div><div class="body"></div></div>').join('')
+      + '</div><form class="compose" id="st-form"><label for="st-in" class="sr">メッセージ</label><input id="st-in" type="text" autocomplete="off" placeholder="この段階について話す"><button type="submit">送る</button></form></section>'
+      + '<section class="swork" aria-label="作業の場">' + work + '</section></div>';
+    const nodes = document.querySelectorAll('#st-chat .msg');
+    chat.forEach((c, i) => { (nodes[i].querySelector('.body') || nodes[i]).textContent = c.text; });
+    const box = document.getElementById('st-chat'); box.scrollTop = box.scrollHeight;
+  }
+  function handedHTML() {
+    const g = SG.gates, mark = (k, v) => g[k].skipped ? '省略(実装時に決める)' : g[k].delegated ? v + '(お任せ)' : v;
+    const rows0 = [['#61', '枠の表と予約の表を追加', 'R1・R2', '—', 'ドメイン 2.1'], ['#62', '空き枠を探す API', 'R1', '空き枠を探す(案 ' + (SG.screens.search.pick || 'A') + ')', 'ドメイン 2.2'], ['#63', '空き枠を探す画面', 'R1', '空き枠を探す(案 ' + (SG.screens.search.pick || 'A') + ')', '—'], ['#64', '予約を確定する API(定員を確かめ直す)', 'R2', '予約の確認', 'ルール 1'], ['#65', '予約の確認と完了の画面', 'R2', '予約の確認・予約完了', '—'], ['#66', '満席のときの戻り先', 'R2', SG.flowIssue.choice === 'err' ? '満席のお知らせ' : '空き枠を探す', 'フロー v2'], ['#67', '予約一覧とキャンセル', 'R3', '予約一覧とキャンセル', 'ルール 3'], ['#68', '前日 18 時のリマインド', 'R4', '—', '既存のメール送信']];
+    const rows = rows0.map((r) => [r[0], r[1], r[2], r[3] === '—' ? '—' : mark('screen', r[3]), r[4] === '—' || r[4] === '既存のメール送信' ? r[4] : mark(r[4].startsWith('フロー') ? 'flow' : 'model', r[4])]);
+    const vers = [['要件', 'v2']].concat([['flow', 'フロー'], ['screen', '画面'], ['model', 'ドメイン']].map(([k, l]) => [l, g[k].skipped ? '省略' : 'v' + g[k].v + (g[k].delegated ? '(お任せ)' : '')]));
+    return '<header><h2>チームに渡しました</h2></header><div class="handed"><span>リーダーのマキが、合意した版(' + vers.map((x) => x[0] + ' ' + x[1]).join('・') + ')から 8 件のチケットを作りました。各チケットは、受け入れ条件・画面・設計の節を持っています。QA は受け入れ条件と画面を見比べて確かめます。</span>'
+      + '<table><thead><tr><th>チケット</th><th>内容</th><th>要件</th><th>画面</th><th>設計</th></tr></thead><tbody>' + rows.map((r) => '<tr>' + r.map((c) => '<td>' + c + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
+  }
+  const sv = document.getElementById('view-studio');
+  sv.addEventListener('click', (e) => {
+    const st = e.target.closest('[data-stage]'); if (st) { SG.stage = st.dataset.stage; SG.pinDraft = null; skipAsk = null; renderStudio(); return; }
+    const sk = e.target.closest('[data-skip]'); if (sk) { skipAsk = sk.dataset.skip + ':skip'; renderStudio(); return; }
+    const dl = e.target.closest('[data-dele]'); if (dl) { skipAsk = dl.dataset.dele + ':dele'; renderStudio(); return; }
+    const dg = e.target.closest('[data-delego]');
+    if (dg) {
+      const k = dg.dataset.delego; skipAsk = null; SG.gates[k].delegated = true;
+      if (k === 'flow' && SG.flowIssue.open) { SG.flowIssue = { open: false, choice: 'suggest' }; SG.gates.flow.v += 1; SG.req[1].ac += '。満席なら近い枠を 3 つ出して空き枠の画面に戻す'; }
+      if (k === 'screen') Object.values(SG.screens).forEach((x) => { if (!x.pick) x.pick = 'A'; x.pins.forEach((p) => { p.done = true; }); x.agreed = true; });
+      const msg = { flow: '満席の分岐は「近い枠を 3 つ出して戻す」に決めて、フロー v' + SG.gates.flow.v + ' にしました。', screen: '空き枠を探すは案 A(日付のタブとリスト)にしました。片手で選びやすいためです。', model: '予約は新しい表(reservations)で持ち、shop-api に足すと決めました。マイグレーションは追加だけで戻せます。' }[k];
+      SG.chats[k].push({ who: 'me', text: 'この段階はお任せします' }, { who: WHO_OF[k], text: 'お任せで決めました。' + msg + ' 戻せない変更は無かったので、確認なしで進めます。' });
+      renderStudio(); return;
+    }
+    const ud = e.target.closest('[data-undele]'); if (ud) { const k = ud.dataset.undele; SG.gates[k].delegated = false; SG.gates[k].agreed = false; SG.chats[k].push({ who: 'me', text: '自分でも確かめます' }, { who: WHO_OF[k], text: '承知しました。今の版を見て、合意か直したい点をください。' }); renderStudio(); return; }
+    if (e.target.closest('[data-skipno]')) { skipAsk = null; renderStudio(); return; }
+    const sg = e.target.closest('[data-skipgo]');
+    if (sg) { const k = sg.dataset.skipgo; SG.gates[k].skipped = true; skipAsk = null; SG.chats[k].push({ who: 'me', text: 'この段階は省いて進めます' }, { who: k === 'model' ? 'arch' : 'design', text: '了解です。チケットには「' + STAGES.find((x) => x[0] === k)[1] + ': 省略」と残し、' + (k === 'model' ? '着手前の設計確認でデータに触れる変更だけは見ます。' : '実装した画面をレビューで確かめます。') }); renderStudio(); return; }
+    const us = e.target.closest('[data-unskip]'); if (us) { const k = us.dataset.unskip; SG.gates[k].skipped = false; SG.chats[k].push({ who: 'me', text: 'やっぱりこの段階を作ります' }); renderStudio(); return; }
+    const nd = e.target.closest('[data-node]'); if (nd) { SG.selNode = nd.dataset.node; renderStudio(); return; }
+    const fc = e.target.closest('[data-flowc]');
+    if (fc) {
+      SG.flowIssue = { open: false, choice: fc.dataset.flowc }; SG.gates.flow.v += 1;
+      SG.req[1].ac += SG.flowIssue.choice === 'suggest' ? '。満席なら近い枠を 3 つ出して空き枠の画面に戻す' : '。満席ならお知らせを出して探し直してもらう';
+      SG.chats.flow.push({ who: 'me', text: fc.textContent.replace('(推奨)', '') }, { who: 'design', text: '図に足して v' + SG.gates.flow.v + ' にしました。要件 R2 の受け入れ条件にも書き足しています。' });
+      renderStudio(); return;
+    }
+    const ag = e.target.closest('[data-agree]'); if (ag && !ag.disabled) { const k = ag.dataset.agree; SG.gates[k].agreed = true; SG.chats[k].push({ who: 'plan', text: STAGES.find((x) => x[0] === k)[1] + ' v' + SG.gates[k].v + ' に合意をもらいました。' }); renderStudio(); return; }
+    const sc = e.target.closest('[data-scr]'); if (sc) { SG.scr = sc.dataset.scr; SG.pinDraft = null; renderStudio(); return; }
+    const pk = e.target.closest('[data-pick]'); if (pk) { SG.screens[SG.scr].pick = pk.dataset.pick; SG.chats.screen.push({ who: 'me', text: SG.screens[SG.scr].name + 'は案 ' + pk.dataset.pick + ' で' }, { who: 'design', text: '案 ' + pk.dataset.pick + ' で進めます。もう一方は記録として残しておきます。' }); renderStudio(); return; }
+    if (e.target.closest('[data-scragree]') && !e.target.closest('[data-scragree]').disabled) { SG.screens[SG.scr].agreed = true; renderStudio(); return; }
+    const ph = e.target.closest('[data-phone]');
+    if (ph) {
+      const sc0 = SG.screens[SG.scr]; if (sc0.variants.length > 1 && sc0.pick !== ph.dataset.phone) { return; }
+      const r = ph.getBoundingClientRect(); SG.pinDraft = { x: Math.round((e.clientX - r.left) / r.width * 100), y: Math.round((e.clientY - r.top) / r.height * 100) };
+      sc0.pins.push(Object.assign({ text: '(コメントを書いてください)', done: false, draft: true }, SG.pinDraft)); renderStudio();
+      const inp = document.getElementById('pin-in'); if (inp) inp.focus(); return;
+    }
+    if (e.target.id === 'st-hand' && !e.target.disabled) { SG.handed = true; renderStudio(); }
+  });
+  sv.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (e.target.id === 'pinform') {
+      const sc0 = SG.screens[SG.scr], pin = sc0.pins.find((p) => p.draft), text = document.getElementById('pin-in').value.trim();
+      if (!pin) return; if (!text) { sc0.pins.splice(sc0.pins.indexOf(pin), 1); SG.pinDraft = null; renderStudio(); return; }
+      pin.text = text; delete pin.draft; SG.pinDraft = null; sc0.agreed = false;
+      SG.chats.screen.push({ who: 'me', text: sc0.name + ' ' + sc0.pins.length + ' 番: ' + text }, { who: 'design', text: '直した版を作ります。少し待ってください。' });
+      renderStudio();
+      setTimeout(() => { pin.done = true; SG.gates.screen.v = Math.max(SG.gates.screen.v, 2); SG.chats.screen.push({ who: 'design', text: sc0.name + 'を直して v' + SG.gates.screen.v + ' にしました。' }); if (ctx === 'studio') renderStudio(); }, 1800);
+    }
+    if (e.target.id === 'st-form') {
+      const inp = document.getElementById('st-in'), text = inp.value.trim(); if (!text) return;
+      const who = { req: 'plan', flow: 'design', screen: 'design', model: 'arch' }[SG.stage];
+      SG.chats[SG.stage].push({ who: 'me', text }, { who, text: '受け取りました。この段階の版に反映するか検討して、変えるときは差分を見せます(モックの応答です)。' });
+      renderStudio();
+    }
+  });
+  // 既にあるコメントは時間差で対応済みにする(デザイナーが直した想定)
+  setTimeout(() => { SG.screens.confirm.pins[0].done = true; SG.gates.screen.v = 2; SG.chats.screen.push({ who: 'design', text: '「予約の確認」に、確定ボタンの下へキャンセルの期限を足して v2 にしました。' }); if (ctx === 'studio') renderStudio(); }, 15000);
+
+  let last = performance.now();
+  function frame() {
+    const now = performance.now(), dt = Math.min(500, now - last); last = now;
+    step(dt);
+    if (ctx === 'project') { if (view === 'office') renderOffice(); else renderBoard(); }
+    if (ctx === 'home' && Math.round(T / 250) % 4 === 0) renderHome();
+    if (!document.getElementById('drawer-mon').hidden) renderMon();
+    if (!document.getElementById('drawer-pol').hidden && polTab === 'rules') document.querySelectorAll('[data-rcount]').forEach((e) => { const r = RULES[e.dataset.rcount]; e.textContent = '違反 ' + r.hits + ' 件 · 自動で直した ' + r.fixed + ' 件'; });
+    if (!document.getElementById('drawer-form').hidden && Math.round(T / 250) % 8 === 0) { const ft = document.getElementById('form-table'); if (ft) ft.innerHTML = formTable(); }
+    if (T - lastSample >= 5000) { lastSample = T; stats.series.push({ T, tpc: stats.done ? stats.simTok / stats.done : null, apc: stats.done ? stats.simAsks / stats.done : null }); if (stats.series.length > 120) stats.series.shift(); }
+    const fe = flowOf(formStat());
+    document.getElementById('eff').innerHTML = (fe == null ? '' : 'フロー効率 <b>' + fe + '%</b> · ') + (stats.done ? '1 件 <b>' + kfmt(stats.simTok / stats.done) + '</b> tok · 判断 <b>' + (stats.simAsks / stats.done).toFixed(2) + '</b>' : '効率: 計測中');
+    renderInbox();
+    status();
+  }
+  let lastSample = 0;
+  try { if (localStorage.getItem('kuramoto-view') === 'board') setView('board'); } catch (e) {}
+  fit(); renderOffice(); renderChat(); renderInbox(); status(); setCtx('home');
+  setInterval(frame, 250);
+})();
+</script>
+
+</body>
+</html>
