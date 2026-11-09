@@ -18,3 +18,12 @@ Kuramoto の設計で下した判断を 1 件ずつ残します。状態は「�
 | [0012](0012-pluggable-harness.md) | ハーネスは差し替え口を作り、最初は Claude Agent SDK だけ載せる | 承認 |
 | [0013](0013-owner-presses-merge.md) | merge は責任者が画面から押し、押した瞬間と押した後に確かめ直す | 承認 |
 | [0014](0014-design-docs-in-workspace-repo.md) | 設計書は作業場のリポジトリの docs/ に PR で置く | 提案 |
+| [0015](0015-infra-stage.md) | 企画スタジオの画面デザインの次にインフラの段階を置き、アーキテクトが受け持つ | 承認 |
+| [0016](0016-architecture-style-in-model-stage.md) | アーキテクチャスタイルは「アーキテクチャとデータ」の段階の最初に決める | 承認 |
+| [0017](0017-restore-from-exported-design-doc.md) | 書き出した設計書に復元用のデータを埋め込み、本部で読み込んでプロジェクトを戻す | 承認 |
+| [0018](0018-digital-agency-design-system.md) | 画面の見た目をデジタル庁デザインシステムに合わせる | 承認 |
+| [0019](0019-more-units-and-split-roles.md) | 島を 6 つまで置き、同じ役割を複数の島に持たせ、島ごとに受け持つリポジトリとモデルを決められるようにする | 承認 |
+| [0020](0020-confine-agents-to-worktree.md) | エージェントを作業場所に閉じ込め、push と PR は Kuramoto が外で行う | 提案 |
+| [0021](0021-review-blocks-only-on-acceptance-security-regression.md) | レビューで止めてよいのは、受け入れ条件・セキュリティ・この差分の不具合だけにする | 提案 |
+| [0022](0022-nonstop-team-takes-responsibility.md) | ノンストップで進め、チームで責任を持つ(merge もチームが行う) | 提案 |
+| [0023](0023-members-stay-at-max.md) | 島のメンバーは最大人数ぶんずっといる(応援を呼ばない・帰さない) | 提案 |
