@@ -60,8 +60,22 @@ function orderSql(pull: Pull): string {
 }
 
 /**
+ * 同じ場所を触るチケットのうち、もう開発に取りかかっていて、まだ終わっていないもの(ADR-0024)。
+ * これが残っている間は、このチケットの実装を始めない(先の方が merge されてから、新しい main の上で始める)。
+ * 「取りかかった」は、開発の起動がある・実装の仕事を取り出し済み、のどちらか。
+ */
+export const AREA_BUSY_SQL = `EXISTS (
+  SELECT 1 FROM ticket_areas a JOIN ticket_areas b ON b.area = a.area AND b.ticket_id <> a.ticket_id
+  JOIN tickets o ON o.id = b.ticket_id
+  WHERE a.ticket_id = %T AND o.stage NOT IN ('done','dropped')
+    AND (EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id = o.id AND r.role = 'dev')
+      OR EXISTS (SELECT 1 FROM messages mm WHERE mm.ticket_id = o.id AND mm.kind = 'implement' AND mm.status = 'claimed'))
+)`;
+
+/**
  * 受信箱から 1 通取り出す。取り出しは 1 文の UPDATE で行い、二重に取られないようにする。
  * 他の起動がまだ終わっていないチケット宛てのものは飛ばす(1 チケット 1 起動)。
+ * 同じ場所を触るチケットが先に進んでいれば、まだ取りかかっていないチケットの実装は始めない(ADR-0024)。
  */
 export function claimNext(p: Project, opts: { exclude?: number[]; planningOnly?: boolean; triage?: boolean } = {}): MessageRow | undefined {
   const pull = p.currentFormation().pull;
@@ -78,7 +92,8 @@ export function claimNext(p: Project, opts: { exclude?: number[]; planningOnly?:
          ${
            opts.triage
              ? `AND NOT (m.kind = 'implement' AND EXISTS (SELECT 1 FROM tickets t WHERE t.id = m.ticket_id AND t.triaged = 0))
-         AND NOT (m.kind = 'implement' AND EXISTS (SELECT 1 FROM ticket_deps d JOIN tickets b ON b.id = d.depends_on WHERE d.ticket_id = m.ticket_id AND b.stage NOT IN ('done','dropped')))`
+         AND NOT (m.kind = 'implement' AND EXISTS (SELECT 1 FROM ticket_deps d JOIN tickets b ON b.id = d.depends_on WHERE d.ticket_id = m.ticket_id AND b.stage NOT IN ('done','dropped')))
+         AND NOT (m.kind = 'implement' AND NOT EXISTS (SELECT 1 FROM runs r0 WHERE r0.ticket_id = m.ticket_id AND r0.role = 'dev') AND ${AREA_BUSY_SQL.replace("%T", "m.ticket_id")})`
              : ""
          }
          ${exclude.length ? `AND m.id NOT IN (${exclude.map(() => "?").join(",")})` : ""}

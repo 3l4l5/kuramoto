@@ -22,6 +22,12 @@ export function waitText(waitFor: number[], waitMerge: number[]): string {
   return [waitMerge.length ? `${nums(waitMerge)} の merge 待ち` : "", working.length ? `${nums(working)} の完了待ち` : ""].filter(Boolean).join("・");
 }
 
+/** 同じ場所を触るチケットの完了待ち(ADR-0024)。 */
+export function areaWaitText(w: { number: number; areas: string[] }[]): string {
+  const areas = [...new Set(w.flatMap((x) => x.areas))];
+  return `同じ場所(${areas.join("・")})を触る ${nums(w.map((x) => x.number))} の完了待ち`;
+}
+
 /** merge 待ちのチケットを merge すると動き出すもの。止めているものが無ければ null。 */
 export function unblockText(u: { now: number[]; later: number[] } | null): string | null {
   if (!u) return null;

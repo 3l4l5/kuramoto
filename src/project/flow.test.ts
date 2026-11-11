@@ -80,6 +80,20 @@ describe("仕事の流れ", () => {
     expect(metrics(p).completed).toBe(1);
   });
 
+  it("確認のやり直しで前の会話を引き継がない設定なら、確認役は新しく始める(開発の直しは引き継ぐ)", async () => {
+    const { p, d, harness } = setup(script({ verdicts: ["changes", "approve"] }));
+    p.setSetting("resume_checks", "0");
+    const t = createTicket(p, { title: "退会" });
+    await d.drain();
+
+    expect(p.ticket(t.id).stage).toBe("merge");
+    const [, , fix, recheck] = harness.calls;
+    expect(fix!.resumeSessionId).toBe("fake-session-1");
+    expect(recheck!.resumeSessionId).toBeUndefined();
+    // 前回の指摘は、引き継がなくてもプロンプトで渡る
+    expect(recheck!.prompt).toContain("前回の指摘");
+  });
+
   it("差し戻されたら持ち主が自分のセッションを再開して直す", async () => {
     const { p, d, harness } = setup(script({ verdicts: ["changes", "approve"] }));
     const t = createTicket(p, { title: "退会" });

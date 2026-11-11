@@ -11,7 +11,7 @@ import { usd } from "./format";
 
 const REPO_ROLES = ["フロント", "API", "インフラ", "その他"];
 const repoOk = (r: string) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r);
-type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean };
+type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean; resumeChecks: boolean };
 
 /** プロジェクトの設定: 名前とリポジトリ(足す・外す・役割を変える)。 */
 export function SettingsPage({ id }: { id: number }) {
@@ -23,6 +23,7 @@ export function SettingsPage({ id }: { id: number }) {
   const [total, setTotal] = useState<number | null>(null);
   const [nonstopOn, setNonstop] = useState(true);
   const [autoMergeOn, setAutoMerge] = useState(true);
+  const [resumeOn, setResume] = useState(true);
   const reset = () => {
     if (!data) return;
     setName(data.name);
@@ -30,6 +31,7 @@ export function SettingsPage({ id }: { id: number }) {
     setTotal(data.projectBudgetUsd);
     setNonstop(data.nonstop);
     setAutoMerge(data.autoMerge);
+    setResume(data.resumeChecks);
     setRepos(data.repos.map((x) => ({ r: x.fullName, role: x.role })));
   };
   useEffect(() => {
@@ -40,9 +42,9 @@ export function SettingsPage({ id }: { id: number }) {
   const set = (i: number, patch: Partial<{ r: string; role: string }>) => setRepos(repos.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const list = repos.filter((x) => x.r).map((x) => ({ fullName: x.r, role: x.role }));
   const budgetOk = totalOk(budget);
-  const changed = name !== data.name || JSON.stringify(list) !== JSON.stringify(data.repos) || budget !== data.ticketBudgetUsd || total !== data.projectBudgetUsd || nonstopOn !== data.nonstop || autoMergeOn !== data.autoMerge;
+  const changed = name !== data.name || JSON.stringify(list) !== JSON.stringify(data.repos) || budget !== data.ticketBudgetUsd || total !== data.projectBudgetUsd || nonstopOn !== data.nonstop || autoMergeOn !== data.autoMerge || resumeOn !== data.resumeChecks;
   const invalid = !name.trim() || !list.length || list.some((x) => !repoOk(x.fullName)) || !budgetOk || !totalOk(total);
-  const save = () => act(() => post(`/projects/${id}/settings`, { name: name.trim(), repos: list, ticketBudgetUsd: budget, projectBudgetUsd: total, nonstop: nonstopOn, autoMerge: autoMergeOn }), "プロジェクトの設定を保存しました");
+  const save = () => act(() => post(`/projects/${id}/settings`, { name: name.trim(), repos: list, ticketBudgetUsd: budget, projectBudgetUsd: total, nonstop: nonstopOn, autoMerge: autoMergeOn, resumeChecks: resumeOn }), "プロジェクトの設定を保存しました");
 
   return (
     <section aria-label="プロジェクトの設定">
@@ -98,6 +100,9 @@ export function SettingsPage({ id }: { id: number }) {
           </Checkbox>
           <Checkbox size="sm" checked={autoMergeOn} onChange={() => setAutoMerge(!autoMergeOn)}>
             チームが自動で merge する(確認がすべて済み、CI が通り、衝突が無いとき)
+          </Checkbox>
+          <Checkbox size="sm" checked={resumeOn} onChange={() => setResume(!resumeOn)}>
+            確認のやり直しで、前の会話を引き継ぐ(前回の見立てを覚えている。外すと毎回新しく読み直し、トークンを節約できる)
           </Checkbox>
           <div className="hint">
             ノンストップでも、取り消せない操作と、あなたにしかできないこと(秘密情報の登録など)はあなたに上がります。止めたいときは、全体の予算で歯止めを掛けてください。

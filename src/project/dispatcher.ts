@@ -7,7 +7,7 @@ import { claimNext, complete, fail, pendingCount, release, send, type MessageKin
 import type { MemberRow, Project, TicketRow } from "./project.js";
 import { promptFor, systemPromptFor } from "./prompts.js";
 import { toolsFor, type RunReport } from "./tools.js";
-import { advance, applyReport, decision, expireDecisions, holdTicket, nonstop, raiseToOwner, ticketBudgetUsd, ticketExhausted, ticketSpentUsd } from "./workflow.js";
+import { advance, applyReport, decision, expireDecisions, holdTicket, nonstop, raiseToOwner, resumeChecks, ticketBudgetUsd, ticketExhausted, ticketSpentUsd } from "./workflow.js";
 import { leftUsd, projectExhausted, projectLeftUsd, unitExhausted, unitLeftUsd } from "./budget.js";
 import { askLeadToUnstick, resetUnstick, unstickPrompt, unstickTools, type StuckPayload } from "./unstick.js";
 import type { Workspace } from "./workspace.js";
@@ -255,11 +255,15 @@ export class Dispatcher {
       return;
     }
 
-    const session = get<{ id: number; harness_session_id: string; branch: string | null }>(
-      p.db,
-      "SELECT id, harness_session_id, branch FROM sessions WHERE member_id = ? AND ticket_id = ? AND repo_id = ?",
-      [member.id, ticket.id, repo.id],
-    );
+    // 確認のやり直しで前の会話を引き継がない設定なら、セッションを使わず新しく始める
+    const fresh = ["review", "sec", "qa"].includes(role) && !resumeChecks(p);
+    const session = fresh
+      ? undefined
+      : get<{ id: number; harness_session_id: string; branch: string | null }>(
+          p.db,
+          "SELECT id, harness_session_id, branch FROM sessions WHERE member_id = ? AND ticket_id = ? AND repo_id = ?",
+          [member.id, ticket.id, repo.id],
+        );
     const branch = devBranch(p, ticket, repo.id);
 
     let runId: number;

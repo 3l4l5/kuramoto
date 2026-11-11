@@ -27,3 +27,4 @@ Kuramoto の設計で下した判断を 1 件ずつ残します。状態は「�
 | [0021](0021-review-blocks-only-on-acceptance-security-regression.md) | レビューで止めてよいのは、受け入れ条件・セキュリティ・この差分の不具合だけにする | 提案 |
 | [0022](0022-nonstop-team-takes-responsibility.md) | ノンストップで進め、チームで責任を持つ(merge もチームが行う) | 提案 |
 | [0023](0023-members-stay-at-max.md) | 島のメンバーは最大人数ぶんずっといる(応援を呼ばない・帰さない) | 提案 |
+| [0024](0024-serialize-tickets-touching-same-area.md) | 同じ場所を触るチケットは同時に開発しない | 提案 |

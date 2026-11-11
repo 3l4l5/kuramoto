@@ -17,6 +17,14 @@ export function nonstop(p: Project): boolean {
   return p.setting("nonstop") !== "0";
 }
 
+/**
+ * 確認(レビュー・セキュリティ・QA)のやり直しで、前の会話を引き継ぐか。設定 resume_checks が "0" なら毎回新しく始める。既定は引き継ぐ。
+ * 引き継ぐと前回の見立てを覚えているが、過去の会話を毎回読み直すぶんトークンを使う。
+ */
+export function resumeChecks(p: Project): boolean {
+  return p.setting("resume_checks") !== "0";
+}
+
 /** 止まった仕事を、止まったところから続けるためのメッセージ(宛先・種類・中身)。 */
 export type ResumeMessage = { toRole: Role; toMemberId: number | null; kind: MessageKind; payload: Record<string, unknown> };
 

@@ -199,4 +199,8 @@ UPDATE decisions SET lead_note = (
   ORDER BY e.id DESC LIMIT 1
 );
 `,
+  // 15: チケットが触りそうな場所(ファイル・機能のまとまり)。同じ場所を触るチケットは同時に開発しない(ADR-0024)
+  `
+CREATE TABLE IF NOT EXISTS ticket_areas (ticket_id INTEGER NOT NULL REFERENCES tickets(id), area TEXT NOT NULL, PRIMARY KEY (ticket_id, area));
+`,
 ];

@@ -395,6 +395,56 @@ describe("並列と交通整理", () => {
   });
 });
 
+describe("同じ場所を触るチケットは同時に開発しない(ADR-0024)", () => {
+  it("触る場所が重なるチケットは、先に取りかかった方が終わるまで着手しない。重ならないものは並列に進む", async () => {
+    const p = new Project(":memory:", new ManualClock());
+    p.addRepo("acme/shop", "API");
+    p.saveFormation({ pull: "down", units: [{ name: "開発の島", roles: ["dev"], maxMembers: 3, summonAt: 2, idleSec: 600 }] });
+    for (const t of ["CI で画面を撮る", "CI で CSP を確かめる", "メモ一覧"]) createTicket(p, { title: t });
+    const { areaWait, areasOf } = await import("./triage.js");
+    const { officeView } = await import("./office.js");
+
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const devTickets: string[] = [];
+    const harness = new FakeHarness(async (req, call) => {
+      if (req.tools.some((t) => t.name === "plan_work")) {
+        expect(req.prompt).toContain("areas");
+        await call("plan_work", {
+          items: [
+            { number: 1, areas: ["./scripts/ci-screenshots.mjs", ".github/workflows/"] },
+            { number: 2, areas: ["Scripts/CI-Screenshots.mjs"] },
+            { number: 3, areas: ["メモ一覧"] },
+          ],
+        });
+        return { finalText: "#1 と #2 は同じ場所なので順番に、#3 は並列にしたわ。" };
+      }
+      if (req.tools.some((t) => t.name === "submit_pr")) {
+        devTickets.push(req.prompt.match(/チケット #(\d+)/)![1]!);
+        await gate;
+      }
+      return {};
+    });
+    const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp"), triage: true, recheckMs: 10 });
+    const drained = d.drain({ concurrency: () => d.capacity(), maxRuns: 4 });
+    await new Promise((r) => setTimeout(r, 80));
+    // 島には 3 人いるが、#2 は #1 と同じファイルを触るので待つ
+    expect(devTickets.sort()).toEqual(["1", "3"]);
+    const [t1, t2] = p.tickets();
+    expect(areasOf(p, t1!.id)).toEqual([".github/workflows", "scripts/ci-screenshots.mjs"]);
+    expect(areaWait(p, t2!.id)).toEqual([{ number: 1, areas: ["scripts/ci-screenshots.mjs"] }]);
+    // 先に取りかかった #1 は #2 を待たない
+    expect(areaWait(p, t1!.id)).toEqual([]);
+    const q = officeView(p).units[0]!.queued;
+    expect(q).toEqual([{ number: 2, why: "同じ場所(scripts/ci-screenshots.mjs)を触る #1 の完了待ち" }]);
+    release();
+    await drained;
+    // #1 が merge されたら、#2 は待たない
+    p.setStage(t1!.id, "done");
+    expect(areaWait(p, t2!.id)).toEqual([]);
+  });
+});
+
 describe("リーダーの割り当ての権限", () => {
   it("リーダーは島とメンバーの今を見て、島を名指しして割り当てられる。手すきがいなければ、島の誰かが空いたら取る", async () => {
     const { teamStatus, triageTools, planWork } = await import("./triage.js");

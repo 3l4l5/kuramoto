@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { post, type ProjectView } from "./api";
-import { hhmm, kfmt, pct, stalledText, timeLeft, unblockText, usd, waitText } from "./format";
+import { TicketTree } from "./Tree";
+import { areaWaitText, hhmm, kfmt, pct, stalledText, timeLeft, unblockText, usd, waitText } from "./format";
 import { duration, go, useAct, useNow, useProject } from "./hooks";
 import { TeamDrawer, type Drawer } from "./Team";
 import { OfficeFloor } from "./Office";
@@ -74,21 +75,21 @@ function Office({ id, data }: { id: number; data: ProjectView }) {
 // ---- オフィスの床 / ボード ----
 
 function FloorOrBoard({ id, data }: { id: number; data: ProjectView }) {
-  const [view, setView] = useState<"floor" | "board">("floor");
+  const [view, setView] = useState<"floor" | "board" | "tree">("floor");
+  const VIEWS = { floor: "オフィス", board: "ボード", tree: "ツリー" } as const;
   return (
-    <section className="panel" aria-label={view === "floor" ? "オフィス" : "ボード"}>
+    <section className="panel" aria-label={VIEWS[view]}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <h2>{view === "floor" ? "オフィス" : "ボード"}</h2>
+        <h2>{VIEWS[view]}</h2>
         <div role="group" aria-label="オフィスの見方" style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
-          <Btn kind={view === "floor" ? "solid-fill" : "outline"} size="sm" aria-pressed={view === "floor"} onClick={() => setView("floor")}>
-            オフィス
-          </Btn>
-          <Btn kind={view === "board" ? "solid-fill" : "outline"} size="sm" aria-pressed={view === "board"} onClick={() => setView("board")}>
-            ボード
-          </Btn>
+          {(Object.keys(VIEWS) as (keyof typeof VIEWS)[]).map((v) => (
+            <Btn key={v} kind={view === v ? "solid-fill" : "outline"} size="sm" aria-pressed={view === v} onClick={() => setView(v)}>
+              {VIEWS[v]}
+            </Btn>
+          ))}
         </div>
       </div>
-      {view === "floor" ? <OfficeFloor id={id} /> : <Board d={data} />}
+      {view === "floor" ? <OfficeFloor id={id} /> : view === "board" ? <Board d={data} /> : <TicketTree d={data} />}
     </section>
   );
 }
@@ -359,6 +360,8 @@ function Board({ d }: { d: ProjectView }) {
                       <span className="who wait">リーダーが交通整理中</span>
                     ) : t.waitFor.length ? (
                       <span className="who wait">{waitText(t.waitFor, t.waitMerge)}</span>
+                    ) : t.waitArea.length ? (
+                      <span className="who wait">{areaWaitText(t.waitArea)}</span>
                     ) : (
                       t.owner &&
                       k !== "done" && (

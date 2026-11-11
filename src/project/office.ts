@@ -2,7 +2,7 @@ import { all, get } from "../db/sqlite.js";
 import { MODELS, ROLE_LABEL, WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
 import { ticketRepo } from "./dispatcher.js";
 import { autoMergeEnabled, suggestedMergeOrder } from "./merge.js";
-import { blockers, mergeBlockers, mergeUnblocks } from "./triage.js";
+import { areaWait, blockers, mergeBlockers, mergeUnblocks } from "./triage.js";
 import { unitExhausted, unitSpentUsd } from "./budget.js";
 import { runWork } from "./progress.js";
 import type { MemberRow, Project, TicketRow } from "./project.js";
@@ -70,9 +70,16 @@ export function officeView(p: Project) {
     if (!unit) continue;
     const triaged = get<{ triaged: number }>(p.db, "SELECT triaged FROM tickets WHERE id = ?", [t.id])?.triaged ?? 1;
     const before = m.kind === "implement" ? blockers(p, t.id) : [];
-    if (m.kind === "implement" && (!triaged || before.length)) {
+    const same = m.kind === "implement" ? areaWait(p, t.id) : [];
+    if (m.kind === "implement" && (!triaged || before.length || same.length)) {
       const merging = mergeBlockers(p, t.id);
-      const why = !triaged ? "交通整理待ち" : merging.length ? `#${merging.join("・#")} の merge 待ち` : `#${before.join("・#")} の完了待ち`;
+      const why = !triaged
+        ? "交通整理待ち"
+        : merging.length
+          ? `#${merging.join("・#")} の merge 待ち`
+          : before.length
+            ? `#${before.join("・#")} の完了待ち`
+            : `同じ場所(${[...new Set(same.flatMap((s) => s.areas))].join("・")})を触る #${same.map((s) => s.number).join("・#")} の完了待ち`;
       queued.set(unit.id, [...(queued.get(unit.id) ?? []), { number: t.number, why }]);
       continue;
     }

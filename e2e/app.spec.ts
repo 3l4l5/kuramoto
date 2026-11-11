@@ -353,6 +353,9 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     // 開発は「未着手」と「開発中」に分かれている
     await expect(page.getByRole("region", { name: "ボード" }).getByRole("heading", { name: /^未着手/ })).toBeVisible();
     await expect(page.getByRole("region", { name: "ボード" }).getByRole("heading", { name: /^開発中/ })).toBeVisible();
+    // ツリー: 待ちのつながりと、ほかのチケットが出る
+    await page.getByRole("group", { name: "オフィスの見方" }).getByRole("button", { name: "ツリー" }).click();
+    await expect(page.getByRole("region", { name: "ツリー" }).getByRole("region", { name: "ほかのチケット" })).toBeVisible();
     await page.getByRole("group", { name: "オフィスの見方" }).getByRole("button", { name: "オフィス" }).click();
     // 床にも島が 3 つ並ぶ
     await expect(page.getByRole("region", { name: "オフィスの床" }).getByRole("region", { name: /^島 / })).toHaveCount(3);

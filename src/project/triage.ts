@@ -9,6 +9,7 @@ import { ticketRepo } from "./dispatcher.js";
 /**
  * リーダーの交通整理。新しいチケットが入ると、リーダーが「どの順で・誰が」やるかを決める。
  * - 先に終わらせるべきチケット(土台・同じファイルを触るもの)を after に書くと、それが merge されるまで着手しない。
+ * - 触りそうな場所(areas)が同じチケットは同時に開発しない。先に取りかかった方が merge されてから次が始まる(ADR-0024)。
  * - 担当を名指しすると、その人が手すきになったときに取る。名指ししなければ手すきの人が取る(島のメンバーは最大人数ぶんずっといる)。
  * 交通整理が済むまで、そのチケットの実装は始めない。
  */
@@ -28,6 +29,40 @@ export function blockers(p: Project, ticketId: number): number[] {
     "SELECT t.number FROM ticket_deps d JOIN tickets t ON t.id = d.depends_on WHERE d.ticket_id = ? AND t.stage NOT IN ('done','dropped') ORDER BY t.number",
     [ticketId],
   ).map((r) => r.number);
+}
+
+/**
+ * 触る場所を正規化する。大文字小文字・前後の空白・先頭の ./ と末尾の / をそろえる。
+ */
+export function normalizeArea(a: string): string {
+  return a.trim().toLowerCase().replace(/^\.\//, "").replace(/\/+$/, "");
+}
+
+export function areasOf(p: Project, ticketId: number): string[] {
+  return all<{ area: string }>(p.db, "SELECT area FROM ticket_areas WHERE ticket_id = ? ORDER BY area", [ticketId]).map((r) => r.area);
+}
+
+/** 同じ場所を触っていて、先に進んでいるチケット(番号と、重なっている場所)。 */
+export function areaBlockers(p: Project, ticketId: number): { number: number; areas: string[] }[] {
+  const rows = all<{ number: number; area: string }>(
+    p.db,
+    `SELECT o.number, a.area FROM ticket_areas a JOIN ticket_areas b ON b.area = a.area AND b.ticket_id <> a.ticket_id
+     JOIN tickets o ON o.id = b.ticket_id
+     WHERE a.ticket_id = ? AND o.stage NOT IN ('done','dropped')
+       AND (EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id = o.id AND r.role = 'dev')
+         OR EXISTS (SELECT 1 FROM messages mm WHERE mm.ticket_id = o.id AND mm.kind = 'implement' AND mm.status = 'claimed'))
+     ORDER BY o.number, a.area`,
+    [ticketId],
+  );
+  const by = new Map<number, string[]>();
+  for (const r of rows) by.set(r.number, [...(by.get(r.number) ?? []), r.area]);
+  return [...by].map(([number, areas]) => ({ number, areas }));
+}
+
+/** まだ開発に取りかかっていないチケットが、同じ場所を触るチケットを待っているか(取りかかった後は待たない)。 */
+export function areaWait(p: Project, ticketId: number): { number: number; areas: string[] }[] {
+  if (get(p.db, "SELECT 1 AS x FROM runs WHERE ticket_id = ? AND role = 'dev'", [ticketId])) return [];
+  return areaBlockers(p, ticketId);
 }
 
 /** 先に終わらせるチケットのうち、merge 待ちの棚にあるもの(責任者が merge を押せば外れる)。 */
@@ -106,7 +141,8 @@ export function triagePrompt(p: Project, targets: TicketRow[]): string {
     .map((t) => {
       const owner = t.owner_member_id ? p.member(t.owner_member_id).name : "未着手";
       const after = dependsOn(p, t.id);
-      return `- #${t.number} ${t.title} [${t.stage}] 担当: ${owner}${after.length ? ` / 先に: #${after.join(", #")}` : ""}`;
+      const areas = areasOf(p, t.id);
+      return `- #${t.number} ${t.title} [${t.stage}] 担当: ${owner}${after.length ? ` / 先に: #${after.join(", #")}` : ""}${areas.length ? ` / 触る場所: ${areas.join(", ")}` : ""}`;
     })
     .join("\n");
   const islands = teamStatus(p);
@@ -124,6 +160,7 @@ ${islands}
 ## 決め方
 - できるだけ並列に進めます。島には最大人数ぶんのメンバーがずっといて、同時に実装できます。
 - 同時に進めると衝突するもの(土台・共通の設定・同じファイルや同じ表を触るもの)は、先に終わらせるチケットを after に書きます。after のチケットが merge されるまで、そのチケットには着手しません。並べすぎると遅くなるので、本当に必要なものだけにします。
+- 触りそうな場所を areas に書きます。ファイルのパス(例: scripts/ci-screenshots.mjs)か、機能のまとまり(例: 認証、メモ一覧)です。同じ場所を書いたチケットどうしは同時に開発せず、先に取りかかった方が merge されてから次が始まります(順番は自動で決まるので、after に書かなくて構いません)。迷ったら、主に書き換えるファイルを 1〜3 個書きます。package.json のような、どのチケットも少し触る共通のファイルは書きません(全部が一列に並んでしまうため)。
 - 担当(assignee)には、メンバーの名前か島の名前を書けます。島の名前を書くと、その島の手すきの人に割り当てます。メンバーを名指しすると、その人が手すきになるまで待ちます。省くと、受け持つ島の手すきの人が取ります。
 - 担当への申し送りがあれば note に書きます(チケットのメモになり、担当が読みます)。
 - 全部のチケットについて plan_work を 1 回で呼んでください。最後のテキストは、責任者への短い報告(並列に進めるもの・順番待ちにしたものとその理由)にします。`;
@@ -139,6 +176,7 @@ export function triageTools(p: Project): KuramotoTool[] {
           z.object({
             number: z.number().int().describe("チケット番号"),
             after: z.array(z.number().int()).default([]).describe("先に merge されている必要があるチケット番号"),
+            areas: z.array(z.string()).default([]).describe("触りそうな場所(ファイルのパスか機能のまとまり)。同じ場所を書いたチケットは同時に開発しない"),
             assignee: z.string().optional().describe("担当にしたい人の名前、または島の名前(島なら手すきの人に割り当てる)。省くと手すきの人が取る"),
             note: z.string().optional().describe("担当への申し送り"),
           }),
@@ -155,7 +193,7 @@ export function triageTools(p: Project): KuramotoTool[] {
   ];
 }
 
-export function planWork(p: Project, items: { number: number; after?: number[]; assignee?: string; note?: string }[]): string {
+export function planWork(p: Project, items: { number: number; after?: number[]; areas?: string[]; assignee?: string; note?: string }[]): string {
   const byNumber = new Map(p.tickets().map((t) => [t.number, t]));
   const problems: string[] = [];
   for (const it of items) {
@@ -187,6 +225,10 @@ export function planWork(p: Project, items: { number: number; after?: number[]; 
       const t = byNumber.get(it.number)!;
       run(p.db, "DELETE FROM ticket_deps WHERE ticket_id = ?", [t.id]);
       for (const n of it.after ?? []) run(p.db, "INSERT INTO ticket_deps (ticket_id, depends_on) VALUES (?, ?)", [t.id, byNumber.get(n)!.id]);
+      if (it.areas) {
+        run(p.db, "DELETE FROM ticket_areas WHERE ticket_id = ?", [t.id]);
+        for (const a of new Set(it.areas.map(normalizeArea).filter(Boolean))) run(p.db, "INSERT INTO ticket_areas (ticket_id, area) VALUES (?, ?)", [t.id, a]);
+      }
       let who = "手すきの人";
       if (it.assignee) {
         const devUnits = p.currentFormation().units.filter((u) => u.roles.includes("dev" as WorkRole));
@@ -206,7 +248,7 @@ export function planWork(p: Project, items: { number: number; after?: number[]; 
         } else if (!island) out.push(`${it.assignee} は開発の島にいません。#${it.number} は手すきの人が取ります`);
       }
       if (it.note?.trim()) p.addNote(t.id, it.note, "lead");
-      p.event(p.fixedMember("lead").name, "ticket_planned", t.id, { after: it.after ?? [], assignee: who });
+      p.event(p.fixedMember("lead").name, "ticket_planned", t.id, { after: it.after ?? [], areas: areasOf(p, t.id), assignee: who });
     }
   });
   return [`${items.length} 件を決めました。`, ...out].join("\n");

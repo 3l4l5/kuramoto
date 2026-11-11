@@ -22,11 +22,11 @@ import { officeView } from "./project/office.js";
 import { memberView, unitView, type MemberView, type UnitView } from "./project/people.js";
 import { ticketView } from "./project/ticket.js";
 import { leadChatView, sayToLead } from "./project/leadchat.js";
-import { blockers, dependsOn, mergeBlockers, mergeUnblocks } from "./project/triage.js";
+import { areaWait, blockers, dependsOn, mergeBlockers, mergeUnblocks } from "./project/triage.js";
 import { budgetView, projectBudgetUsd, projectSpentUsd, setProjectBudget } from "./project/budget.js";
 import type { Project } from "./project/project.js";
 import { GitWorkspace, type Workspace } from "./project/workspace.js";
-import { answerDecision, createTicket, defaultTicketBudgetUsd, nonstop, pendingOwnerDecisions, reopenTicket, setDefaultTicketBudget, setTicketBudget, type DecisionOption } from "./project/workflow.js";
+import { answerDecision, createTicket, defaultTicketBudgetUsd, nonstop, pendingOwnerDecisions, reopenTicket, resumeChecks, setDefaultTicketBudget, setTicketBudget, type DecisionOption } from "./project/workflow.js";
 import {
   addComment,
   advance,
@@ -311,6 +311,7 @@ export class KuramotoServer {
         projectSpentUsd: projectSpentUsd(p),
         nonstop: nonstop(p),
         autoMerge: autoMergeEnabled(p),
+        resumeChecks: resumeChecks(p),
       };
     if (b === "settings" && method === "POST") {
       const budget = body.ticketBudgetUsd === undefined ? undefined : body.ticketBudgetUsd === null ? null : Number(body.ticketBudgetUsd);
@@ -323,6 +324,7 @@ export class KuramotoServer {
       if (total !== undefined) setProjectBudget(p, total);
       if (typeof body.nonstop === "boolean") p.setSetting("nonstop", body.nonstop ? "1" : "0");
       if (typeof body.autoMerge === "boolean") p.setSetting("auto_merge", body.autoMerge ? "1" : "0");
+      if (typeof body.resumeChecks === "boolean") p.setSetting("resume_checks", body.resumeChecks ? "1" : "0");
       this.poke(id);
       return { name: rec.name };
     }
@@ -445,6 +447,8 @@ export class KuramotoServer {
         // リーダーの交通整理: まだなら triaging、先に終わらせるチケットが残っていれば waitFor
         triaging: !(get<{ triaged: number }>(p.db, "SELECT triaged FROM tickets WHERE id = ?", [t.id])?.triaged ?? 1),
         waitFor: blockers(p, t.id),
+        // 同じ場所を触るチケットが先に進んでいて、まだ取りかかれないもの(ADR-0024)
+        waitArea: areaWait(p, t.id),
         // waitFor のうち merge 待ちの棚にあるもの(責任者が merge を押せば外れる)
         waitMerge: mergeBlockers(p, t.id),
         // merge 待ちのとき: merge すると動き出すチケット
