@@ -21,7 +21,7 @@ import { canResume, noteSession } from "./sessions.js";
 import { runTeamCi, teamCiEnabled, type CommandRunner } from "./team-ci.js";
 import { confinementFor } from "./confine.js";
 import { afterPlanningRun, planningPrompt, planningSystemPrompt, planningTools, type PlanPayload } from "./planning-agent.js";
-import { checkStudioLoop, say, studioPaused } from "./planning.js";
+import { checkStudioLoop, onlyQuestions, say, studioPaused } from "./planning.js";
 import { progressRecorder } from "./progress.js";
 import { giveUpTriage, markTriaged, requestTriage, triagePrompt, triageTools, untriaged } from "./triage.js";
 import { LEAD_CHAT_SYSTEM, leadChatPrompt, leadChatTools, leadReply, markOwnerMessagesRead, unreadOwnerMessages } from "./leadchat.js";
@@ -517,7 +517,8 @@ export class Dispatcher {
         model: policy.model,
         effort: policy.effort,
         ...(resume ? { resumeSessionId: resume } : {}),
-        tools: planningTools(p, payload.stage),
+        // 質問だけなら、書き換えの道具を渡さない(答えるだけ。合意も外れない)
+        tools: onlyQuestions(payload.events) ? [] : planningTools(p, payload.stage),
         onProgress: progressRecorder(p, runId),
         allowedTools: ["Read", "Glob", "Grep"],
         maxBudgetUsd: this.runBudget(),

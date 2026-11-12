@@ -850,3 +850,7 @@ body { background: var(--color-neutral-white); }
 .designcompare figcaption { font-size: 12px; color: var(--muted); }
 .designcompare img { width: 100%; max-height: 360px; object-fit: contain; object-position: top; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
 @media (max-width: 640px) { .designcompare .dc-imgs { grid-template-columns: 1fr; } }
+
+/* 企画スタジオのチャット: 質問か、直してほしいか */
+.askmode { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 14px 6px; font-size: 12.5px; }
+.askmode label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }

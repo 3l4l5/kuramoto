@@ -65,3 +65,28 @@ describe("企画スタジオを止める(ADR-0031)", () => {
     expect(await d.dispatchOnce()).toBe(false);
   });
 });
+
+describe("企画スタジオで質問する", () => {
+  it("質問には、中身を変えずに答えだけを返す(書き換えの道具を渡さない。合意も外れない)", async () => {
+    const { chat, upsertRequirement, agree, stageRow, messages } = await import("./planning.js");
+    const { p, d, harness } = setup(async (req) => ({ finalText: req.tools.length ? "直しました" : "R1 は、メモを新しい順に並べるためです" }));
+    p.setSetting("plan_started:req", p.now()); // 要件の段階はもう始まっている
+    upsertRequirement(p, { name: "一覧", acceptance: "新しい順に並ぶ" });
+    agree(p, "req");
+    chat(p, "req", "R1 はなぜ新しい順なの?", "question");
+    await d.drain();
+    // 合意で次の段階(フロー)の担当も起きるので、要件の段階の起動だけを見る
+    const req = () => harness.calls.filter((c) => c.prompt.includes("段階「要件」"));
+    expect(req()).toHaveLength(1);
+    expect(req()[0]!.tools).toEqual([]);
+    expect(req()[0]!.prompt).toContain("責任者の質問: R1 はなぜ新しい順なの?");
+    expect(req()[0]!.prompt).toContain("企画の中身は変えません");
+    expect(stageRow(p, "req").agreed_version).toBe(stageRow(p, "req").version);
+    expect(messages(p, "req").map((m) => m.body)).toEqual(expect.arrayContaining(["(質問)R1 はなぜ新しい順なの?", "R1 は、メモを新しい順に並べるためです"]));
+
+    // 直してほしいときは、今までどおり道具を渡す
+    chat(p, "req", "古い順にして");
+    await d.drain();
+    expect(req()[1]!.tools.length).toBeGreaterThan(0);
+  });
+});

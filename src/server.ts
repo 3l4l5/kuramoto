@@ -472,7 +472,7 @@ export class KuramotoServer {
       case "chat": {
         const text = String(body.text ?? "").trim();
         if (!text) throw new Error("メッセージがありません");
-        chat(p, body.stage === "handoff" ? "handoff" : stage(body.stage), text);
+        chat(p, body.stage === "handoff" ? "handoff" : stage(body.stage), text, body.kind === "question" ? "question" : "chat");
         return { ok: true };
       }
       case "open-items":

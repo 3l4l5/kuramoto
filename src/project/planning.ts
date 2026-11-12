@@ -286,11 +286,20 @@ export function say(p: Project, stage: Stage | "handoff", who: string, body: str
   run(p.db, "INSERT INTO plan_messages (stage, who, body, at) VALUES (?, ?, ?, ?)", [stage, who, body, p.now()]);
 }
 
-export function chat(p: Project, stage: Stage | "handoff", text: string): void {
+/**
+ * 責任者が担当に話す。question なら、中身は変えずに答えだけを返してもらう(書き換えの道具を渡さない)。
+ * そうでなければ、頼まれたことを企画の中身に反映して返事をする。
+ */
+export function chat(p: Project, stage: Stage | "handoff", text: string, kind: "chat" | "question" = "chat"): void {
   tx(p.db, () => {
-    say(p, stage, "me", text);
-    sendPlan(p, stage, { type: "chat", text });
+    say(p, stage, "me", kind === "question" ? `(質問)${text}` : text);
+    sendPlan(p, stage, { type: kind, text });
   });
+}
+
+/** 依頼が質問だけか(書き換えの道具を渡さず、答えだけを返してもらう)。 */
+export function onlyQuestions(events: { type: string }[]): boolean {
+  return events.length > 0 && events.every((e) => e.type === "question");
 }
 
 export function messages(p: Project, stage?: string): PlanMessage[] {

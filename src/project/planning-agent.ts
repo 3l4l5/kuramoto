@@ -32,6 +32,7 @@ import {
   type Infra,
   type Stage,
   messages,
+  onlyQuestions,
   designSystem,
   type DesignSystem,
 } from "./planning.js";
@@ -479,7 +480,8 @@ function snapshot(p: Project, stage: Stage | "handoff"): string {
 export function planningPrompt(p: Project, payload: PlanPayload, opts: { fresh?: boolean } = {}): string {
   const where = payload.stage === "handoff" ? "チームへの引き渡し" : `段階「${STAGE_LABEL[payload.stage]}」(${payload.stage})`;
   const name = get<{ value: string }>(p.db, "SELECT value FROM settings WHERE key = 'project_name'")?.value ?? "";
-  const events = payload.events.map((e) => (e.type === "chat" ? `責任者: ${e.text}` : `[${e.type}] ${e.text}`)).join("\n");
+  const events = payload.events.map((e) => (e.type === "chat" ? `責任者: ${e.text}` : e.type === "question" ? `責任者の質問: ${e.text}` : `[${e.type}] ${e.text}`)).join("\n");
+  const ask = onlyQuestions(payload.events);
   return `プロジェクト「${name}」の企画スタジオ、${where}です。
 
 ## 今の企画の中身
@@ -488,7 +490,11 @@ ${snapshot(p, payload.stage)}
 ${opts.fresh ? `## この段階のこれまでの会話(最近の分。前の起動の会話は引き継いでいないので、ここで流れをつかむ)\n${recentPlanChat(p, payload.stage)}\n\n` : ""}## 起きたこと
 ${events}
 
-道具で企画の中身を更新し、最後に責任者への返事を短く書いてください。`;
+${
+    ask
+      ? "責任者からの質問です。企画の中身は変えません(書き換えの道具はありません)。上の中身と、必要なら作業場所のリポジトリを読んで、質問に答えてください。理由や前提、ほかの案と比べてどうかも、分かる範囲で書きます。直したほうがよいと思うことがあれば、直さずに「こう直せます」と提案だけ書きます。最後のテキストがそのまま答えになります。"
+      : "道具で企画の中身を更新し、最後に責任者への返事を短く書いてください。"
+  }`;
 }
 
 /** その段階の最近の会話(古い順)。 */

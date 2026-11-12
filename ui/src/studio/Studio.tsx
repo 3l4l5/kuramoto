@@ -104,6 +104,8 @@ function Gates({ d, pid, stage, select }: { d: StudioView; pid: number; stage: s
 function Chat({ d, pid, stage }: { d: StudioView; pid: number; stage: string }) {
   const act = useAct();
   const [text, setText] = useState("");
+  // 質問(中身は変えずに答えてもらう)か、直してほしい・相談(中身に反映してもらう)か
+  const [kind, setKind] = useState<"question" | "chat">("question");
   const list = d.messages.filter((m) => m.stage === stage);
   const work = d.work[stage];
   const box = useRef<HTMLDivElement>(null);
@@ -115,7 +117,7 @@ function Chat({ d, pid, stage }: { d: StudioView; pid: number; stage: string }) 
     const t = text.trim();
     if (!t) return;
     setText("");
-    await act(() => post(`/projects/${pid}/studio/chat`, { stage, text: t }));
+    await act(() => post(`/projects/${pid}/studio/chat`, { stage, text: t, kind }));
   };
   return (
     <section className="strio" aria-label="企画の 3 人との会話">
@@ -143,14 +145,25 @@ function Chat({ d, pid, stage }: { d: StudioView; pid: number; stage: string }) 
         {d.progress[stage] && <RecentRuns p={d.progress[stage]!} limit={d.loopLimit} />}
         {!list.length && !work && <div style={{ color: "var(--muted)", fontSize: 12 }}>{stage === "handoff" ? "" : "まだ会話はありません。"}</div>}
       </div>
-      <div id="st-in-hint" className="hint compose-hint">{stage === "handoff" ? `${d.cast.lead}(リーダー)に話す` : `${ownerOf(d.cast, stage)}に話す(この段階について)`}</div>
+      <div id="st-in-hint" className="hint compose-hint">
+        {stage === "handoff" ? `${d.cast.lead}(リーダー)に` : `${ownerOf(d.cast, stage)}に(この段階について)`}
+        {kind === "question" ? "質問する。中身は変えずに答えます" : "直してほしいこと・相談を伝える。中身に反映します"}
+      </div>
+      <div className="askmode" role="radiogroup" aria-label="送り方">
+        <label>
+          <input type="radio" name="st-kind" checked={kind === "question"} onChange={() => setKind("question")} /> 質問する(中身は変えない)
+        </label>
+        <label>
+          <input type="radio" name="st-kind" checked={kind === "chat"} onChange={() => setKind("chat")} /> 直してほしい・相談する
+        </label>
+      </div>
       <form className="compose" onSubmit={send}>
         <label htmlFor="st-in" className="sr">
           メッセージ
         </label>
         <Input id="st-in" type="text" blockSize="md" className="grow" autoComplete="off" aria-describedby="st-in-hint" value={text} onChange={(e) => setText(e.target.value)} />
         <Btn kind="solid-fill" type="submit">
-          送る
+          {kind === "question" ? "質問する" : "送る"}
         </Btn>
       </form>
     </section>
