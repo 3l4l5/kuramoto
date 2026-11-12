@@ -7,6 +7,7 @@ import { teamStatus, triageTools } from "./triage.js";
 import type { Project, TicketRow } from "./project.js";
 import { dropTicketTool } from "./patrol.js";
 import { pendingOwnerDecisions, createTicket } from "./workflow.js";
+import { designSystem, requirements, screens } from "./planning.js";
 
 /**
  * 責任者とリーダーのチャット(非同期)。書いたメッセージは受信箱を通してリーダーに届き、リーダーが手すきのときに返事をする。
@@ -57,6 +58,13 @@ export function unreadOwnerMessages(p: Project): LeadMessage[] {
   return msgs.slice(lastLead + 1).filter((m) => m.who === "owner");
 }
 
+/** 企画で合意した画面とデザインシステムの有無(リーダーが画面のチケットにひも付けるため)。 */
+function planScreens(p: Project): string {
+  const list = [...screens(p)].map(([key, s]) => `- ${key}: ${s.name}(${s.device === "phone" ? "スマホ" : "パソコン"}、要件 ${s.requirements.join("・") || "—"}${s.agreed ? "、合意済み" : "、まだ合意していない"})`);
+  const ds = designSystem(p);
+  return `${list.join("\n") || "(なし)"}\nデザインシステム: ${ds ? `あり(トークン ${ds.tokens.length}・部品 ${ds.components.length})` : "まだありません"}`;
+}
+
 /** 返事をするメッセージより前の、最近のやりとり(責任者とリーダーの会話。報告は短く)。 */
 function recentChat(p: Project, unread: LeadMessage[]): string {
   const first = unread[0]?.id ?? Infinity;
@@ -87,6 +95,9 @@ ${teamStatus(p)}
 ## 責任者の答えを待っている判断
 ${decisions}
 
+## 企画の画面(画面を作る・直すチケットは、create_ticket の screens にこの key を書く)
+${planScreens(p)}
+
 ## 最近のやりとり(古い順。前の起動の会話は引き継がないので、ここで流れをつかむ)
 ${recentChat(p, unread)}
 
@@ -109,9 +120,34 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
     dropTicketTool(p, ws.closePrs),
     defineTool({
       name: "create_ticket",
-      description: "責任者に頼まれた作業を、チケットとして開発の受信箱に入れる。",
-      input: { title: z.string(), body: z.string().describe("やること・受け入れ条件") },
-      handler: (a) => `#${createTicket(p, { title: a.title, body: a.body }).number} を作りました。`,
+      description:
+        "責任者に頼まれた作業を、チケットとして開発の受信箱に入れる。画面を作る・直すチケットは screens に企画の画面の key を書く(担当に試作とお手本の画像が渡り、画像で見比べる)。デザインシステムの土台(トークン・共通の部品・カタログ /_design)を作るチケットは design_system: true にする。",
+      input: {
+        title: z.string(),
+        body: z.string().describe("やること・受け入れ条件"),
+        screens: z.array(z.string()).optional().describe("ひも付ける企画の画面の key(下の「企画の画面」から)"),
+        requirement: z.string().optional().describe("ひも付ける要件の code(例: R1)"),
+        design_system: z.boolean().optional().describe("デザインシステムの土台のチケットなら true"),
+        after: z.array(z.number().int()).optional().describe("先に merge されている必要があるチケットの番号(画面のチケットは、デザインシステムの土台のチケットを書く)"),
+      },
+      handler: (a) => {
+        const known = new Set(screens(p).keys());
+        const bad = (a.screens ?? []).filter((k) => !known.has(k));
+        if (bad.length) return `画面 ${bad.join("・")} は企画にありません。使えるのは ${[...known].join("・") || "(なし)"}`;
+        const item = a.requirement ? requirements(p).find((r) => r.code === a.requirement) : undefined;
+        if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
+        const t = createTicket(p, {
+          title: a.title,
+          body: a.body,
+          ...(item ? { requirementItemId: item.id } : {}),
+          planRefs: { ...(a.screens?.length ? { screens: a.screens } : {}), ...(a.requirement ? { requirement: a.requirement } : {}), ...(a.design_system ? { designSystem: true } : {}) },
+        });
+        for (const n of a.after ?? []) {
+          const dep = p.tickets().find((x) => x.number === n);
+          if (dep) run(p.db, "INSERT OR IGNORE INTO ticket_deps (ticket_id, depends_on) VALUES (?, ?)", [t.id, dep.id]);
+        }
+        return `#${t.number} を作りました。`;
+      },
     }),
     defineTool({
       name: "add_ticket_note",
