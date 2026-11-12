@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { Role } from "../domain/roles.js";
 
@@ -65,6 +65,8 @@ export interface Workspace {
   prepareCheck?(req: { repo: string; ticketNumber: number; branch: string }): Promise<CheckWorkspace>;
   /** origin の既定のブランチの今のコミット(merge の直前に、チームの CI を流し直すかを決める)。 */
   baseSha?(repo: string): Promise<string>;
+  /** 画面の試作を作業場所に置く(ADR-0033)。git には入れない(info/exclude に足す)。 */
+  writeDesign?(path: string, gitDir: string, files: { file: string; html: string }[]): Promise<void>;
 }
 
 export type CheckWorkspace = PreparedWorkspace & { sha: string; baseSha: string; conflict?: string };
@@ -194,6 +196,21 @@ export class GitWorkspace implements Workspace {
     return { path: realpathSync(path), base, gitDir: realpathSync(join(clone, ".git")), sha, baseSha, ...(merged ? { conflict: merged } : {}) };
   }
 
+  async writeDesign(path: string, gitDir: string, files: { file: string; html: string }[]): Promise<void> {
+    for (const f of files) {
+      const to = join(path, f.file);
+      mkdirSync(dirname(to), { recursive: true });
+      writeFileSync(to, f.html);
+    }
+    // 試作はコミットしない。worktree は元の clone の info/exclude を共有する
+    const exclude = join(gitDir, "info", "exclude");
+    const cur = existsSync(exclude) ? readFileSync(exclude, "utf8") : "";
+    if (!cur.split("\n").includes(".kuramoto/")) {
+      mkdirSync(dirname(exclude), { recursive: true });
+      writeFileSync(exclude, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}.kuramoto/\n`);
+    }
+  }
+
   async baseSha(repo: string): Promise<string> {
     const clone = this.clonePath(repo);
     const base = await defaultBranch(clone);
@@ -249,6 +266,11 @@ export class StaticWorkspace implements Workspace {
   }
   async checkGithub(): Promise<string | undefined> {
     return this.opts.github?.();
+  }
+  /** テスト用: 置いた試作を覚えるだけ。 */
+  readonly designs: { file: string; html: string }[] = [];
+  async writeDesign(_path: string, _gitDir: string, files: { file: string; html: string }[]): Promise<void> {
+    this.designs.push(...files);
   }
   async prepare(): Promise<PreparedWorkspace> {
     return { path: this.path, base: "main", gitDir: join(this.path, ".git") };

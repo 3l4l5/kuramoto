@@ -13,6 +13,7 @@ import { askLeadToUnstick, resetUnstick, unstickPrompt, unstickTools, type Stuck
 import type { Workspace } from "./workspace.js";
 import type { GitHub } from "../github/github.js";
 import { ciTools } from "./ci-tools.js";
+import { designFor, designPrompt } from "./design.js";
 import { canResume, noteSession } from "./sessions.js";
 import { runTeamCi, teamCiEnabled, type CommandRunner } from "./team-ci.js";
 import { confinementFor } from "./confine.js";
@@ -345,11 +346,14 @@ export class Dispatcher {
     let error: string | undefined;
     try {
       const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: ticket.number, role, memberName: member.name, branch });
+      // 画面のデザイン: 企画で合意した試作を作業場所に置き、役割ごとの使い方を指示に足す(ADR-0033)
+      const designs = ["dev", "review", "qa"].includes(role) ? designFor(p, ticket) : [];
+      if (designs.length) await this.deps.workspace.writeDesign?.(ws.path, ws.gitDir, designs);
       result = await harness.run({
         cwd: ws.path,
         confine: confinementFor(p, ws, role),
         systemPrompt: systemPromptFor(p, role, policy, { name: use.unitName, focus: use.unitFocus }, member.name),
-        prompt: promptFor(p, msg, ticket, { branch, base: ws.base, repo: repo.full_name, ...prNumber(p, ticket.id, repo.id) }),
+        prompt: promptFor(p, msg, ticket, { branch, base: ws.base, repo: repo.full_name, ...prNumber(p, ticket.id, repo.id) }) + designPrompt(designs, role),
         model: use.model,
         effort: use.effort,
         ...(resumeId ? { resumeSessionId: resumeId } : {}),
