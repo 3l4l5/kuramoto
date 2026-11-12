@@ -16,7 +16,7 @@ import { ciTools } from "./ci-tools.js";
 import { runTeamCi, teamCiEnabled, type CommandRunner } from "./team-ci.js";
 import { confinementFor } from "./confine.js";
 import { afterPlanningRun, planningPrompt, planningSystemPrompt, planningTools, type PlanPayload } from "./planning-agent.js";
-import { say } from "./planning.js";
+import { checkStudioLoop, say, studioPaused } from "./planning.js";
 import { progressRecorder } from "./progress.js";
 import { giveUpTriage, markTriaged, requestTriage, triagePrompt, triageTools, untriaged } from "./triage.js";
 import { LEAD_CHAT_SYSTEM, leadChatPrompt, leadChatTools, leadReply } from "./leadchat.js";
@@ -62,6 +62,8 @@ export class Dispatcher {
   /** 期限切れの判断を片付け、島の席を最大人数ぶん埋めておく(メンバーはずっといる。ADR-0023)。 */
   housekeep(): void {
     expireDecisions(this.p);
+    // 企画スタジオが同じところを回っていたら止める
+    if (checkStudioLoop(this.p)) this.stopPlanning();
     // チームの CI を使うなら、GitHub Actions の CI のためのチケットは片付ける(ADR-0028)
     if (teamCiEnabled(this.p)) dropGithubCiTickets(this.p);
     // 始業中なら、新しいチケットの交通整理をリーダーに頼む
@@ -81,7 +83,8 @@ export class Dispatcher {
     for (;;) {
       // GitHub に入れない間は、チケットの仕事を取らない(企画・チャットなど、チケットを持たない仕事だけ動かす)
       const planningOnly = (this.deps.ticketsAllowed ? !this.deps.ticketsAllowed() : false) || !!githubDown(this.p);
-      const msg = claimNext(this.p, { exclude: released, planningOnly, triage: !!this.deps.triage });
+      // 企画スタジオを止めている間は、企画の担当を起こさない
+      const msg = claimNext(this.p, { exclude: released, planningOnly, triage: !!this.deps.triage, noPlan: !!studioPaused(this.p) });
       if (!msg) return null;
       const job = this.assign(msg);
       if (job === "wait") {
@@ -113,6 +116,15 @@ export class Dispatcher {
     const error = await probe.call(this.deps.workspace, repo.full_name).catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
     if (error) githubStillDown(this.p, error);
     else markGithubUp(this.p);
+  }
+
+  /** 動いている企画の起動(止めるときに使う)。 */
+  private readonly planRuns = new Map<number, AbortController>();
+
+  /** 動いている企画の担当の起動を、その場で止める(企画スタジオを止めたとき)。止めた依頼は、再開したら取り直す。 */
+  stopPlanning(): number {
+    for (const a of this.planRuns.values()) a.abort(new Error("企画スタジオを止めました"));
+    return this.planRuns.size;
   }
 
   private wakers: (() => void)[] = [];
@@ -459,6 +471,8 @@ export class Dispatcher {
 
     let result: HarnessResult | undefined;
     let error: string | undefined;
+    const abort = new AbortController();
+    this.planRuns.set(runId, abort);
     try {
       const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: 0, role, memberName: member.name, branch: "" });
       result = await harness.run({
@@ -473,10 +487,21 @@ export class Dispatcher {
         onProgress: progressRecorder(p, runId),
         allowedTools: ["Read", "Glob", "Grep"],
         maxBudgetUsd: this.runBudget(),
+        signal: abort.signal,
       });
       if (result.status !== "ok" && result.status !== "budget") error = result.error ?? "ハーネスがエラーで終わりました";
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
+    } finally {
+      this.planRuns.delete(runId);
+    }
+    // 企画スタジオを止めたので途中でやめた。失敗に数えず、再開したら同じ依頼を取り直す
+    if (abort.signal.aborted) {
+      tx(p.db, () => {
+        run(p.db, "UPDATE runs SET ended_at = ?, outcome = 'cancelled', error = ?, cost_usd = ? WHERE id = ?", [p.now(), "企画スタジオを止めたので、途中でやめました", result?.usage?.costUsd ?? 0, runId]);
+        release(p, msg.id, 0);
+      });
+      return;
     }
 
     tx(p.db, () => {

@@ -531,6 +531,77 @@ export function ownerPlanItems(p: Project): { stage: Stage; text: string }[] {
   return out;
 }
 
+// ---- 止める・回り続けていないか ----
+
+/** 企画スタジオを止めているか。止めている間は、企画の担当を起こさない(オフィスとは別)。 */
+export function studioPaused(p: Project): { at: string; reason: string } | null {
+  const v = p.setting("plan_paused");
+  return v ? (JSON.parse(v) as { at: string; reason: string }) : null;
+}
+
+/** 企画スタジオを止める・再開する。再開すると、止めたところ(待っている依頼)から続ける。 */
+export function setStudioPaused(p: Project, paused: boolean, reason = "あなたが止めました"): void {
+  if (paused) {
+    if (studioPaused(p)) return;
+    p.setSetting("plan_paused", JSON.stringify({ at: p.now(), reason }));
+    p.event("owner", "studio_paused", null, { reason });
+    say(p, currentStage(p), "system", `企画スタジオを止めました(${reason})。「再開する」で続きから動きます。`);
+  } else {
+    if (!studioPaused(p)) return;
+    p.setSetting("plan_paused", "");
+    p.event("owner", "studio_resumed", null, {});
+    say(p, currentStage(p), "system", "企画スタジオを再開しました。止めたところから続けます。");
+  }
+}
+
+/** 今動いている(か、次に動く)段階。会話の知らせを置く場所。 */
+function currentStage(p: Project): Stage | "handoff" {
+  if (p.setting("plan_handoff_requested_at")) return "handoff";
+  return STAGES.find((s) => stageStarted(p, s) && !stageDone(p, s)) ?? "req";
+}
+
+/**
+ * 回り続けていないか。同じ段階で、直近 1 時間に担当を plan_loop_runs 回(既定 10)より多く起こしていたら、
+ * 企画スタジオを止めて知らせる(トークンを使い続けないように)。
+ * @returns 止めたら、その段階
+ */
+export function checkStudioLoop(p: Project): string | null {
+  if (studioPaused(p)) return null;
+  const limit = p.settingNumber("plan_loop_runs", 10);
+  const since = new Date(p.clock.now().getTime() - 3_600_000).toISOString();
+  const hot = get<{ stage: string; n: number }>(
+    p.db,
+    `SELECT json_extract(m.payload, '$.stage') AS stage, COUNT(*) AS n FROM runs r JOIN messages m ON m.id = r.message_id
+     WHERE m.kind = 'plan' AND r.started_at >= ? GROUP BY stage ORDER BY n DESC LIMIT 1`,
+    [since],
+  );
+  if (!hot || hot.n <= limit) return null;
+  const label = hot.stage === "handoff" ? "チームへの引き渡し" : (STAGE_LABEL[hot.stage as Stage] ?? hot.stage);
+  setStudioPaused(p, true, `「${label}」で、この 1 時間に担当を ${hot.n} 回起こしていて、同じところを回っているようです。会話と途中経過を見て、指示を足してから再開してください`);
+  return hot.stage;
+}
+
+/** 段階ごとの進み具合: 起動の回数(通算・直近 1 時間)・金額・エラー・最近の起動。 */
+export function studioProgress(p: Project) {
+  const since = p.clock.now().getTime() - 3_600_000;
+  const rows = all<{ stage: string; id: number; started_at: string; ended_at: string | null; outcome: string | null; error: string | null; cost: number | null; member: string; attempts: number }>(
+    p.db,
+    `SELECT json_extract(m.payload, '$.stage') AS stage, r.id, r.started_at, r.ended_at, r.outcome, r.error, r.cost_usd AS cost, mb.name AS member, m.attempts
+     FROM runs r JOIN messages m ON m.id = r.message_id JOIN members mb ON mb.id = r.member_id WHERE m.kind = 'plan' ORDER BY r.id`,
+  );
+  const out: Record<string, { runs: number; lastHour: number; costUsd: number; errors: number; recent: { at: string; member: string; ms: number | null; outcome: string; error: string | null }[] }> = {};
+  for (const r of rows) {
+    const o = (out[r.stage] ??= { runs: 0, lastHour: 0, costUsd: 0, errors: 0, recent: [] });
+    o.runs++;
+    if (Date.parse(r.started_at) >= since) o.lastHour++;
+    o.costUsd += r.cost ?? 0;
+    if (r.outcome === "error") o.errors++;
+    o.recent.push({ at: r.started_at, member: r.member, ms: r.ended_at ? Date.parse(r.ended_at) - Date.parse(r.started_at) : null, outcome: r.ended_at ? (r.outcome ?? "?") : "running", error: r.error ? r.error.slice(0, 200) : null });
+  }
+  for (const o of Object.values(out)) o.recent = o.recent.slice(-5).reverse();
+  return out;
+}
+
 // ---- 画面に出す全体 ----
 
 export function studioView(p: Project) {
@@ -556,6 +627,11 @@ export function studioView(p: Project) {
     }),
     handoff: { blocker: handoffBlocker(p), requested: !!p.setting("plan_handoff_requested_at"), handed: handedOff(p), thinking: thinking.has("handoff") },
     work: planningWork(p),
+    /** 止めているか(いつ・なぜ) */
+    paused: studioPaused(p),
+    /** 段階ごとの進み具合 */
+    progress: studioProgress(p),
+    loopLimit: p.settingNumber("plan_loop_runs", 10),
     /** 担当の名前(画面はここから受け取る) */
     cast: { planner: p.fixedMember("planner").name, designer: p.fixedMember("designer").name, architect: p.fixedMember("architect").name, lead: p.fixedMember("lead").name },
     brief: artifact<Brief>(p, "req", "brief", "main"),

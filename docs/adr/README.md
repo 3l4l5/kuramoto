@@ -34,3 +34,4 @@ Kuramoto の設計で下した判断を 1 件ずつ残します。状態は「�
 | [0028](0028-team-ci.md) | チームの CI を持ち、使うときは GitHub Actions を止める | 提案 |
 | [0029](0029-flow-dashboard.md) | 生産性の画面に「流れ」と「メンバー」を足す | 提案 |
 | [0030](0030-continue-existing-repo.md) | 既存のリポジトリの続きから始められるようにする | 提案 |
+| [0031](0031-pause-studio-and-show-progress.md) | 企画スタジオを止められるようにし、段階ごとの進み具合を見せる | 提案 |

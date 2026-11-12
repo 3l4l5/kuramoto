@@ -51,8 +51,7 @@ import {
   STAGES,
   studioView,
   type Mode,
-  type Stage,
-} from "./project/planning.js";
+  type Stage, setStudioPaused, studioPaused } from "./project/planning.js";
 
 /** ビルドした画面(vite build の出力)。 */
 const WEB_DIR = fileURLToPath(new URL("../ui/dist/", import.meta.url));
@@ -452,6 +451,13 @@ export class KuramotoServer {
     if (!a && method === "GET") return this.studioViewOf(id);
     if (method !== "POST") return undefined;
     switch (a) {
+      case "pause": {
+        // 企画スタジオを止める(動いている担当もその場で止める)・再開する
+        setStudioPaused(p, !!body.paused);
+        if (body.paused) this.runners.get(id)?.dispatcher.stopPlanning();
+        else this.poke(id);
+        return { paused: !!studioPaused(p) };
+      }
       case "chat": {
         const text = String(body.text ?? "").trim();
         if (!text) throw new Error("メッセージがありません");

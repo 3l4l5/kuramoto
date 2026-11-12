@@ -43,7 +43,16 @@ export function Studio({ id }: { id: number }) {
           <LinkBtn kind="outline" size="sm" className="exportbtn" href={`/api/projects/${id}/studio/export`} download>
             設計書をエクスポート(Markdown)
           </LinkBtn>
+          <PauseButton pid={id} paused={!!data.paused} />
         </div>
+        {data.paused && (
+          <div className="budgetalert" role="alert">
+            <p>
+              <b>企画スタジオを止めています。</b>
+              {data.paused.reason}。担当は起こしません(オフィスのチームは別に動きます)。会話で指示を足してから「再開する」を押すと、止めたところから続けます。
+            </p>
+          </div>
+        )}
         <Gates d={data} pid={id} stage={stage} select={select} />
         <div className="sbody">
           <Chat d={data} pid={id} stage={stage} />
@@ -73,6 +82,7 @@ function Gates({ d, pid, stage, select }: { d: StudioView; pid: number; stage: s
           </span>
           <span className="t">{s.label}</span>
           <span className={`st ${s.done ? "ok" : "wip"}`}>{s.status}</span>
+          {d.progress[s.key] && <RunCount p={d.progress[s.key]!} limit={d.loopLimit} />}
         </button>
       ))}
       {h.requested || h.handed ? (
@@ -127,6 +137,7 @@ function Chat({ d, pid, stage }: { d: StudioView; pid: number; stage: string }) 
           ),
         )}
         {work && <WorkBox w={work} who={ownerOf(d.cast, stage)} />}
+        {d.progress[stage] && <RecentRuns p={d.progress[stage]!} limit={d.loopLimit} />}
         {!list.length && !work && <div style={{ color: "var(--muted)", fontSize: 12 }}>{stage === "handoff" ? "" : "まだ会話はありません。"}</div>}
       </div>
       <div id="st-in-hint" className="hint compose-hint">{stage === "handoff" ? `${d.cast.lead}(リーダー)に話す` : `${ownerOf(d.cast, stage)}に話す(この段階について)`}</div>
@@ -180,5 +191,54 @@ function WorkBox({ w, who }: { w: Work; who: string }) {
         </ol>
       )}
     </div>
+  );
+}
+
+type Progress = StudioView["progress"][string];
+
+/** 企画スタジオを止める・再開する。止めると、動いている担当もその場で止まる。 */
+function PauseButton({ pid, paused }: { pid: number; paused: boolean }) {
+  const act = useAct();
+  return (
+    <Btn
+      kind={paused ? "solid-fill" : "outline"}
+      size="sm"
+      onClick={() => act(() => post(`/projects/${pid}/studio/pause`, { paused: !paused }), paused ? "企画スタジオを再開しました" : "企画スタジオを止めました")}
+    >
+      {paused ? "再開する" : "企画スタジオを止める"}
+    </Btn>
+  );
+}
+
+/** 段階の起動の回数。直近 1 時間に多いときは目立たせる(上限に近いと回っている合図)。 */
+function RunCount({ p, limit }: { p: Progress; limit: number }) {
+  const hot = p.lastHour >= Math.ceil(limit * 0.6);
+  return (
+    <span className={`runs${hot ? " hot" : ""}`}>
+      起動 {p.runs} 回{p.lastHour ? `(1 時間 ${p.lastHour})` : ""} · ${p.costUsd.toFixed(2)}
+      {p.errors ? ` · エラー ${p.errors}` : ""}
+    </span>
+  );
+}
+
+const OUTCOME: Record<string, string> = { ok: "終わった", error: "エラー", budget: "予算の上限", cancelled: "止めた", running: "作業中", abandoned: "中断" };
+
+/** この段階の最近の起動。同じことを繰り返していないかを見る。 */
+function RecentRuns({ p, limit }: { p: Progress; limit: number }) {
+  return (
+    <details className="recentruns" open={p.lastHour >= Math.ceil(limit * 0.6)}>
+      <summary>
+        この段階の起動: 通算 {p.runs} 回 · 直近 1 時間 {p.lastHour} 回(上限 {limit} 回で自動で止めます) · ${p.costUsd.toFixed(2)}
+      </summary>
+      <ol>
+        {p.recent.map((r, i) => (
+          <li key={i}>
+            <span className="t">{new Date(r.at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}</span> {r.member} · {OUTCOME[r.outcome] ?? r.outcome}
+            {r.ms != null ? ` · ${duration(Math.round(r.ms / 1000))}` : ""}
+            {r.error ? <div className="err">{r.error}</div> : null}
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }

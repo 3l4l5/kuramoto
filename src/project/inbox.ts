@@ -78,7 +78,7 @@ export const AREA_BUSY_SQL = `EXISTS (
  * 他の起動がまだ終わっていないチケット宛てのものは飛ばす(1 チケット 1 起動)。
  * 同じ場所を触るチケットが先に進んでいれば、まだ取りかかっていないチケットの実装は始めない(ADR-0024)。
  */
-export function claimNext(p: Project, opts: { exclude?: number[]; planningOnly?: boolean; triage?: boolean } = {}): MessageRow | undefined {
+export function claimNext(p: Project, opts: { exclude?: number[]; planningOnly?: boolean; triage?: boolean; noPlan?: boolean } = {}): MessageRow | undefined {
   const pull = p.currentFormation().pull;
   const exclude = opts.exclude ?? [];
   return get<MessageRow>(
@@ -90,6 +90,7 @@ export function claimNext(p: Project, opts: { exclude?: number[]; planningOnly?:
          AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id = m.ticket_id AND r.ended_at IS NULL)
          AND NOT (m.ticket_id IS NULL AND EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id IS NULL AND r.role = m.to_role AND r.ended_at IS NULL))
          ${opts.planningOnly ? "AND m.ticket_id IS NULL" : ""}
+         ${opts.noPlan ? "AND m.kind <> 'plan'" : ""}
          ${
            opts.triage
              ? `AND NOT (m.kind = 'implement' AND EXISTS (SELECT 1 FROM tickets t WHERE t.id = m.ticket_id AND t.triaged = 0))
