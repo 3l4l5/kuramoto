@@ -19,7 +19,7 @@ import { afterPlanningRun, planningPrompt, planningSystemPrompt, planningTools, 
 import { checkStudioLoop, say, studioPaused } from "./planning.js";
 import { progressRecorder } from "./progress.js";
 import { giveUpTriage, markTriaged, requestTriage, triagePrompt, triageTools, untriaged } from "./triage.js";
-import { LEAD_CHAT_SYSTEM, leadChatPrompt, leadChatTools, leadReply } from "./leadchat.js";
+import { LEAD_CHAT_SYSTEM, leadChatPrompt, leadChatTools, leadReply, markOwnerMessagesRead, unreadOwnerMessages } from "./leadchat.js";
 import { dropGithubCiTickets, githubCheckDue, githubDown, githubStillDown, isGithubAuthError, markGithubDown, markGithubUp } from "./outage.js";
 import { finishPatrol, loopSignals, patrolPrompt, patrolTools, requestPatrol, type LoopSignal } from "./patrol.js";
 
@@ -539,6 +539,12 @@ export class Dispatcher {
       complete(p, msg.id);
       return;
     }
+    // チャット: 読んでいない責任者のメッセージが無ければ起こさない(前の起動でまとめて返事をしたなど)
+    const unread = mode === "chat" ? unreadOwnerMessages(p) : [];
+    if (mode === "chat" && !unread.length) {
+      complete(p, msg.id);
+      return;
+    }
     const signals: LoopSignal[] = mode === "patrol" ? loopSignals(p) : [];
     const policy = p.policy("lead");
     const harness = this.deps.harnesses[policy.harness];
@@ -566,7 +572,7 @@ export class Dispatcher {
         cwd: ws.path,
         confine: confinementFor(p, ws, "lead"),
         systemPrompt: LEAD_CHAT_SYSTEM + (policy.focus.trim() ? `\n\n## このプロジェクトで重視すること\n${policy.focus.trim()}` : "") + speechNote(member.name),
-        prompt: mode === "chat" ? leadChatPrompt(p) : mode === "triage" ? triagePrompt(p, targets) : patrolPrompt(p, signals, { start: !!(JSON.parse(msg.payload) as { start?: boolean }).start }),
+        prompt: mode === "chat" ? leadChatPrompt(p, unread) : mode === "triage" ? triagePrompt(p, targets) : patrolPrompt(p, signals, { start: !!(JSON.parse(msg.payload) as { start?: boolean }).start }),
         model: policy.model,
         effort: policy.effort,
         ...(resume ? { resumeSessionId: resume } : {}),
@@ -621,7 +627,11 @@ export class Dispatcher {
         p.event(member.name, "patrolled", null, { tickets: signals.map((s) => s.ticket.number) });
         const text = result?.finalText?.trim();
         leadReply(p, `【見回り】${text ? `\n${text}` : ""}`);
-      } else leadReply(p, result?.finalText ?? "");
+      } else {
+        leadReply(p, result?.finalText ?? "");
+        // 渡したメッセージまで読んだことにする(返事の最中に届いたものは、次の起動で読む)
+        markOwnerMessagesRead(p, Math.max(...unread.map((m) => m.id)));
+      }
     });
   }
 

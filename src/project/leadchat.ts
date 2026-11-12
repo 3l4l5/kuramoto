@@ -44,11 +44,26 @@ export function leadChatView(p: Project) {
   };
 }
 
-/** リーダーへの指示。今のチケットの状況と、まだ返事をしていない責任者のメッセージを渡す。 */
-export function leadChatPrompt(p: Project): string {
+/**
+ * リーダーがまだ読んでいない責任者のメッセージ。どこまで読んだかは、チャットの起動ごとに覚えておく(設定 lead_chat_read)。
+ * 「最後のリーダーの発言より後」で数えると、交通整理・見回りの報告や、書いている最中の返事に追い越されたメッセージが読まれずに残っていた。
+ */
+export function unreadOwnerMessages(p: Project): LeadMessage[] {
   const msgs = leadMessages(p);
+  const read = p.setting("lead_chat_read");
+  if (read !== undefined) return msgs.filter((m) => m.who === "owner" && m.id > Number(read));
+  // まだ覚えていない(この仕組みの前のデータ)なら、前のやり方で数える
   const lastLead = msgs.map((m) => m.who).lastIndexOf("lead");
-  const unread = msgs.slice(lastLead + 1).filter((m) => m.who === "owner");
+  return msgs.slice(lastLead + 1).filter((m) => m.who === "owner");
+}
+
+/** ここまで読んだ(返事を書き終えた)。 */
+export function markOwnerMessagesRead(p: Project, upTo: number): void {
+  if (upTo > Number(p.setting("lead_chat_read") ?? 0)) p.setSetting("lead_chat_read", String(upTo));
+}
+
+/** リーダーへの指示。今のチケットの状況と、まだ返事をしていない責任者のメッセージを渡す。 */
+export function leadChatPrompt(p: Project, unread: LeadMessage[] = unreadOwnerMessages(p)): string {
   const tickets = p.tickets().filter((t) => t.stage !== "dropped");
   const board = tickets.map((t) => `- #${t.number} ${t.title} [${t.stage}]${t.rounds ? ` 往復 ${t.rounds}` : ""}`).join("\n") || "(チケットはまだありません)";
   const decisions = pendingOwnerDecisions(p).map((d) => `- ${d.question.split("\n").pop()}`).join("\n") || "(なし)";
