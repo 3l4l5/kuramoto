@@ -332,7 +332,15 @@ table.vt th { color: var(--muted); font-weight: 500; }
 .reqi .links { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
 .okc { font-size: 12px; font-weight: 700; color: var(--ok); }
 .flowwrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
-.flowwrap svg { display: block; min-width: 760px; width: 100%; height: auto; }
+.flowwrap svg { display: block; margin: 0 auto; height: auto; }
+.diagram-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 12px; color: var(--muted); margin: 6px 0 4px; }
+.diagram-legend .lg { display: inline-block; width: 18px; height: 12px; border: 1.8px solid var(--table-edge); border-radius: 3px; vertical-align: -1px; margin-right: 4px; }
+.diagram-legend .lg.dashed { border-style: dashed; }
+.diagram-legend .lg.line { height: 0; border-width: 1.8px 0 0; border-color: var(--muted); border-radius: 0; vertical-align: middle; }
+.diagram-legend .lg.line.quiet { border-color: var(--muted); opacity: .45; border-top-width: 1px; }
+.fedge.quiet { stroke-width: 1; opacity: .45; }
+.flabel.quiet { opacity: .7; font-size: 10px; }
+.fitbtn { position: sticky; left: 8px; top: 8px; margin: 8px; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 2px 8px; cursor: pointer; }
 .fnode { cursor: pointer; }
 .fnode rect { fill: var(--surface); stroke: var(--table-edge); stroke-width: 1.5; }
 .fnode.sel rect { stroke: var(--ink); stroke-width: 2.5; }
