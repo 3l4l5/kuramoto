@@ -57,6 +57,15 @@ export function unreadOwnerMessages(p: Project): LeadMessage[] {
   return msgs.slice(lastLead + 1).filter((m) => m.who === "owner");
 }
 
+/** 返事をするメッセージより前の、最近のやりとり(責任者とリーダーの会話。報告は短く)。 */
+function recentChat(p: Project, unread: LeadMessage[]): string {
+  const first = unread[0]?.id ?? Infinity;
+  const n = p.settingNumber("lead_chat_history", 12);
+  const lead = p.fixedMember("lead").name;
+  const rows = leadMessages(p).filter((m) => m.id < first && m.who !== "system").slice(-n);
+  return rows.map((m) => `- ${m.who === "owner" ? "責任者" : lead}: ${m.body.length > 400 ? `${m.body.slice(0, 400)}…` : m.body}`).join("\n") || "(なし)";
+}
+
 /** ここまで読んだ(返事を書き終えた)。 */
 export function markOwnerMessagesRead(p: Project, upTo: number): void {
   if (upTo > Number(p.setting("lead_chat_read") ?? 0)) p.setSetting("lead_chat_read", String(upTo));
@@ -78,7 +87,10 @@ ${teamStatus(p)}
 ## 責任者の答えを待っている判断
 ${decisions}
 
-## 責任者のメッセージ
+## 最近のやりとり(古い順。前の起動の会話は引き継がないので、ここで流れをつかむ)
+${recentChat(p, unread)}
+
+## 責任者のメッセージ(まだ返事をしていないもの)
 ${unread.map((m) => `- ${m.body}`).join("\n")}
 
 状況を答える・相談に乗るときは、上の状況をもとに短く答えてください。作業を頼まれたら create_ticket でチケットを作り、既にあるチケットへの指示は add_ticket_note で担当に伝えてください。順番や担当を変えてと言われたら plan_work で決め直してください(assignee にはメンバーか島の名前を書けます)。最後のテキストがそのまま責任者への返事になります。`;

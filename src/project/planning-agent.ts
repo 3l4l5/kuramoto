@@ -31,6 +31,7 @@ import {
   type Architecture,
   type Infra,
   type Stage,
+  messages,
 } from "./planning.js";
 import type { Project } from "./project.js";
 import { createTicket } from "./workflow.js";
@@ -433,7 +434,7 @@ function snapshot(p: Project, stage: Stage | "handoff"): string {
   return JSON.stringify(data, null, 1);
 }
 
-export function planningPrompt(p: Project, payload: PlanPayload): string {
+export function planningPrompt(p: Project, payload: PlanPayload, opts: { fresh?: boolean } = {}): string {
   const where = payload.stage === "handoff" ? "チームへの引き渡し" : `段階「${STAGE_LABEL[payload.stage]}」(${payload.stage})`;
   const name = get<{ value: string }>(p.db, "SELECT value FROM settings WHERE key = 'project_name'")?.value ?? "";
   const events = payload.events.map((e) => (e.type === "chat" ? `責任者: ${e.text}` : `[${e.type}] ${e.text}`)).join("\n");
@@ -442,11 +443,18 @@ export function planningPrompt(p: Project, payload: PlanPayload): string {
 ## 今の企画の中身
 ${snapshot(p, payload.stage)}
 
-## 起きたこと
+${opts.fresh ? `## この段階のこれまでの会話(最近の分。前の起動の会話は引き継いでいないので、ここで流れをつかむ)\n${recentPlanChat(p, payload.stage)}\n\n` : ""}## 起きたこと
 ${events}
 
 道具で企画の中身を更新し、最後に責任者への返事を短く書いてください。`;
 }
+
+/** その段階の最近の会話(古い順)。 */
+function recentPlanChat(p: Project, stage: Stage | "handoff"): string {
+  const rows = messages(p, stage).slice(-p.settingNumber("plan_chat_history", 12));
+  return rows.map((m) => `- ${m.who === "me" ? "責任者" : m.who === "system" ? "Kuramoto" : SPEAKER_NAME[m.who] ?? m.who}: ${m.body.length > 500 ? `${m.body.slice(0, 500)}…` : m.body}`).join("\n") || "(まだありません)";
+}
+const SPEAKER_NAME: Record<string, string> = { plan: "企画", design: "デザイナー", arch: "アーキテクト", lead: "リーダー" };
 
 /** 起動が終わったあと: 返事を会話に残し、段階が終わっていれば次の段階を起こす。 */
 export function afterPlanningRun(p: Project, msg: MessageRow, role: Role, finalText: string): void {

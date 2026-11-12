@@ -13,6 +13,7 @@ import { askLeadToUnstick, resetUnstick, unstickPrompt, unstickTools, type Stuck
 import type { Workspace } from "./workspace.js";
 import type { GitHub } from "../github/github.js";
 import { ciTools } from "./ci-tools.js";
+import { canResume, noteSession } from "./sessions.js";
 import { runTeamCi, teamCiEnabled, type CommandRunner } from "./team-ci.js";
 import { confinementFor } from "./confine.js";
 import { afterPlanningRun, planningPrompt, planningSystemPrompt, planningTools, type PlanPayload } from "./planning-agent.js";
@@ -321,13 +322,15 @@ export class Dispatcher {
           [member.id, ticket.id, repo.id],
         );
     const branch = devBranch(p, ticket, repo.id);
+    // 同じ会話を引き継ぐのは上限まで。超えたら新しく始める(ADR-0032)
+    const resumeId = session && canResume(p, session.harness_session_id) ? session.harness_session_id : undefined;
 
     let runId: number;
     try {
       runId = run(
         p.db,
         "INSERT INTO runs (message_id, ticket_id, member_id, role, session_id, policy_id, formation_id, started_at, model, effort, unit_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [msg.id, ticket.id, member.id, role, session?.id ?? null, policy.id, formation.id, p.now(), use.model, use.effort, use.unitName],
+        [msg.id, ticket.id, member.id, role, resumeId ? session!.id : null, policy.id, formation.id, p.now(), use.model, use.effort, use.unitName],
       ).lastId;
     } catch (e) {
       if (!isUniqueViolation(e)) throw e;
@@ -349,7 +352,7 @@ export class Dispatcher {
         prompt: promptFor(p, msg, ticket, { branch, base: ws.base, repo: repo.full_name, ...prNumber(p, ticket.id, repo.id) }),
         model: use.model,
         effort: use.effort,
-        ...(session ? { resumeSessionId: session.harness_session_id } : {}),
+        ...(resumeId ? { resumeSessionId: resumeId } : {}),
         tools: [
           // PR がある開発には、CI を調べる道具を渡す(作業場所からは GitHub が見えないため)
           ...(role === "dev" && msg.kind !== "implement" ? ciTools(p, this.deps.github, { ticket }) : []),
@@ -424,6 +427,7 @@ export class Dispatcher {
            ON CONFLICT(member_id, ticket_id, repo_id) DO UPDATE SET harness_session_id = excluded.harness_session_id, last_used_at = excluded.last_used_at`,
           [member.id, ticket.id, repo.id, harness.name, result.sessionId, role === "dev" ? branch : null, p.now(), p.now()],
         );
+        noteSession(p, result.sessionId, resumeId);
       }
     });
 
@@ -460,8 +464,10 @@ export class Dispatcher {
       this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
       return;
     }
-    const sessionKey = `plan_session:${member.id}`;
-    const resume = p.setting(sessionKey);
+    // 企画の会話は段階ごとに分け、引き継ぐのは上限まで(段階をまたいで 1 つの会話を引き継ぐと、回ごとに高くなっていた)
+    const sessionKey = `plan_session:${member.id}:${payload.stage}`;
+    const saved = p.setting(sessionKey);
+    const resume = canResume(p, saved) ? saved : undefined;
     const runId = run(
       p.db,
       "INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at, model, effort) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)",
@@ -479,7 +485,7 @@ export class Dispatcher {
         cwd: ws.path,
         confine: confinementFor(p, ws, role),
         systemPrompt: planningSystemPrompt(p, role, policy.focus),
-        prompt: planningPrompt(p, payload),
+        prompt: planningPrompt(p, payload, { fresh: !resume }),
         model: policy.model,
         effort: policy.effort,
         ...(resume ? { resumeSessionId: resume } : {}),
@@ -516,7 +522,10 @@ export class Dispatcher {
         error ?? null,
         runId,
       ]);
-      if (result?.sessionId) p.setSetting(sessionKey, result.sessionId);
+      if (result?.sessionId) {
+        p.setSetting(sessionKey, result.sessionId);
+        noteSession(p, result.sessionId, resume);
+      }
     });
 
     if (error) {
@@ -555,9 +564,7 @@ export class Dispatcher {
     }
     // 取りやめ・重複の片付けで、開いている PR を閉じる
     const closePrs = (t: TicketRow, reason: string) => closeOpenPrs(this.deps.workspace, p, t, { commit: "", reason });
-    // 交通整理と見回りは毎回まっさらに始める(前の会話を引きずらない)
-    const sessionKey = `lead_chat_session:${member.id}`;
-    const resume = mode === "chat" ? p.setting(sessionKey) : null;
+    // チャット・交通整理・見回りは毎回まっさらに始める。チャットの前のやりとりは、指示に最近の分を入れて渡す(ADR-0032)
     const runId = run(
       p.db,
       "INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at, model, effort) VALUES (?, NULL, ?, 'lead', ?, ?, ?, ?, ?)",
@@ -575,7 +582,6 @@ export class Dispatcher {
         prompt: mode === "chat" ? leadChatPrompt(p, unread) : mode === "triage" ? triagePrompt(p, targets) : patrolPrompt(p, signals, { start: !!(JSON.parse(msg.payload) as { start?: boolean }).start }),
         model: policy.model,
         effort: policy.effort,
-        ...(resume ? { resumeSessionId: resume } : {}),
         tools:
           mode === "chat"
             ? leadChatTools(p, { closePrs })
@@ -603,7 +609,6 @@ export class Dispatcher {
         result?.finalText?.trim() || null,
         runId,
       ]);
-      if (result?.sessionId && mode === "chat") p.setSetting(sessionKey, result.sessionId);
     });
     if (error) {
       run(p.db, "INSERT INTO lead_messages (who, body, at) VALUES ('system', ?, ?)", [
