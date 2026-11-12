@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, post, type TicketView } from "./api";
-import { hhmm, usd, waitText } from "./format";
+import { droppedText, hhmm, usd, waitText } from "./format";
 import { BudgetInput, budgetOk } from "./BudgetInput";
 import { duration, useAct } from "./hooks";
 import { Btn } from "./ui";
@@ -75,6 +75,12 @@ function TicketDialog({ projectId, ticketId, close }: { projectId: number; ticke
               閉じる
             </Btn>
           </header>
+          {data.dropped && (
+            <div className="dropnote" role="note">
+              {droppedText(data.dropped)}
+              {data.dropped.at && <span className="at">({new Date(data.dropped.at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })})</span>}
+            </div>
+          )}
           <div className="cols">
             <Details projectId={projectId} t={data} />
             <Timeline projectId={projectId} t={data} />

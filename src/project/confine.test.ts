@@ -134,4 +134,67 @@ describe("作業場所への閉じ込め", () => {
     git(w, "commit", "-m", "a");
     expect(await ws.checkReady(w, "main")).toBeUndefined();
   });
+
+  it("GitWorkspace は、変更がすでに main に入っているかを確かめる", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kuramoto-ws-"));
+    const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, ...a], { encoding: "utf8" });
+    execFileSync("git", ["init", "--bare", "-b", "main", join(dir, "origin.git")]);
+    execFileSync("git", ["clone", join(dir, "origin.git"), join(dir, "w")], { stdio: "ignore" });
+    const w = join(dir, "w");
+    git(w, "config", "user.email", "t@example.com");
+    git(w, "config", "user.name", "t");
+    git(w, "commit", "--allow-empty", "-m", "init");
+    git(w, "push", "origin", "HEAD:main");
+    // 別のチケットで、回数制限が main に入った
+    writeFileSync(join(w, "limiter.ts"), "export const max = 5;\n");
+    git(w, "add", "limiter.ts");
+    git(w, "commit", "-m", "limiter");
+    const landed = git(w, "rev-parse", "HEAD").trim();
+    git(w, "push", "origin", "HEAD:main");
+    const ws = new GitWorkspace(dir);
+    // このチケットのブランチは main と同じ → 完了にしてよい
+    expect(await ws.landed(w, "main", landed.slice(0, 7))).toBeUndefined();
+    expect(await ws.landed(w, "main", "0000000")).toContain("見つかりません");
+    // main に無いコミットを指したら断る
+    git(w, "checkout", "-b", "kuramoto/52");
+    writeFileSync(join(w, "extra.ts"), "x\n");
+    git(w, "add", "extra.ts");
+    git(w, "commit", "-m", "extra");
+    const local = git(w, "rev-parse", "HEAD").trim();
+    expect(await ws.landed(w, "main", local)).toContain("入っていません");
+    // ブランチに main に無い変更が残っていれば断る
+    expect(await ws.landed(w, "main", landed)).toContain("origin/main に無いコミットが 1 件");
+  });
+
+  it("GitWorkspace は、承認のあとに足した自分の変更だけを数える(main の取り込みは数えない)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kuramoto-ws-"));
+    const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, ...a], { encoding: "utf8" });
+    execFileSync("git", ["init", "--bare", "-b", "main", join(dir, "origin.git")]);
+    execFileSync("git", ["clone", join(dir, "origin.git"), join(dir, "w")], { stdio: "ignore" });
+    const w = join(dir, "w");
+    git(w, "config", "user.email", "t@example.com");
+    git(w, "config", "user.name", "t");
+    git(w, "commit", "--allow-empty", "-m", "init");
+    git(w, "push", "origin", "HEAD:main");
+    git(w, "checkout", "-b", "kuramoto/1");
+    writeFileSync(join(w, "a.ts"), "a\n");
+    git(w, "add", "a.ts");
+    git(w, "commit", "-m", "a");
+    const approved = git(w, "rev-parse", "HEAD").trim();
+    // 別のチケットが main に入り、それを取り込んだ
+    git(w, "checkout", "main");
+    writeFileSync(join(w, "b.ts"), "b\n");
+    git(w, "add", "b.ts");
+    git(w, "commit", "-m", "b");
+    git(w, "push", "origin", "main");
+    git(w, "checkout", "kuramoto/1");
+    git(w, "fetch", "origin");
+    git(w, "merge", "--no-edit", "origin/main");
+    const ws = new GitWorkspace(dir);
+    expect(await ws.ownCommits(w, "main", approved)).toBe(0);
+    writeFileSync(join(w, "a.ts"), "a2\n");
+    git(w, "commit", "-am", "fix ci");
+    expect(await ws.ownCommits(w, "main", approved)).toBe(1);
+    expect(await ws.ownCommits(w, "main", "0000000")).toBeNull();
+  });
 });

@@ -203,4 +203,26 @@ UPDATE decisions SET lead_note = (
   `
 CREATE TABLE IF NOT EXISTS ticket_areas (ticket_id INTEGER NOT NULL REFERENCES tickets(id), area TEXT NOT NULL, PRIMARY KEY (ticket_id, area));
 `,
+  // 16: 画面の取得(プロジェクト・オフィス)が、チケットごとに起動・出来事・受信箱を全件なめていて、数秒かかっていた。よく引く列に索引を張る
+  `
+CREATE INDEX IF NOT EXISTS runs_ticket ON runs(ticket_id, role);
+CREATE INDEX IF NOT EXISTS runs_member ON runs(member_id);
+CREATE INDEX IF NOT EXISTS events_ticket ON events(ticket_id, type);
+CREATE INDEX IF NOT EXISTS events_type ON events(type);
+CREATE INDEX IF NOT EXISTS messages_ticket ON messages(ticket_id, kind, status);
+CREATE INDEX IF NOT EXISTS ticket_areas_area ON ticket_areas(area);
+CREATE INDEX IF NOT EXISTS reviews_ticket ON reviews(ticket_id);
+CREATE INDEX IF NOT EXISTS decisions_ticket ON decisions(ticket_id);
+CREATE INDEX IF NOT EXISTS ticket_deps_dep ON ticket_deps(depends_on);
+`,
+  // 17: 取りやめたチケットに、誰が・いつ・なぜ取りやめたかを残す(ボードとチケットに出す)。前の重複の片付けは出来事から埋める
+  `
+ALTER TABLE tickets ADD COLUMN dropped_by TEXT;
+ALTER TABLE tickets ADD COLUMN dropped_reason TEXT;
+ALTER TABLE tickets ADD COLUMN dropped_at TEXT;
+UPDATE tickets SET dropped_by = 'lead',
+  dropped_reason = (SELECT '#' || json_extract(e.data, '$.sameAs') || ' と重複していたため' FROM events e WHERE e.ticket_id = tickets.id AND e.type = 'duplicate_dropped' ORDER BY e.id DESC LIMIT 1),
+  dropped_at = (SELECT e.at FROM events e WHERE e.ticket_id = tickets.id AND e.type = 'duplicate_dropped' ORDER BY e.id DESC LIMIT 1)
+WHERE stage = 'dropped' AND EXISTS (SELECT 1 FROM events e WHERE e.ticket_id = tickets.id AND e.type = 'duplicate_dropped');
+`,
 ];

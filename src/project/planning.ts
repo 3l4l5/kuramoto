@@ -3,6 +3,7 @@ import type { Role } from "../domain/roles.js";
 import { send } from "./inbox.js";
 import type { Project } from "./project.js";
 import { planningWork } from "./progress.js";
+import { existingHandoffText, existingKickoff, fromExisting, snapshotText } from "./onboard.js";
 
 /**
  * 企画スタジオ(docs/design.md 5.1・6.2、ADR-0008・0009・0015)。
@@ -218,6 +219,12 @@ function onceDone(p: Project, s: Stage): boolean {
 
 function kickoff(p: Project, s: Stage): void {
   p.setSetting(`plan_started:${s}`, p.now());
+  // 既存のリポジトリの続きから: 聞き取りから作らず、リポジトリを読んで現状を下書きに起こす(ADR-0030)
+  if (fromExisting(p)) {
+    const delegatedNote = stageRow(p, s).mode === "delegate" ? " この段階はお任せです。未決は推奨で決め(answer_open_item)、版を仕上げて、決めた内容を報告してください。戻せない判断だけは未決に残してください。" : "";
+    sendPlan(p, s, { type: "kickoff", text: existingKickoff(p, s) + delegatedNote });
+    return;
+  }
   const text: Record<Stage, string> = {
     req: "新しいプロジェクトです。責任者に挨拶し、何のためのものか(目的)から聞き始めてください。",
     infra: "画面が決まりました。要件・フロー・画面(画像のアップロード、オフラインでの保存など、画面が求めるもの)をもとに、このプロダクトをどこで・どう動かすかを決めてください。まず登録されたリポジトリ(特にインフラの役割のもの)を読み、既にある環境・IaC・CI を確かめ、使えるものは使ってください。動かす場所と構成 → 環境とデプロイ → 運用 → 費用と規模 の順に set_infra で書きます。",
@@ -500,7 +507,9 @@ export function handoff(p: Project): void {
     say(p, "handoff", "me", "チームに渡します");
     sendPlan(p, "handoff", {
       type: "handoff",
-      text: "企画のすべての段階が終わりました。合意した版から、実装のチケットを create_ticket で作ってください。各チケットには、要件の項目(code)・画面(key)・設計の節をひも付け、受け入れ条件を本文に書いてください。作り終えたら finish_handoff を呼んでください。",
+      text:
+        "企画のすべての段階が終わりました。合意した版から、実装のチケットを create_ticket で作ってください。各チケットには、要件の項目(code)・画面(key)・設計の節をひも付け、受け入れ条件を本文に書いてください。作り終えたら finish_handoff を呼んでください。" +
+        (fromExisting(p) ? `${existingHandoffText()}\n\n## GitHub の途中の仕事(Kuramoto が取ってきたもの)\n${snapshotText(p, { bodies: true })}` : ""),
     });
   });
 }

@@ -4,7 +4,8 @@ import { defineTool, type KuramotoTool } from "../harness/types.js";
 import { send } from "./inbox.js";
 import { runWork } from "./progress.js";
 import { teamStatus, triageTools } from "./triage.js";
-import type { Project } from "./project.js";
+import type { Project, TicketRow } from "./project.js";
+import { dropTicketTool } from "./patrol.js";
 import { pendingOwnerDecisions, createTicket } from "./workflow.js";
 
 /**
@@ -71,12 +72,14 @@ ${unread.map((m) => `- ${m.body}`).join("\n")}
 export const LEAD_CHAT_SYSTEM = `あなたは Kuramoto の開発チームのリーダーです。責任者(人間)とチャットで話します。
 - 返事は短く、日本語で。分からないことは分からないと言います。
 - 作業を頼まれたら create_ticket でチケットにします。既にあるチケットへの指示は add_ticket_note で担当に伝えます。
+- いらなくなったチケット(責任者にいらないと言われた・仕様が変わった・ほかで済んだ)は drop_ticket で理由を書いて取りやめます。
 - あなたはチームの交通整理役です。誰がどのチケットをやるかを plan_work で割り当てます。島には最大人数ぶんのメンバーがずっといます。島の最大人数を変えるのは責任者の権限です。
 - merge はしません。merge は責任者が押します。`;
 
-export function leadChatTools(p: Project): KuramotoTool[] {
+export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason: string) => Promise<void> } = {}): KuramotoTool[] {
   return [
     ...triageTools(p),
+    dropTicketTool(p, ws.closePrs),
     defineTool({
       name: "create_ticket",
       description: "責任者に頼まれた作業を、チケットとして開発の受信箱に入れる。",

@@ -34,6 +34,7 @@ import {
 } from "./planning.js";
 import type { Project } from "./project.js";
 import { createTicket } from "./workflow.js";
+import { adoptPull, fromExisting, markIssueTicketed } from "./onboard.js";
 
 export type PlanPayload = { stage: Stage | "handoff"; events: { type: string; text: string }[] };
 
@@ -338,6 +339,7 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
             screens: z.array(z.string()).describe("ひも付ける画面の key"),
             design: z.array(z.string()).describe("ひも付ける設計の節(例: ルール 1、reservations 表)"),
             repo: z.string().optional().describe("対象のリポジトリ(owner/repo)。省くと最初に登録したもの"),
+            issue: z.number().int().optional().describe("このチケットで片付ける GitHub の Issue の番号(既存のリポジトリの続きから。PR に「Closes #番号」が付く)"),
           },
           handler: (a) => {
             const repos = p.repos().map((r) => r.full_name);
@@ -350,11 +352,33 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
               title: a.title,
               body: a.body,
               ...(item ? { requirementItemId: item.id } : {}),
-              planRefs: { fromPlan: true, requirement: a.requirement ?? null, screens: a.screens, design: a.design, modes, versions, ...(a.repo ? { repo: a.repo } : {}) },
+              planRefs: { fromPlan: true, requirement: a.requirement ?? null, screens: a.screens, design: a.design, modes, versions, ...(a.repo ? { repo: a.repo } : {}), ...(a.issue ? { issue: a.issue } : {}) },
             });
+            if (a.issue) markIssueTicketed(p, a.repo ?? repos[0]!, a.issue);
             return `#${t.number} を作りました。`;
           },
         }),
+        ...(fromExisting(p)
+          ? [
+              defineTool({
+                name: "adopt_pr",
+                description: "既存の開いている PR を引き継ぐチケットを作る。確認(レビューなど)の工程から続け、差し戻されたら開発の島の人が PR のブランチの続きから直す。",
+                input: {
+                  number: z.number().int().describe("PR の番号"),
+                  repo: z.string().optional().describe("PR のリポジトリ(owner/repo)。省くと最初に登録したもの"),
+                  requirement: z.string().optional().describe("ひも付ける要件の code"),
+                  title: z.string().optional().describe("チケットのタイトル(省くと PR のタイトル)"),
+                  body: z.string().optional().describe("やること・受け入れ条件(省くと PR の本文)"),
+                },
+                handler: (a) => {
+                  const item = a.requirement ? requirements(p).find((r) => r.code === a.requirement) : undefined;
+                  if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
+                  const r = adoptPull(p, { repo: a.repo ?? p.repos()[0]!.full_name, number: a.number, ...(a.title ? { title: a.title } : {}), ...(a.body ? { body: a.body } : {}), ...(item ? { requirementItemId: item.id } : {}) });
+                  return typeof r === "string" ? r : `#${r.number} を作り、PR #${a.number} を確認の工程から続けます。`;
+                },
+              }),
+            ]
+          : []),
         defineTool({
           name: "finish_handoff",
           description: "チケットを作り終えたら呼ぶ。",

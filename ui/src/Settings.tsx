@@ -7,11 +7,12 @@ import { Input } from "./dads/Input";
 import { Select } from "./dads/Select";
 import { BudgetInput, budgetOk as totalOk } from "./BudgetInput";
 import { Checkbox } from "./dads/Checkbox";
+import { Textarea } from "./dads/Textarea";
 import { usd } from "./format";
 
 const REPO_ROLES = ["フロント", "API", "インフラ", "その他"];
 const repoOk = (r: string) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r);
-type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean; resumeChecks: boolean };
+type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean; resumeChecks: boolean; patrolMin: number; ciMode: "team" | "github"; ciCommands: Record<string, string> };
 
 /** プロジェクトの設定: 名前とリポジトリ(足す・外す・役割を変える)。 */
 export function SettingsPage({ id }: { id: number }) {
@@ -24,6 +25,9 @@ export function SettingsPage({ id }: { id: number }) {
   const [nonstopOn, setNonstop] = useState(true);
   const [autoMergeOn, setAutoMerge] = useState(true);
   const [resumeOn, setResume] = useState(true);
+  const [patrolMin, setPatrolMin] = useState("5");
+  const [ciMode, setCiMode] = useState<"team" | "github">("github");
+  const [ciCommands, setCiCommands] = useState<Record<string, string>>({});
   const reset = () => {
     if (!data) return;
     setName(data.name);
@@ -32,6 +36,9 @@ export function SettingsPage({ id }: { id: number }) {
     setNonstop(data.nonstop);
     setAutoMerge(data.autoMerge);
     setResume(data.resumeChecks);
+    setPatrolMin(String(data.patrolMin));
+    setCiMode(data.ciMode);
+    setCiCommands(data.ciCommands);
     setRepos(data.repos.map((x) => ({ r: x.fullName, role: x.role })));
   };
   useEffect(() => {
@@ -42,9 +49,10 @@ export function SettingsPage({ id }: { id: number }) {
   const set = (i: number, patch: Partial<{ r: string; role: string }>) => setRepos(repos.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const list = repos.filter((x) => x.r).map((x) => ({ fullName: x.r, role: x.role }));
   const budgetOk = totalOk(budget);
-  const changed = name !== data.name || JSON.stringify(list) !== JSON.stringify(data.repos) || budget !== data.ticketBudgetUsd || total !== data.projectBudgetUsd || nonstopOn !== data.nonstop || autoMergeOn !== data.autoMerge || resumeOn !== data.resumeChecks;
-  const invalid = !name.trim() || !list.length || list.some((x) => !repoOk(x.fullName)) || !budgetOk || !totalOk(total);
-  const save = () => act(() => post(`/projects/${id}/settings`, { name: name.trim(), repos: list, ticketBudgetUsd: budget, projectBudgetUsd: total, nonstop: nonstopOn, autoMerge: autoMergeOn, resumeChecks: resumeOn }), "プロジェクトの設定を保存しました");
+  const changed = name !== data.name || JSON.stringify(list) !== JSON.stringify(data.repos) || budget !== data.ticketBudgetUsd || total !== data.projectBudgetUsd || nonstopOn !== data.nonstop || autoMergeOn !== data.autoMerge || resumeOn !== data.resumeChecks || patrolMin !== String(data.patrolMin) || ciMode !== data.ciMode || JSON.stringify(ciCommands) !== JSON.stringify(data.ciCommands);
+  const patrolOk = /^\d+$/.test(patrolMin);
+  const invalid = !name.trim() || !list.length || list.some((x) => !repoOk(x.fullName)) || !budgetOk || !totalOk(total) || !patrolOk;
+  const save = () => act(() => post(`/projects/${id}/settings`, { name: name.trim(), repos: list, ticketBudgetUsd: budget, projectBudgetUsd: total, nonstop: nonstopOn, autoMerge: autoMergeOn, resumeChecks: resumeOn, patrolMin: Number(patrolMin), ciMode, ciCommands }), "プロジェクトの設定を保存しました");
 
   return (
     <section aria-label="プロジェクトの設定">
@@ -108,6 +116,44 @@ export function SettingsPage({ id }: { id: number }) {
             ノンストップでも、取り消せない操作と、あなたにしかできないこと(秘密情報の登録など)はあなたに上がります。止めたいときは、全体の予算で歯止めを掛けてください。
           </div>
         </fieldset>
+        <fieldset className="runmode">
+          <legend className="h">CI</legend>
+          <Select aria-label="CI の扱い" blockSize="md" value={ciMode} onChange={(e) => setCiMode(e.target.value as "team" | "github")}>
+            <option value="team">チームの CI を使う(GitHub Actions は止める)</option>
+            <option value="github">GitHub Actions の CI を待つ</option>
+          </Select>
+          <div className="hint">
+            チームの CI では、担当が PR を出すたびに Kuramoto がこの PC で(エージェントと同じ閉じ込めの中で)、PR を最新の main と合わせて確認のコマンドを流します。通ったものだけをレビューに回し、merge の直前にも main が進んでいれば流し直します。GitHub の CI を待たないので速く、Actions の利用枠も使いません。切り替えると、リポジトリの GitHub Actions を止めます(戻すと動かします)。ブランチ保護で CI の確認を必須にしていると merge できないので、そのときは必須を外してください。
+          </div>
+          {ciMode === "team" &&
+            list.map((x) => (
+              <div key={x.fullName} style={{ marginTop: 8 }}>
+                <label className="h" htmlFor={`ps-ci-${x.fullName}`}>
+                  {x.fullName} で流すコマンド(1 行に 1 つ、上から順に)
+                </label>
+                <div className="hint" style={{ marginBottom: 6 }}>
+                  空なら package.json から決めます(入れる → lint → 型 → テスト)。例: <code>npm ci</code>・<code>npm run lint</code>・<code>npm run typecheck</code>・<code>npx vitest run</code>
+                </div>
+                <Textarea
+                  id={`ps-ci-${x.fullName}`}
+                  rows={4}
+                  className="w-full font-mono"
+                  value={ciCommands[x.fullName] ?? ""}
+                  onChange={(e) => setCiCommands({ ...ciCommands, [x.fullName]: e.target.value })}
+                />
+              </div>
+            ))}
+        </fieldset>
+        <div>
+          <label className="h" htmlFor="ps-patrol">
+            リーダーの見回りの間隔(分)
+          </label>
+          <div className="hint" style={{ marginBottom: 6 }}>
+            リーダーがボードを見て、重複したチケットを片付け、同じところを回り続けているチケットに手を打ちます。始業したときは必ず見回り、その後はこの間隔ごとに見ます(気になるものが無ければ起動しません)。0 にすると見回りません。
+          </div>
+          <Input type="number" id="ps-patrol" blockSize="md" min={0} step={1} isError={!patrolOk} value={patrolMin} onChange={(e) => setPatrolMin(e.target.value.trim())} />
+          {!patrolOk && <div className="bad">0 以上の整数(分)を入れてください</div>}
+        </div>
         <div>
           <label className="h" htmlFor="ps-total">
             全体の予算(ドル)

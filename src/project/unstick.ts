@@ -3,14 +3,18 @@ import { all, get, run } from "../db/sqlite.js";
 import { ROLE_LABEL, type Role } from "../domain/roles.js";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
 import { send, type MessageRow } from "./inbox.js";
+import { dropUnneeded } from "./patrol.js";
+import { lastCiFailure } from "./merge.js";
+import { lastTeamCi, teamCiEnabled } from "./team-ci.js";
 import type { Project, TicketRow } from "./project.js";
-import { createTicket, holdTicket, resumeWork, ticketBudgetUsd, ticketSpentUsd, type ResumeMessage } from "./workflow.js";
+import { closeAlreadyDone, createTicket, holdTicket, resumeWork, ticketBudgetUsd, ticketSpentUsd, type ResumeMessage } from "./workflow.js";
 
 /**
  * 詰まったチケットの手助け。担当の起動が同じように失敗し続けたら、責任者に上げる前にリーダーが原因を調べる。
  * - 直せそうなら、担当への助言をチケットのメモに書いて、止まった仕事をやり直させる(retry_with_advice)
  * - 担当を替えたほうがよければ、別のメンバー・島に渡す(reassign)
  * - 大きすぎるなら、残りを別チケットに切り出し、範囲を絞ってやり直させる(split_and_retry)
+ * - 変更がすでに main に入っていた(重複・先に入った)なら、確かめて完了にする(close_as_already_done)
  * - チームの中では解けない(環境・権限・仕様の判断が要る)なら、保留して責任者に何をしてほしいかを伝える(hold)
  * リーダーの手助けが続けて unstick_max 回(既定 5)に達しても進まなければ、保留にする。
  */
@@ -87,6 +91,9 @@ ${runs.map((r) => `- [${r.started_at}] ${r.name}(${r.role}): ${r.outcome ?? "?"}
 ## 最後の起動の途中経過
 ${steps.map((s) => `- [${s.kind}] ${s.text.slice(0, 300)}`).join("\n") || "(記録なし)"}
 
+${lastCiFailure(p, ticket.id)}
+${lastTeamCi(p, ticket.id)}
+
 ## これまでのメモ(責任者・リーダーから)
 ${notes.map((n) => `- ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.body}`).join("\n") || "(なし)"}
 
@@ -96,13 +103,40 @@ ${notes.map((n) => `- ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.bo
 - 直せそうなら retry_with_advice で、担当への具体的な助言(何が原因で、どこをどう直すか・何を避けるか)を渡してやり直させます。同じ助言の繰り返しは避けます。
 - 担当が同じところで詰まり続けているなら、reassign で別のメンバーか島に渡します(新しい目で見てもらう)。
 - チケットが大きすぎる・手元で確かめられない部分がある(例: 本番の CI でしか動かない)なら、split_and_retry で残りを別チケットに切り出し、今のチケットは確かめられる範囲に絞ってやり直させます。
+- このチケットの変更が、すでに main に入っている(別のチケットで先に入った・重複していた)なら、close_as_already_done で完了にします。git log origin/main でコミットを確かめ、受け入れ条件を満たしているかも見てから呼びます。保留にはしません。
+${teamCiEnabled(p) ? "- CI はチームの CI を使っています(GitHub Actions は止めてあり、merge にも使いません)。落ちたなら、上の「最後のチームの CI」の出力で原因を見立てます。GitHub の CI の失敗は理由にしません。" : `- CI が落ちているなら、上の「最後に落ちた CI」と、ci_status・ci_run(ジョブ・ステップ・GitHub の注記・ログ)・ci_settings(秘密情報の名前)で原因を見立てます。作業場所からは GitHub は見えませんが、これらの道具は Kuramoto が外で GitHub を見て答えます。責任者に「ログを貼ってほしい」「やり直してほしい」とは頼みません(ci_rerun で自分でやり直せます)。ジョブが始まってもいない(ステップが 1 つも動いていない)なら、注記に理由(請求・使用額の上限・ランナー)が書かれています。原因がコードなら retry_with_advice で直し方を、main でも落ちているなら main の CI を直すチケットに任せて待つよう伝えます。ワークフローの設定・秘密情報など責任者にしかできないことが原因なら hold にします。`}
+- 直すコードが無い・やることが無いチケット(GitHub の CI のためだけのもの、仕様が変わっていらなくなったものなど)は、hold にせず drop_ticket で理由を書いて取りやめます。
 - 仕様が決まっていないなら、受け入れ条件と設計から仮に決め、その前提を助言に書いて進めます。
 - hold(保留)は、責任者にしかできないことが要るときだけです(秘密情報やアカウントの登録・外のサービスの契約・権限の付与など)。そのときは責任者に何をしてほしいかを具体的に書きます。
 - 最後のテキストは、責任者への短い報告(原因の見立てと、どうしたか)にします。`;
 }
 
-export function unstickTools(p: Project, ticket: TicketRow, payload: StuckPayload, done: { action?: "retry" | "hold" }): KuramotoTool[] {
+export function unstickTools(
+  p: Project,
+  ticket: TicketRow,
+  payload: StuckPayload,
+  done: { action?: "retry" | "hold" | "closed" | "dropped" },
+  ws: { checkLanded?: (commit: string) => Promise<string | undefined>; closePrs?: (a: { commit: string; reason: string }) => Promise<void>; closeTicketPrs?: (t: TicketRow, reason: string) => Promise<void> } = {},
+): KuramotoTool[] {
   return [
+    defineTool({
+      name: "close_as_already_done",
+      description:
+        "このチケットの変更が、すでに main に入っていて、やることが無いときに完了にする(別のチケット・PR で先に入った、重複していた)。Kuramoto がコミットが main に入っていることを確かめ、開いたままの PR があれば閉じる。",
+      input: {
+        commit: z.string().min(4).describe("このチケットの変更が入った main 上のコミット(SHA)"),
+        reason: z.string().min(1).describe("何がどこで入っていたか(受け入れ条件を満たしていることも含めて)"),
+      },
+      handler: async (a) => {
+        if (done.action) return "もう決めました。";
+        const problem = await ws.checkLanded?.(a.commit);
+        if (problem) return problem;
+        await ws.closePrs?.(a);
+        closeAlreadyDone(p, ticket, { ...a, by: p.fixedMember("lead").name });
+        done.action = "closed";
+        return "確かめて、完了にしました。";
+      },
+    }),
     defineTool({
       name: "retry_with_advice",
       description: "担当への助言をチケットのメモに書き、止まった仕事をやり直させる。",
@@ -165,6 +199,17 @@ export function unstickTools(p: Project, ticket: TicketRow, payload: StuckPayloa
         resumeWork(p, ticket, payload.resume);
         done.action = "retry";
         return `#${made.map((t) => t.number).join("・#")} に切り出し、範囲を絞ってやり直してもらいます。`;
+      },
+    }),
+    defineTool({
+      name: "drop_ticket",
+      description: "直すコードが無い・やることが無いチケットを、理由を書いて取りやめる(GitHub の CI のためだけのもの、仕様が変わっていらなくなったものなど)。記録は消さず、責任者が戻せる。",
+      input: { reason: z.string().min(1).describe("なぜいらないか(責任者が読む)") },
+      handler: async (a) => {
+        if (done.action) return "もう決めました。";
+        const r = await dropUnneeded(p, ticket.number, a.reason, ws.closeTicketPrs);
+        if (p.ticket(ticket.id).stage === "dropped") done.action = "dropped";
+        return r;
       },
     }),
     defineTool({

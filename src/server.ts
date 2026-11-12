@@ -1,5 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { networkInterfaces } from "node:os";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { all, get } from "./db/sqlite.js";
@@ -8,10 +11,15 @@ import { ROLE_LABEL } from "./domain/roles.js";
 import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import type { Harness } from "./harness/types.js";
 import { GhCli, type GitHub } from "./github/github.js";
-import { Hq, workDirFor } from "./hq.js";
+import { Hq, kuramotoHome, workDirFor } from "./hq.js";
 import { Dispatcher } from "./project/dispatcher.js";
 import { recoverStale } from "./project/inbox.js";
-import { autoMerge, autoMergeEnabled, ownerMerge, suggestedMergeOrder } from "./project/merge.js";
+import { autoMerge, autoMergeEnabled, ownerMerge, suggestedMergeOrder, type TeamCiHook } from "./project/merge.js";
+import { patrolMinutes, setPatrolMinutes, startPatrol } from "./project/patrol.js";
+import { ciBlockAction, ciBlocked, githubDown } from "./project/outage.js";
+import { fetchGithubSnapshot, markExisting } from "./project/onboard.js";
+import { runTeamCi, SandboxRunner, teamCiEnabled, type CommandRunner } from "./project/team-ci.js";
+import { leadReply } from "./project/leadchat.js";
 import { metrics } from "./project/metrics.js";
 import { exportDesignDoc } from "./project/export.js";
 import { extractTransfer, restoreTransfer } from "./project/transfer.js";
@@ -26,7 +34,7 @@ import { areaWait, blockers, dependsOn, mergeBlockers, mergeUnblocks } from "./p
 import { budgetView, projectBudgetUsd, projectSpentUsd, setProjectBudget } from "./project/budget.js";
 import type { Project } from "./project/project.js";
 import { GitWorkspace, type Workspace } from "./project/workspace.js";
-import { answerDecision, createTicket, defaultTicketBudgetUsd, nonstop, pendingOwnerDecisions, reopenTicket, resumeChecks, setDefaultTicketBudget, setTicketBudget, type DecisionOption } from "./project/workflow.js";
+import { answerDecision, createTicket, defaultTicketBudgetUsd, droppedInfo, nonstop, pendingOwnerDecisions, reopenTicket, resumeChecks, setDefaultTicketBudget, setTicketBudget, type DecisionOption } from "./project/workflow.js";
 import {
   addComment,
   advance,
@@ -63,15 +71,25 @@ export type ServerDeps = {
   workspaceFor?: (dataDir: string) => Workspace;
   /** 自動 merge で merge 待ちを見回る間隔(ミリ秒)。既定は 20 秒。 */
   mergePollMs?: number;
+  /** チームの CI のコマンドを流す(テストで差し替える)。既定は閉じ込めの中で流す。 */
+  checkRunner?: CommandRunner;
+  /**
+   * 他の PC から見られるようにする(npm run start:public)。どの Host でも受けるが、合言葉(トークン)を求める。
+   * 合言葉は URL の ?token= で一度渡すと Cookie に入り、以後はそれで通る。この PC 自身(localhost)からは合言葉なしで使える。
+   */
+  publicToken?: string;
 };
 
 /**
  * ローカルサーバー(docs/design.md 3.1)。画面を配り、API を受け、稼働中のプロジェクトのディスパッチャを回す。
  * localhost だけで待ち受け、書き込みの API には独自のヘッダーを求める(他のサイトからの書き込みを防ぐ)。
+ * 公開するとき(publicToken)は、localhost 以外からの接続に合言葉を求める。
  */
 export class KuramotoServer {
   private readonly projects = new Map<number, Project>();
-  private readonly runners = new Map<number, { timer: NodeJS.Timeout; mergeTimer: NodeJS.Timeout; busy: boolean; dispatcher: Dispatcher; tick: () => Promise<void> }>();
+  private readonly runners = new Map<number, { timer: NodeJS.Timeout; mergeTimer: NodeJS.Timeout; busy: boolean; dispatcher: Dispatcher; tick: () => Promise<void>; teamCi: TeamCiHook }>();
+  /** チームの CI のコマンドを閉じ込めの中で流す(プロセスで 1 つ。1 度に 1 つずつ流す)。 */
+  private readonly checkRunner: CommandRunner;
   /** オフィス(チケットの仕事)を動かしているプロジェクト。企画スタジオの担当は止めていても動く。 */
   private readonly running = new Set<number>();
   private readonly harnesses: Record<string, Harness>;
@@ -84,6 +102,7 @@ export class KuramotoServer {
     this.github = deps.github ?? new GhCli();
     this.mergePollMs = deps.mergePollMs ?? MERGE_POLL_MS;
     this.workspaceFor = deps.workspaceFor ?? ((d) => new GitWorkspace(workDirFor(d)));
+    this.checkRunner = deps.checkRunner ?? new SandboxRunner();
   }
 
   get hq(): Hq {
@@ -113,6 +132,8 @@ export class KuramotoServer {
   start(id: number): void {
     this.running.add(id);
     this.hq.setStatus(id, "running");
+    // 始業したら、リーダーがまずボードを見回る(重複・回り続けているチケット。ADR-0026)
+    startPatrol(this.project(id));
     this.loop(id);
     this.poke(id);
   }
@@ -137,11 +158,19 @@ export class KuramotoServer {
     if (this.runners.has(id)) return;
     const p = this.project(id);
     recoverStale(p);
+    const workspace = this.workspaceFor(this.hq.project(id).data_dir);
+    // merge の直前にチームの CI を流す口(ADR-0028)
+    const teamCi: TeamCiHook = {
+      run: (t, repo, branch) => runTeamCi(p, workspace, this.checkRunner, t, repo, branch),
+      baseSha: (repo) => workspace.baseSha?.(repo) ?? Promise.resolve(""),
+    };
     const dispatcher = new Dispatcher(p, {
       harnesses: this.harnesses,
-      workspace: this.workspaceFor(this.hq.project(id).data_dir),
+      checkRunner: this.checkRunner,
+      workspace,
       ticketsAllowed: () => this.running.has(id),
       triage: true,
+      github: this.github,
     });
     // チームが自動で merge する(ADR-0022)。始業中だけ。merge できたら、待っていた後のチケットが動けるように受信箱を見直す
     let merging = false;
@@ -149,7 +178,7 @@ export class KuramotoServer {
       if (merging || !this.running.has(id) || !autoMergeEnabled(p)) return;
       merging = true;
       try {
-        if (await autoMerge(p, this.github)) this.poke(id);
+        if (await autoMerge(p, this.github, { teamCi })) this.poke(id);
       } catch (e) {
         p.event("system", "dispatcher_error", null, { error: e instanceof Error ? e.message : String(e) });
       } finally {
@@ -159,6 +188,7 @@ export class KuramotoServer {
     const r = {
       busy: false,
       dispatcher,
+      teamCi,
       timer: setInterval(() => void tick(), POLL_MS),
       mergeTimer: setInterval(() => void merge(), this.mergePollMs),
       tick: async () => tick(),
@@ -187,6 +217,32 @@ export class KuramotoServer {
     void tick();
   }
 
+  /**
+   * CI の扱いを切り替える(ADR-0028)。チームの CI にするなら、リポジトリの GitHub Actions を止める(戻すなら動かす)。
+   * Actions を切り替えられなかった(権限が無い等)ときは、チームの CI には切り替えたうえで、責任者に知らせる。
+   */
+  private async setCiMode(p: Project, mode: "team" | "github"): Promise<void> {
+    p.setSetting("ci_mode", mode);
+    const done: string[] = [];
+    const failed: string[] = [];
+    for (const r of p.repos()) {
+      try {
+        if (!this.github.setActionsEnabled) throw new Error("この環境では切り替えられません");
+        await this.github.setActionsEnabled(r.full_name, mode === "github");
+        done.push(r.full_name);
+      } catch (e) {
+        failed.push(`${r.full_name}(${(e instanceof Error ? e.message : String(e)).slice(0, 200)})`);
+      }
+    }
+    p.event("owner", "ci_mode", null, { mode, done, failed });
+    leadReply(
+      p,
+      mode === "team"
+        ? `【チームの CI に切り替えました】これからは、担当が PR を出すたびに Kuramoto が閉じ込めの中で確認を流し、通ったものだけをレビューに回します。merge の直前にも、main が進んでいれば流し直します。GitHub の CI は待ちません。${done.length ? `\n${done.join("・")} の GitHub Actions を止めました。` : ""}${failed.length ? `\nGitHub Actions を止められませんでした: ${failed.join("・")}。リポジトリの Settings > Actions で止めてください。` : ""}\nリポジトリのブランチ保護で「CI の確認が通ること」を必須にしていると、GitHub が merge を断ります。そのときは必須の確認を外してください。`
+        : `【GitHub Actions の CI に戻しました】これからは merge の前に GitHub の CI を待ちます。${done.length ? `\n${done.join("・")} の GitHub Actions を動かしました。` : ""}${failed.length ? `\nGitHub Actions を動かせませんでした: ${failed.join("・")}。リポジトリの Settings > Actions で動かしてください。` : ""}`,
+    );
+  }
+
   /** テスト用: 今すぐ受信箱を見に行く。 */
   async tick(id: number): Promise<void> {
     const r = this.runners.get(id);
@@ -206,6 +262,7 @@ export class KuramotoServer {
       clearInterval(r.mergeTimer);
     }
     for (const p of this.projects.values()) p.close();
+    if (this.checkRunner instanceof SandboxRunner) void this.checkRunner.close();
   }
 
   // ---- API ----
@@ -213,7 +270,7 @@ export class KuramotoServer {
   async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
-      if (!isLocalHost(req.headers.host)) return send(res, 403, { error: "localhost からだけ使えます" });
+      if (!this.allowed(req, url, res)) return;
       if (!url.pathname.startsWith("/api/")) return await this.serveStatic(url.pathname, res);
       if (req.method !== "GET" && req.headers["x-kuramoto"] !== "1") return send(res, 403, { error: "ヘッダーがありません" });
       const exp = req.method === "GET" && url.pathname.match(/^\/api\/projects\/(\d+)\/studio\/export$/);
@@ -225,6 +282,34 @@ export class KuramotoServer {
     } catch (e) {
       send(res, 400, { error: e instanceof Error ? e.message : String(e) });
     }
+  }
+
+  /** 入ってよいか。だめなら応答を返して false。合言葉つきの URL で来たら Cookie に入れて、合言葉を外した URL へ送り直す。 */
+  private allowed(req: IncomingMessage, url: URL, res: ServerResponse): boolean {
+    const local = isLocalHost(req.headers.host) && isLoopback(req.socket.remoteAddress);
+    const token = this.deps.publicToken;
+    if (!token) {
+      if (isLocalHost(req.headers.host)) return true;
+      send(res, 403, { error: "localhost からだけ使えます" });
+      return false;
+    }
+    if (local) return true;
+    const given = url.searchParams.get("token");
+    if (given !== null && sameSecret(given, token)) {
+      url.searchParams.delete("token");
+      res.writeHead(303, { location: url.pathname + url.search, "set-cookie": `${TOKEN_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${60 * 60 * 24 * 365}` });
+      res.end();
+      return false;
+    }
+    const cookie = parseCookies(req.headers.cookie)[TOKEN_COOKIE];
+    const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+    if ((cookie && sameSecret(cookie, token)) || (bearer && sameSecret(bearer, token))) return true;
+    if (url.pathname.startsWith("/api/")) send(res, 401, { error: "合言葉(トークン)が要ります" });
+    else {
+      res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
+      res.end('<!doctype html><meta charset="utf-8"><title>Kuramoto</title><p style="font-family:sans-serif;padding:24px">Kuramoto を開くには、起動したターミナルに出ている「合言葉つきの URL」を開いてください。</p>');
+    }
+    return false;
   }
 
   private async route(method: string, parts: string[], body: Record<string, unknown>): Promise<unknown> {
@@ -244,7 +329,12 @@ export class KuramotoServer {
     if (!idStr && method === "POST") {
       const repos = (body.repos as { fullName: string; role: string }[] | undefined) ?? [];
       const rec = this.hq.createProject(String(body.name ?? ""), repos.map((r) => ({ fullName: String(r.fullName).trim(), role: String(r.role) })));
-      // リポジトリを登録したら、企画スタジオの企画担当が要件を聞き始める
+      // 既存のリポジトリの続きから: GitHub の途中の仕事(開いている PR・Issue)を取ってきてから、担当に現状を読ませる(ADR-0030)
+      if (body.mode === "existing") {
+        markExisting(this.project(rec.id), typeof body.issueLabel === "string" ? body.issueLabel : "kuramoto");
+        await fetchGithubSnapshot(this.project(rec.id), this.github);
+      }
+      // リポジトリを登録したら、企画スタジオの企画担当が要件を聞き始める(既存なら現状を読み始める)
       advance(this.project(rec.id));
       this.loop(rec.id);
       return { id: rec.id };
@@ -284,7 +374,10 @@ export class KuramotoServer {
       this.poke(id);
       return { ok: true };
     }
-    if (b === "merge" && c && method === "POST") return ownerMerge(p, this.github, Number(c));
+    if (b === "merge" && c && method === "POST") {
+      this.loop(id);
+      return ownerMerge(p, this.github, Number(c), "owner", { teamCi: this.runners.get(id)!.teamCi });
+    }
     if (b === "run" && method === "POST") {
       if (body.running) this.start(id);
       else this.stop(id);
@@ -312,6 +405,10 @@ export class KuramotoServer {
         nonstop: nonstop(p),
         autoMerge: autoMergeEnabled(p),
         resumeChecks: resumeChecks(p),
+        patrolMin: patrolMinutes(p),
+        ciMode: teamCiEnabled(p) ? "team" : "github",
+        // チームの CI で流すコマンド(リポジトリごと)。空なら package.json から決める
+        ciCommands: Object.fromEntries(p.repos().map((r) => [r.full_name, p.setting(`team_ci_commands:${r.full_name}`) ?? ""])),
       };
     if (b === "settings" && method === "POST") {
       const budget = body.ticketBudgetUsd === undefined ? undefined : body.ticketBudgetUsd === null ? null : Number(body.ticketBudgetUsd);
@@ -325,6 +422,10 @@ export class KuramotoServer {
       if (typeof body.nonstop === "boolean") p.setSetting("nonstop", body.nonstop ? "1" : "0");
       if (typeof body.autoMerge === "boolean") p.setSetting("auto_merge", body.autoMerge ? "1" : "0");
       if (typeof body.resumeChecks === "boolean") p.setSetting("resume_checks", body.resumeChecks ? "1" : "0");
+      if (body.patrolMin !== undefined) setPatrolMinutes(p, Number(body.patrolMin));
+      if (body.ciCommands && typeof body.ciCommands === "object")
+        for (const [repo, cmds] of Object.entries(body.ciCommands as Record<string, unknown>)) p.setSetting(`team_ci_commands:${repo}`, String(cmds ?? "").trim());
+      if ((body.ciMode === "team" || body.ciMode === "github") && (body.ciMode === "team") !== teamCiEnabled(p)) await this.setCiMode(p, body.ciMode);
       this.poke(id);
       return { name: rec.name };
     }
@@ -454,6 +555,8 @@ export class KuramotoServer {
         // merge 待ちのとき: merge すると動き出すチケット
         unblocks: unblocks.get(t.id) ?? null,
         conflict: !!get(p.db, "SELECT 1 AS x FROM conflicts c JOIN pull_requests pr ON pr.id = c.pr_id WHERE pr.ticket_id = ? AND c.resolved_at IS NULL", [t.id]),
+        // 取りやめたとき: 誰が・なぜ・いつ(ボードの「取りやめ」に出す)
+        dropped: droppedInfo(p, t.id),
       };
     });
     const decisions = pendingOwnerDecisions(p).map((d) => {
@@ -483,6 +586,10 @@ export class KuramotoServer {
       mergeOrder: suggestedMergeOrder(p).map((t) => t.id),
       budget: budgetView(p),
       autoMerge: autoMergeEnabled(p),
+      // GitHub に入れない(認証切れ)とき: いつから・どんなエラーか(ADR-0027)
+      githubDown: githubDown(p),
+      // CI のジョブが始まらない(請求・上限など)リポジトリ。merge だけ止まっている
+      ciBlocked: ciBlocked(p).map((b) => ({ ...b, action: ciBlockAction(b.notes) })),
       events: p.events(30),
       metrics: metrics(p),
       spentUsd: get<{ s: number | null }>(p.db, "SELECT SUM(cost_usd) AS s FROM runs")?.s ?? 0,
@@ -536,6 +643,49 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
+const TOKEN_COOKIE = "kuramoto_token";
+
+function isLoopback(addr: string | undefined): boolean {
+  return !!addr && (addr === "::1" || addr.startsWith("127.") || addr.startsWith("::ffff:127."));
+}
+
+function sameSecret(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
+function parseCookies(header: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of (header ?? "").split(";")) {
+    const i = part.indexOf("=");
+    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  }
+  return out;
+}
+
+/** 公開するときの合言葉。KURAMOTO_TOKEN があればそれ、なければ ~/.kuramoto/access-token に作って使い回す(本人だけが読める)。 */
+function publicToken(): string {
+  if (process.env.KURAMOTO_TOKEN) return process.env.KURAMOTO_TOKEN;
+  const file = join(kuramotoHome(), "access-token");
+  if (existsSync(file)) {
+    const t = readFileSync(file, "utf8").trim();
+    if (t) return t;
+  }
+  mkdirSync(kuramotoHome(), { recursive: true });
+  const t = randomBytes(24).toString("base64url");
+  writeFileSync(file, t + "\n", { mode: 0o600 });
+  return t;
+}
+
+/** 他の PC から開ける URL(この PC の LAN の IPv4 アドレス)。 */
+function lanUrls(port: number): string[] {
+  return Object.values(networkInterfaces())
+    .flat()
+    .filter((i): i is NonNullable<typeof i> => !!i && i.family === "IPv4" && !i.internal)
+    .map((i) => `http://${i.address}:${port}`);
+}
+
 function isLocalHost(host: string | undefined): boolean {
   return !!host && /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host);
 }
@@ -555,10 +705,18 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 // 直接起動したとき
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const port = Number(process.env.KURAMOTO_PORT ?? 4300);
-  const app = new KuramotoServer({ hq: new Hq() });
+  const open = process.env.KURAMOTO_PUBLIC === "1";
+  const token = open ? publicToken() : undefined;
+  const app = new KuramotoServer({ hq: new Hq(), ...(token ? { publicToken: token } : {}) });
   app.resume();
   const server = createServer((req, res) => void app.handle(req, res));
-  server.listen(port, "127.0.0.1", () => console.log(`Kuramoto: http://localhost:${port}`));
+  server.listen(port, open ? "0.0.0.0" : "127.0.0.1", () => {
+    console.log(`Kuramoto: http://localhost:${port}`);
+    if (!token) return;
+    console.log("他の PC からは、次の URL を開いてください(合言葉つき。一度開けば、そのブラウザでは以後合言葉なしで入れます):");
+    for (const u of lanUrls(port)) console.log(`  ${u}/?token=${token}`);
+    console.log("この URL を知っている人は、チームを動かし、あなたの GitHub に push できます。信頼できるネットワークでだけ使い、他人に渡さないでください。");
+  });
   const shutdown = () => {
     app.close();
     server.close(() => process.exit(0));

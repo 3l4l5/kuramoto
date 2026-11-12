@@ -3,7 +3,7 @@ import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
 import type { Project } from "./project.js";
 import { blockers, dependsOn, mergeBlockers, mergeUnblocks } from "./triage.js";
 import { threads, type Thread } from "./review.js";
-import { defaultTicketBudgetUsd, hasOwnBudget, ticketBudgetUsd, type DecisionOption } from "./workflow.js";
+import { defaultTicketBudgetUsd, droppedInfo, hasOwnBudget, ticketBudgetUsd, type DecisionOption } from "./workflow.js";
 
 /**
  * チケットを開いたときに見せる中身。チケットの中身・ひも付く要件と画面・PR・金額と、
@@ -155,6 +155,7 @@ export function ticketView(p: Project, ticketId: number) {
     ownBudget: hasOwnBudget(p, t.id),
     defaultBudgetUsd: defaultTicketBudgetUsd(p),
     tokens: cost?.tokens ?? 0,
+    dropped: droppedInfo(p, t.id),
     timeline,
   };
 }

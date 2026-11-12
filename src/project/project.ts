@@ -20,6 +20,10 @@ export type TicketRow = {
   created_at: string;
   done_at: string | null;
   active_ms: number;
+  /** 取りやめたとき: 誰が(lead・owner)・なぜ・いつ */
+  dropped_by?: string | null;
+  dropped_reason?: string | null;
+  dropped_at?: string | null;
 };
 
 export type MemberRow = {
@@ -203,7 +207,7 @@ export class Project {
   /**
    * どの島も、最大人数ぶんのメンバーが席にいるようにする(ADR-0023)。応援を呼んだり帰したりはしない。
    * 前にいた応援は、ずっといるメンバーとして扱う。足りない席は、前に帰ったメンバー(受け持ちのチケットがある人から)を呼び戻し、
-   * それでも足りなければ新しいメンバーで埋める。最大人数を超えている島からは、ここでは誰も帰さない(席替えのときに減らす)。
+   * それでも足りなければ新しいメンバーで埋める。最大人数を超えている島からは、作業中でない人を帰す。
    */
   fillSeats(): void {
     const f = this.currentFormationOrNull();
@@ -211,6 +215,17 @@ export class Project {
     tx(this.db, () => {
       run(this.db, "UPDATE members SET is_base = 1 WHERE unit_id IS NOT NULL AND left_at IS NULL AND is_base = 0");
       for (const u of f.units) {
+        // 最大人数を超えていたら(前の版で呼び戻された人など)、作業中でない人から、後から来た順に帰す
+        const seated = this.membersOfUnit(u.id);
+        const running = new Set(all<{ member_id: number }>(this.db, "SELECT member_id FROM runs WHERE ended_at IS NULL").map((r) => r.member_id));
+        const extra = seated
+          .filter((m) => !running.has(m.id))
+          .sort((a, b) => b.joined_at.localeCompare(a.joined_at) || b.id - a.id)
+          .slice(0, Math.max(0, seated.length - u.max_members));
+        for (const m of extra) {
+          run(this.db, "UPDATE members SET left_at = ? WHERE id = ?", [this.now(), m.id]);
+          this.event(m.name, "left", null, {});
+        }
         let n = this.membersOfUnit(u.id).length;
         while (n < u.max_members) {
           const back = get<{ id: number }>(

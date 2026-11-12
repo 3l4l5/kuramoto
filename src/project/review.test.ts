@@ -153,21 +153,36 @@ describe("何を止めるか(受け入れ条件・セキュリティ・この差
       replies.push(
         await call("submit_review", {
           findings: [{ category: "perf", severity: "medium", blocking: false, body: "数千件で重い" }],
-          followups: [{ title: "ゴミ箱の画面を作る", body: "入口のリンク先が 404 になる" }],
+          followups: [
+            { title: "ゴミ箱の画面を作る", body: "入口のリンク先が 404 になる" },
+            { title: "検索の結果を並べる", body: "更新順にしてほしい", existing: search.number },
+          ],
         }),
       );
     });
     upsertRequirement(p, { name: "一覧", acceptance: "すべてのメモが更新順で表示される" });
     const t = createTicket(p, { title: "一覧の外枠", body: "## 受け入れ条件\n- R1: 一覧が出る" });
     run(p.db, "UPDATE tickets SET triaged = 1 WHERE id = ?", [t.id]);
+    // 別に開いているチケット(まだ着手しない)
+    const search = createTicket(p, { title: "検索" });
+    run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ?", [search.id]);
     await d.drain();
 
     expect(replies[0]).toContain("必須の指摘には根拠(basis)が要ります");
     expect(replies[1]).toContain("承認");
     expect(reviewPrompt).toContain("R1 一覧: すべてのメモが更新順で表示される");
     expect(reviewPrompt).toContain("merge できるかどうかは見ません");
-    // PR は止まらずに merge 待ちへ。範囲外の指摘は、交通整理待ちの新しいチケットになる
+    // 開いているチケットを見せて、重ならないか確かめさせる
+    expect(reviewPrompt).toContain(`#${search.number} 検索`);
+    // PR は止まらずに merge 待ちへ。すでにあるチケットに当たるものは、そのチケットのメモになる
     expect(p.ticket(t.id).stage).toBe("merge");
+    expect(p.notes(search.id).at(-1)!.body).toContain("検索の結果を並べる");
+    // 範囲外の指摘は、merge するまでは別チケットにしない。merge したら、交通整理待ちの新しいチケットになる(1 回だけ)
+    expect(p.tickets().find((x) => x.title === "ゴミ箱の画面を作る")).toBeUndefined();
+    const { ownerMerge } = await import("./merge.js");
+    const gh = { prStatus: async () => ({ state: "OPEN" as const, mergeable: "MERGEABLE" as const, ci: "success" as const }), merge: async () => {}, comment: async () => "" };
+    expect(await ownerMerge(p, gh, t.id)).toEqual({ result: "merged" });
+    expect(p.tickets().filter((x) => x.title === "ゴミ箱の画面を作る")).toHaveLength(1);
     const followup = p.tickets().find((x) => x.title === "ゴミ箱の画面を作る")!;
     expect(followup.body).toContain(`#${t.number}「一覧の外枠」のレビューで見つかった`);
     expect(get(p.db, "SELECT triaged FROM tickets WHERE id = ?", [followup.id])).toEqual({ triaged: 0 });

@@ -1,10 +1,11 @@
+import { configuredCommands, teamCiEnabled } from "./team-ci.js";
 import { speechNote } from "../domain/cast.js";
 import { mustAnswer, mustResolve, openNits, threadText } from "./review.js";
 import { ROLE_LABEL, type Role } from "../domain/roles.js";
 import type { MessageRow } from "./inbox.js";
 import type { PolicyRow, Project, TicketRow } from "./project.js";
 import { requirements } from "./planning.js";
-import { get } from "../db/sqlite.js";
+import { all, get } from "../db/sqlite.js";
 import { decision, nonstop, type DecisionOption } from "./workflow.js";
 
 /**
@@ -65,6 +66,13 @@ export function systemPromptFor(p: Project, role: Role, policy: PolicyRow, unit?
   return parts.join("\n");
 }
 
+/** チームの CI を使うプロジェクトなら、submit_pr のあとに流す確認を伝える(先に手元で通しておく)。 */
+function teamCiNote(p: Project, repo?: string): string {
+  if (!teamCiEnabled(p) || !repo) return "";
+  const cmds = configuredCommands(p, repo);
+  return `\nsubmit_pr のあと、Kuramoto がチームの CI(PR を最新の main と合わせて${cmds ? `、${cmds.map((c) => `\`${c}\``).join(" → ")} を流す` : "、lint・型・テストを流す"})で確かめ、通ったものだけをレビューに回します。報告の前に、手元で同じ確認を通しておいてください。`;
+}
+
 export function promptFor(p: Project, msg: MessageRow, ticket: TicketRow | null, ctx: { branch?: string; base?: string; repo?: string; prNumber?: number }): string {
   const base = `origin/${ctx.base ?? "main"}`;
   const payload = JSON.parse(msg.payload) as Record<string, unknown>;
@@ -72,7 +80,7 @@ export function promptFor(p: Project, msg: MessageRow, ticket: TicketRow | null,
   const head = ticket ? ticketBlock(ticket) + (notes.length ? `\n\n### メモ(責任者・リーダーから)\n${notes.map((n) => `- ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.body}`).join("\n")}` : "") : "";
   switch (msg.kind) {
     case "implement":
-      return `${head}\n\nこのチケットを実装してください。リポジトリは ${ctx.repo}、ブランチは ${ctx.branch}(作業場所で取り出し済み)です。終わったら変更をコミットし、submit_pr で報告してください(PR のタイトルと本文も渡せます)。push と PR の作成は Kuramoto が行います。`;
+      return `${head}\n\nこのチケットを実装してください。リポジトリは ${ctx.repo}、ブランチは ${ctx.branch}(作業場所で取り出し済み)です。終わったら変更をコミットし、submit_pr で報告してください(PR のタイトルと本文も渡せます)。push と PR の作成は Kuramoto が行います。${teamCiNote(p, ctx.repo)}`;
     case "fix": {
       // CI の失敗など、スレッドにならない指示
       const extra = ((payload.findings as { severity: string; body: string }[] | undefined) ?? []).map((f) => `- [${f.severity}] ${f.body}`).join("\n");
@@ -84,7 +92,7 @@ export function promptFor(p: Project, msg: MessageRow, ticket: TicketRow | null,
       const from = ROLE_LABEL[(payload.from as Role) ?? "review"];
       return `${head}
 
-あなたが出した PR #${ctx.prNumber ?? "?"}(リポジトリは ${ctx.repo}、ブランチは ${ctx.branch})が${from}から差し戻されました。${extra ? `\n${extra}\n` : ""}
+${payload.team ? `あなたが出した PR #${ctx.prNumber ?? "?"}(リポジトリは ${ctx.repo}、ブランチは ${ctx.branch})を、Kuramoto がチームの CI で確かめたところ、落ちました。レビューにはまだ回していません。\n${extra}\n\n## チームの CI の直し方\n- チームの CI は、PR のコミットを最新の main(${base})と合わせた状態で、上のコマンドを順に流しています(あなたと同じ閉じ込めの中です)。\n- 出力から原因を見つけて直し、手元で git merge ${base} をしてから同じコマンドを流して、通ることを確かめてからコミットします。\n- 何も変えずに出し直しても、同じように落ちて戻ってきます。\n` : payload.ci ? `あなたが出した PR #${ctx.prNumber ?? "?"}(リポジトリは ${ctx.repo}、ブランチは ${ctx.branch})の CI が落ちて、merge できませんでした。\n${extra}\n\n## CI の直し方\n- あなたの作業場所からは GitHub(Actions のログ・PR の Checks)は見えません。上のログは Kuramoto が取ってきたものです。もっと見たいときは ci_status・ci_run・ci_settings で Kuramoto に取ってきてもらえます。ログから原因を見つけて直し、手元で同じコマンドを動かして確かめてからコミットします。\n- この PR の変更と関係のない失敗に見えるなら、git merge ${base} で main を取り込んでから確かめます(main 側で直っていることがあります)。\n- 何も変えずに出し直しても、同じように落ちて戻ってきます。ログが届くのを待つことはしません(要るものは道具で取れます)。\n` : `あなたが出した PR #${ctx.prNumber ?? "?"}(リポジトリは ${ctx.repo}、ブランチは ${ctx.branch})が${from}から差し戻されました。${extra ? `\n${extra}\n` : ""}`}
 ## 必須の指摘(すべてに返事をする)
 ${must.map(threadText).join("\n") || "(なし)"}
 
@@ -109,10 +117,26 @@ ${nits.map(threadText).join("\n") || "(なし)"}
   - security: セキュリティの問題(認証・認可・入力の扱い・秘密情報など)
   - regression: この差分で入った不具合(前は動いていたものが壊れた・明らかなバグ)
 - それ以外(書き方・好み・性能の心配・もっと良くできる点)は提案(blocking: false)にします。必須が残らなければ承認になります。
-- このチケットの範囲外のこと(後のチケットで扱う機能・別の画面・別の API)は、指摘にせず followups で別チケットの候補にします。PR は止めません。リーダーが順番と担当を決めます。
+- このチケットの範囲外のこと(後のチケットで扱う機能・別の画面・別の API)は、指摘にせず followups に書きます。PR は止めません。
+  - 先に下の「開いているチケット」を見て、同じことを扱うチケットがあれば、followups の existing にその番号を書きます(新しいチケットは作らず、そのチケットにメモとして足します)。
+  - 無ければ、この PR が merge されたときに別チケットになり、リーダーが順番と担当を決めます。
+${ticket ? openTicketsBlock(p, ticket) : ""}
 - ベースのブランチとの衝突・merge できるかどうかは見ません。merge の前に Kuramoto が確かめ、衝突していれば持ち主に直させます。
 - 確かめるための道具が動かない(テストやブラウザが起動しない)ときは、それを理由に差し戻しません。コードを読んで確かめられた範囲で判断し、動かせなかったことを提案として書きます。
 - 指摘には、何が問題で、どう直すべきかを書きます。`;
+      const recheck = ticket ? p.setting(`recheck:${ticket.id}`) : undefined;
+      if (recheck && !prior.length) {
+        return `${head}
+
+${ctx.repo} の PR #${ctx.prNumber} は、確認がすべて済んで merge を待っていましたが、その後に変更が入りました(main との衝突の解消や、CI の失敗の直しなど)。
+前に承認されたコミット ${recheck} のあとに、このブランチ自身が足した変更だけを確かめてください。全体を見直す必要はありません。
+
+- 変更は git log --no-merges -p ${recheck}..HEAD ^${base} で見られます(main から取り込んだものは除かれます)。
+- その変更で、受け入れ条件を満たさなくなっていないか・セキュリティの問題や不具合が入っていないかを見ます。問題が無ければ承認します。承認すると、ほかの確認はやり直さずに merge 待ちに戻ります。
+- 結果は submit_review で報告してください。
+
+${how}`;
+      }
       if (!prior.length) {
         return `${head}\n\n${ctx.repo} の PR #${ctx.prNumber} を確かめてください。作業場所に PR のブランチが取り出してあり、差分は git diff ${base}...HEAD で見られます。結果は submit_review で報告してください。\n\n${how}`;
       }
@@ -136,6 +160,7 @@ ${how}`;
     case "chat":
     case "triage":
     case "unstick":
+    case "patrol":
       return "";
     case "decide": {
       const d = decision(p, Number(payload.decision_id));
@@ -162,4 +187,17 @@ export function acceptanceBlock(p: Project, t: TicketRow): string {
 function ticketBlock(t: TicketRow): string {
   const id = t.jira_key ? `${t.jira_key}(#${t.number})` : `#${t.number}`;
   return `## チケット ${id}: ${t.title}\n${t.body}`.trim();
+}
+
+/** 確認する人に見せる、開いているチケットの一覧(followups の重複を避けるため)。このチケットから出たものを先に、多すぎれば新しいものから。 */
+function openTicketsBlock(p: Project, ticket: TicketRow): string {
+  const rows = all<{ number: number; title: string; plan_refs: string }>(
+    p.db,
+    "SELECT number, title, plan_refs FROM tickets WHERE stage NOT IN ('done','dropped') AND id <> ? ORDER BY number DESC LIMIT 200",
+    [ticket.id],
+  );
+  const mine = rows.filter((r) => (JSON.parse(r.plan_refs || "{}") as { followupOf?: number }).followupOf === ticket.number);
+  const others = rows.filter((r) => !mine.includes(r)).slice(0, Math.max(0, 80 - mine.length));
+  const list = [...mine, ...others].map((r) => `  - #${r.number} ${r.title}`).join("\n");
+  return list ? `\n## 開いているチケット(followups が重ならないか確かめる)\n${list}\n` : "";
 }

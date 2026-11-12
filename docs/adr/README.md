@@ -28,3 +28,9 @@ Kuramoto の設計で下した判断を 1 件ずつ残します。状態は「�
 | [0022](0022-nonstop-team-takes-responsibility.md) | ノンストップで進め、チームで責任を持つ(merge もチームが行う) | 提案 |
 | [0023](0023-members-stay-at-max.md) | 島のメンバーは最大人数ぶんずっといる(応援を呼ばない・帰さない) | 提案 |
 | [0024](0024-serialize-tickets-touching-same-area.md) | 同じ場所を触るチケットは同時に開発しない | 提案 |
+| [0025](0025-recheck-only-changes-after-approval.md) | 承認のあとに戻ってきたら、その後の変更だけを確かめる。範囲外の指摘は merge のときに 1 回だけチケットにする | 提案 |
+| [0026](0026-lead-patrols-board.md) | リーダーが定期的にボードを見回り、重複・いらなくなったチケットと回り続けているチケットに手を打つ | 提案 |
+| [0027](0027-github-outage-and-ci-logs.md) | GitHub に入れないときはチームで待って自動で再開し、CI が落ちたら Kuramoto がログを取ってきて渡す | 提案 |
+| [0028](0028-team-ci.md) | チームの CI を持ち、使うときは GitHub Actions を止める | 提案 |
+| [0029](0029-flow-dashboard.md) | 生産性の画面に「流れ」と「メンバー」を足す | 提案 |
+| [0030](0030-continue-existing-repo.md) | 既存のリポジトリの続きから始められるようにする | 提案 |

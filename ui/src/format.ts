@@ -42,3 +42,10 @@ export function stalledText(number: number, u: { now: number[]; later: number[] 
   const all = [...u.now, ...u.later].sort((a, b) => a - b);
   return `#${number} の merge 待ちで ${nums(all)} が止まっています`;
 }
+
+/** 取りやめたチケットの「誰が・なぜ」。 */
+export function droppedText(d: { by: string | null; reason: string | null } | null): string {
+  if (!d) return "";
+  const who = d.by === "lead" ? "リーダー" : d.by === "owner" ? "あなた" : "";
+  return `${who ? `${who}が` : ""}取りやめ${d.reason ? `: ${d.reason}` : ""}`;
+}

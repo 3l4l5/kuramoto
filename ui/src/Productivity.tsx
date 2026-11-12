@@ -13,13 +13,24 @@ export const useProductivity = (id: number) => useQuery({ queryKey: ["productivi
 const tok = (v: number) => (v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : v >= 1000 ? `${Math.round(v / 1000)}k` : String(Math.round(v)));
 const int = (v: number) => String(Math.round(v));
 
-type View = "trend" | "cost" | "tickets";
+type View = "flow" | "trend" | "cost" | "tickets" | "members";
 type Mode = "graph" | "table";
-const VIEW_LABEL: Record<View, string> = { trend: "日ごとの推移", cost: "金額の内訳", tickets: "チケットごと" };
+const VIEW_LABEL: Record<View, string> = { flow: "流れ", trend: "日ごとの推移", cost: "金額の内訳", tickets: "チケットごと", members: "メンバー" };
+
+/** かかった時間(ミリ秒)を、分・時間・日で短く。 */
+const span = (ms: number | null) => {
+  if (ms == null) return "—";
+  if (ms < 60_000) return `${Math.round(ms / 1000)} 秒`;
+  const m = ms / 60_000;
+  return m < 60 ? `${Math.round(m)} 分` : m < 60 * 48 ? `${(m / 60).toFixed(1)} 時間` : `${(m / 60 / 24).toFixed(1)} 日`;
+};
+/** 1 時間ごとの目盛り: 「14時」(0 時だけ日付も)。 */
+const hourTick = (l: string) => (l.endsWith(" 00時") ? l.slice(5, 10) : l.slice(11));
+const pct = (v: number | null) => (v == null ? "—" : `${Math.round(v * 100)}%`);
 
 export function ProductivityPage({ id }: { id: number }) {
   const { data } = useProductivity(id);
-  const [view, setView] = useState<View>("trend");
+  const [view, setView] = useState<View>("flow");
   const [mode, setMode] = useState<Mode>("graph");
   if (!data) return <section aria-label="生産性" />;
   const t = data.totals;
@@ -58,6 +69,8 @@ export function ProductivityPage({ id }: { id: number }) {
       </div>
 
       <div role="tabpanel" aria-label={VIEW_LABEL[view]}>
+        {view === "flow" && <Flow data={data} mode={mode} />}
+        {view === "members" && <Members data={data} />}
         {view === "trend" && <Trend data={data} mode={mode} />}
         {view === "cost" && <Cost data={data} mode={mode} />}
         {view === "tickets" && <Tickets data={data} mode={mode} />}
@@ -79,7 +92,7 @@ function Tile({ label, value, note }: { label: string; value: string; note: stri
 }
 
 /** 日ごとの棒グラフ(1 系列)。棒に乗せると日付と値が出る。 */
-function BarChart({ title, rows, fmt }: { title: string; rows: { label: string; value: number }[]; fmt: (v: number) => string }) {
+function BarChart({ title, rows, fmt, tick = (l) => l.slice(5) }: { title: string; rows: { label: string; value: number }[]; fmt: (v: number) => string; tick?: (label: string) => string }) {
   const [hover, setHover] = useState<number | null>(null);
   const W = 360, H = 150, L = 8, R = 8, T = 12, B = 22;
   const max = Math.max(...rows.map((r) => r.value), 0) || 1;
@@ -117,7 +130,7 @@ function BarChart({ title, rows, fmt }: { title: string; rows: { label: string; 
                 )}
                 {i % every === 0 && (
                   <text x={x + bw / 2} y={H - 6} textAnchor="middle" className="tick">
-                    {r.label.slice(5)}
+                    {tick(r.label)}
                   </text>
                 )}
                 {/* 当たり判定は棒より広く取る */}
@@ -304,5 +317,197 @@ function Tickets({ data, mode }: P) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** 件数の横棒(多い順・並びを決めたもの)。棒の長さは一番多いものに対する割合。 */
+function CountBars({ rows, label, unit = "件" }: { rows: { key: string; label: string; n: number; note?: string }[]; label: string; unit?: string }) {
+  const max = Math.max(...rows.map((r) => r.n)) || 1;
+  return (
+    <ul className="rolebars" aria-label={label}>
+      {rows.map((r) => (
+        <li key={r.key} aria-label={r.label}>
+          <span className="name">{r.label}</span>
+          <span className="track">
+            <span className="fill" style={{ width: `${Math.max(1, (r.n / max) * 100)}%` }} />
+          </span>
+          <span className="val">
+            {r.n} {unit}
+            {r.note && <small> · {r.note}</small>}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** 流れ: 速さ・入ってくる数と片付く数・仕掛かり・待ち(直近 48 時間は 1 時間ずつ)。 */
+function Flow({ data, mode }: P) {
+  const f = data.flow;
+  const th = f.throughput;
+  const h = f.hourly;
+  return (
+    <>
+      <div className="tiles" role="list" aria-label="流れの指標">
+        <Tile label="時間あたりの merge" value={th.mergedPerActiveHour == null ? "—" : th.mergedPerActiveHour.toFixed(2)} note={`直近 24 時間で ${th.mergedLast24h} 件 · チームが動いていた ${th.activeHours} 時間あたり(24 時間ならし ${th.mergedPerHour.toFixed(2)})`} />
+        <Tile label="入った / 片付いた(24 時間)" value={`${th.createdLast24h} / ${th.closedLast24h}`} note={th.netLast24h > 0 ? `${th.netLast24h} 件溜まっています(未完了 ${f.open} 件)` : th.netLast24h < 0 ? `${-th.netLast24h} 件減りました(未完了 ${f.open} 件)` : `増減なし(未完了 ${f.open} 件)`} />
+        <Tile label="リードタイム(中央値)" value={span(f.times.leadMs.median)} note={`入ってから merge まで · 90% は ${span(f.times.leadMs.p90)} 以内 · ${f.times.leadMs.n} 件`} />
+        <Tile label="サイクルタイム(中央値)" value={span(f.times.cycleMs.median)} note={`取りかかってから merge まで · 90% は ${span(f.times.cycleMs.p90)} 以内`} />
+        <Tile label="merge 待ち(中央値)" value={span(f.times.mergeWaitMs.median)} note={`確認が済んでから merge まで · 90% は ${span(f.times.mergeWaitMs.p90)} 以内`} />
+        <Tile label="フロー効率" value={pct(f.flowEfficiency)} note="リードタイムのうち、誰かが手を動かしていた割合" />
+        <Tile label="一発で通った" value={pct(f.firstPassYield)} note={`差し戻し・衝突・CI での戻りなしで merge した割合(${f.mergedTotal} 件中)`} />
+        <Tile label="あなたを待った時間" value={span(f.ownerWait.totalMs)} note={`判断カード ${f.ownerWait.count} 枚(いま待っている ${f.ownerWait.pending} 枚) · 1 枚あたり中央値 ${span(f.ownerWait.median)}`} />
+      </div>
+
+      <p className="hint">直近 48 時間を 1 時間ずつ。片付いたのは merge・取りやめ・すでに入っていたもの、未完了は各時間の終わりの数です。</p>
+      {mode === "graph" ? (
+        <div className="charts">
+          <BarChart title="入ったチケット" rows={h.map((x) => ({ label: x.hour, value: x.created }))} fmt={int} tick={hourTick} />
+          <BarChart title="片付いたチケット" rows={h.map((x) => ({ label: x.hour, value: x.closed }))} fmt={int} tick={hourTick} />
+          <BarChart title="未完了のチケット" rows={h.map((x) => ({ label: x.hour, value: x.open }))} fmt={int} tick={hourTick} />
+          <BarChart title="merge" rows={h.map((x) => ({ label: x.hour, value: x.merged }))} fmt={int} tick={hourTick} />
+          <BarChart title="起動" rows={h.map((x) => ({ label: x.hour, value: x.runs }))} fmt={int} tick={hourTick} />
+          <BarChart title="使った金額" rows={h.map((x) => ({ label: x.hour, value: x.costUsd }))} fmt={(v) => usd(v)} tick={hourTick} />
+        </div>
+      ) : (
+        <div className="tablewrap">
+          <table aria-label="1 時間ごとの推移の表">
+            <thead>
+              <tr>
+                <th>時間</th>
+                <th>入った</th>
+                <th>片付いた</th>
+                <th>未完了</th>
+                <th>merge</th>
+                <th>起動</th>
+                <th>金額</th>
+              </tr>
+            </thead>
+            <tbody>
+              {h.map((x) => (
+                <tr key={x.hour}>
+                  <th>{x.hour}</th>
+                  <td>{x.created}</td>
+                  <td>{x.closed}</td>
+                  <td>{x.open}</td>
+                  <td>{x.merged}</td>
+                  <td>{x.runs}</td>
+                  <td>{usd(x.costUsd)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="breakdowns">
+        <div>
+          <h4>どこから入ったか</h4>
+          {f.sources.length ? <CountBars label="チケットがどこから入ったか" rows={f.sources.map((s) => ({ key: s.key, label: s.label, n: s.total, note: `直近 24 時間 ${s.last24h} · 未完了 ${s.open}` }))} /> : <p className="hint">まだありません。</p>}
+        </div>
+        <div>
+          <h4>いまの仕掛かり</h4>
+          {f.wip.length ? <CountBars label="工程ごとの未完了のチケット" rows={f.wip.map((w) => ({ key: w.key, label: w.label, n: w.n }))} /> : <p className="hint">未完了のチケットはありません。</p>}
+        </div>
+        <div>
+          <h4>長く開いているチケット</h4>
+          {f.aging.length ? (
+            <div className="tablewrap">
+            <table aria-label="長く開いているチケット">
+              <thead>
+                <tr>
+                  <th>チケット</th>
+                  <th>工程</th>
+                  <th>入ってから</th>
+                </tr>
+              </thead>
+              <tbody>
+                {f.aging.map((a) => (
+                  <tr key={a.id}>
+                    <th>
+                      #{a.number} {a.title}
+                    </th>
+                    <td>{a.stage === "todo" ? "未着手" : (STAGE[a.stage] ?? a.stage)}</td>
+                    <td>{span(a.ageMs)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </div>
+          ) : (
+            <p className="hint">ありません。</p>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** メンバーごとと、役割ごとの起動の長さ。 */
+function Members({ data }: { data: ProductivityView }) {
+  const m = data.members;
+  if (!m.list.length) return <p className="hint">まだ記録がありません。</p>;
+  return (
+    <>
+      <p className="hint">稼働率は、直近 24 時間のうちチームが動いていた時間に対して、その人が起動していた割合です。</p>
+      <div className="tablewrap">
+        <table aria-label="メンバーごとの指標">
+          <thead>
+            <tr>
+              <th>メンバー</th>
+              <th>島</th>
+              <th>稼働率(24 時間)</th>
+              <th>起動</th>
+              <th>動いていた時間(通算)</th>
+              <th>金額</th>
+              <th>エラー</th>
+              <th>merge まで持っていった</th>
+            </tr>
+          </thead>
+          <tbody>
+            {m.list.map((x) => (
+              <tr key={x.id}>
+                <th>
+                  {x.name}
+                  {x.left ? "(離れた)" : ""}
+                </th>
+                <td>{x.unit || x.role}</td>
+                <td>{pct(x.utilization)}</td>
+                <td>{x.runs}</td>
+                <td>{span(x.busyMs)}</td>
+                <td>{usd(x.costUsd)}</td>
+                <td>{x.errors}</td>
+                <td>{x.merged}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <h4>役割ごとの起動</h4>
+      <div className="tablewrap">
+        <table aria-label="役割ごとの起動の長さ">
+          <thead>
+            <tr>
+              <th>役割</th>
+              <th>起動</th>
+              <th>1 回の長さ(中央値)</th>
+              <th>90% は</th>
+              <th>エラーの割合</th>
+            </tr>
+          </thead>
+          <tbody>
+            {m.roles.map((r) => (
+              <tr key={r.role}>
+                <th>{r.label}</th>
+                <td>{r.runs}</td>
+                <td>{span(r.median)}</td>
+                <td>{span(r.p90)} 以内</td>
+                <td>{pct(r.errorRate)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }

@@ -6,8 +6,9 @@ import { nextStage, pipelineOf } from "../domain/formation.js";
 import { WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
 import { send, type MessageKind, type MessageRow } from "./inbox.js";
 import type { Project, TicketRow } from "./project.js";
-import type { Finding, Question, RunReport } from "./tools.js";
+import type { Finding, Followup, Question, RunReport } from "./tools.js";
 import { comment, lastReviewer, mustResolve, setStatus, threadText } from "./review.js";
+import { teamCiFindings } from "./team-ci.js";
 
 /**
  * ノンストップで進めるか(ADR-0022)。設定 nonstop が "0" でなければ、戻せる判断はチームで決め、責任者には報告だけする。
@@ -67,6 +68,10 @@ const REVIEW_KINDS: Record<string, WorkRole> = { review: "review", sec: "sec", q
 export function enterStage(p: Project, ticket: TicketRow, stage: WorkRole | "merge", extra: { toMemberId?: number | null; payload?: Record<string, unknown> } = {}): void {
   p.setStage(ticket.id, stage);
   if (stage === "merge") {
+    // 確認がすべて済んだコミットを覚えておく。この後に戻ってきても、承認のあとの変更だけを確かめればよい
+    const sha = p.setting(`pr_sha:${ticket.id}`);
+    if (sha) p.setSetting(`approved_sha:${ticket.id}`, sha);
+    p.setSetting(`recheck:${ticket.id}`, "");
     p.event("system", "ready_to_merge", ticket.id, { number: ticket.number });
     return;
   }
@@ -99,7 +104,7 @@ export function applyReport(p: Project, ctx: { msg: MessageRow; runId: number; m
       case "implement":
       case "fix":
       case "answer":
-        return applyDev(p, ticket, ctx.memberId, report, JSON.parse(msg.payload) as { from?: WorkRole; conflict?: boolean });
+        return applyDev(p, ticket, ctx.memberId, report, JSON.parse(msg.payload) as { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string });
       case "review":
       case "sec":
       case "qa":
@@ -110,12 +115,13 @@ export function applyReport(p: Project, ctx: { msg: MessageRow; runId: number; m
       case "chat":
       case "triage":
       case "unstick":
+      case "patrol":
         return undefined;
     }
   });
 }
 
-function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunReport, payload: { from?: WorkRole; conflict?: boolean } = {}): string | undefined {
+function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunReport, payload: { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string } = {}): string | undefined {
   if (ticket.owner_member_id === null) {
     run(p.db, "UPDATE tickets SET owner_member_id = ? WHERE id = ?", [memberId, ticket.id]);
     ticket = p.ticket(ticket.id);
@@ -124,7 +130,14 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
     raiseToLead(p, ticket, report.question);
     return undefined;
   }
+  if (report.alreadyDone) {
+    closeAlreadyDone(p, ticket, { ...report.alreadyDone, by: p.member(memberId).name });
+    return undefined;
+  }
   if (!report.pr) return "submit_pr が呼ばれませんでした";
+  // CI が落ちたコミットのまま出し直しても、同じように落ちて戻ってくるだけ(ADR-0027)。失敗として扱い、続けばリーダーが手助けする
+  if (payload.ci && payload.sha && report.pr.sha === payload.sha)
+    return `CI が落ちたコミット(${payload.sha.slice(0, 7)})から何も変わっていません。渡したログから原因を直すか、git merge origin/main で main を取り込んでから出し直してください`;
   const repo = p.repos().find((r) => r.full_name === report.pr!.repo);
   if (!repo) return `登録されていないリポジトリです: ${report.pr.repo}`;
   run(
@@ -134,10 +147,19 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
     [ticket.id, repo.id, report.pr.number, report.pr.head],
   );
   p.event(p.member(memberId).name, "pr_submitted", ticket.id, { number: report.pr.number, repo: report.pr.repo });
+  if (report.pr.sha) p.setSetting(`pr_sha:${ticket.id}`, report.pr.sha);
   // 指摘への返事をスレッドに残す
   for (const r of report.responses ?? []) {
     comment(p, r.findingId, { memberId, role: "dev" }, r.action, r.comment);
     setStatus(p, r.findingId, r.action === "fixed" ? "addressed" : "disputed");
+  }
+  // チームの CI が落ちた(ADR-0028)。レビューに回さず、出力を付けてその場で持ち主に戻す
+  if (report.teamCi && !report.teamCi.ok) {
+    const r = report.teamCi;
+    p.event("team_ci", "sent_back", ticket.id, { sha: r.sha });
+    if (r.conflict) enterStage(p, ticket, "dev", { payload: { conflict: true, cause: r.conflict } });
+    else enterStage(p, ticket, "dev", { payload: { ci: true, team: true, ...(report.pr.sha ? { sha: report.pr.sha } : {}), ...(payload.from ? { from: payload.from } : {}), findings: teamCiFindings(r) } });
+    return undefined;
   }
   // 衝突の解き方で行き先を分ける(ADR-0013): 機械的に解けたら merge 待ちへ、ロジックに手を入れたら確認をやり直す。
   const conflict = get<{ id: number }>(
@@ -153,8 +175,25 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
       return undefined;
     }
   }
-  // 差し戻しの直しなら、差し戻した工程(同じレビュアー)に戻す。前の工程の承認はそのまま生かす
   const pipeline = pipelineOf(p.currentFormation());
+  // 確認がすべて済んだあとに(衝突・CI の失敗などで)戻ってきた。確認を最初からやり直さない
+  const approved = p.setting(`approved_sha:${ticket.id}`);
+  if (approved && !payload.from) {
+    // main を取り込んだだけ(自分の変更が無い)なら、そのまま merge 待ちへ
+    if (report.pr.ownCommitsSinceApproved === 0) {
+      p.event("system", "recheck_skipped", ticket.id, { reason: "main の取り込みだけ" });
+      enterStage(p, ticket, "merge");
+      return undefined;
+    }
+    // 自分で足した変更があれば、最初の確認の工程が、承認のあとの変更だけを軽く確かめる
+    const first = pipeline.find((r) => r !== "dev");
+    if (first) {
+      p.setSetting(`recheck:${ticket.id}`, approved);
+      enterStage(p, ticket, first);
+      return undefined;
+    }
+  }
+  // 差し戻しの直しなら、差し戻した工程(同じレビュアー)に戻す。前の工程の承認はそのまま生かす
   if (payload.from && pipeline.includes(payload.from)) {
     enterStage(p, ticket, payload.from);
     return undefined;
@@ -199,7 +238,9 @@ function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: numbe
 
   if (verdict === "approve") {
     p.event(role, "approved", ticket.id, { round });
-    advance(p, ticket, role);
+    // 承認のあとの変更だけを確かめる軽い確認なら、ほかの工程はやり直さずに merge 待ちへ
+    if (p.setting(`recheck:${ticket.id}`)) enterStage(p, ticket, "merge");
+    else advance(p, ticket, role);
     return undefined;
   }
 
@@ -260,13 +301,38 @@ function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: numbe
 const ROLE_TEXT: Record<string, string> = { review: "レビュー", sec: "セキュリティ", qa: "QA" };
 
 /**
- * チケットの範囲外の指摘を、別チケットとして切り出す。PR は止めず、新しいチケットはリーダーの交通整理を待つ。
- * 同じタイトルのチケットが既にあれば作らない(再レビューのたびに増えないように)。
+ * チケットの範囲外の指摘(followups)を受け取る。PR は止めない。
+ * - すでに同じことを扱うチケット(existing)があれば、新しく作らずそのチケットにメモとして足す。
+ * - 無ければ控えておき、この PR が merge されたとき(flushFollowups)にまとめて 1 回だけ別チケットにする。
+ *   確認をやり直すたびに同じ指摘が出ても、merge までに 1 つにまとまる(同じタイトルは 1 つにする)。
  */
-function createFollowups(p: Project, from: TicketRow, role: WorkRole, followups: { title: string; body: string }[]): void {
+function createFollowups(p: Project, from: TicketRow, role: WorkRole, followups: Followup[]): void {
+  const key = `pending_followups:${from.id}`;
+  const pending = JSON.parse(p.setting(key) || "[]") as (Followup & { role: string })[];
   for (const f of followups) {
     const title = f.title.trim();
-    if (!title || get(p.db, "SELECT 1 AS x FROM tickets WHERE title = ?", [title])) continue;
+    if (!title) continue;
+    const existing = f.existing ? get<TicketRow>(p.db, "SELECT * FROM tickets WHERE number = ? AND stage NOT IN ('done','dropped')", [f.existing]) : undefined;
+    if (existing && existing.id !== from.id) {
+      p.addNote(existing.id, `【#${from.number} の${ROLE_TEXT[role] ?? role}から】${title}\n${f.body.trim()}`, "lead");
+      p.event(role, "followup_noted", existing.id, { number: existing.number, from: from.number, title });
+      continue;
+    }
+    if (pending.some((x) => x.title === title)) continue;
+    pending.push({ title, body: f.body, role });
+  }
+  p.setSetting(key, JSON.stringify(pending));
+}
+
+/** merge されたチケットの、控えておいた followups を別チケットにする。同じタイトルのチケットが既にあれば作らない。 */
+export function flushFollowups(p: Project, from: TicketRow): void {
+  const key = `pending_followups:${from.id}`;
+  const pending = JSON.parse(p.setting(key) || "[]") as (Followup & { role: string })[];
+  p.setSetting(key, "[]");
+  for (const f of pending) {
+    const title = f.title;
+    const role = f.role;
+    if (get(p.db, "SELECT 1 AS x FROM tickets WHERE title = ?", [title])) continue;
     const refs = JSON.parse((get<{ plan_refs: string }>(p.db, "SELECT plan_refs FROM tickets WHERE id = ?", [from.id])?.plan_refs ?? "{}")) as { repo?: string };
     const t = createTicket(p, {
       title,
@@ -397,6 +463,16 @@ export function answerDecision(p: Project, id: number, choice: number, note?: st
   });
 }
 
+/** 保留を解いて、止まったところから続ける(保留の原因が無くなったと Kuramoto が確かめたとき)。 */
+export function resumeHold(p: Project, id: number, by: "owner" | "lead"): void {
+  tx(p.db, () => {
+    const d = decision(p, id);
+    if (d.decided_at) return;
+    const i = (JSON.parse(d.options) as DecisionOption[]).findIndex((o) => o.action === "resume");
+    if (i >= 0) resolve(p, d, i, by);
+  });
+}
+
 /** 期限を過ぎた判断を推奨で決める。 */
 export function expireDecisions(p: Project): number {
   const due = all<DecisionRow>(p.db, "SELECT * FROM decisions WHERE escalated = 1 AND decided_at IS NULL AND deadline_at <= ?", [p.now()]);
@@ -421,6 +497,7 @@ function resolve(p: Project, d: DecisionRow, choice: number, by: "owner" | "lead
   p.event(by, "decided", ticket.id, { decision_id: d.id, choice, label: option.label });
   if (option.action === "drop") {
     p.setStage(ticket.id, "dropped");
+    run(p.db, "UPDATE tickets SET dropped_by = ?, dropped_reason = ?, dropped_at = ? WHERE id = ?", [by === "lead" ? "lead" : "owner", `判断「${d.question.split("\n").pop()}」で「${option.label}」を選んだため`, p.now(), ticket.id]);
     return;
   }
   if (option.action === "pass" && option.from) {
@@ -577,6 +654,53 @@ export function resumeWork(p: Project, ticket: TicketRow, m: ResumeMessage): voi
  * 保留する。リーダーが手を尽くしても進まないときの最後の手。チケットはやめずに止めておき、
  * 責任者が対応して「再開する」を押すまで待つ(期限で勝手に再開しない)。待っている後のチケットも待ち続ける。
  */
+/**
+ * チケットの変更が、すでに main に入っていた(別のチケット・PR で先に入った、重複していた)。
+ * コミットが main に入っていることは、呼ぶ前に Kuramoto が確かめておく(Workspace.landed)。
+ * 待っている判断と仕事を片付け、チケットを完了にする。後に待っていたチケットはそのまま動き出す。
+ */
+export function closeAlreadyDone(p: Project, ticket: TicketRow, a: { commit: string; reason: string; by: string }): void {
+  tx(p.db, () => {
+    run(p.db, "UPDATE decisions SET decided_by = 'lead', decided_at = ? WHERE ticket_id = ? AND decided_at IS NULL", [p.now(), ticket.id]);
+    run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ? AND status = 'pending'", [ticket.id]);
+    p.setStage(ticket.id, "merge"); // 完了の時刻を入れる
+    p.setStage(ticket.id, "done");
+    p.addNote(ticket.id, `【すでに main に入っていました】${a.reason}(コミット ${a.commit})`, "lead");
+    flushFollowups(p, ticket);
+    p.event(a.by, "already_done", ticket.id, { commit: a.commit, reason: a.reason });
+  });
+}
+
+/**
+ * チケットを取りやめる(いらなくなった・重複していた)。記録は消さず、誰が・いつ・なぜ取りやめたかを残す。
+ * 待っている仕事と判断を閉じる。このチケットを待っていた後のチケットは、残す方(sameAs)があればそちらを待ち、無ければ待つのをやめる。
+ * 開いている PR を閉じるのは呼ぶ側(外の操作なので)。起動中でないことも呼ぶ側で確かめる。
+ */
+export function dropTicket(p: Project, ticketId: number, d: { by: "lead" | "owner"; reason: string; sameAs?: TicketRow }): void {
+  const ticket = p.ticket(ticketId);
+  const actor = d.by === "lead" ? p.fixedMember("lead").name : "owner";
+  tx(p.db, () => {
+    run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ? AND status = 'pending'", [ticketId]);
+    run(p.db, "UPDATE decisions SET decided_by = ?, decided_at = ? WHERE ticket_id = ? AND decided_at IS NULL", [d.by, p.now(), ticketId]);
+    if (d.sameAs) run(p.db, "UPDATE OR IGNORE ticket_deps SET depends_on = ? WHERE depends_on = ? AND ticket_id <> ?", [d.sameAs.id, ticketId, d.sameAs.id]);
+    run(p.db, "DELETE FROM ticket_deps WHERE depends_on = ? OR ticket_id = ?", [ticketId, ticketId]);
+    run(p.db, "UPDATE tickets SET triaged = 1, dropped_by = ?, dropped_reason = ?, dropped_at = ? WHERE id = ?", [d.by, d.reason, p.now(), ticketId]);
+    p.setStage(ticketId, "dropped");
+    p.addNote(ticketId, `【取りやめ】${d.reason}`, d.by);
+    p.event(actor, d.sameAs ? "duplicate_dropped" : "ticket_dropped", ticketId, { number: ticket.number, reason: d.reason, ...(d.sameAs ? { sameAs: d.sameAs.number } : {}) });
+  });
+}
+
+/** 取りやめたチケットの、誰が・いつ・なぜ。取りやめていなければ null。 */
+export function droppedInfo(p: Project, ticketId: number): { by: "lead" | "owner" | null; reason: string | null; at: string | null } | null {
+  const r = get<{ stage: string; dropped_by: "lead" | "owner" | null; dropped_reason: string | null; dropped_at: string | null }>(
+    p.db,
+    "SELECT stage, dropped_by, dropped_reason, dropped_at FROM tickets WHERE id = ?",
+    [ticketId],
+  );
+  return r && r.stage === "dropped" ? { by: r.dropped_by, reason: r.dropped_reason, at: r.dropped_at } : null;
+}
+
 export function holdTicket(p: Project, ticketId: number, h: { reason: string; ownerAction: string; resume: ResumeMessage }): number {
   const ticket = p.ticket(ticketId);
   const open = get<{ id: number }>(p.db, "SELECT id FROM decisions WHERE ticket_id = ? AND decided_at IS NULL AND options LIKE '%\"resume\"%'", [ticketId]);
@@ -612,6 +736,7 @@ export function reopenTicket(p: Project, ticketId: number, by: "owner" | "lead" 
     // 取りやめの前のメッセージが残っていても、取り出したときに捨てられているので、新しく頼み直す
     run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ? AND status IN ('pending','claimed')", [ticketId]);
     p.setStage(ticketId, "dev");
+    run(p.db, "UPDATE tickets SET dropped_by = NULL, dropped_reason = NULL, dropped_at = NULL WHERE id = ?", [ticketId]);
     if (ticket.owner_member_id) {
       send(p, {
         ticketId,

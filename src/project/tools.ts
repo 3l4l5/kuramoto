@@ -6,13 +6,27 @@ import type { MessageKind } from "./inbox.js";
 export type RunReport = {
   /** 開発が submit_pr で渡した PR の中身。起動のあとで Kuramoto が push して PR にし、pr に入れる(ADR-0020)。 */
   draft?: { title?: string; body?: string; summary: string; conflictResolution?: "mechanical" | "logic" };
-  pr?: { repo: string; number: number; head: string; summary: string; conflictResolution?: "mechanical" | "logic" };
+  pr?: {
+    repo: string;
+    number: number;
+    head: string;
+    summary: string;
+    conflictResolution?: "mechanical" | "logic";
+    /** push したコミット */
+    sha?: string;
+    /** 前に承認されたあとの、このブランチ自身の変更のコミット数(承認済みのチケットが戻ってきたときだけ) */
+    ownCommitsSinceApproved?: number | null;
+  };
   /** 指摘への開発の返事 */
   responses?: Response[];
   review?: { findings: Finding[]; resolutions: Resolution[]; followups?: Followup[] };
   question?: Question;
   leadDecision?: { choice: number; reason: string; note?: string };
   escalate?: { reason: string };
+  /** このチケットの変更はすでに main に入っていて、やることが無い(Kuramoto が確かめ済み)。 */
+  alreadyDone?: { commit: string; reason: string };
+  /** push のあとに流したチームの CI(ADR-0028)の結果。 */
+  teamCi?: import("./team-ci.js").TeamCiResult;
 };
 
 export type Finding = {
@@ -26,7 +40,7 @@ export type Finding = {
 };
 
 /** チケットの範囲外の指摘を、別チケットの候補として切り出したもの。リーダーが交通整理でチケットにする。 */
-export type Followup = { title: string; body: string };
+export type Followup = { title: string; body: string; existing?: number };
 export type Response = { findingId: number; action: "fixed" | "wontfix"; comment: string };
 export type Resolution = { findingId: number; result: "resolved" | "accept" | "reopen"; comment?: string };
 
@@ -38,6 +52,8 @@ export type ToolContext = {
   escalateAllowed?: boolean;
   /** submit_pr を受ける前に作業場所を確かめる(コミットし忘れなど)。問題があればその理由。 */
   checkReady?: () => Promise<string | undefined>;
+  /** 「すでに main に入っている」を確かめる。本当なら undefined、違えばその理由。 */
+  checkLanded?: (commit: string) => Promise<string | undefined>;
 };
 
 export type Question = {
@@ -117,6 +133,22 @@ export function toolsFor(kind: MessageKind, report: RunReport, ctx: ToolContext 
     },
   });
 
+  const alreadyDone = defineTool({
+    name: "report_already_done",
+    description:
+      "このチケットでやるべき変更が、すでに main に入っていて、やることが無いときに使う(別のチケットや PR で先に入った・重複していた)。Kuramoto が、そのコミットが main に入っていることと、ブランチに main に無い変更が残っていないことを確かめて、チケットを完了にする。submit_pr の代わりに呼ぶ。",
+    input: {
+      commit: z.string().min(4).describe("このチケットの変更が入った main 上のコミット(SHA)"),
+      reason: z.string().min(1).describe("何がどこで入っていたか(受け入れ条件を満たしていることも含めて)"),
+    },
+    handler: async ({ commit, reason }) => {
+      const problem = await ctx.checkLanded?.(commit);
+      if (problem) return problem;
+      report.alreadyDone = { commit, reason };
+      return "確かめました。このチケットは、すでに main に入っているものとして完了にします。";
+    },
+  });
+
   const raiseQuestion = defineTool({
     name: "raise_question",
     description: "自分では決められない判断をリーダーに上げる。仕様・約束・セキュリティ・取り消せない操作に関わるときに使う。呼んだら作業を止めてよい。",
@@ -146,9 +178,17 @@ export function toolsFor(kind: MessageKind, report: RunReport, ctx: ToolContext 
         .default([])
         .describe("前回までの指摘への答え"),
       followups: z
-        .array(z.object({ title: z.string().min(1).describe("別チケットのタイトル"), body: z.string().describe("やること・なぜ必要か・どこで見つけたか") }))
+        .array(
+          z.object({
+            title: z.string().min(1).describe("別チケットのタイトル"),
+            body: z.string().describe("やること・なぜ必要か・どこで見つけたか"),
+            existing: z.number().int().optional().describe("同じことを扱うチケットがすでにあれば、その番号。新しいチケットは作らず、そのチケットにメモとして足す"),
+          }),
+        )
         .default([])
-        .describe("このチケットの範囲外だが、後で直すべきこと。別チケットの候補になり、リーダーが順番と担当を決める。この PR は止めない"),
+        .describe(
+          "このチケットの範囲外だが、後で直すべきこと。この PR は止めない。すでに同じことを扱うチケットがあれば existing にその番号を書く(そのチケットにメモとして足す)。無ければ、この PR が merge されたときに別チケットになり、リーダーが順番と担当を決める",
+        ),
     },
     handler: (input) => {
       const a = { ...input, findings: input.findings ?? [], resolutions: input.resolutions ?? [], followups: input.followups ?? [] };
@@ -206,7 +246,7 @@ export function toolsFor(kind: MessageKind, report: RunReport, ctx: ToolContext 
     case "implement":
     case "fix":
     case "answer":
-      return [submitPr, raiseQuestion];
+      return [submitPr, alreadyDone, raiseQuestion];
     case "review":
     case "sec":
     case "qa":
@@ -217,6 +257,7 @@ export function toolsFor(kind: MessageKind, report: RunReport, ctx: ToolContext 
     case "chat":
     case "triage":
     case "unstick":
+    case "patrol":
       return [];
   }
 }

@@ -15,8 +15,9 @@ import type { Project } from "./project.js";
  * - chat: 責任者からリーダーへのチャット(非同期)。チケットを持たない
  * - triage: リーダーの交通整理(チケットの順番と担当を決める)。チケットを持たない
  * - unstick: 詰まったチケットの手助けをリーダーへ(原因を調べ、やり直させるか保留する)
+ * - patrol: リーダーの定期の見回り(重複と、回り続けているチケットに手を打つ)。チケットを持たない
  */
-export type MessageKind = "implement" | "fix" | "review" | "sec" | "qa" | "decide" | "answer" | "plan" | "chat" | "triage" | "unstick";
+export type MessageKind = "implement" | "fix" | "review" | "sec" | "qa" | "decide" | "answer" | "plan" | "chat" | "triage" | "unstick" | "patrol";
 
 export type MessageRow = {
   id: number;
@@ -51,8 +52,8 @@ export function send(
  * - 着手優先: 新しい実装を先に取る。開発の中では直しを新しい実装より先にする(docs/design.md 5.2)
  */
 const ORDER: Record<Pull, MessageKind[]> = {
-  down: ["chat", "triage", "plan", "unstick", "answer", "decide", "qa", "sec", "review", "fix", "implement"],
-  start: ["chat", "triage", "plan", "unstick", "answer", "decide", "fix", "implement", "review", "sec", "qa"],
+  down: ["chat", "triage", "patrol", "plan", "unstick", "answer", "decide", "qa", "sec", "review", "fix", "implement"],
+  start: ["chat", "triage", "patrol", "plan", "unstick", "answer", "decide", "fix", "implement", "review", "sec", "qa"],
 };
 
 function orderSql(pull: Pull): string {

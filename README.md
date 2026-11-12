@@ -15,6 +15,7 @@ Node 24 以上が要ります。エージェントを実際に動かすには `c
 ```sh
 npm install
 npm start            # 画面をビルドして起動。http://localhost:4300 を開く(KURAMOTO_PORT で変更可)
+npm run start:public # 他の PC からも開けるように起動。ターミナルに出る「合言葉つきの URL」を開く(合言葉は ~/.kuramoto/access-token。KURAMOTO_TOKEN で指定も可)
 npm test             # サーバー側のテスト(フェイクのハーネスで流れ全体を確かめる)
 npm run e2e          # 画面の E2E テスト(手元の Google Chrome を使う。本物の Claude と GitHub は使わない)
 npm run dev:ui       # 画面を作るとき: Vite の開発サーバー(http://localhost:5173)。/api は npm start のサーバーへ回す

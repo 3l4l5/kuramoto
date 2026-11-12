@@ -1,7 +1,7 @@
 import { fixedAll, mustFindingIds, withResolutions } from "../harness/fake.js";
 import { describe, expect, it } from "vitest";
 import { ManualClock } from "../clock.js";
-import { all, get } from "../db/sqlite.js";
+import { all, get, run } from "../db/sqlite.js";
 import { FakeHarness, type FakeStep } from "../harness/fake.js";
 import type { GitHub, PrStatus } from "../github/github.js";
 import { Dispatcher } from "./dispatcher.js";
@@ -316,6 +316,54 @@ describe("止まる条件", () => {
     expect(p.ticket(t.id).stage).toBe("decision");
   });
 
+  it("変更がすでに main に入っていたら、開発が確かめて完了にする。main に無いコミットなら断る", async () => {
+    const clock = new ManualClock();
+    const p = new Project(":memory:", clock);
+    p.addRepo(REPO, "API");
+    const replies: string[] = [];
+    const harness = new FakeHarness(async (req, call) => {
+      if (!req.tools.some((t) => t.name === "report_already_done")) return {};
+      replies.push(await call("report_already_done", { commit: "deadbeef", reason: "#41 で入っている" }));
+      replies.push(await call("report_already_done", { commit: "3677184", reason: "#41 で src/login-limiter.ts が入っていて、受け入れ条件を満たす" }));
+      return {};
+    });
+    const workspace = new StaticWorkspace("/tmp/ws", { landed: (c) => (c === "3677184" ? undefined : `コミット ${c} は origin/main に入っていません`) });
+    const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace });
+    const before = createTicket(p, { title: "ログインの回数制限" });
+    const after = createTicket(p, { title: "回数制限の画面表示" });
+    run(p.db, "INSERT INTO ticket_deps (ticket_id, depends_on) VALUES (?, ?)", [after.id, before.id]);
+    // PR が残っていれば閉じる
+    run(p.db, "INSERT INTO pull_requests (ticket_id, repo_id, number, head, gh_state) VALUES (?, 1, 77, 'kuramoto/1', 'OPEN')", [before.id]);
+    await d.drain({ maxRuns: 1 });
+
+    expect(replies[0]).toContain("入っていません");
+    expect(p.ticket(before.id).stage).toBe("done");
+    expect(p.notes(before.id).at(-1)!.body).toContain("すでに main に入っていました");
+    expect(workspace.closed).toMatchObject([{ number: 77 }]);
+    expect(all(p.db, "SELECT 1 FROM messages WHERE kind = 'unstick'")).toEqual([]);
+    // 待っていたチケットは動き出せる
+    const { blockers } = await import("./triage.js");
+    expect(blockers(p, after.id)).toEqual([]);
+  });
+
+  it("詰まったチケットの変更がすでに main に入っていたら、リーダーが確かめて完了にする(保留にしない)", async () => {
+    const { p, d, clock } = setup(async (req, call) => {
+      if (req.tools.some((t) => t.name === "close_as_already_done")) {
+        await call("close_as_already_done", { commit: "3677184", reason: "#41 と重複していた" });
+        return { finalText: "重複だったので閉じたわ。" };
+      }
+      return {};
+    });
+    const t = createTicket(p, { title: "x" });
+    for (let i = 0; i < 4; i++) {
+      await d.drain();
+      clock.advance(10 * 60_000);
+    }
+    expect(p.ticket(t.id).stage).toBe("done");
+    expect(pendingOwnerDecisions(p)).toEqual([]);
+    expect(all(p.db, "SELECT 1 FROM messages WHERE ticket_id = ? AND status = 'pending'", [t.id])).toEqual([]);
+  });
+
   it("利用の上限で止まったときは失敗に数えず、時間を置いてやり直す", async () => {
     const { p, d } = setup(() => ({ status: "error", error: "You've hit your 5-hour limit · resets 3am" }));
     createTicket(p, { title: "x" });
@@ -489,6 +537,50 @@ describe("merge", () => {
     expect(await ownerMerge(p, gh, t.id)).toMatchObject({ result: "blocked" });
     expect(gh.merged).toEqual([]);
     expect(p.ticket(t.id).stage).toBe("dev");
+  });
+
+  it("確認が済んだあとに CI の失敗で戻ってきたら、承認のあとの変更だけを 1 回確かめて merge 待ちに戻す(確認を最初からやり直さない)", async () => {
+    const { p, d, harness } = setup(script());
+    p.saveFormation({ pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 1, summonAt: 2, idleSec: 600 }, { name: "確認", roles: ["review", "sec", "qa"], maxMembers: 1, summonAt: 2, idleSec: 600 }] });
+    const t = createTicket(p, { title: "x" });
+    await d.drain();
+    expect(p.ticket(t.id).stage).toBe("merge");
+    const before = all(p.db, "SELECT role FROM runs").length; // 開発・レビュー・セキュリティ・QA
+    expect(before).toBe(4);
+
+    const gh = new FakeGitHub();
+    gh.status.set(10, { ci: "failure" });
+    await ownerMerge(p, gh, t.id);
+    expect(p.ticket(t.id).stage).toBe("dev");
+    await d.drain();
+
+    expect(p.ticket(t.id).stage).toBe("merge");
+    expect(all(p.db, "SELECT role FROM runs ORDER BY id").slice(before)).toEqual([{ role: "dev" }, { role: "review" }]);
+    expect(harness.calls.at(-1)!.prompt).toContain("前に承認されたコミット sha-1");
+    // 戻ったあとは CI が通れば merge できる(セキュリティ・QA の承認は前のまま生きている)
+    gh.status.set(10, { ci: "success" });
+    expect(await ownerMerge(p, gh, t.id)).toEqual({ result: "merged" });
+  });
+
+  it("確認が済んだあとに衝突で戻ってきて、main を取り込んだだけなら確認せずに merge 待ちへ", async () => {
+    const clock = new ManualClock();
+    const p = new Project(":memory:", clock);
+    p.addRepo(REPO, "API");
+    const harness = new FakeHarness(async (req, call) => {
+      if (req.tools.some((x) => x.name === "submit_pr")) await call("submit_pr", { summary: "", responses: fixedAll(req.prompt), ...(req.prompt.includes("衝突") ? { conflict_resolution: "logic" } : {}) });
+      else await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] }));
+    });
+    const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp/ws", { ownCommits: () => 0 }) });
+    const t = createTicket(p, { title: "x" });
+    await d.drain();
+    const before = all(p.db, "SELECT role FROM runs").length;
+    const gh = new FakeGitHub();
+    gh.status.set(t.number, { mergeable: "CONFLICTING" });
+    await ownerMerge(p, gh, t.id);
+    expect(p.ticket(t.id).stage).toBe("dev");
+    await d.drain();
+    expect(p.ticket(t.id).stage).toBe("merge");
+    expect(all(p.db, "SELECT role FROM runs ORDER BY id").slice(before)).toEqual([{ role: "dev" }]);
   });
 
   it("merge の後、残りの merge 待ちの衝突を確かめ直し、衝突したら持ち主に戻す。機械的に解けたら merge 待ちに直行", async () => {

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { post, type ProjectView } from "./api";
 import { TicketTree } from "./Tree";
-import { areaWaitText, hhmm, kfmt, pct, stalledText, timeLeft, unblockText, usd, waitText } from "./format";
+import { areaWaitText, droppedText, hhmm, kfmt, pct, stalledText, timeLeft, unblockText, usd, waitText } from "./format";
 import { duration, go, useAct, useNow, useProject } from "./hooks";
 import { TeamDrawer, type Drawer } from "./Team";
 import { OfficeFloor } from "./Office";
@@ -220,12 +220,32 @@ function DecisionCard({ pid, d }: { pid: number; d: Decision }) {
   );
 }
 
-/** 予算を使い切って止まっているものを、責任者の対応の先頭に出す。 */
+/** 予算を使い切って止まっているもの・GitHub に入れないことを、責任者の対応の先頭に出す。 */
 function BudgetAlerts({ d }: { d: ProjectView }) {
   const broke = d.budget.units.filter((u) => u.exhausted);
-  if (!d.budget.project.exhausted && !broke.length) return null;
+  if (!d.budget.project.exhausted && !broke.length && !d.githubDown && !d.ciBlocked.length) return null;
   return (
     <div className="budgetalert" role="alert">
+      {d.githubDown && (
+        <p>
+          <b>GitHub に入れないので、チームはチケットの仕事を止めて待っています({new Date(d.githubDown.since).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}から)。</b>
+          この PC のターミナルで <code>gh auth login</code> をし直してください。入れるようになったら自動で再開します(認証切れで保留になったチケットも再開します)。
+          <br />
+          <small>エラー: {d.githubDown.error}</small>
+        </p>
+      )}
+      {d.ciBlocked.map((b) => (
+        <p key={b.repo}>
+          <b>{b.repo} の CI のジョブが始まっていないので、merge を止めて待っています(開発と確認は続けています)。</b>
+          {b.action}
+          {b.notes.length > 0 && (
+            <>
+              <br />
+              <small>GitHub の注記: {b.notes.join(" / ")}</small>
+            </>
+          )}
+        </p>
+      ))}
       {d.budget.project.exhausted && (
         <p>
           <b>全体の予算({usd(d.budget.project.budgetUsd)})を使い切ったので、チームは止まっています。</b>
@@ -319,6 +339,8 @@ function Board({ d }: { d: ProjectView }) {
     ["decision", "判断待ち"],
     ["merge", "merge 待ち"],
     ["done", "完了"],
+    // 取りやめたチケットは消さずに、誰が・なぜ取りやめたかと一緒に並べる(あるときだけ)
+    ...(d.tickets.some((t) => t.stage === "dropped") ? [["dropped", "取りやめ"] as [string, string]] : []),
   ];
   const colOf = (t: ProjectView["tickets"][number]) => (t.stage === "dev" && !t.started ? "todo" : t.stage);
   return (
@@ -336,7 +358,7 @@ function Board({ d }: { d: ProjectView }) {
                 const wk = t.worker?.work;
                 const quiet = wk ? Math.max(0, Math.round((now - Date.parse(wk.lastActivityAt)) / 1000)) : 0;
                 return (
-                  <div className={`card${wk && quiet >= QUIET_WARN_SEC ? " quiet" : ""}`} key={t.id}>
+                  <div className={`card${wk && quiet >= QUIET_WARN_SEC ? " quiet" : ""}${k === "dropped" ? " dropped" : ""}`} key={t.id}>
                     <span className="id">
                       <span>
                         #{t.number}
@@ -345,7 +367,9 @@ function Board({ d }: { d: ProjectView }) {
                       <span>{t.conflict ? <span className="cf">衝突</span> : t.rounds ? `往復 ${t.rounds}` : ""}</span>
                     </span>
                     <TicketLink id={t.id}>{t.title}</TicketLink>
-                    {t.worker ? (
+                    {k === "dropped" ? (
+                      <span className="who drop">{droppedText(t.dropped)}</span>
+                    ) : t.worker ? (
                       <>
                         <span className="wk">
                           {t.worker.name} が{t.worker.role}中{wk && <span className="el"> · 経過 {duration(Math.max(0, Math.round((now - Date.parse(wk.startedAt)) / 1000)))}</span>}
@@ -469,6 +493,21 @@ const EVENT_TEXT: Record<string, (e: Ev, d: Record<string, any>) => string> = {
   conflict: (_e, d) => `PR #${d.pr} が衝突しました。持ち主に戻します`,
   summoned: (e) => `${e.actor} が応援に来ました`,
   recalled: (e) => `${e.actor} が持ち主として呼び戻されました`,
+  recheck_skipped: () => `main を取り込んだだけなので、確認をやり直さずに merge 待ちに戻しました`,
+  followup_noted: (_e, d) => `#${d.from} の確認で見つかったこと「${d.title}」を、このチケットのメモに足しました`,
+  duplicate_dropped: (e, d) => `${e.actor} が #${d.sameAs} の重複として片付けました`,
+  team_ci_passed: (_e, d) => `チームの CI が通りました(${d.results.map((r: { command: string }) => r.command).join(" → ")})`,
+  team_ci_failed: (_e, d) => (d.conflict ? "チームの CI: main と合わせると衝突しました" : d.noCommands ? "チームの CI: 流すコマンドが決まっていません" : `チームの CI が落ちました(${d.results.filter((r: { ok: boolean }) => !r.ok).map((r: { command: string }) => r.command).join("・")})`),
+  sent_back: () => "チームの CI が落ちたので、レビューに回さず持ち主に戻しました",
+  ci_mode: (_e, d) => (d.mode === "team" ? "チームの CI に切り替えました" : "GitHub Actions の CI に戻しました"),
+  ci_blocked: (_e, d) => `${d.repo} の CI のジョブが始まらなくなりました(GitHub 側の原因)。merge を止めて待ちます`,
+  ci_running: (_e, d) => `${d.repo} の CI が動き出したので、merge を再開しました`,
+  github_down: () => "GitHub に入れなくなりました(認証切れ)。チケットの仕事を止めて待ちます",
+  github_up: (_e, d) => `GitHub に戻れたので再開しました${d.resumed ? `(保留から ${d.resumed} 枚再開)` : ""}`,
+  ci_rerun: (_e, d) => `CI(${d.checks.join("・")})が落ちたので、一時的な失敗でないか 1 回やり直しています`,
+  ci_red_on_base: (_e, d) => `main でも同じ CI(${d.checks.join("・")})が落ちているので、#${d.fixer} で直すのを待ちます`,
+  ticket_dropped: (e, d) => `${e.actor === "owner" ? "あなた" : e.actor} が #${d.number} を取りやめました: ${d.reason}`,
+  took_over: (e, d) => `${e.actor} が、島を離れた ${d.from} からチケットを引き継ぎました`,
   left: (e) => `${e.actor} が帰りました`,
   retry: (_e, d) => `エラーのため再試行します: ${d.error}`,
   stopped: (_e, d) => `止まりました: ${d.reason === "budget" ? "予算切れ" : d.error}`,
@@ -480,6 +519,9 @@ const EVENT_TEXT: Record<string, (e: Ev, d: Record<string, any>) => string> = {
   unstick_run_started: (e) => `${e.actor} が詰まった原因を調べ始めました`,
   unstick_retried: (e) => `${e.actor} が助言を渡して、やり直してもらいます`,
   unstick_held: (e) => `${e.actor} が保留にして、あなたに対応をお願いしました`,
+  unstick_closed: (e) => `${e.actor} が、変更がすでに main に入っていたことを確かめて完了にしました`,
+  already_done: (e, d) => `${e.actor} が、変更がすでに main に入っていたことを確かめて完了にしました(${String(d.commit).slice(0, 7)})`,
+  pr_close_failed: (_e, d) => `要らなくなった PR #${d.pr} を閉じられませんでした`,
   held: (_e, d) => `保留しました: ${d.reason}`,
   resumed: () => "止まったところから再開しました",
   usage_limited: () => "利用の上限に達したので、時間を置いてやり直します",

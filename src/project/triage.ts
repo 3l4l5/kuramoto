@@ -5,6 +5,7 @@ import { defineTool, type KuramotoTool } from "../harness/types.js";
 import { send } from "./inbox.js";
 import type { Project, TicketRow } from "./project.js";
 import { ticketRepo } from "./dispatcher.js";
+import { dropTicket } from "./workflow.js";
 
 /**
  * リーダーの交通整理。新しいチケットが入ると、リーダーが「どの順で・誰が」やるかを決める。
@@ -162,6 +163,7 @@ ${islands}
 - 同時に進めると衝突するもの(土台・共通の設定・同じファイルや同じ表を触るもの)は、先に終わらせるチケットを after に書きます。after のチケットが merge されるまで、そのチケットには着手しません。並べすぎると遅くなるので、本当に必要なものだけにします。
 - 触りそうな場所を areas に書きます。ファイルのパス(例: scripts/ci-screenshots.mjs)か、機能のまとまり(例: 認証、メモ一覧)です。同じ場所を書いたチケットどうしは同時に開発せず、先に取りかかった方が merge されてから次が始まります(順番は自動で決まるので、after に書かなくて構いません)。迷ったら、主に書き換えるファイルを 1〜3 個書きます。package.json のような、どのチケットも少し触る共通のファイルは書きません(全部が一列に並んでしまうため)。
 - 担当(assignee)には、メンバーの名前か島の名前を書けます。島の名前を書くと、その島の手すきの人に割り当てます。メンバーを名指しすると、その人が手すきになるまで待ちます。省くと、受け持つ島の手すきの人が取ります。
+- 交通整理するチケットが、ほかのチケット(交通整理するものどうしも含む)と同じことを扱っていたら、drop_as_duplicate で重複として片付けます。中身は残す方のメモに移ります。片付けたチケットは plan_work に含めません。
 - 担当への申し送りがあれば note に書きます(チケットのメモになり、担当が読みます)。
 - 全部のチケットについて plan_work を 1 回で呼んでください。最後のテキストは、責任者への短い報告(並列に進めるもの・順番待ちにしたものとその理由)にします。`;
 }
@@ -185,12 +187,38 @@ export function triageTools(p: Project): KuramotoTool[] {
       handler: (a) => planWork(p, a.items),
     }),
     defineTool({
+      name: "drop_as_duplicate",
+      description: "ほかのチケットと同じことを扱う(重複している)チケットを、重複として片付ける。中身は残す方のチケットにメモとして移す。まだ誰も取りかかっていないチケットだけに使える。",
+      input: {
+        number: z.number().int().describe("片付けるチケットの番号"),
+        same_as: z.number().int().describe("残す方のチケットの番号"),
+      },
+      handler: (a) => dropAsDuplicate(p, a.number, a.same_as),
+    }),
+    defineTool({
       name: "team_status",
       description: "島ごとのメンバー・作業中のチケット・空き席・待ちの件数を見る。",
       input: {},
       handler: () => teamStatus(p),
     }),
   ];
+}
+
+/** 重複したチケットを片付ける。まだ開発に取りかかっていないものだけ。中身は残す方のメモに移す。 */
+export function dropAsDuplicate(p: Project, number: number, sameAs: number): string {
+  const t = get<TicketRow>(p.db, "SELECT * FROM tickets WHERE number = ?", [number]);
+  const keep = get<TicketRow>(p.db, "SELECT * FROM tickets WHERE number = ?", [sameAs]);
+  if (!t || !keep) return `#${!t ? number : sameAs} はありません`;
+  if (t.id === keep.id) return "同じチケットです";
+  if (t.stage === "done" || t.stage === "dropped") return `#${number} はもう終わっています`;
+  if (keep.stage === "dropped") return `#${sameAs} は取りやめになっています。残す方には、開いているチケットを選んでください`;
+  if (get(p.db, "SELECT 1 AS x FROM runs WHERE ticket_id = ? AND role = 'dev'", [t.id])) return `#${number} はもう開発に取りかかっているので、重複として片付けられません`;
+  tx(p.db, () => {
+    p.addNote(keep.id, `【重複していた #${number} から】${t.title}\n${t.body.trim().slice(0, 1500)}`, "lead");
+    // 片付けたチケットを待っていたものは、残す方を待つ
+    dropTicket(p, t.id, { by: "lead", reason: `#${sameAs}「${keep.title}」と重複していたため`, sameAs: keep });
+  });
+  return `#${number} を #${sameAs} の重複として片付けました。`;
 }
 
 export function planWork(p: Project, items: { number: number; after?: number[]; areas?: string[]; assignee?: string; note?: string }[]): string {

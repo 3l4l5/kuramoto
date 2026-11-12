@@ -164,6 +164,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--bg); display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .card .id { font-family: var(--f-mono); font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; }
 .card .who { font-size: 11px; font-weight: 500; }
+/* 取りやめたチケット: 消さずに、薄くして理由を出す */
+.card.dropped { opacity: .75; border-style: dashed; }
+.card.dropped .ticketlink { text-decoration: line-through; }
+.card .who.drop { color: var(--muted); font-weight: 400; }
+.ticketdialog .dropnote { margin: 12px 18px 0; padding: 8px 12px; border-radius: 8px; border: 1px dashed var(--color-neutral-solid-gray-420, #999); background: var(--color-neutral-solid-gray-50, #f2f2f2); font-size: 14px; }
+.ticketdialog .dropnote .at { margin-left: 6px; color: var(--muted); font-size: 12px; }
 
 /* モニタリング */
 .mon { padding: 14px; display: flex; flex-direction: column; gap: 16px; }
@@ -573,6 +579,13 @@ body { background: var(--color-neutral-white); }
 .prod .rolebars li { display: grid; grid-template-columns: 120px 1fr minmax(180px, auto); gap: 12px; align-items: center; font-size: 14px; }
 .prod .rolebars .track { height: 12px; }
 .prod .rolebars .fill { display: block; height: 12px; border-radius: 0 4px 4px 0; background: var(--color-key-900); }
+/* 狭い画面では、名前と値を上に、棒を下の全幅に並べる(3 列だと棒が潰れる) */
+@media (max-width: 640px) {
+  .prod .rolebars li { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+  .prod .rolebars .name { flex: 1 1 auto; font-weight: 500; }
+  .prod .rolebars .val { flex: 0 1 auto; text-align: right; }
+  .prod .rolebars .track { order: 3; flex: 1 0 100%; }
+}
 .prod .rolebars .val { font-variant-numeric: tabular-nums; }
 .prod .rolebars small { color: var(--color-neutral-solid-gray-600); margin-left: 4px; }
 /* 本部の「設計書から復元」: ボタンの見た目の上に、透明なファイル選択を重ねる */

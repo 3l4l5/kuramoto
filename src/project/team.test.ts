@@ -1,7 +1,7 @@
 import { fixedAll, withResolutions } from "../harness/fake.js";
 import { describe, expect, it } from "vitest";
 import { ManualClock } from "../clock.js";
-import { all, get } from "../db/sqlite.js";
+import { all, get, run } from "../db/sqlite.js";
 import { FakeHarness } from "../harness/fake.js";
 import { Dispatcher } from "./dispatcher.js";
 import { Project } from "./project.js";
@@ -114,7 +114,7 @@ describe("登場人物の名前", () => {
     const path = join(mkdtempSync(join(tmpdir(), "kuramoto-cast-")), "p.sqlite");
     new P(path, new ManualClock()).close();
     const raw = new DatabaseSync(path);
-    raw.exec("UPDATE members SET name = CASE name WHEN '咲季' THEN 'サキ' WHEN '手毬' THEN 'ハル' ELSE name END; ALTER TABLE units DROP COLUMN repos; ALTER TABLE units DROP COLUMN model; ALTER TABLE units DROP COLUMN effort; ALTER TABLE runs DROP COLUMN model; ALTER TABLE runs DROP COLUMN effort; ALTER TABLE units DROP COLUMN focus; ALTER TABLE runs DROP COLUMN summary; DROP TABLE ticket_notes; DROP TABLE lead_messages; ALTER TABLE tickets DROP COLUMN triaged; DROP TABLE ticket_deps; DROP TABLE finding_comments; ALTER TABLE units DROP COLUMN budget_usd; ALTER TABLE runs DROP COLUMN unit_name; ALTER TABLE decisions DROP COLUMN lead_note; PRAGMA user_version = 4;");
+    raw.exec("UPDATE members SET name = CASE name WHEN '咲季' THEN 'サキ' WHEN '手毬' THEN 'ハル' ELSE name END; ALTER TABLE units DROP COLUMN repos; ALTER TABLE units DROP COLUMN model; ALTER TABLE units DROP COLUMN effort; ALTER TABLE runs DROP COLUMN model; ALTER TABLE runs DROP COLUMN effort; ALTER TABLE units DROP COLUMN focus; ALTER TABLE runs DROP COLUMN summary; DROP TABLE ticket_notes; DROP TABLE lead_messages; ALTER TABLE tickets DROP COLUMN triaged; DROP TABLE ticket_deps; DROP TABLE finding_comments; ALTER TABLE units DROP COLUMN budget_usd; ALTER TABLE runs DROP COLUMN unit_name; ALTER TABLE decisions DROP COLUMN lead_note; ALTER TABLE tickets DROP COLUMN dropped_by; ALTER TABLE tickets DROP COLUMN dropped_reason; ALTER TABLE tickets DROP COLUMN dropped_at; PRAGMA user_version = 4;");
     raw.close();
     const q = new P(path, new ManualClock());
     expect(q.fixedMember("planner").name).toBe("咲季");
@@ -442,6 +442,67 @@ describe("同じ場所を触るチケットは同時に開発しない(ADR-0024)
     // #1 が merge されたら、#2 は待たない
     p.setStage(t1!.id, "done");
     expect(areaWait(p, t2!.id)).toEqual([]);
+  });
+});
+
+describe("島を離れた持ち主の直し(ADR-0023)", () => {
+  it("持ち主が席替えで島を離れていたら、呼び戻さずに島の手すきの人が引き継ぐ。島の人数は最大人数のまま", async () => {
+    const p = new Project(":memory:", new ManualClock());
+    p.addRepo("acme/shop", "API");
+    const formation = (n: number) => ({ pull: "down" as const, units: [{ name: "開発の島", roles: ["dev" as const], maxMembers: n, summonAt: 2, idleSec: 600 }] });
+    p.saveFormation(formation(2));
+    const [a, b] = p.activeMembers().filter((m) => m.unit_id !== null);
+    const t = createTicket(p, { title: "退会" });
+    run(p.db, "UPDATE tickets SET owner_member_id = ? WHERE id = ?", [b!.id, t.id]);
+    run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ?", [t.id]);
+    p.saveFormation(formation(1));
+    expect(p.member(b!.id).left_at).not.toBeNull();
+
+    const { send } = await import("./inbox.js");
+    send(p, { ticketId: t.id, toRole: "dev", toMemberId: b!.id, kind: "fix", payload: {} });
+    const harness = new FakeHarness(async (req, call) => {
+      if (req.tools.some((x) => x.name === "submit_pr")) await call("submit_pr", { summary: "直した", responses: fixedAll(req.prompt) });
+    });
+    const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp") });
+    await d.drain({ maxRuns: 1 });
+
+    expect(get(p.db, "SELECT member_id FROM runs WHERE role = 'dev'")).toEqual({ member_id: a!.id });
+    expect(p.ticket(t.id).owner_member_id).toBe(a!.id);
+    expect(p.member(b!.id).left_at).not.toBeNull();
+    expect(p.activeMembers().filter((m) => m.unit_id !== null)).toHaveLength(1);
+    expect(p.notes(t.id).at(-1)!.body).toContain("引き継ぎ");
+  });
+
+  it("最大人数を超えて席にいる人は、作業中でなければ帰す", () => {
+    const p = new Project(":memory:", new ManualClock());
+    p.saveFormation({ pull: "down", units: [{ name: "開発の島", roles: ["dev"], maxMembers: 3, summonAt: 2, idleSec: 600 }] });
+    const unit = p.currentFormation().units[0]!;
+    p.addMember(unit.id, true);
+    expect(p.membersOfUnit(unit.id)).toHaveLength(4);
+    p.fillSeats();
+    expect(p.membersOfUnit(unit.id)).toHaveLength(3);
+  });
+});
+
+describe("重複したチケットを片付ける", () => {
+  it("リーダーは、まだ着手していない重複チケットを片付け、中身と待ちを残す方へ移す", async () => {
+    const p = new Project(":memory:", new ManualClock());
+    p.addRepo("acme/shop", "API");
+    const { dropAsDuplicate, blockers } = await import("./triage.js");
+    const keep = createTicket(p, { title: "412 のときの文言" });
+    const dup = createTicket(p, { title: "手で押す保存で 412 が出たときの文言", body: "自動保存とそろえる" });
+    const later = createTicket(p, { title: "保存のテスト" });
+    run(p.db, "INSERT INTO ticket_deps (ticket_id, depends_on) VALUES (?, ?)", [later.id, dup.id]);
+
+    expect(dropAsDuplicate(p, dup.number, keep.number)).toContain("片付けました");
+    expect(p.ticket(dup.id).stage).toBe("dropped");
+    expect(p.notes(keep.id).at(-1)!.body).toContain("自動保存とそろえる");
+    expect(blockers(p, later.id)).toEqual([keep.number]);
+    expect(all(p.db, "SELECT 1 FROM messages WHERE ticket_id = ? AND status = 'pending'", [dup.id])).toEqual([]);
+
+    // 着手したチケットは片付けない
+    run(p.db, "INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at, ended_at) VALUES (1, ?, 1, 'dev', 1, 1, '', '')", [later.id]);
+    expect(dropAsDuplicate(p, later.number, keep.number)).toContain("取りかかっている");
   });
 });
 
