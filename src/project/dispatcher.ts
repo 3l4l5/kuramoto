@@ -13,7 +13,10 @@ import { askLeadToUnstick, resetUnstick, unstickPrompt, unstickTools, type Stuck
 import type { Workspace } from "./workspace.js";
 import type { GitHub } from "../github/github.js";
 import { ciTools } from "./ci-tools.js";
-import { designFor, designPrompt } from "./design.js";
+import { designFor, designPrompt, designSystemFiles, isDesignSystemTicket } from "./design.js";
+import { compareScreenTools } from "./design-tools.js";
+import { referenceImage, type DesignStore, type Renderer } from "./design-visual.js";
+import { designSystem } from "./planning.js";
 import { canResume, noteSession } from "./sessions.js";
 import { runTeamCi, teamCiEnabled, type CommandRunner } from "./team-ci.js";
 import { confinementFor } from "./confine.js";
@@ -38,6 +41,9 @@ export type DispatcherDeps = {
   github?: GitHub;
   /** チームの CI(ADR-0028)のコマンドを閉じ込めの中で流す。無ければチームの CI は流さない。 */
   checkRunner?: CommandRunner;
+  /** 画面の画像(お手本・実装・違い)の置き場所と、試作を画像にする描き手(ADR-0034)。無ければ画像では見比べない。 */
+  designStore?: DesignStore;
+  renderer?: Renderer;
 };
 
 type Job = { msg: MessageRow; member: MemberRow; role: Role; ticket: TicketRow | null };
@@ -346,20 +352,38 @@ export class Dispatcher {
     let error: string | undefined;
     try {
       const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: ticket.number, role, memberName: member.name, branch });
-      // 画面のデザイン: 企画で合意した試作を作業場所に置き、役割ごとの使い方を指示に足す(ADR-0033)
-      const designs = ["dev", "review", "qa"].includes(role) ? designFor(p, ticket) : [];
-      if (designs.length) await this.deps.workspace.writeDesign?.(ws.path, ws.gitDir, designs);
+      // 画面のデザイン: 企画で合意した試作・デザインシステム・お手本の画像を作業場所に置き、役割ごとの使い方を指示に足す(ADR-0033・0034)
+      const designUse = ["dev", "review", "qa"].includes(role);
+      const designs = designUse ? designFor(p, ticket) : [];
+      const system = designUse ? designSystem(p) : null;
+      const systemTicket = designUse && isDesignSystemTicket(p, ticket);
+      const withSystem = !!system && (designs.length > 0 || systemTicket);
+      const refs = new Map<string, { id: number; png: Buffer }>();
+      if (designs.length && this.deps.designStore && this.deps.renderer)
+        for (const d of designs) {
+          const r = await referenceImage(p, this.deps.designStore, this.deps.renderer, d);
+          if (r) refs.set(d.key, r);
+        }
+      const files = [
+        ...designs.map((d) => ({ file: d.file, data: d.html })),
+        ...designs.filter((d) => refs.has(d.key)).map((d) => ({ file: d.file.replace(/\.html$/, ".png"), data: refs.get(d.key)!.png })),
+        ...(withSystem ? designSystemFiles(system!) : []),
+      ];
+      if (files.length) await this.deps.workspace.writeDesign?.(ws.path, ws.gitDir, files);
+      const compareTools =
+        refs.size && (role === "dev" || role === "qa") && this.deps.designStore ? compareScreenTools(p, this.deps.designStore, ticket, ws.path, ws.gitDir, refs, this.deps.workspace) : [];
       result = await harness.run({
         cwd: ws.path,
         confine: confinementFor(p, ws, role),
         systemPrompt: systemPromptFor(p, role, policy, { name: use.unitName, focus: use.unitFocus }, member.name),
-        prompt: promptFor(p, msg, ticket, { branch, base: ws.base, repo: repo.full_name, ...prNumber(p, ticket.id, repo.id) }) + designPrompt(designs, role),
+        prompt: promptFor(p, msg, ticket, { branch, base: ws.base, repo: repo.full_name, ...prNumber(p, ticket.id, repo.id) }) + designPrompt(designs, role, { hasSystem: withSystem, systemTicket, references: new Set(refs.keys()) }),
         model: use.model,
         effort: use.effort,
         ...(resumeId ? { resumeSessionId: resumeId } : {}),
         tools: [
           // PR がある開発には、CI を調べる道具を渡す(作業場所からは GitHub が見えないため)
           ...(role === "dev" && msg.kind !== "implement" ? ciTools(p, this.deps.github, { ticket }) : []),
+          ...compareTools,
           ...toolsFor(msg.kind, report, {
           mustAnswer: msg.kind === "fix" && !JSON.parse(msg.payload).conflict ? mustAnswer(p, ticket.id).map((t) => t.id) : [],
           mustResolve: ["review", "sec", "qa"].includes(msg.kind) ? mustResolve(p, ticket.id, msg.kind).map((t) => t.id) : [],

@@ -1,6 +1,6 @@
 import { speechNote } from "../domain/cast.js";
 import { z } from "zod";
-import { get } from "../db/sqlite.js";
+import { get, run } from "../db/sqlite.js";
 import type { Role } from "../domain/roles.js";
 import { castName } from "../domain/cast.js";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
@@ -32,6 +32,8 @@ import {
   type Infra,
   type Stage,
   messages,
+  designSystem,
+  type DesignSystem,
 } from "./planning.js";
 import type { Project } from "./project.js";
 import { createTicket } from "./workflow.js";
@@ -52,8 +54,9 @@ const BASE: Partial<Record<Role, string>> = {
   designer: `あなたは Kuramoto のデザイナー${castName("designer")}です。要件をもとに、ユーザーフローの図と、画面の触れる試作を作ります。
 - フローは set_flow で、画面を箱(node)、遷移を矢印(edge)で描きます。通常の流れは実線、分岐や例外は alt: true(点線)。
   箱は col(0〜3)と row(0〜3)の格子に置き、重ならないようにします。決まっていない分岐は kind: "question" の「?」の箱にし、add_open_item で未決にします。
-- 試作は upsert_screen で、1 画面ずつ自己完結した HTML(<style> を含めてよい。外部ファイル・外部の画像は使わない)で作ります。
-  スマホ向けなら幅 230px・高さ 424px ほど、デスクトップ向けなら 960×600px ほどに収まるようにします。迷う画面は 2 案(A・B)にします。
+- 画面の試作より先に、set_design_system でデザインシステムを作ります。色・文字(大きさ・太さ・行の高さ)・余白・角丸・影を、名前付きのトークン(CSS 変数。例: --color-primary)にし、ボタン・入力欄・カード・一覧の行・見出しなど、画面に繰り返し出る部品を、見た目(トークンの CSS 変数を使った HTML)と状態(押せない・エラー・選んでいる など)で決めます。これが開発チームとの共通の決まりになり、開発はこれをプロダクトのリポジトリに作ってから画面を組み立てます。
+- 試作は upsert_screen で、1 画面ずつ自己完結した HTML(<style> を含めてよい。外部ファイル・外部の画像は使わない)で作ります。<style> の最初にデザインシステムのトークン(:root の CSS 変数)を書き、色や大きさは必ずトークンを使います。部品はデザインシステムの部品と同じ見た目にします。画面ごとに違う色や大きさを作らず、要るならデザインシステムに足してから使います。
+  実際の端末の大きさで作ります。スマホ向けは幅 390px(高さは 844px ほど)、パソコン向けは幅 1280px(高さは 800px ほど)。スタジオでは縮めて見せます。文字の大きさも実際の大きさ(本文 15〜16px など)にします。迷う画面は 2 案(A・B)にします。
 - コメントが付いたら試作を直して upsert_screen し、resolve_comment で対応済みにします。
 - 返事(最後のテキスト)は、責任者へのチャットとしてそのまま表示されます。短く、日本語で。`,
   architect: `あなたは Kuramoto のアーキテクト${castName("architect")}です。慎重さを優先します。インフラの段階と、アーキテクチャとデータの段階を受け持ちます。
@@ -78,6 +81,7 @@ const BASE: Partial<Record<Role, string>> = {
   lead: `あなたは Kuramoto のリーダー${castName("lead")}です。企画スタジオで合意した版から、実装のチケットを作ります。
 - 1 チケットは、1 人の開発者が 1 本の PR で終えられる大きさにします。データの変更(マイグレーション)は単独のチケットにします。
 - 各チケットに、要件の項目(code)・画面(key)・設計の節をひも付け、本文に受け入れ条件を書きます。省略・お任せで決まった段階があれば、それも本文に書きます。
+- デザインシステムがあれば、最初のチケットを「デザインシステムの土台」にします(create_ticket の design_system: true)。トークンを CSS 変数に、部品を共通の部品にして、トークン・部品・各画面を並べて見られるカタログのページ(開発のときだけ開く /_design)をプロダクトのリポジトリに作るチケットです。画面を作るチケットは、after にこのチケットの番号を書き、本文に「デザインシステムの部品とトークンで組み立てる」と書きます。
 - インフラの段階で新しく用意するもの(環境・CI/CD・監視など)も、リポジトリに書けるもの(IaC・設定ファイル・ワークフロー)はチケットにします。クラウドの契約やアカウント作成など人が行うことは、チケットにせず finish_handoff の前の返事で責任者に伝えます。
 - 作り終えたら finish_handoff を呼びます。`,
 };
@@ -232,6 +236,37 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
           },
         }),
         defineTool({
+          name: "set_design_system",
+          description: "デザインシステム(トークンと部品)を書く(全体を置き換える)。直すと、画面デザインの段階の合意は外れる。",
+          input: {
+            principles: z.array(z.string()).describe("見た目の方針(例: 余白を広く取り、色は主役の青 1 色に絞る)"),
+            tokens: z
+              .array(
+                z.object({
+                  group: z.enum(["color", "font", "space", "radius", "shadow", "other"]),
+                  name: z.string().regex(/^--[a-z0-9-]+$/).describe("CSS 変数の名前(例: --color-primary)"),
+                  value: z.string().describe("値(例: #2f67d4、16px、700、0 1px 2px rgba(0,0,0,.1))"),
+                  use: z.string().describe("どこに使うか"),
+                }),
+              )
+              .min(1),
+            components: z
+              .array(
+                z.object({
+                  name: z.string().describe("部品の名前(例: 主ボタン)"),
+                  use: z.string().describe("どこで使うか"),
+                  states: z.array(z.string()).describe("状態(例: 通常・押せない・読み込み中)"),
+                  html: z.string().describe("見た目の見本。状態ごとに並べた HTML。色や大きさはトークンの CSS 変数(var(--…))で書く。:root は書かない(トークンから足す)"),
+                }),
+              )
+              .min(1),
+          },
+          handler: (a) => {
+            putArtifact(p, "screen", "designsystem", "main", { principles: a.principles, tokens: a.tokens, components: a.components } satisfies DesignSystem);
+            return `デザインシステムを書きました(トークン ${a.tokens.length}・部品 ${a.components.length})。試作は、このトークンと部品で組み立ててください。`;
+          },
+        }),
+        defineTool({
           name: "get_screen",
           description: "今の試作の HTML とコメントを読む。",
           input: { key: z.string() },
@@ -341,6 +376,8 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
             design: z.array(z.string()).describe("ひも付ける設計の節(例: ルール 1、reservations 表)"),
             repo: z.string().optional().describe("対象のリポジトリ(owner/repo)。省くと最初に登録したもの"),
             issue: z.number().int().optional().describe("このチケットで片付ける GitHub の Issue の番号(既存のリポジトリの続きから。PR に「Closes #番号」が付く)"),
+            design_system: z.boolean().optional().describe("デザインシステムの土台(トークン・共通の部品・カタログ)を作るチケットなら true"),
+            after: z.array(z.number().int()).optional().describe("先に merge されている必要があるチケットの番号(画面を作るチケットは、デザインシステムの土台のチケットを書く)"),
           },
           handler: (a) => {
             const repos = p.repos().map((r) => r.full_name);
@@ -353,8 +390,12 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
               title: a.title,
               body: a.body,
               ...(item ? { requirementItemId: item.id } : {}),
-              planRefs: { fromPlan: true, requirement: a.requirement ?? null, screens: a.screens, design: a.design, modes, versions, ...(a.repo ? { repo: a.repo } : {}), ...(a.issue ? { issue: a.issue } : {}) },
+              planRefs: { fromPlan: true, requirement: a.requirement ?? null, screens: a.screens, design: a.design, modes, versions, ...(a.repo ? { repo: a.repo } : {}), ...(a.issue ? { issue: a.issue } : {}), ...(a.design_system ? { designSystem: true } : {}) },
             });
+            for (const n of a.after ?? []) {
+              const dep = p.tickets().find((x) => x.number === n);
+              if (dep) run(p.db, "INSERT OR IGNORE INTO ticket_deps (ticket_id, depends_on) VALUES (?, ?)", [t.id, dep.id]);
+            }
             if (a.issue) markIssueTicketed(p, a.repo ?? repos[0]!, a.issue);
             return `#${t.number} を作りました。`;
           },
@@ -415,6 +456,7 @@ function snapshot(p: Project, stage: Stage | "handoff"): string {
   };
   if (stage !== "req") data.flow = artifact(p, "flow", "flow", "main");
   if (stage === "infra" || stage === "model" || stage === "handoff") data.infra = artifact(p, "infra", "infra", "main");
+  if (stage === "screen" || stage === "handoff") data.designSystem = designSystem(p);
   if (stage === "screen" || stage === "infra" || stage === "model" || stage === "handoff") {
     data.screens = [...screens(p)].map(([key, s]) => ({
       key,

@@ -225,4 +225,11 @@ UPDATE tickets SET dropped_by = 'lead',
   dropped_at = (SELECT e.at FROM events e WHERE e.ticket_id = tickets.id AND e.type = 'duplicate_dropped' ORDER BY e.id DESC LIMIT 1)
 WHERE stage = 'dropped' AND EXISTS (SELECT 1 FROM events e WHERE e.ticket_id = tickets.id AND e.type = 'duplicate_dropped');
 `,
+  // 18: 画面を画像で見比べる(ADR-0034)。画像そのものは置き場所(ファイル・S3)に置き、ここには場所と大きさ・違いの割合だけを残す
+  `
+CREATE TABLE IF NOT EXISTS design_images (id INTEGER PRIMARY KEY, ticket_id INTEGER REFERENCES tickets(id), screen_key TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('reference','actual','diff')), store_key TEXT NOT NULL, width INTEGER NOT NULL, height INTEGER NOT NULL,
+  diff_ratio REAL, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS design_images_ticket ON design_images(ticket_id, screen_key);
+`,
 ];

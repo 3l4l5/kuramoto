@@ -1,3 +1,5 @@
+import { latestComparisons } from "./design-visual.js";
+import { screens } from "./planning.js";
 import { all, get } from "../db/sqlite.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
 import type { Project } from "./project.js";
@@ -156,6 +158,8 @@ export function ticketView(p: Project, ticketId: number) {
     defaultBudgetUsd: defaultTicketBudgetUsd(p),
     tokens: cost?.tokens ?? 0,
     dropped: droppedInfo(p, t.id),
+    // 画面ごとの最新の見比べ(お手本・実装・違いの画像と、違いの割合。ADR-0034)
+    designCompare: latestComparisons(p, t.id).map((c) => ({ ...c, name: screens(p).get(c.screen)?.name ?? c.screen })),
     timeline,
   };
 }

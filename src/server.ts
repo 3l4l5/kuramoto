@@ -20,6 +20,7 @@ import { ciBlockAction, ciBlocked, githubDown } from "./project/outage.js";
 import { fetchGithubSnapshot, markExisting } from "./project/onboard.js";
 import { runTeamCi, SandboxRunner, teamCiEnabled, type CommandRunner } from "./project/team-ci.js";
 import { leadReply } from "./project/leadchat.js";
+import { FileDesignStore, imageRow, playwrightRenderer, type DesignStore, type Renderer } from "./project/design-visual.js";
 import { metrics } from "./project/metrics.js";
 import { exportDesignDoc } from "./project/export.js";
 import { extractTransfer, restoreTransfer } from "./project/transfer.js";
@@ -72,6 +73,9 @@ export type ServerDeps = {
   mergePollMs?: number;
   /** チームの CI のコマンドを流す(テストで差し替える)。既定は閉じ込めの中で流す。 */
   checkRunner?: CommandRunner;
+  /** 画面の画像の置き場所(既定はデータの置き場所のファイル)と、試作を画像にする描き手(既定は手元の Chrome)。 */
+  designStoreFor?: (dataDir: string) => DesignStore;
+  renderer?: Renderer;
   /**
    * 他の PC から見られるようにする(npm run start:public)。どの Host でも受けるが、合言葉(トークン)を求める。
    * 合言葉は URL の ?token= で一度渡すと Cookie に入り、以後はそれで通る。この PC 自身(localhost)からは合言葉なしで使える。
@@ -166,6 +170,8 @@ export class KuramotoServer {
     const dispatcher = new Dispatcher(p, {
       harnesses: this.harnesses,
       checkRunner: this.checkRunner,
+      designStore: this.designStoreFor(id),
+      renderer: this.deps.renderer ?? playwrightRenderer,
       workspace,
       ticketsAllowed: () => this.running.has(id),
       triage: true,
@@ -274,6 +280,8 @@ export class KuramotoServer {
       if (req.method !== "GET" && req.headers["x-kuramoto"] !== "1") return send(res, 403, { error: "ヘッダーがありません" });
       const exp = req.method === "GET" && url.pathname.match(/^\/api\/projects\/(\d+)\/studio\/export$/);
       if (exp) return this.sendExport(Number(exp[1]), res);
+      const img = req.method === "GET" && url.pathname.match(/^\/api\/projects\/(\d+)\/design-images\/(\d+)$/);
+      if (img) return await this.sendDesignImage(Number(img[1]), Number(img[2]), res);
       const body = req.method === "GET" ? {} : await readJson(req);
       const out = await this.route(req.method ?? "GET", url.pathname.split("/").filter(Boolean).slice(1), body);
       if (out === undefined) return send(res, 404, { error: "ありません" });
@@ -603,6 +611,20 @@ export class KuramotoServer {
   }
 
   /** 要件と技術的な設計を Markdown でダウンロードさせる。 */
+  /** 画面の画像(お手本・実装・違い)を返す(ADR-0034)。 */
+  private async sendDesignImage(id: number, imageId: number, res: ServerResponse): Promise<void> {
+    const row = imageRow(this.project(id), imageId);
+    const data = row ? await this.designStoreFor(id).get(row.store_key) : null;
+    if (!data) return send(res, 404, { error: "画像がありません" });
+    res.writeHead(200, { "content-type": "image/png", "cache-control": "private, max-age=86400" });
+    res.end(data);
+  }
+
+  /** 画面の画像の置き場所。既定はプロジェクトのデータの置き場所の design/(S3 に替えるときは deps.designStoreFor)。 */
+  private designStoreFor(id: number): DesignStore {
+    return this.deps.designStoreFor?.(this.hq.project(id).data_dir) ?? new FileDesignStore(join(this.hq.project(id).data_dir, "design"));
+  }
+
   private sendExport(id: number, res: ServerResponse): void {
     const name = this.hq.project(id).name;
     const md = exportDesignDoc(this.project(id), name);

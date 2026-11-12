@@ -307,7 +307,7 @@ function Flow({ d, ui, setUi }: Props) {
 function Screens({ d, pid, ui, setUi }: Props) {
   const act = useAct();
   const [text, setText] = useState("");
-  if (!d.screens.length) return <div style={muted}>{d.cast.designer}が画面の試作を作っています。</div>;
+  if (!d.screens.length) return d.designSystem ? <DesignSystemPanel ds={d.designSystem} /> : <div style={muted}>{d.cast.designer}が画面の試作を作っています。</div>;
   const sc = d.screens.find((s) => s.key === ui.scr) ?? d.screens[0]!;
   const multi = sc.variants.length > 1;
   const openPins = sc.comments.filter((c) => c.resolved_in === null);
@@ -325,6 +325,7 @@ function Screens({ d, pid, ui, setUi }: Props) {
 
   return (
     <>
+      {d.designSystem ? <DesignSystemPanel ds={d.designSystem} /> : <div className="hint">デザインシステム(トークンと部品)がまだありません。{d.cast.designer}に頼むと作ります。合意には必要です。</div>}
       <div className="scrlist" role="group" aria-label="画面">
         {d.screens.map((s) => (
           <Btn kind={s.key === sc.key ? "solid-fill" : "outline"} size="xs" key={s.key} aria-pressed={s.key === sc.key} onClick={() => setUi({ scr: s.key, pin: null, commentMode: false })}>
@@ -876,5 +877,45 @@ function Handoff({ d }: { d: StudioView }) {
         </table>
       </div>
     </>
+  );
+}
+
+type DS = NonNullable<StudioView["designSystem"]>;
+
+/** デザインシステム(ADR-0034): 方針・トークン(色見本)・部品の見本。部品はトークンの CSS 変数で描く。 */
+function DesignSystemPanel({ ds }: { ds: DS }) {
+  const css = `:root{${ds.tokens.map((t) => `${t.name}:${t.value};`).join("")}}body{margin:12px;font-family:system-ui,sans-serif}`;
+  return (
+    <details className="dspanel">
+      <summary>
+        デザインシステム(トークン {ds.tokens.length}・部品 {ds.components.length})— 開発チームとの共通の決まり
+      </summary>
+      {ds.principles.length > 0 && (
+        <ul className="ds-principles">
+          {ds.principles.map((x, i) => (
+            <li key={i}>{x}</li>
+          ))}
+        </ul>
+      )}
+      <div className="ds-tokens">
+        {ds.tokens.map((t) => (
+          <div key={t.name} className="ds-token" title={t.use}>
+            {t.group === "color" ? <span className="sw" style={{ background: t.value }} /> : <span className="sw grp">{t.group}</span>}
+            <code>{t.name}</code>
+            <span className="v">{t.value}</span>
+          </div>
+        ))}
+      </div>
+      <div className="ds-comps">
+        {ds.components.map((c) => (
+          <figure key={c.name}>
+            <figcaption>
+              <b>{c.name}</b> <span className="hint">{c.use}(状態: {c.states.join("・")})</span>
+            </figcaption>
+            <iframe title={`部品 ${c.name}`} sandbox="" srcDoc={`<!doctype html><meta charset="utf-8"><style>${css}</style>${c.html}`} />
+          </figure>
+        ))}
+      </div>
+    </details>
   );
 }

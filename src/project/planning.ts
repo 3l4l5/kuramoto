@@ -77,6 +77,27 @@ export type Infra = {
   cost: { assumptions: string[]; monthly: { item: string; usd: number }[] };
 };
 
+/**
+ * デザインシステム(ADR-0034)。合意した試作から起こす、画面に共通の決まり。開発チームとの共通言語になる。
+ * - tokens: 色・文字・余白・角丸・影を名前付きの値にしたもの(CSS 変数の名前と値)
+ * - components: ボタン・入力欄・カード・一覧の行などの部品。見た目(HTML。トークンの CSS 変数を使う)と状態
+ */
+export type DesignSystem = {
+  principles: string[];
+  tokens: { group: "color" | "font" | "space" | "radius" | "shadow" | "other"; name: string; value: string; use: string }[];
+  components: { name: string; use: string; states: string[]; html: string }[];
+};
+
+/** トークンを CSS 変数にしたもの(:root)。試作・部品の見本・開発の土台で同じものを使う。 */
+export function designSystemCss(ds: DesignSystem): string {
+  const v = (n: string) => (n.startsWith("--") ? n : `--${n}`);
+  return `:root {\n${ds.tokens.map((t) => `  ${v(t.name)}: ${t.value}; /* ${t.use.replace(/\*\//g, "")} */`).join("\n")}\n}\n`;
+}
+
+export function designSystem(p: Project): DesignSystem | null {
+  return artifact<DesignSystem>(p, "screen", "designsystem", "main");
+}
+
 export type DataDesign = { tables: { name: string; change: "new" | "alter" | "none"; columns: string[]; note: string; reversible: boolean }[] };
 
 const REMOVED = "__removed__";
@@ -128,6 +149,8 @@ export function agreeBlocker(p: Project, s: Stage): string | null {
   const open = openItems(p, s).filter((o) => o.answer === null);
   if (open.length) return `未決が ${open.length} 件あります`;
   if (s === "screen") {
+    // 画面があるなら、デザインシステムも要る(開発チームとの共通の決まり。ADR-0034)
+    if (screens(p).size && !designSystem(p)) return "デザインシステムがまだありません";
     for (const [key, sc] of screens(p)) {
       if (sc.variants.length > 1 && !sc.chosen) return `「${sc.name}」の案を選んでください`;
       if (comments(p, key).some((c) => c.resolved_in === null)) return `「${sc.name}」に対応待ちのコメントがあります`;
@@ -229,7 +252,7 @@ function kickoff(p: Project, s: Stage): void {
     req: "新しいプロジェクトです。責任者に挨拶し、何のためのものか(目的)から聞き始めてください。",
     infra: "画面が決まりました。要件・フロー・画面(画像のアップロード、オフラインでの保存など、画面が求めるもの)をもとに、このプロダクトをどこで・どう動かすかを決めてください。まず登録されたリポジトリ(特にインフラの役割のもの)を読み、既にある環境・IaC・CI を確かめ、使えるものは使ってください。動かす場所と構成 → 環境とデプロイ → 運用 → 費用と規模 の順に set_infra で書きます。",
     flow: "要件が決まりました。要件をもとに、画面と遷移のユーザーフローを描いてください。決まっていない分岐は「?」の箱と未決にしてください。",
-    screen: "ユーザーフローが決まりました。フローの各画面について、触れる試作(HTML)を作ってください。迷う画面は 2 案にしてください。",
+    screen: "ユーザーフローが決まりました。まず set_design_system でデザインシステム(色・文字・余白・角丸・影のトークンと、ボタン・入力欄・カード・一覧の行などの部品)を作り、フローの各画面の触れる試作(HTML)を、そのトークン(CSS 変数)と部品で組み立ててください。迷う画面は 2 案にしてください。",
     model: "インフラが決まりました。インフラで決めたこと(DB の種類など)を前提に、アーキテクチャスタイル → ドメインモデル → 作る / 既存を使う / 作らない → データ設計 の順に書いてください。既存のリポジトリのコードを読んで、既にある作り方に合わせ、新しい表やサービスは安易に作らないでください。",
   };
   const delegated = stageRow(p, s).mode === "delegate"
@@ -640,6 +663,7 @@ export function studioView(p: Project) {
     infra: artifact<Infra>(p, "infra", "infra", "main"),
     flow: artifact<Flow>(p, "flow", "flow", "main"),
     screens: [...screens(p)].map(([key, s]) => ({ key, ...s, comments: comments(p, key) })),
+    designSystem: designSystem(p),
     architecture: artifact<Architecture>(p, "model", "architecture", "main"),
     domain: artifact<Domain>(p, "model", "domain", "main"),
     data: artifact<DataDesign>(p, "model", "data", "main"),

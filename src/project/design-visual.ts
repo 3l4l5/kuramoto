@@ -1,0 +1,160 @@
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { PNG } from "pngjs";
+import pixelmatch from "pixelmatch";
+import { all, get, run } from "../db/sqlite.js";
+import type { Project } from "./project.js";
+
+/**
+ * 画面を画像で見比べる(ADR-0034)。
+ * - 合意した試作を、実際の端末の幅でブラウザに描いて「お手本」の画像にする
+ * - 担当が撮った実装のスクリーンショットとお手本を比べ、違う画素の割合と、違うところを色付けした画像を作る
+ * 画像は DesignStore に置き(既定はデータの置き場所のファイル。S3 などに替えられる)、DB には置き場所だけを残す。
+ */
+
+/** 画像の置き場所。既定はファイル。S3(FastFS など)に替えるときは、これを実装する。 */
+export interface DesignStore {
+  put(key: string, data: Buffer): Promise<void>;
+  get(key: string): Promise<Buffer | null>;
+}
+
+export class FileDesignStore implements DesignStore {
+  constructor(private readonly dir: string) {}
+  async put(key: string, data: Buffer): Promise<void> {
+    const to = join(this.dir, key);
+    mkdirSync(dirname(to), { recursive: true });
+    writeFileSync(to, data);
+  }
+  async get(key: string): Promise<Buffer | null> {
+    const from = join(this.dir, key);
+    return existsSync(from) ? readFileSync(from) : null;
+  }
+}
+
+/** HTML を、決まった幅のブラウザで描いた画像(ページ全体)。 */
+export type Renderer = (html: string, width: number) => Promise<Buffer>;
+
+export const DEVICE_WIDTH = { phone: 390, desktop: 1280 } as const;
+const DEVICE_HEIGHT = { phone: 844, desktop: 800 } as const;
+
+/** 手元の Chrome(無ければ Playwright の Chromium)で描く。 */
+export const playwrightRenderer: Renderer = async (html, width) => {
+  const { chromium } = await import("@playwright/test");
+  const browser = await chromium.launch({ channel: "chrome" }).catch(() => chromium.launch());
+  try {
+    const page = await browser.newPage({ viewport: { width, height: width === DEVICE_WIDTH.phone ? DEVICE_HEIGHT.phone : DEVICE_HEIGHT.desktop }, deviceScaleFactor: 1 });
+    await page.setContent(html, { waitUntil: "load" });
+    return await page.screenshot({ fullPage: true });
+  } finally {
+    await browser.close();
+  }
+};
+
+export type DesignImage = { id: number; ticket_id: number | null; screen_key: string; kind: "reference" | "actual" | "diff"; store_key: string; width: number; height: number; diff_ratio: number | null; created_at: string };
+
+function size(png: Buffer): { width: number; height: number } {
+  const p = PNG.sync.read(png);
+  return { width: p.width, height: p.height };
+}
+
+function record(p: Project, r: Omit<DesignImage, "id" | "created_at">): number {
+  return run(p.db, "INSERT INTO design_images (ticket_id, screen_key, kind, store_key, width, height, diff_ratio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
+    r.ticket_id,
+    r.screen_key,
+    r.kind,
+    r.store_key,
+    r.width,
+    r.height,
+    r.diff_ratio,
+    p.now(),
+  ]).lastId;
+}
+
+/** 試作のお手本の画像。同じ試作(HTML と端末)なら、前に描いたものを使う。 */
+export async function referenceImage(p: Project, store: DesignStore, render: Renderer, s: { key: string; html: string; device: "phone" | "desktop" }): Promise<{ id: number; png: Buffer } | null> {
+  const hash = createHash("sha1").update(`${s.device}|${s.html}`).digest("hex").slice(0, 12);
+  const key = `reference/${s.key}-${hash}.png`;
+  const known = get<{ id: number }>(p.db, "SELECT id FROM design_images WHERE kind = 'reference' AND store_key = ?", [key]);
+  const cached = await store.get(key);
+  if (known && cached) return { id: known.id, png: cached };
+  let png: Buffer;
+  try {
+    png = await render(s.html, DEVICE_WIDTH[s.device]);
+  } catch (e) {
+    p.event("system", "design_render_failed", null, { screen: s.key, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
+    return null;
+  }
+  await store.put(key, png);
+  const id = known?.id ?? record(p, { ticket_id: null, screen_key: s.key, kind: "reference", store_key: key, ...size(png), diff_ratio: null });
+  return { id, png };
+}
+
+export type Comparison = {
+  /** 違う画素の割合(0〜1)。重なる範囲で数える */
+  ratio: number;
+  /** 大きさの違い(幅・高さ)の注意。同じなら空 */
+  sizeNote: string;
+  diff: Buffer;
+};
+
+/** 2 枚の画像を比べる。大きさが違えば、重なる範囲(左上から)で比べ、大きさの違いも知らせる。 */
+export function compareImages(reference: Buffer, actual: Buffer): Comparison {
+  const a = PNG.sync.read(reference);
+  const b = PNG.sync.read(actual);
+  const w = Math.min(a.width, b.width);
+  const h = Math.min(a.height, b.height);
+  const crop = (img: PNG) => {
+    if (img.width === w && img.height === h) return img.data;
+    const out = Buffer.alloc(w * h * 4);
+    for (let y = 0; y < h; y++) img.data.copy(out, y * w * 4, y * img.width * 4, y * img.width * 4 + w * 4);
+    return out;
+  };
+  const diff = new PNG({ width: w, height: h });
+  const n = pixelmatch(crop(a), crop(b), diff.data, w, h, { threshold: 0.1, includeAA: false });
+  const notes: string[] = [];
+  if (a.width !== b.width) notes.push(`幅が違います(お手本 ${a.width}px・実装 ${b.width}px)。同じ幅で撮り直してください`);
+  if (Math.abs(a.height - b.height) > Math.max(a.height, b.height) * 0.1) notes.push(`高さが大きく違います(お手本 ${a.height}px・実装 ${b.height}px)。要素の抜けや余白の違いを確かめてください`);
+  return { ratio: w * h ? n / (w * h) : 1, sizeNote: notes.join("。"), diff: PNG.sync.write(diff) };
+}
+
+/** 実装のスクリーンショットを受け取り、お手本と比べて残す。 */
+export async function recordComparison(
+  p: Project,
+  store: DesignStore,
+  a: { ticketId: number; screenKey: string; reference: { id: number; png: Buffer }; actual: Buffer },
+): Promise<Comparison & { actualId: number; diffId: number }> {
+  const c = compareImages(a.reference.png, a.actual);
+  const stamp = p.now().replace(/[:.]/g, "-");
+  const actualKey = `tickets/${a.ticketId}/${a.screenKey}-${stamp}-actual.png`;
+  const diffKey = `tickets/${a.ticketId}/${a.screenKey}-${stamp}-diff.png`;
+  await store.put(actualKey, a.actual);
+  await store.put(diffKey, c.diff);
+  const actualId = record(p, { ticket_id: a.ticketId, screen_key: a.screenKey, kind: "actual", store_key: actualKey, ...size(a.actual), diff_ratio: c.ratio });
+  const diffId = record(p, { ticket_id: a.ticketId, screen_key: a.screenKey, kind: "diff", store_key: diffKey, ...size(c.diff), diff_ratio: c.ratio });
+  p.event("system", "design_compared", a.ticketId, { screen: a.screenKey, ratio: c.ratio, reference: a.reference.id, actual: actualId, diff: diffId });
+  return { ...c, actualId, diffId };
+}
+
+/** チケットの画面ごとの、最新の見比べ(お手本・実装・違い)。 */
+export function latestComparisons(p: Project, ticketId: number): { screen: string; ratio: number; at: string; reference: number | null; actual: number; diff: number }[] {
+  const rows = all<{ screen_key: string; diff_ratio: number; created_at: string; data: string }>(
+    p.db,
+    `SELECT screen_key, diff_ratio, created_at, (SELECT data FROM events e WHERE e.ticket_id = ? AND e.type = 'design_compared' AND json_extract(e.data, '$.actual') = d.id) AS data
+     FROM design_images d WHERE d.ticket_id = ? AND d.kind = 'actual' ORDER BY d.id DESC`,
+    [ticketId, ticketId],
+  );
+  const seen = new Set<string>();
+  const out: { screen: string; ratio: number; at: string; reference: number | null; actual: number; diff: number }[] = [];
+  for (const r of rows) {
+    if (seen.has(r.screen_key) || !r.data) continue;
+    seen.add(r.screen_key);
+    const d = JSON.parse(r.data) as { reference: number; actual: number; diff: number };
+    out.push({ screen: r.screen_key, ratio: r.diff_ratio, at: r.created_at, reference: d.reference ?? null, actual: d.actual, diff: d.diff });
+  }
+  return out;
+}
+
+export function imageRow(p: Project, id: number): DesignImage | undefined {
+  return get<DesignImage>(p.db, "SELECT * FROM design_images WHERE id = ?", [id]);
+}

@@ -66,7 +66,7 @@ export interface Workspace {
   /** origin の既定のブランチの今のコミット(merge の直前に、チームの CI を流し直すかを決める)。 */
   baseSha?(repo: string): Promise<string>;
   /** 画面の試作を作業場所に置く(ADR-0033)。git には入れない(info/exclude に足す)。 */
-  writeDesign?(path: string, gitDir: string, files: { file: string; html: string }[]): Promise<void>;
+  writeDesign?(path: string, gitDir: string, files: { file: string; data: string | Buffer }[]): Promise<void>;
 }
 
 export type CheckWorkspace = PreparedWorkspace & { sha: string; baseSha: string; conflict?: string };
@@ -196,11 +196,11 @@ export class GitWorkspace implements Workspace {
     return { path: realpathSync(path), base, gitDir: realpathSync(join(clone, ".git")), sha, baseSha, ...(merged ? { conflict: merged } : {}) };
   }
 
-  async writeDesign(path: string, gitDir: string, files: { file: string; html: string }[]): Promise<void> {
+  async writeDesign(path: string, gitDir: string, files: { file: string; data: string | Buffer }[]): Promise<void> {
     for (const f of files) {
       const to = join(path, f.file);
       mkdirSync(dirname(to), { recursive: true });
-      writeFileSync(to, f.html);
+      writeFileSync(to, f.data);
     }
     // 試作はコミットしない。worktree は元の clone の info/exclude を共有する
     const exclude = join(gitDir, "info", "exclude");
@@ -268,8 +268,8 @@ export class StaticWorkspace implements Workspace {
     return this.opts.github?.();
   }
   /** テスト用: 置いた試作を覚えるだけ。 */
-  readonly designs: { file: string; html: string }[] = [];
-  async writeDesign(_path: string, _gitDir: string, files: { file: string; html: string }[]): Promise<void> {
+  readonly designs: { file: string; data: string | Buffer }[] = [];
+  async writeDesign(_path: string, _gitDir: string, files: { file: string; data: string | Buffer }[]): Promise<void> {
     this.designs.push(...files);
   }
   async prepare(): Promise<PreparedWorkspace> {

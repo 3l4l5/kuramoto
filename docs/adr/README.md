@@ -37,3 +37,4 @@ Kuramoto の設計で下した判断を 1 件ずつ残します。状態は「�
 | [0031](0031-pause-studio-and-show-progress.md) | 企画スタジオを止められるようにし、段階ごとの進み具合を見せる | 提案 |
 | [0032](0032-cap-session-resume.md) | 担当の会話を引き継ぐ回数に上限を設ける | 提案 |
 | [0033](0033-match-screen-design.md) | 企画で合意した画面の試作を、作る人と確かめる人に渡して見比べる | 提案 |
+| [0034](0034-design-system-and-visual-compare.md) | デザインシステムを企画の成果物にし、画面を画像で見比べる | 提案 |

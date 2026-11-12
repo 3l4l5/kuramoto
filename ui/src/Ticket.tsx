@@ -81,6 +81,7 @@ function TicketDialog({ projectId, ticketId, close }: { projectId: number; ticke
               {data.dropped.at && <span className="at">({new Date(data.dropped.at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })})</span>}
             </div>
           )}
+          {data.designCompare.length > 0 && <DesignCompare projectId={projectId} rows={data.designCompare} />}
           <div className="cols">
             <Details projectId={projectId} t={data} />
             <Timeline projectId={projectId} t={data} />
@@ -424,4 +425,37 @@ function item(x: TicketView["timeline"][number]): ReactNode {
     case "merge":
       return <b>{x.result === "merged" ? "merge しました" : x.result === "conflict" ? "merge しようとしたら衝突していました" : "merge できませんでした"}</b>;
   }
+}
+
+/** 画面のデザインの見比べ(ADR-0034)。お手本(企画で合意した試作)・実装・違い(赤いところ)を並べる。 */
+function DesignCompare({ projectId, rows }: { projectId: number; rows: TicketView["designCompare"] }) {
+  const src = (id: number | null) => (id ? `/api/projects/${projectId}/design-images/${id}` : "");
+  return (
+    <section className="designcompare" aria-label="デザインの見比べ">
+      <h3>デザインの見比べ</h3>
+      {rows.map((r) => (
+        <div key={r.screen} className="dc-row">
+          <div className="dc-head">
+            <b>{r.name}</b>
+            <span className={r.ratio > 0.1 ? "bad" : "ok"}>違い {(r.ratio * 100).toFixed(1)}%</span>
+            <span className="hint">{new Date(r.at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+          </div>
+          <div className="dc-imgs">
+            {([["お手本(試作)", r.reference], ["実装", r.actual], ["違い(赤)", r.diff]] as const).map(([label, id]) => (
+              <figure key={label}>
+                <figcaption>{label}</figcaption>
+                {id ? (
+                  <a href={src(id)} target="_blank" rel="noreferrer">
+                    <img src={src(id)} alt={`${r.name}の${label}`} loading="lazy" />
+                  </a>
+                ) : (
+                  <span className="hint">ありません</span>
+                )}
+              </figure>
+            ))}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
 }

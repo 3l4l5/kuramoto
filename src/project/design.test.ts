@@ -46,18 +46,18 @@ describe("デザインを合わせる(ADR-0033)", () => {
     const [dev, review, qa] = harness.calls.map((c) => c.prompt);
     expect(dev).toContain("## 画面のデザイン");
     expect(dev).toContain("`.kuramoto/design/list.html`");
-    expect(dev).toContain("試作に合わせて作ります");
+    expect(dev).toContain("お手本の画像に合わせて作ります");
     expect(review).toContain("試作と食い違っていないか");
-    expect(qa).toContain("スクリーンショットを撮り、見比べます");
-    expect(qa).toContain("スマホ(幅 390px ほど)");
-    expect(ws.designs[0]).toEqual({ ...ws.designs[0], file: ".kuramoto/design/list.html", html: "<h1>B案: 青い見出し</h1>" });
+    expect(qa).toContain("compare_screen");
+    expect(qa).toContain("スマホ(幅 390px)");
+    expect(ws.designs[0]).toEqual({ file: ".kuramoto/design/list.html", data: "<h1>B案: 青い見出し</h1>" });
   });
 
   it("作業場所に置いた試作は、git の変更に出てこない", async () => {
     const dir = mkdtempSync(join(tmpdir(), "kuramoto-design-"));
     try {
       execFileSync("git", ["init", "-q", dir]);
-      await new GitWorkspace(dir).writeDesign(dir, join(dir, ".git"), [{ file: ".kuramoto/design/list.html", html: "<h1>x</h1>" }]);
+      await new GitWorkspace(dir).writeDesign(dir, join(dir, ".git"), [{ file: ".kuramoto/design/list.html", data: "<h1>x</h1>" }]);
       expect(existsSync(join(dir, ".kuramoto/design/list.html"))).toBe(true);
       expect(execFileSync("git", ["-C", dir, "status", "--porcelain"]).toString()).toBe("");
     } finally {

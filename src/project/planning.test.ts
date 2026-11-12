@@ -76,6 +76,7 @@ const agents: FakeStep = async (req, call) => {
       await call("resolve_comment", { id });
       return { finalText: "直しました。" };
     }
+    await call("set_design_system", { principles: ["青 1 色"], tokens: [{ group: "color", name: "--color-primary", value: "#2f67d4", use: "主ボタン" }], components: [{ name: "主ボタン", use: "確定", states: ["通常"], html: "<button>確定</button>" }] });
     await call("upsert_screen", { key: "search", name: "空き枠を探す", device: "phone", requirements: ["R1"], variants: [{ id: "A", html: "<p>A</p>" }, { id: "B", html: "<p>B</p>" }] });
     await call("upsert_screen", { key: "confirm", name: "予約の確認", device: "phone", requirements: ["R2"], variants: [{ id: "A", html: "<p>C</p>" }] });
     return { finalText: "試作を作りました。" };
@@ -205,6 +206,7 @@ describe("企画スタジオ", () => {
         return { finalText: "描きました" };
       }
       if (has("upsert_screen")) {
+        await call("set_design_system", { principles: ["青 1 色"], tokens: [{ group: "color", name: "--color-primary", value: "#2f67d4", use: "主ボタン" }], components: [{ name: "主ボタン", use: "確定", states: ["通常"], html: "<button>確定</button>" }] });
         await call("upsert_screen", { key: "list", name: "一覧", device: "phone", requirements: ["R1"], variants: [{ id: "A", html: "<p/>" }] });
         return { finalText: "作りました" };
       }
