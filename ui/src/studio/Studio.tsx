@@ -43,6 +43,9 @@ export function Studio({ id }: { id: number }) {
           <LinkBtn kind="outline" size="sm" className="exportbtn" href={`/api/projects/${id}/studio/export`} download>
             設計書をエクスポート(Markdown)
           </LinkBtn>
+          <LinkBtn kind="outline" size="sm" href={`/api/projects/${id}/studio/export.zip`} download title="設計書と、画面ごとのお手本の画像(実際の端末の幅で描いたもの)をまとめた zip。GitHub などに置いても画面の絵が出ます">
+            設計書と画面の画像(zip)
+          </LinkBtn>
           <PauseButton pid={id} paused={!!data.paused} />
         </div>
         {data.paused && (

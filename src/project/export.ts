@@ -6,6 +6,8 @@ import {
   openItems,
   requirements,
   screens,
+  designSystem,
+  designSystemCss,
   stageRow,
   STAGE_LABEL,
   STAGES,
@@ -22,7 +24,7 @@ import {
  * 企画スタジオで決めた要件と技術的な設計を、1 つの Markdown にまとめる。
  * 図は Mermaid で書くので、GitHub などではそのまま図として表示される(ADR-0014 の docs/ に置ける形)。
  */
-export function exportDesignDoc(p: Project, projectName: string): string {
+export function exportDesignDoc(p: Project, projectName: string, opts: { images?: Map<string, string> } = {}): string {
   const out: string[] = [];
   const h = (level: number, text: string) => out.push("", `${"#".repeat(level)} ${text}`, "");
   const list = (xs: string[]) => xs.forEach((x) => out.push(`- ${x}`));
@@ -70,8 +72,24 @@ export function exportDesignDoc(p: Project, projectName: string): string {
   const scr = [...screens(p)];
   if (skipped(p, "screen")) out.push("この段階は省きました(開発が要件から直接作る)。");
   else if (!scr.length) out.push("(まだありません)");
+  // デザインシステム(ADR-0034): 画面に共通の決まり。開発チームとの共通言語
+  const ds = designSystem(p);
+  if (ds) {
+    h(3, "デザインシステム");
+    if (ds.principles.length) list(ds.principles);
+    out.push("", "| トークン | 種類 | 値 | 使うところ |", "|---|---|---|---|");
+    for (const t of ds.tokens) out.push(`| \`${t.name}\` | ${GROUP[t.group] ?? t.group} | \`${cell(t.value)}\` | ${cell(t.use)} |`);
+    out.push("", "部品:", "");
+    for (const c of ds.components) {
+      out.push(`- **${c.name}**: ${c.use}(状態: ${c.states.join("・") || "—"})`);
+      out.push("", "  <details><summary>見本の HTML</summary>", "", "  ```html", ...c.html.split("\n").map((l) => `  ${l}`), "  ```", "", "  </details>", "");
+    }
+    out.push("", "<details><summary>トークンの CSS 変数</summary>", "", "```css", designSystemCss(ds).trimEnd(), "```", "", "</details>");
+  }
   for (const [key, s] of scr) {
     h(3, `${s.name}(${key})`);
+    const img = opts.images?.get(key);
+    if (img) out.push(`![${s.name}](${img})`, "");
     const chosen = s.variants.find((v) => v.id === s.chosen) ?? (s.variants.length === 1 ? s.variants[0] : undefined);
     out.push(`- 要件: ${s.requirements.join("、") || "なし"}`, `- 向き: ${s.device === "phone" ? "スマホ" : "デスクトップ"}`, `- 案: ${s.variants.map((v) => v.id).join("・")}(選んだ案: ${chosen?.id ?? "未選択"})${s.agreed ? "、合意済み" : ""}`);
     if (chosen?.note) out.push(`- 案のメモ: ${chosen.note}`);
@@ -173,6 +191,8 @@ export function exportDesignDoc(p: Project, projectName: string): string {
   }
   return out.join("\n") + "\n" + embedTransfer(collectTransfer(p, projectName));
 }
+
+const GROUP: Record<string, string> = { color: "色", font: "文字", space: "余白", radius: "角丸", shadow: "影", other: "その他" };
 
 function statusOf(p: Project, s: Stage): string {
   const r = stageRow(p, s);

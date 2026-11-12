@@ -20,7 +20,8 @@ import { ciBlockAction, ciBlocked, githubDown } from "./project/outage.js";
 import { fetchGithubSnapshot, markExisting } from "./project/onboard.js";
 import { runTeamCi, SandboxRunner, teamCiEnabled, type CommandRunner } from "./project/team-ci.js";
 import { leadReply } from "./project/leadchat.js";
-import { FileDesignStore, imageRow, playwrightRenderer, type DesignStore, type Renderer } from "./project/design-visual.js";
+import { FileDesignStore, imageRow, playwrightRenderer, referenceImage, type DesignStore, type Renderer } from "./project/design-visual.js";
+import { zip } from "./project/zip.js";
 import { metrics } from "./project/metrics.js";
 import { exportDesignDoc } from "./project/export.js";
 import { extractTransfer, restoreTransfer } from "./project/transfer.js";
@@ -52,7 +53,7 @@ import {
   STAGES,
   studioView,
   type Mode,
-  type Stage, setStudioPaused, studioPaused } from "./project/planning.js";
+  type Stage, setStudioPaused, studioPaused, screens } from "./project/planning.js";
 
 /** ビルドした画面(vite build の出力)。 */
 const WEB_DIR = fileURLToPath(new URL("../ui/dist/", import.meta.url));
@@ -280,6 +281,8 @@ export class KuramotoServer {
       if (req.method !== "GET" && req.headers["x-kuramoto"] !== "1") return send(res, 403, { error: "ヘッダーがありません" });
       const exp = req.method === "GET" && url.pathname.match(/^\/api\/projects\/(\d+)\/studio\/export$/);
       if (exp) return this.sendExport(Number(exp[1]), res);
+      const expZip = req.method === "GET" && url.pathname.match(/^\/api\/projects\/(\d+)\/studio\/export\.zip$/);
+      if (expZip) return await this.sendExportZip(Number(expZip[1]), res);
       const img = req.method === "GET" && url.pathname.match(/^\/api\/projects\/(\d+)\/design-images\/(\d+)$/);
       if (img) return await this.sendDesignImage(Number(img[1]), Number(img[2]), res);
       const body = req.method === "GET" ? {} : await readJson(req);
@@ -623,6 +626,36 @@ export class KuramotoServer {
   /** 画面の画像の置き場所。既定はプロジェクトのデータの置き場所の design/(S3 に替えるときは deps.designStoreFor)。 */
   private designStoreFor(id: number): DesignStore {
     return this.deps.designStoreFor?.(this.hq.project(id).data_dir) ?? new FileDesignStore(join(this.hq.project(id).data_dir, "design"));
+  }
+
+  /**
+   * 設計書と画面の画像を zip で書き出す。画像は、選んだ案を実際の端末の幅で描いたお手本(images/<画面>.png)。
+   * 設計書から画像を参照するので、GitHub などに置いても画面の絵が出る。描けなかった画面は画像なしで書く。
+   */
+  private async sendExportZip(id: number, res: ServerResponse): Promise<void> {
+    const p = this.project(id);
+    const name = this.hq.project(id).name;
+    const store = this.designStoreFor(id);
+    const render = this.deps.renderer ?? playwrightRenderer;
+    const images = new Map<string, string>();
+    const files: { name: string; data: Buffer | string }[] = [];
+    for (const [key, s] of screens(p)) {
+      const v = s.variants.find((x) => x.id === s.chosen) ?? s.variants[0];
+      if (!v) continue;
+      const ref = await referenceImage(p, store, render, { key, html: v.html, device: s.device });
+      if (!ref) continue;
+      const file = `images/${key.replace(/[^A-Za-z0-9_-]/g, "_")}.png`;
+      images.set(key, file);
+      files.push({ name: file, data: ref.png });
+    }
+    files.unshift({ name: "design.md", data: exportDesignDoc(p, name, { images }) });
+    const body = zip(files);
+    res.writeHead(200, {
+      "content-type": "application/zip",
+      "content-disposition": `attachment; filename="design.zip"; filename*=UTF-8''${encodeURIComponent(`${name}-設計書.zip`)}`,
+      "x-kuramoto-build": BUILD_ID,
+    });
+    res.end(body);
   }
 
   private sendExport(id: number, res: ServerResponse): void {

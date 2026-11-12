@@ -16,7 +16,7 @@ const leadSaid = (p: Project, text: string) => leadMessages(p).some((m) => m.bod
 const cleanups: (() => void)[] = [];
 afterEach(() => cleanups.splice(0).forEach((f) => f()));
 
-async function boot(opts: { publicToken?: string } = {}) {
+async function boot(opts: { publicToken?: string; renderer?: import("./project/design-visual.js").Renderer } = {}) {
   const home = mkdtempSync(join(tmpdir(), "kuramoto-srv-"));
   const harness = new FakeHarness(async (req, call) => {
     if (req.tools.some((t) => t.name === "submit_pr")) await call("submit_pr", { summary: "", responses: fixedAll(req.prompt) });
@@ -133,5 +133,34 @@ describe("ローカルサーバー", () => {
     expect((await get("/api/hq", { cookie: "kuramoto_token=s3cret" })).status).toBe(200);
     expect((await get("/api/hq", { authorization: "Bearer s3cret" })).status).toBe(200);
     expect((await get("/api/hq", { cookie: "kuramoto_token=nope" })).status).toBe(401);
+  });
+
+  it("設計書を、画面のお手本の画像と一緒に zip で書き出す(デザインシステムの節つき)", async () => {
+    const { PNG } = await import("pngjs");
+    const { execFileSync } = await import("node:child_process");
+    const img = new PNG({ width: 390, height: 10 });
+    img.data.fill(255);
+    const { call, app, port } = await boot({ renderer: async () => PNG.sync.write(img) });
+    const { json: created } = await call("POST", "/api/projects", { name: "書き出し", repos: [{ fullName: "acme/shop", role: "API" }] });
+    const p = app.project(created.id);
+    const { putScreen, putArtifact } = await import("./project/planning.js");
+    putArtifact(p, "screen", "designsystem", "main", { principles: ["青 1 色"], tokens: [{ group: "color", name: "--color-primary", value: "#2f67d4", use: "主ボタン" }], components: [{ name: "主ボタン", use: "確定", states: ["通常"], html: "<button>保存</button>" }] });
+    putScreen(p, "list", { name: "メモ一覧", device: "phone", requirements: [], variants: [{ id: "A", html: "<p>一覧</p>" }], chosen: "A", agreed: true });
+    const res = await fetch(`http://localhost:${port}/api/projects/${created.id}/studio/export.zip`);
+    expect(res.headers.get("content-type")).toBe("application/zip");
+    const dir = mkdtempSync(join(tmpdir(), "kuramoto-zip-"));
+    try {
+      writeFileSync(join(dir, "d.zip"), Buffer.from(await res.arrayBuffer()));
+      const listing = execFileSync("unzip", ["-l", join(dir, "d.zip")]).toString();
+      expect(listing).toContain("design.md");
+      expect(listing).toContain("images/list.png");
+      const md = execFileSync("unzip", ["-p", join(dir, "d.zip"), "design.md"]).toString();
+      expect(md).toContain("### デザインシステム");
+      expect(md).toContain("| `--color-primary` | 色 | `#2f67d4` | 主ボタン |");
+      expect(md).toContain("![メモ一覧](images/list.png)");
+      expect(execFileSync("unzip", ["-t", join(dir, "d.zip")]).toString()).toContain("No errors");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
