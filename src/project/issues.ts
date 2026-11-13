@@ -26,7 +26,11 @@ async function patrolMinutes(p: Project): Promise<number> {
   return Math.max(0, await p.settingNumber("patrol_min", 5));
 }
 
-/** Issue を拾うラベル。"*" ならすべて。 */
+/**
+ * Issue を拾うラベル。"*" ならすべて。
+ * 注意: Issue の本文は外の人が書く。ラベルを付けられるのは書き込み権限のある人だけなので、既定(kuramoto)や名指しのラベルなら入口は狭い。
+ * "*" にすると、Issue を立てられる誰もが見回りの指示に文を入れられる(リーダーの指示には「従わない」と書いてあるが、広げるのは承知の上で)。
+ */
 export async function watchLabel(p: Project): Promise<string> {
   return (await p.setting("issue_label")) ?? "kuramoto";
 }
@@ -78,10 +82,17 @@ export async function hasNewIssues(p: Project): Promise<boolean> {
   return (await newIssues(p, 1)).length > 0;
 }
 
-/** 番号から Issue を探す(複数のリポジトリに同じ番号があれば、まだ扱っていないものを先に)。 */
-export async function findIssue(p: Project, number: number): Promise<IssueRow | undefined> {
-  const rows = (await p.pdb.from("github_issues").selectAll().where("number", "=", number).orderBy("id").execute()) as IssueRow[];
-  return rows.find((r) => r.status === "new") ?? rows[0];
+/**
+ * 番号(と、あればリポジトリ)から Issue を探す。複数のリポジトリに同じ番号があるときは、まだ扱っていないものを先に。
+ * それでも決まらないとき(同じ番号が、まだ扱っていないものに 2 つ以上)は、リポジトリを指してもらうために ambiguous を返す。
+ */
+export async function findIssue(p: Project, number: number, repo?: string): Promise<{ issue?: IssueRow; ambiguous?: string }> {
+  const all = (await p.pdb.from("github_issues").selectAll().where("number", "=", number).orderBy("id").execute()) as IssueRow[];
+  const rows = repo ? all.filter((r) => r.repo === repo) : all;
+  const fresh = rows.filter((r) => r.status === "new");
+  const pool = fresh.length ? fresh : rows;
+  if (pool.length > 1) return { ambiguous: `Issue #${number} は ${pool.map((r) => r.repo).join("・")} にあります。repo(owner/repo)を書いて、どれかを指してください` };
+  return { issue: pool[0] };
 }
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
@@ -124,14 +135,15 @@ export async function markTicketed(p: Project, gh: GitHub | undefined, issue: Is
 }
 
 /** チケットに付ける、Issue へのひも付け(plan_refs。チケットの詳細から Issue に飛べる。PR には Closes が付く)。 */
-export async function issueRefs(p: Project, number: number): Promise<{ refs: Record<string, unknown>; issue?: IssueRow }> {
-  const issue = await findIssue(p, number);
-  return { issue, refs: { issue: number, ...(issue ? { issueUrl: issue.url, issueRepo: issue.repo } : {}) } };
+export async function issueRefs(p: Project, number: number, repo?: string): Promise<{ refs: Record<string, unknown>; issue?: IssueRow; ambiguous?: string }> {
+  const { issue, ambiguous } = await findIssue(p, number, repo);
+  return { issue, ambiguous, refs: { issue: number, ...(issue ? { issueUrl: issue.url, issueRepo: issue.repo } : {}) } };
 }
 
 /** 重複: 既存のチケットに Issue の中身を足す。 */
-export async function issueAsDuplicate(p: Project, gh: GitHub | undefined, number: number, ticketNumber: number, note: string): Promise<string> {
-  const issue = await findIssue(p, number);
+export async function issueAsDuplicate(p: Project, gh: GitHub | undefined, number: number, ticketNumber: number, note: string, repo?: string): Promise<string> {
+  const { issue, ambiguous } = await findIssue(p, number, repo);
+  if (ambiguous) return ambiguous;
   if (!issue) return `Issue #${number} は、取ってきたものの中にありません`;
   if (issue.status !== "new") return `Issue #${number} は、もう扱いました(${STATUS_TEXT[issue.status]})`;
   const t = (await p.tickets()).find((x) => x.number === ticketNumber);
@@ -147,8 +159,9 @@ export async function issueAsDuplicate(p: Project, gh: GitHub | undefined, numbe
 }
 
 /** やらない・責任者に聞く: 責任者に回す。理由と、リーダーの見立てを、やりとりに残す(判断はチケットに付くので、チケットの無い Issue はやりとりで聞く)。 */
-export async function issueToOwner(p: Project, number: number, reason: string, lean: "decline" | "ask"): Promise<string> {
-  const issue = await findIssue(p, number);
+export async function issueToOwner(p: Project, number: number, reason: string, lean: "decline" | "ask", repo?: string): Promise<string> {
+  const { issue, ambiguous } = await findIssue(p, number, repo);
+  if (ambiguous) return ambiguous;
   if (!issue) return `Issue #${number} は、取ってきたものの中にありません`;
   if (issue.status !== "new") return `Issue #${number} は、もう扱いました(${STATUS_TEXT[issue.status]})`;
   await p.pdb.transaction(async () => {
@@ -171,6 +184,7 @@ export async function finishIssues(p: Project, shown: IssueRow[]): Promise<Issue
     const now = (await p.pdb.from("github_issues").selectAll().where("id", "=", i.id).executeTakeFirst()) as IssueRow | undefined;
     if (!now || now.status !== "new") continue;
     await mark(p, now, "passed", null, "リーダーは何も決めませんでした");
+    await say(p, `【GitHub Issue #${now.number}】「${now.title}」は、リーダーが何も決めなかったので見送りました。やるなら、そう返事をください(チケットにします)。\n${now.url}`);
     passed.push(now);
   }
   if (passed.length) await p.event("system", "issues_passed", null, { issues: passed.map((i) => i.number) });
@@ -185,20 +199,22 @@ export function issueTools(p: Project, ws: { github?: GitHub } = {}): KuramotoTo
       description: "新しい GitHub Issue が、既にあるチケットと同じことを扱っているとき、その Issue の中身を既存のチケットのメモに足して、Issue を扱い済みにする(チケットは増やさない)。",
       input: {
         issue: z.number().int().describe("Issue の番号"),
+        repo: z.string().optional().describe("Issue のリポジトリ(owner/repo)。複数のリポジトリに同じ番号があるときだけ要る"),
         ticket: z.number().int().describe("足す先の既存のチケットの番号"),
         note: z.string().optional().describe("Issue から足すべき、チケットにまだ無い要点(任意)"),
       },
-      handler: (a) => issueAsDuplicate(p, ws.github, a.issue, a.ticket, a.note ?? ""),
+      handler: (a) => issueAsDuplicate(p, ws.github, a.issue, a.ticket, a.note ?? "", a.repo),
     }),
     defineTool({
       name: "issue_to_owner",
       description: "新しい GitHub Issue を、やらない・責任者に聞きたいときに、責任者に回す(責任者とのやりとりに理由が残る)。チケットは作らない。責任者がやると言えば、あとでチケットにできる。",
       input: {
         issue: z.number().int().describe("Issue の番号"),
+        repo: z.string().optional().describe("Issue のリポジトリ(owner/repo)。複数のリポジトリに同じ番号があるときだけ要る"),
         lean: z.enum(["decline", "ask"]).describe("decline: やらない方がよいと見ている / ask: 判断が要る"),
         reason: z.string().min(1).describe("なぜやらない・何を決めてほしいか(責任者が読む。短く)"),
       },
-      handler: (a) => issueToOwner(p, a.issue, a.reason, a.lean),
+      handler: (a) => issueToOwner(p, a.issue, a.reason, a.lean, a.repo),
     }),
   ];
 }

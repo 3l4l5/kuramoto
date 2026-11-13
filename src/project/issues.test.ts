@@ -182,6 +182,9 @@ describe("リーダーの応答(#79)", () => {
     await finishPatrol(p, [], [], shown);
     expect(await newIssues(p)).toEqual([]);
     expect(await finishIssues(p, shown)).toEqual([]);
+    // 見送った Issue も、やりとりに残る(責任者が追える)
+    const said = (await leadMessages(p)).filter((m) => m.body.includes("見送りました"));
+    expect(said.map((m) => m.body.match(/Issue #(\d+)/)![1])).toEqual(["5", "6"]);
     // 取り直しても、同じ Issue は new に戻らない
     clock.advance(5 * 60_000);
     expect(await pollIssues(p, gh)).toBe(0);
@@ -234,5 +237,23 @@ describe("Dispatcher からの見回り(#79)", () => {
     expect(prompts.filter((x) => x.includes("Issue #5(acme/shop)"))).toEqual([]);
     expect((await p.tickets()).length).toBe(1);
     expect(state.comments).toEqual([]);
+  });
+});
+
+describe("同じ番号の Issue が複数のリポジトリにあるとき(#79)", () => {
+  it("リポジトリを指さないと断り、指せば、そのリポジトリの Issue を扱う", async () => {
+    const { p, gh } = await setup();
+    await p.addRepo("acme/api", "API");
+    await pollIssues(p, gh); // どちらのリポジトリにも #5・#6(フェイクは同じ一覧を返す)
+    expect(await newIssues(p)).toHaveLength(4);
+    const owner = tool(issueTools(p, { github: gh }), "issue_to_owner");
+    expect(await call(owner, { issue: 5, lean: "ask", reason: "x" })).toContain("repo");
+    expect((await newIssues(p)).length).toBe(4);
+    const create = tool(leadChatTools(p, { github: gh }), "create_ticket");
+    expect(await call(create, { title: "t", body: "x", kind: "bugfix", issue: 5 })).toContain("repo");
+    expect(await p.tickets()).toEqual([]);
+    expect(await call(create, { title: "t", body: "x", kind: "bugfix", issue: 5, issue_repo: "acme/api" })).toMatch(/を作りました/);
+    expect(JSON.parse((await p.tickets())[0]!.plan_refs)).toMatchObject({ issue: 5, issueRepo: "acme/api" });
+    expect(await call(owner, { issue: 5, repo: "acme/shop", lean: "ask", reason: "x" })).toContain("責任者に回しました");
   });
 });

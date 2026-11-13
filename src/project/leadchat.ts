@@ -143,6 +143,7 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
         all_screens: z.boolean().optional().describe("全画面を試作と見比べるチケットなら true(全画面の試作が担当に渡る)"),
         after: z.array(z.number().int()).optional().describe("先に merge されている必要があるチケットの番号(画面のチケットは、デザインシステムの土台のチケットを書く)"),
         issue: z.number().int().optional().describe("このチケットで片付ける GitHub Issue の番号(あれば)。チケットの詳細から Issue に飛べ、PR に「Closes #番号」が付く"),
+        issue_repo: z.string().optional().describe("その Issue のリポジトリ(owner/repo)。複数のリポジトリに同じ番号があるときだけ要る"),
       },
       handler: async (a) => {
         const known = new Set((await screens(p)).keys());
@@ -150,7 +151,8 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
         if (bad.length) return `画面 ${bad.join("・")} は企画にありません。使えるのは ${[...known].join("・") || "(なし)"}`;
         const item = a.requirement ? (await requirements(p)).find((r) => r.code === a.requirement) : undefined;
         if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
-        const linked = a.issue ? await issueRefs(p, a.issue) : undefined;
+        const linked = a.issue ? await issueRefs(p, a.issue, a.issue_repo) : undefined;
+        if (linked?.ambiguous) return linked.ambiguous;
         // 同じ Issue で二度チケットを切らない(チケットにした・既存のチケットに足した Issue は、もう扱い済み)
         if (linked?.issue && (linked.issue.status === "ticketed" || linked.issue.status === "duplicate")) return `Issue #${a.issue} は、もう${linked.issue.ticket_id ? `チケットに扱っています(#${(await p.ticket(linked.issue.ticket_id)).number})` : "扱い済みです"}。チケットは増やしません`;
         const t = await createTicket(p, {
