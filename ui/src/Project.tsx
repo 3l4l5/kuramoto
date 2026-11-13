@@ -75,8 +75,15 @@ function Office({ id, data }: { id: number; data: ProjectView }) {
 
 // ---- オフィスの床 / ボード ----
 
+/** チケットの画面から「← ボードに戻る」で戻ったとき、見ていたオフィス/ボード/ツリーのままにする。 */
+let lastView: "floor" | "board" | "tree" = "floor";
+
 function FloorOrBoard({ id, data }: { id: number; data: ProjectView }) {
-  const [view, setView] = useState<"floor" | "board" | "tree">("floor");
+  const [view, setViewState] = useState<"floor" | "board" | "tree">(lastView);
+  const setView = (v: "floor" | "board" | "tree") => {
+    lastView = v;
+    setViewState(v);
+  };
   const VIEWS = { floor: "オフィス", board: "ボード", tree: "ツリー" } as const;
   return (
     <section className="panel" aria-label={VIEWS[view]}>

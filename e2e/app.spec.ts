@@ -211,7 +211,14 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await page.getByRole("dialog", { name: "開発の島 の設定" }).getByRole("button", { name: "閉じる" }).click();
     // チケットを開くと、中身とやりとり(実装・PR・レビューの結果)が見られ、メモを残せる
     await floor.getByRole("region", { name: "merge 待ちの棚" }).getByRole("button", { name: /空き枠を探す画面/ }).click();
-    const dialog = page.getByRole("dialog", { name: /チケット #\d/ });
+    const dialog = page.getByRole("region", { name: /チケット #\d/ });
+    // モーダルではなく 1 枚の画面: 共通ヘッダーと、「← ボードに戻る・番号・題名・工程・往復」の帯がある
+    await expect(page).toHaveURL(/#\/p\/\d+\/t\/\d+$/);
+    await expect(page.getByRole("group", { name: "プロジェクトの画面" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "編成", exact: true })).toBeVisible();
+    await expect(dialog.locator("header")).toContainText("空き枠を探す画面");
+    await expect(dialog.locator("header")).toContainText("往復");
+    await expect(dialog.getByRole("button", { name: "← ボードに戻る" })).toBeVisible();
     const timeline = dialog.getByRole("region", { name: "やりとり" });
     await expect(timeline).toContainText("が実装をしました");
     await expect(timeline).toContainText("が PR acme/reserve#");
@@ -240,8 +247,9 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await details.getByRole("button", { name: "既定(無制限)に戻す" }).click();
     await expect(details).toContainText("(既定)");
     await shot(page, "ticket");
-    await dialog.getByRole("button", { name: "閉じる" }).click();
+    await dialog.getByRole("button", { name: "← ボードに戻る" }).click();
     await expect(dialog).toHaveCount(0);
+    await expect(page).toHaveURL(/#\/p\/\d+$/);
     // 待たずに今 merge したいときは、棚から押せる
     await shelf.getByRole("button", { name: /を merge$/ }).first().click();
     await expect(page.getByRole("status", { name: "お知らせ" })).toHaveText("merge しました");
@@ -793,7 +801,7 @@ test("チケットの種類: 詳細で変えられ、ボードは種類の流れ
     await page.getByRole("group", { name: "オフィスの見方" }).getByRole("button", { name: "ボード" }).click();
     await board.getByRole("radiogroup", { name: "種類で絞り込み" }).getByRole("radio", { name: "すべて" }).click();
     await board.getByRole("button", { name: "落ちるのを直す" }).click();
-    const dialog = page.getByRole("dialog", { name: /チケット #\d/ });
+    const dialog = page.getByRole("region", { name: /チケット #\d/ });
     await expect(dialog.locator("header")).toContainText("バグ修正");
     const kindFlow = dialog.getByLabel("バグ修正の流れ");
     await expect(kindFlow).toHaveText("バグ修正の流れ: QA 申し送り → 開発 → merge 待ち");
@@ -807,7 +815,9 @@ test("チケットの種類: 詳細で変えられ、ボードは種類の流れ
     await expect(dialog.locator(".kindchanged")).toHaveText("バグ修正 → ドキュメントに変えました。次の工程からドキュメントの流れで進みます。");
     await expect(dialog.getByRole("region", { name: "やりとり" })).toContainText("種類を「バグ修正」から「ドキュメント」に変えました");
     await shot(page, "ticket-kind");
-    await dialog.getByRole("button", { name: "閉じる" }).click();
+    await dialog.getByRole("button", { name: "← ボードに戻る" }).click();
+    // 戻ると、見ていたボードのまま
+    await expect(board).toBeVisible();
   });
 
   await test.step("生産性のチケットごとの表に種類の列が出て、種類で絞り込める", async () => {
