@@ -1,5 +1,5 @@
 import { formationMarks } from "./formation-marks.js";
-import type { Selectable } from "kysely";
+import { sql, type Selectable } from "kysely";
 import { countFrom, countOf, inScope, scopeIds } from "../db/count.js";
 import type { DecisionsTable, RunsTable, TicketsTable } from "../db/tables.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
@@ -46,7 +46,12 @@ export async function productivity(p: Project) {
     inScope(p.pdb, "decisions").where("escalated", "=", 1).execute(),
     inScope(p.pdb, "rule_violations").execute(),
     inScope(p.pdb, "plan_open_items").execute(),
-    inScope(p.pdb, "messages").execute(),
+    // 件数がいちばん増える表。使うのは kind と、企画の段階を持つ plan の payload だけ
+    p.pdb.k
+      .selectFrom("messages")
+      .select(["id", "kind", sql<string>`CASE WHEN kind = 'plan' THEN payload ELSE '' END`.as("payload")])
+      .where("project_id", "in", scopeIds(p.pdb))
+      .execute(),
     inScope(p.pdb, "policies").execute(),
   ]);
   const doneRuns = runsAll.filter((r) => r.ended_at !== null);
@@ -241,8 +246,7 @@ const SOURCE: Record<string, string> = {
 async function flow(p: Project, d: { runsAll: RunRow[]; ticketsAll: TicketRow[]; decisionsAll: DecisionRow[] }) {
   const now = p.clock.now().getTime();
   const tickets = [...d.ticketsAll].sort((a, b) => a.id - b.id);
-  const evs = await p.pdb
-    .from("events")
+  const evs = await inScope(p.pdb, "events")
     .where("type", "in", ["merged", "already_done", "ticket_dropped", "duplicate_dropped", "ready_to_merge", "changes_requested", "conflict", "sent_back", "merge_blocked", "escalated"])
     .execute();
   const firstAt = (...types: string[]) => earliest(evs.filter((e) => types.includes(e.type)));
@@ -454,7 +458,7 @@ async function members(p: Project, runs: RunRow[]) {
   return { list, roles: roles.sort((a, b) => b.runs - a.runs) };
 }
 
-export type Productivity = ReturnType<typeof productivity>;
+export type Productivity = Awaited<ReturnType<typeof productivity>>;
 
 /** 日(ローカルの日付)ごとのフロー効率。merge した日に集める。 */
 export function efficiencyDaily(rows: { at: number; active: number; lead: number }[]): { day: string; value: number }[] {

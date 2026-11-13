@@ -802,7 +802,7 @@ export type ProjectView = Awaited<ReturnType<KuramotoServer["projectView"]>>;
 export type StudioView = Awaited<ReturnType<KuramotoServer["studioViewOf"]>>;
 export type TeamView = ReturnType<typeof teamView>;
 export type DevRulesView = ReturnType<typeof devRulesView>;
-export type ProductivityView = ReturnType<typeof productivity>;
+export type ProductivityView = Awaited<ReturnType<typeof productivity>>;
 export type OfficeView = ReturnType<typeof officeView> & { running: boolean };
 export type { MemberView, UnitView };
 export type TicketView = Awaited<ReturnType<typeof ticketView>>;

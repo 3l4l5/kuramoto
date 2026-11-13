@@ -89,3 +89,26 @@ describe("生産性: ルール違反(R15)", () => {
     expect(row(b.id)).toMatchObject({ violations: 0, autofixed: 0 });
   });
 });
+
+describe("生産性: project_id が 0 のままの行(同期の書き込み)", () => {
+  it("projectId が 0 でないプロジェクトで、p.event と createTicket が書いた直後の動きも、流れの指標に入る", async () => {
+    const clock = new ManualClock(new Date("2026-11-12T00:00:00Z"));
+    const p = new Project(":memory:", clock, 7);
+    p.addRepo("acme/shop", "API");
+    const a = createTicket(p, { title: "A" });
+    clock.advance(H);
+    p.event("system", "ready_to_merge", a.id, {});
+    clock.advance(H);
+    p.event("team", "merged", a.id, {});
+    run(p.db, "UPDATE tickets SET stage = 'done', done_at = ? WHERE id = ?", [p.now(), a.id]);
+    // 同期の書き込みは project_id を書かないので、まだ 0 のまま(開き直すまで)
+    expect(p.db.prepare("SELECT COUNT(*) AS n FROM events WHERE type = 'merged' AND project_id = 0").get()).toEqual({ n: 1 });
+
+    const v = await productivity(p);
+    expect(v.flow.mergedTotal).toBe(1);
+    expect(v.flow.throughput.mergedLast24h).toBe(1);
+    expect(v.flow.times.leadMs.n).toBe(1);
+    expect(v.flow.times.mergeWaitMs.n).toBe(1);
+    expect(v.totals.completed).toBe(1);
+  });
+});
