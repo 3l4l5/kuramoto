@@ -46,4 +46,12 @@ export function initialDrawer(search: string): { drawer: "formation" | "policy" 
   return { drawer: d === "formation" || d === "policy" || d === "lead" ? d : null, tab: q.get("dtab") };
 }
 
-export const drawerFromUrl = () => initialDrawer(typeof location === "undefined" ? "" : location.search);
+/**
+ * URL の指定は、開いた直後の 1 回だけ使う。引き出しを開け閉めしたら捨てる(clearDrawerFromUrl)ので、
+ * 閉じて開き直したときに毎回同じタブから始まることは無い(読み込み直すと、URL がまた使われる)。
+ */
+let fromUrl = initialDrawer(typeof location === "undefined" ? "" : location.search);
+export const drawerFromUrl = () => fromUrl;
+export const clearDrawerFromUrl = () => {
+  fromUrl = { drawer: null, tab: null };
+};

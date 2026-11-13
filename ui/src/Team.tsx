@@ -6,7 +6,7 @@ import { MAX_MEMBERS_PER_UNIT, type FormationSpec, type UnitSpec } from "../../s
 import { EFFORTS, MODELS, ROLE_LABEL, WORK_ROLES, type WorkRole } from "../../src/domain/roles";
 import { Btn } from "./ui";
 import { LeadChat } from "./LeadChat";
-import { drawerFromUrl } from "./phoneNav";
+import { clearDrawerFromUrl, drawerFromUrl } from "./phoneNav";
 import { FormationDrawer } from "./Formation";
 import { Button, Checkbox, Input, Select, Textarea } from "./ds";
 import { BudgetInput } from "./BudgetInput";
@@ -58,6 +58,7 @@ export function useDrawerState(projectId: number | null): { drawer: Drawer | nul
     }
   }
   const open = (to: Drawer | null) => {
+    clearDrawerFromUrl();
     setPending(null);
     if (to !== "policy") setDraft(null);
     setDrawer(to);

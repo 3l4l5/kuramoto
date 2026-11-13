@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { initialDrawer } from "../ui/src/phoneNav";
+import { clearDrawerFromUrl, drawerFromUrl, initialDrawer } from "../ui/src/phoneNav";
 
 // 編成・チームの方針の引き出しは、URL の ?drawer=&dtab= で開いた状態にできる(撮影・共有用)。
 describe("initialDrawer", () => {
@@ -16,6 +16,14 @@ describe("initialDrawer", () => {
 
   it("知らない引き出しは閉じたままにする", () => {
     expect(initialDrawer("?drawer=x&dtab=y")).toEqual({ drawer: null, tab: "y" });
+  });
+});
+
+// URL の指定は開いた直後の 1 回だけ。引き出しを開け閉めしたら、次からは使わない。
+describe("drawerFromUrl", () => {
+  it("clearDrawerFromUrl のあとは、何も指定されていない", () => {
+    clearDrawerFromUrl();
+    expect(drawerFromUrl()).toEqual({ drawer: null, tab: null });
   });
 });
 
