@@ -162,8 +162,26 @@ function EfficiencyTrend({ data }: { data: ProductivityView }) {
   const marks = data.flow.formationMarks;
   const days = [...new Set([...rows.map((r) => r.day), ...marks.map((m) => m.day)])].sort();
   if (days.length === 0) return null;
-  const W = 386, H = 196, L = 34, R = 8, T = 34, B = 36;
+  const W = 386, L = 34, R = 8, B = 36;
   const x = (day: string) => (days.length === 1 ? (L + W - R) / 2 : L + (days.indexOf(day) / (days.length - 1)) * (W - L - R));
+  // 札は、横に重なるものを別の段に積む(同じ日に版が複数上がっても、札が重ならず読める)。段の数だけ上の余白を広げ、グラフ本体の高さは変えない
+  const CARD_H = 20, LANE_GAP = 4, GAP_X = 4;
+  const cards = marks.map((m) => {
+    const text = `v${m.version} ${m.changed.map((c) => CHANGED_LABEL[c] ?? c).join("・")}`;
+    const w = text.length * 12 + 12;
+    const left = Math.min(Math.max(x(m.day) - w / 2, 0), W - w);
+    return { m, text, w, left, lane: 0 };
+  });
+  const lanes: { left: number; right: number }[][] = [];
+  for (const c of cards) {
+    let lane = lanes.findIndex((l) => l.every((o) => c.left >= o.right + GAP_X || c.left + c.w + GAP_X <= o.left));
+    if (lane < 0) lane = lanes.push([]) - 1;
+    lanes[lane]!.push({ left: c.left, right: c.left + c.w });
+    c.lane = lane;
+  }
+  const laneY = (lane: number) => lane * (CARD_H + LANE_GAP);
+  const T = Math.max(34, lanes.length * (CARD_H + LANE_GAP) + 10);
+  const H = 196 + (T - 34);
   const top = Math.max(0.5, ...rows.map((r) => r.value));
   const y = (v: number) => T + (1 - v / top) * (H - T - B);
   return (
@@ -179,18 +197,13 @@ function EfficiencyTrend({ data }: { data: ProductivityView }) {
           <text x={0} y={y(top) + 4} className="tick">{Math.round(top * 100)}%</text>
           {rows.length > 1 && <polyline fill="none" className="line" stroke="var(--dev)" strokeWidth={2} points={rows.map((r) => `${x(r.day)},${y(r.value)}`).join(" ")} />}
           {rows.map((r) => <circle key={r.day} cx={x(r.day)} cy={y(r.value)} r={3} fill="var(--dev)" />)}
-          {marks.map((m, i) => {
-            const text = `v${m.version} ${m.changed.map((c) => CHANGED_LABEL[c] ?? c).join("・")}`;
-            const w = text.length * 12 + 12;
-            const left = Math.min(Math.max(x(m.day) - w / 2, 0), W - w);
-            return (
-              <g key={m.version} className="mark" data-version={m.version}>
-                <line x1={x(m.day)} x2={x(m.day)} y1={T - 6} y2={H - B} stroke="var(--lead)" strokeDasharray="4 3" />
-                <rect x={left} y={i % 2 ? 6 : 0} width={w} height={20} rx={6} fill="var(--lead-soft)" />
-                <text x={left + 6} y={(i % 2 ? 6 : 0) + 14} style={{ fill: "var(--lead)", fontSize: "var(--fs-xs)" }}>{text}</text>
-              </g>
-            );
-          })}
+          {cards.map(({ m, text, w, left, lane }) => (
+            <g key={m.version} className="mark" data-version={m.version} data-lane={lane}>
+              <line x1={x(m.day)} x2={x(m.day)} y1={laneY(lane) + CARD_H} y2={H - B} stroke="var(--lead)" strokeDasharray="4 3" />
+              <rect x={left} y={laneY(lane)} width={w} height={CARD_H} rx={6} fill="var(--lead-soft)" />
+              <text x={left + 6} y={laneY(lane) + 14} style={{ fill: "var(--lead)", fontSize: "var(--fs-xs)" }}>{text}</text>
+            </g>
+          ))}
           <text x={L} y={H - 8} className="tick">{days[0]!.slice(5)}</text>
           <text x={W - R} y={H - 8} textAnchor="end" className="tick">{days.at(-1)!.slice(5)}</text>
         </svg>
