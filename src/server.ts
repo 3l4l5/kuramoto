@@ -30,7 +30,7 @@ import { exportDesignDoc } from "./project/export.js";
 import { extractTransfer, restoreTransfer } from "./project/transfer.js";
 import { runWork } from "./project/progress.js";
 import { saveFormationInput, savePolicyInput, teamView } from "./project/team.js";
-import { addDevRule, devRulesView, setDevRuleEnabled } from "./project/dev-rules.js";
+import { addDevRule, devRulesView, openViolations, setDevRuleEnabled } from "./project/dev-rules.js";
 import { productivity } from "./project/productivity.js";
 import { officeView } from "./project/office.js";
 import { memberView, unitView, type MemberView, type UnitView } from "./project/people.js";
@@ -614,6 +614,8 @@ export class KuramotoServer {
         conflict: !!get(p.db, "SELECT 1 AS x FROM conflicts c JOIN pull_requests pr ON pr.id = c.pr_id WHERE pr.ticket_id = ? AND c.resolved_at IS NULL", [t.id]),
         // 取りやめたとき: 誰が・なぜ・いつ(ボードの「取りやめ」に出す)
         dropped: droppedInfo(p, t.id),
+        // 「直すまで進めない」ルールに反して止まっているルールの名前(ボードの赤い札)
+        ruleBlocked: openViolations(p, t.id, "blocked").map((v) => v.name),
       };
     });
     const decisions = pendingOwnerDecisions(p).map((d) => {
@@ -728,6 +730,7 @@ export type HqView = ReturnType<KuramotoServer["hqView"]>;
 export type ProjectView = ReturnType<KuramotoServer["projectView"]>;
 export type StudioView = ReturnType<KuramotoServer["studioViewOf"]>;
 export type TeamView = ReturnType<typeof teamView>;
+export type DevRulesView = ReturnType<typeof devRulesView>;
 export type ProductivityView = ReturnType<typeof productivity>;
 export type OfficeView = ReturnType<typeof officeView> & { running: boolean };
 export type { MemberView, UnitView };

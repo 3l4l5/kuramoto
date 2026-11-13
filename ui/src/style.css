@@ -835,3 +835,32 @@ body { background: var(--surface); }
 /* 企画スタジオのチャット: 質問か、直してほしいか */
 .askmode { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 14px 6px; font-size: var(--fs-md); }
 .askmode label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+
+/* チームの方針の「開発ルール」(R15)。部品は ds/、ここは並べ方だけ */
+.drawer--wide { max-width: 880px; flex-basis: 880px; }
+.drawer--wide .ds-drawer__body { padding: 0; }
+.drawer--wide .pol { padding: var(--sp-4); }
+.rules { display: flex; flex-wrap: wrap; min-height: 480px; }
+.rules__side { width: 340px; flex: none; border-right: 1px solid var(--line); padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-5); }
+.rules__title { display: flex; flex-direction: column; gap: var(--sp-1); }
+.rules__title b { font-size: var(--fs-md); }
+.rules__sub { font-size: var(--fs-sm); font-weight: var(--fw-regular); color: var(--muted); }
+.rules__meta { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.rules .ds-list__item { padding: var(--sp-2) var(--sp-3); }
+.rules__add { margin-top: var(--sp-2); width: 100%; }
+.rules__tpl { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.rules__form { flex: 1; min-width: 320px; padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-5); }
+.rules__field { display: flex; flex-direction: column; gap: var(--sp-1); align-items: flex-start; }
+.rules__field > b, .rules__field > label { font-size: var(--fs-md); font-weight: var(--fw-bold); }
+.rules__field input, .rules__field textarea { width: 100%; }
+.rules__hint { font-size: var(--fs-sm); color: var(--muted); }
+.rules__text { margin: 0; font-size: var(--fs-base); }
+.rules__checks { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.rules__check { display: inline-flex; align-items: center; height: var(--h-control-sm); padding: 0 var(--sp-3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--ink); font: inherit; font-size: var(--fs-md); cursor: pointer; }
+.rules__check[aria-pressed="true"] { border-color: var(--dev); background: var(--dev-soft); color: var(--dev); font-weight: var(--fw-medium); }
+.rules__check:disabled { cursor: default; }
+.rules__ex, .rules__mono { font-family: var(--f-mono); font-size: var(--fs-sm); }
+.rules__ex { display: block; width: 100%; background: var(--bg); border-radius: var(--r-md); padding: var(--sp-2) var(--sp-3); overflow-wrap: anywhere; }
+.rules__foot { flex: 1 0 100%; display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line); }
+.rules__note { flex: 1; font-size: var(--fs-sm); color: var(--muted); }
+.viol { display: inline-flex; flex-wrap: wrap; gap: var(--sp-1); }
