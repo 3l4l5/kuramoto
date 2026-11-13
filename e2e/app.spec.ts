@@ -169,13 +169,25 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expect(inbox.getByRole("button", { name: "merge する", exact: true })).toHaveCount(0);
     await expect(inbox).toContainText("チームが merge します。あなたの対応は要りません");
     await shot(page, "office-merge");
-    // キャラクターを押すと、その人の様子(今の仕事・受け持ち・これまでの仕事)がモーダルで開く
-    await devIsland.getByRole("button", { name: /押すと様子を見る/ }).first().click();
-    const memberDialog = page.getByRole("dialog", { name: /の様子$/ });
-    await expect(memberDialog).toContainText("今していること");
-    await expect(memberDialog.getByRole("list", { name: "これまでの仕事" })).toContainText("実装");
-    await memberDialog.getByRole("button", { name: "閉じる" }).click();
-    await expect(memberDialog).toHaveCount(0);
+    // 路線図: 種類ごとの路線が床に引かれ、種類を選ぶとその路線だけが濃くなる(R17)
+    const rails = floor.getByRole("img", { name: /^路線図:/ });
+    await expect(rails.locator("[data-line]")).toHaveCount(4);
+    await expect(rails.locator('[data-line="bugfix"]')).not.toHaveClass(/of-line-dim/);
+    await floor.getByRole("radiogroup", { name: "路線の種類" }).getByRole("radio", { name: /バグ修正/ }).click();
+    await expect(rails.locator('[data-line="bugfix"]')).toHaveClass(/of-line-on/);
+    await expect(rails.locator('[data-line="feature"]')).toHaveClass(/of-line-dim/);
+    await floor.getByRole("radiogroup", { name: "路線の種類" }).getByRole("radio", { name: "すべて" }).click();
+    // キャラクターを押すと、右に引き出しが開く: 今のチケット・直近の手順・話す欄。話すとチケットのメモに残る
+    await devIsland.getByRole("button", { name: /実装中.*押すと様子を見る/ }).first().click();
+    const drawer = floor.getByLabel(/の様子と会話$/);
+    await expect(drawer.getByRole("region", { name: "今のチケット" })).toContainText("工程");
+    await expect(drawer.getByRole("region", { name: "直近の手順" })).toBeVisible();
+    await shot(page, "office-member");
+    await drawer.getByRole("textbox").fill("境界値のテストも足してね");
+    await drawer.getByRole("button", { name: "送る" }).click();
+    await expect(drawer.getByRole("log", { name: "会話" })).toContainText("境界値のテストも足してね");
+    await drawer.getByRole("button", { name: "閉じる" }).click();
+    await expect(drawer).toHaveCount(0);
     // 島の名前を押すと、島の様子(メンバー・待ち・予算・最近の仕事)が開き、そこから設定にも行ける
     await devIsland.getByRole("button", { name: "開発の島 の様子" }).click();
     const unitDialog = page.getByRole("dialog", { name: "開発の島 の様子" });

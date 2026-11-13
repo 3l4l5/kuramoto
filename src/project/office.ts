@@ -1,5 +1,7 @@
 import { all, get } from "../db/sqlite.js";
 import { MODELS, ROLE_LABEL, WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
+import { flowFor, KIND_LABEL as TICKET_KIND_LABEL, TICKET_KINDS } from "../domain/flow.js";
+import { routesAmong } from "../domain/route.js";
 import { ticketRepo } from "./dispatcher.js";
 import { autoMergeEnabled, suggestedMergeOrder } from "./merge.js";
 import { areaWait, blockers, mergeBlockers, mergeUnblocks } from "./triage.js";
@@ -121,7 +123,30 @@ export function officeView(p: Project) {
   const done = [...tickets.values()].filter((t) => t.stage === "done").sort((a, b) => String(b.done_at).localeCompare(String(a.done_at)));
   for (const t of done) where[t.number] = "done";
 
+  // 路線図(R16・R17): 種類ごとの流れを、島(駅)を通る路線にする。開発より前の工程は「申し送りだけ」の停車(pre)
+  const lines = TICKET_KINDS.map((kind) => {
+    const flow = flowFor(f.flows, kind);
+    const devAt = flow.indexOf("dev");
+    const stops = flow.flatMap((role, i) => {
+      const u = f.units.find((x) => x.roles.includes(role));
+      return u ? [{ unitId: u.id, role: ROLE_LABEL[role], pre: i < devAt }] : [];
+    });
+    return { kind, label: TICKET_KIND_LABEL[kind], stops };
+  });
+  // 許されている連絡経路(端は駅の名前: unit:ID / lead / arch)。質問の封筒は、答えを待っている質問の経路を行き来する
+  const ends = new Map<string, string>([["lead", "lead"], ["architect", "arch"], ...f.units.map((u): [string, string] => [u.name, `unit:${u.id}`])]);
+  const routes = routesAmong(f.routes, [...ends.keys()])
+    .filter((r) => r.mode === "ask")
+    .map((r) => ({ a: ends.get(r.from)!, b: ends.get(r.to)! }));
+  const asks = all<{ unit_id: number | null; to_target: string }>(
+    p.db,
+    "SELECT m.unit_id, q.to_target FROM ticket_questions q JOIN members m ON m.id = q.from_member_id WHERE q.answered_at IS NULL AND q.routed_to_lead = 0 AND m.unit_id IS NOT NULL",
+  ).flatMap((q) => (ends.has(q.to_target) ? [{ a: `unit:${q.unit_id}`, b: ends.get(q.to_target)! }] : []));
+
   return {
+    lines,
+    routes,
+    asks,
     units,
     lead: { ...fixed("lead"), decisions: decisions.map((t) => t.number) },
     architect: fixed("architect"),

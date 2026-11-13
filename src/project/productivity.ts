@@ -322,6 +322,8 @@ function flow(p: Project) {
     },
     times: { leadMs: spread(lead), cycleMs: spread(cycle), mergeWaitMs: spread(mergeWait) },
     flowEfficiency: leadSum > 0 ? activeSum / leadSum : null,
+    /** フロー効率の日ごとの推移(その日に merge したチケットの、手を動かしていた割合)。formationMarks の縦線と並べて見る */
+    efficiencyDaily: efficiencyDaily(done.map((t) => ({ at: merged.get(t.id)!, active: t.active_ms, lead: merged.get(t.id)! - Date.parse(t.created_at) }))),
     firstPassYield: done.length ? firstPass / done.length : null,
     mergedTotal: done.length,
     open: open.length,
@@ -390,3 +392,15 @@ function members(p: Project) {
 }
 
 export type Productivity = ReturnType<typeof productivity>;
+
+/** 日(ローカルの日付)ごとのフロー効率。merge した日に集める。 */
+export function efficiencyDaily(rows: { at: number; active: number; lead: number }[]): { day: string; value: number }[] {
+  const byDay = new Map<string, { active: number; lead: number }>();
+  for (const r of rows) {
+    const d = new Date(r.at);
+    const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const cur = byDay.get(day) ?? { active: 0, lead: 0 };
+    byDay.set(day, { active: cur.active + r.active, lead: cur.lead + Math.max(0, r.lead) });
+  }
+  return [...byDay].filter(([, v]) => v.lead > 0).map(([day, v]) => ({ day, value: v.active / v.lead })).sort((a, b) => a.day.localeCompare(b.day));
+}

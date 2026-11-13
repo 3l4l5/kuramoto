@@ -1,6 +1,6 @@
-import type { DevRulesView, HqView, LeadChatView, MemberView, OfficeView, ProductivityView, ProjectView, StudioView, TeamView, TicketView, UnitView } from "../../src/server.js";
+import type { DevRulesView, HqView, LeadChatView, MemberChatView, MemberNow, MemberView, OfficeView, ProductivityView, ProjectView, StudioView, TeamView, TicketView, UnitView } from "../../src/server.js";
 
-export type { DevRulesView, HqView, LeadChatView, MemberView, OfficeView, ProductivityView, ProjectView, StudioView, TeamView, TicketView, UnitView };
+export type { DevRulesView, HqView, LeadChatView, MemberChatView, MemberNow, MemberView, OfficeView, ProductivityView, ProjectView, StudioView, TeamView, TicketView, UnitView };
 
 let build: string | null = null;
 
