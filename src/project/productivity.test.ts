@@ -85,8 +85,41 @@ describe("生産性: ルール違反(R15)", () => {
     const v = (await productivity(p));
     expect(v.totals.ruleViolations).toEqual({ total: 3, autofixed: 2 });
     const row = (id: number) => v.tickets.find((t) => t.id === id)!;
-    expect(row(a.id)).toMatchObject({ violations: 3, autofixed: 2, reviewed: 0, blocked: 1 });
-    expect(row(b.id)).toMatchObject({ violations: 0, autofixed: 0 });
+    expect(row(a.id)).toMatchObject({ violations: 3, autofixed: 2, reviewed: 0, blocked: 1, stopped: true });
+    run(p.db, "UPDATE rule_violations SET resolved_at = ? WHERE handled = 'blocked'", [p.now()]);
+    expect((await productivity(p)).tickets.find((t) => t.id === a.id)!.stopped).toBe(false); // 直ったら止まっていない
+    expect(row(b.id)).toMatchObject({ violations: 0, autofixed: 0, stopped: false });
+  });
+});
+
+describe("生産性: 島への質問・判断の回数・かかった時間(試作 metrics)", () => {
+  it("質問は島どうしと経路が無くリーダーへ回ったものを分けて数え、リーダーへ直接聞いたものは数えない。チケットごとに手を動かした時間が出る", async () => {
+    const p = await Project.open(":memory:", new ManualClock(new Date("2026-11-12T00:00:00Z")));
+    await p.addRepo("acme/shop", "API");
+    const a = await createTicket(p, { title: "A" });
+    const b = await createTicket(p, { title: "B" });
+    const ask = (to: string, toLead: number) =>
+      run(p.db, "INSERT INTO ticket_questions (ticket_id, to_target, body, routed_to_lead, asked_at) VALUES (?, ?, 'q', ?, ?)", [a.id, to, toLead, p.now()]);
+    ask("画面", 0);
+    ask("画面", 0);
+    ask("基盤", 1); // 経路が無くリーダーへ
+    ask("lead", 1); // リーダーへ直接
+    run(p.db, "UPDATE tickets SET active_ms = ? WHERE id = ?", [3 * H + 20 * 60_000, a.id]);
+
+    const v = await productivity(p);
+    expect(v.totals.questions).toEqual({ islands: 2, noRoute: 1 });
+    expect(v.tickets.find((t) => t.id === a.id)!.activeMs).toBe(3 * H + 20 * 60_000);
+    expect(v.tickets.find((t) => t.id === b.id)!.activeMs).toBe(0);
+    // 判断カードはまだ無い。いまの編成の版が出る
+    expect(v.totals.decisionsPerTicket).toBe(0);
+    expect(v.totals.formationVersion).toBe((await p.currentFormation()).version);
+  });
+
+  it("チケットも質問も無いプロジェクトは、質問は 0 件、1 件あたりは空", async () => {
+    const p = await Project.open(":memory:", new ManualClock(new Date("2026-11-12T00:00:00Z")));
+    const v = await productivity(p);
+    expect(v.totals.questions).toEqual({ islands: 0, noRoute: 0 });
+    expect(v.totals.decisionsPerTicket).toBeNull();
   });
 });
 

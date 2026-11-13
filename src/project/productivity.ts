@@ -5,6 +5,7 @@ import type { DecisionsTable, RunsTable, TicketsTable } from "../db/tables.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
 import { violationTotals } from "./dev-rules.js";
 import type { Project } from "./project.js";
+import { LEAD_TARGET } from "./questions.js";
 
 type RunRow = Selectable<RunsTable>;
 type TicketRow = Selectable<TicketsTable>;
@@ -38,7 +39,7 @@ const earliest = (rows: { ticket_id: number | null; at: string }[]) => {
 
 export async function productivity(p: Project) {
   // 読むものは表ごとに 1 文でまとめて取り、数えるのは JS でやる(記録から毎回計算する)
-  const [runsAll, ticketsAll, prsAll, conflictsAll, decisionsAll, violationsAll, planItems, messagesAll, policiesAll] = await Promise.all([
+  const [runsAll, ticketsAll, prsAll, conflictsAll, decisionsAll, violationsAll, planItems, messagesAll, policiesAll, questionsAll, formationNow] = await Promise.all([
     inScope(p.pdb, "runs").execute(),
     inScope(p.pdb, "tickets").orderBy("number", "desc").execute(),
     inScope(p.pdb, "pull_requests").execute(),
@@ -53,6 +54,8 @@ export async function productivity(p: Project) {
       .where("project_id", "=", p.pdb.projectId)
       .execute(),
     inScope(p.pdb, "policies").execute(),
+    inScope(p.pdb, "ticket_questions").execute(),
+    p.currentFormationOrNull(),
   ]);
   const doneRuns = runsAll.filter((r) => r.ended_at !== null);
   const asks = planItems.filter((o) => o.decided_by === "owner" || (o.answer === null && o.withdrawn === null));
@@ -83,6 +86,12 @@ export async function productivity(p: Project) {
     help: { total: decisions + planAsks, decisions, planAsks },
     // 開発ルールに反した件数と、うち持ち主が自動で直した件数(R15)
     ruleViolations: await violationTotals(p),
+    // 島への質問(R16)。島どうしで答えをもらった数と、経路が無くリーダーに回った数(リーダーへ直接聞いたものは、どちらにも数えない)
+    questions: { islands: questionsAll.filter((q) => q.routed_to_lead === 0).length, noRoute: questionsAll.filter((q) => q.routed_to_lead === 1 && q.to_target !== LEAD_TARGET).length },
+    // チケット 1 件あたりの判断の回数(判断カード ÷ チケットの数)
+    decisionsPerTicket: ticketsAll.length ? decisions / ticketsAll.length : null,
+    // いまの編成の版(画面の上の指標に出す)
+    formationVersion: formationNow?.version ?? null,
   };
 
   // ---- 日ごと(サーバーの時刻の日付で区切る) ----
@@ -215,6 +224,9 @@ export async function productivity(p: Project) {
       reviewed: vs.filter((v) => v.handled === "review").length,
       blocked: vs.filter((v) => v.handled === "blocked").length,
       costUsd: cost ?? 0,
+      activeMs: t.active_ms,
+      // 「直すまで止める」ルールに反したまま(直った印が無い)で、まだ片付いていない: 画面の状態に「止まっている」と出す
+      stopped: t.stage !== "done" && t.stage !== "dropped" && vs.some((v) => v.handled === "blocked" && v.resolved_at === null),
     };
   });
 

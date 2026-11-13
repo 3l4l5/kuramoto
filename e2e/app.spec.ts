@@ -472,10 +472,13 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(page.getByRole("region", { name: "出来事" })).toContainText("PR #", { timeout: 20_000 });
     await page.getByRole("group", { name: "プロジェクトの画面" }).getByRole("button", { name: "生産性" }).click();
     const tiles = page.getByRole("list", { name: "合計" });
-    await expect(tiles.getByRole("listitem", { name: "PR" })).toContainText(/^PR1/);
-    await expect(tiles.getByRole("listitem", { name: "消費トークン" })).not.toContainText(/^消費トークン0/);
-    await expect(tiles.getByRole("listitem", { name: "人間に助けを求めた" })).toBeVisible();
-    await expect(tiles.getByRole("listitem", { name: "手戻り" })).toBeVisible();
+    // 企画の試作(metrics)の並び: トークン・金額・PR / 完成・手戻り・人に助けを求めた・ルール違反・質問(島どうし)・経路が無くリーダーへ
+    await expect(tiles.getByRole("listitem")).toHaveText([/^トークン/, /^金額/, /^PR \/ 完成/, /^手戻り/, /^人に助けを求めた/, /^ルール違反/, /^質問\(島どうし\)/, /^経路が無くリーダーへ/]);
+    await expect(tiles.getByRole("listitem", { name: "PR / 完成" })).toContainText(/^PR \/ 完成1 \/ \d/);
+    await expect(tiles.getByRole("listitem", { name: "トークン" })).not.toContainText(/^トークン0/);
+    await expect(tiles.getByRole("listitem", { name: "質問(島どうし)" })).toContainText("0");
+    // 画面の右上には、フロー効率と編成の版・完成 1 件あたり・判断の回数
+    await expect(page.getByRole("group", { name: "主な指標" })).toContainText("判断の回数");
     // 流れ: フロー効率の推移に、編成の版が上がった日(v2 は島、v3 は連絡経路と流れ)の縦の点線と札が入り、表に切り替えても残る
     const trend = page.getByRole("figure", { name: "フロー効率の推移と編成を変えた日" });
     await expect(trend.locator('g.mark[data-version="2"]')).toContainText("v2 島");
@@ -486,13 +489,18 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     expect(boxes).toHaveLength(2);
     const [c1, c2] = boxes as [(typeof boxes)[number], (typeof boxes)[number]];
     expect(c1.r <= c2.l || c2.r <= c1.l || c1.b <= c2.t || c2.b <= c1.t).toBe(true);
+    // 札を押すと、その版で変えたことが出る
+    await trend.locator('g.mark[data-version="3"]').click();
+    await expect(page.getByRole("status").filter({ hasText: "v3 で変えたこと" })).toContainText("流れ:");
+    // 日ごとの推移に切り替えても、グラフと表のどちらでも、この図は残る
+    await page.getByRole("tab", { name: "日ごとの推移" }).click();
+    await expect(trend.locator("g.mark")).toHaveCount(2);
     await page.getByRole("group", { name: "表示" }).getByRole("button", { name: "表" }).click();
     await expect(trend.locator("g.mark")).toHaveCount(2);
     await page.getByRole("group", { name: "表示" }).getByRole("button", { name: "グラフ" }).click();
     await expect(trend.locator("g.mark")).toHaveCount(2);
     await shot(page, "productivity-flow");
     // 日ごとの推移: グラフと表を切り替えられる
-    await page.getByRole("tab", { name: "日ごとの推移" }).click();
     await expect(page.getByRole("tab", { name: "日ごとの推移" })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByRole("figure", { name: "使った金額の日ごとの推移" })).toBeVisible();
     await expect(page.getByRole("figure", { name: "出した PRの日ごとの推移" })).toBeVisible();
@@ -507,11 +515,12 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(page.getByRole("list", { name: "どのモデルにかかったか" }).getByRole("listitem", { name: "Sonnet 5.5" })).toBeVisible();
     await expect(page.getByRole("list", { name: "どの役割にかかったか" }).getByRole("listitem", { name: "開発" })).toBeVisible();
     await shot(page, "productivity-cost");
-    // チケットごと
+    // チケットごと(試作の表: 番号・種類・チケット・トークン・金額・往復・ルール違反・かかった時間・状態)。この表だけは、グラフと表の切り替えが無い
     await page.getByRole("tab", { name: "チケットごと" }).click();
-    await expect(page.getByRole("list", { name: "チケットごとの金額" })).toContainText("CSV を書き出す");
-    await page.getByRole("group", { name: "表示" }).getByRole("button", { name: "表" }).click();
-    await expect(page.getByRole("table", { name: "チケットごとの指標" })).toContainText("CSV を書き出す");
+    const tickets = page.getByRole("table", { name: "チケットごとの指標" });
+    await expect(tickets.getByRole("columnheader")).toHaveText(["番号", "種類", "チケット", "トークン", "金額", "往復", "ルール違反", "かかった時間", "状態"]);
+    await expect(tickets).toContainText("CSV を書き出す");
+    await expect(page.getByRole("group", { name: "表示" })).toHaveCount(0);
     await shot(page, "productivity");
   });
 });
@@ -823,7 +832,6 @@ test("チケットの種類: 詳細で変えられ、ボードは種類の流れ
   await test.step("生産性のチケットごとの表に種類の列が出て、種類で絞り込める", async () => {
     await page.getByRole("group", { name: "プロジェクトの画面" }).getByRole("button", { name: "生産性" }).click();
     await page.getByRole("tab", { name: "チケットごと" }).click();
-    await page.getByRole("group", { name: "表示" }).getByRole("button", { name: "表" }).click();
     const table = page.getByRole("table", { name: "チケットごとの指標" });
     await expect(table.getByRole("columnheader", { name: "種類" })).toBeVisible();
     await expect(table.locator("tbody tr")).toHaveCount(2);
