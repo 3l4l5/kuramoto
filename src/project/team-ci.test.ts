@@ -152,7 +152,7 @@ describe("チームの CI(ADR-0028)", () => {
     p.setSetting("ci_blocked", JSON.stringify([{ repo: REPO, since: "", notes: [], probedAt: "", runIds: [] }]));
     await d.housekeep();
     expect(p.ticket(fixer.id).stage).toBe("dropped");
-    expect(await droppedInfo(p, fixer.id)!.reason).toContain("チームの CI");
+    expect((await droppedInfo(p, fixer.id))!.reason).toContain("チームの CI");
     expect(p.setting("ci_blocked")).toBe("[]");
     const { pendingOwnerDecisions } = await import("./workflow.js");
     expect(await pendingOwnerDecisions(p)).toEqual([]);

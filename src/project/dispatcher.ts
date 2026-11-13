@@ -26,7 +26,7 @@ import { runTeamCi, teamCiEnabled, type CommandRunner } from "./team-ci.js";
 import { confinementFor } from "./confine.js";
 import { afterPlanningRun, planningPrompt, planningSystemPrompt, planningTools, type PlanPayload } from "./planning-agent.js";
 import { checkStudioLoop, onlyQuestions, say, studioPaused } from "./planning.js";
-import { progressRecorder } from "./progress.js";
+import { flushProgress, progressRecorder } from "./progress.js";
 import { answerPrompt, answerSystem, askTools, question, recordAnswer, replyTools, reroutedToLead, targetUnit, type AnswerReport, type AskPayload } from "./questions.js";
 import { finishMemberChat, isFinishedTicket, memberChatPrompt, memberChatSystem, memberChatTools, unreadForMember } from "./member-chat.js";
 import { giveUpTriage, markTriaged, requestTriage, triagePrompt, triageTools, untriaged } from "./triage.js";
@@ -529,6 +529,7 @@ export class Dispatcher {
     }
 
     const elapsed = p.clock.now().getTime() - started;
+    await flushProgress(runId);
     await p.pdb.transaction(async () => {
       const u = result?.usage;
       await p.pdb.update("runs", { ended_at: p.now(), input_tokens: (u?.inputTokens ?? 0) + judged.inputTokens, output_tokens: (u?.outputTokens ?? 0) + judged.outputTokens, cache_read_tokens: (u?.cacheReadTokens ?? 0) + judged.cacheReadTokens, cost_usd: (u?.costUsd ?? 0) + judged.costUsd, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null, summary: (report.pr?.summary || report.draft?.summary || result?.finalText || "").trim() || null }).where("id", "=", runId).execute();
@@ -616,6 +617,8 @@ export class Dispatcher {
       return;
     }
 
+    await flushProgress(runId);
+
     await p.pdb.transaction(async () => {
       const u = result?.usage;
       await p.pdb.update("runs", { ended_at: p.now(), input_tokens: u?.inputTokens ?? 0, output_tokens: u?.outputTokens ?? 0, cache_read_tokens: u?.cacheReadTokens ?? 0, cost_usd: u?.costUsd ?? 0, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null }).where("id", "=", runId).execute();
@@ -689,6 +692,7 @@ export class Dispatcher {
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
+    await flushProgress(runId);
     await p.pdb.transaction(async () => {
       const u = result?.usage;
       await p.pdb.update("runs", { ended_at: p.now(), input_tokens: u?.inputTokens ?? 0, output_tokens: u?.outputTokens ?? 0, cache_read_tokens: u?.cacheReadTokens ?? 0, cost_usd: u?.costUsd ?? 0, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null, summary: result?.finalText?.trim() || null }).where("id", "=", runId).execute();
@@ -776,6 +780,7 @@ export class Dispatcher {
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
+    await flushProgress(runId);
     await p.pdb.transaction(async () => {
       const u = result?.usage;
       await p.pdb.update("runs", { ended_at: p.now(), input_tokens: u?.inputTokens ?? 0, output_tokens: u?.outputTokens ?? 0, cache_read_tokens: u?.cacheReadTokens ?? 0, cost_usd: u?.costUsd ?? 0, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null, summary: result?.finalText?.trim() || null }).where("id", "=", runId).execute();
@@ -843,6 +848,7 @@ export class Dispatcher {
     // reply を呼ばずに終わったときは、最後のテキストを答えとする
     const answer = report.answer ?? result?.finalText?.trim();
     if (!error && !answer) error = "答えが返りませんでした";
+    await flushProgress(runId);
     await p.pdb.transaction(async () => {
       const u = result?.usage;
       await p.pdb.update("runs", { ended_at: p.now(), input_tokens: u?.inputTokens ?? 0, output_tokens: u?.outputTokens ?? 0, cache_read_tokens: u?.cacheReadTokens ?? 0, cost_usd: u?.costUsd ?? 0, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null, summary: answer || null }).where("id", "=", runId).execute();
@@ -942,6 +948,7 @@ export class Dispatcher {
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
+    await flushProgress(runId);
     await p.pdb.transaction(async () => {
       const u = result?.usage;
       await p.pdb.update("runs", { ended_at: p.now(), input_tokens: u?.inputTokens ?? 0, output_tokens: u?.outputTokens ?? 0, cache_read_tokens: u?.cacheReadTokens ?? 0, cost_usd: u?.costUsd ?? 0, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null, summary: result?.finalText?.trim() || null }).where("id", "=", runId).execute();

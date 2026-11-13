@@ -11,6 +11,16 @@ const HEARTBEAT_MS = 2_000;
  */
 export type ProgressRecorder = ((e: ProgressEvent) => void) & { flush(): Promise<void> };
 
+/** 起動ごとの記録の受け口(起動を終える側が flushProgress で待つ)。 */
+const recorders = new Map<number, ProgressRecorder>();
+
+/** 起動の途中経過の書き込みが済むまで待つ。受け口が無ければ何もしない。 */
+export async function flushProgress(runId: number): Promise<void> {
+  const r = recorders.get(runId);
+  recorders.delete(runId);
+  await r?.flush();
+}
+
 export function progressRecorder(p: Project, runId: number): ProgressRecorder {
   let lastBeat = 0;
   let queue: Promise<void> = Promise.resolve();
@@ -38,12 +48,14 @@ export function progressRecorder(p: Project, runId: number): ProgressRecorder {
       await touch(e.kind === "thinking" ? "考えています" : e.text, at);
     });
   };
-  return Object.assign(record, {
+  const recorder = Object.assign(record, {
     async flush() {
       await queue;
       if (failure !== undefined) throw failure;
     },
   });
+  recorders.set(runId, recorder);
+  return recorder;
 }
 
 export type RunWork = {

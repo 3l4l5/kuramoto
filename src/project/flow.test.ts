@@ -622,6 +622,8 @@ describe("受信箱", () => {
     const t = await createTicket(p, { title: "x" });
     const job = (await d.next())!;
     const running = d.execute(job);
+    // 起動の行が書かれるまで待つ(書く前に、DB を何度か待つため)
+    while (!get(p.db, "SELECT 1 AS x FROM runs")) await new Promise((r) => setTimeout(r, 1));
     // 同じチケットへの別のメッセージがあっても取り出されない
     p.db.prepare("INSERT INTO messages (ticket_id, to_role, kind, available_at, created_at) VALUES (?, 'dev', 'fix', ?, ?)").run(t.id, p.now(), p.now());
     expect(await d.next()).toBeNull();
