@@ -102,7 +102,7 @@ describe("node:sqlite を Kysely につなぐドライバ", () => {
     const db = openDb(":memory:", PROJECT_MIGRATIONS);
     const k = createKysely<ProjectDatabase>(db);
     db.prepare("INSERT INTO settings (key, value) VALUES ('a', '1')").run();
-    expect(await k.selectFrom("settings").selectAll().execute()).toEqual([{ key: "a", value: "1" }]);
+    expect(await k.selectFrom("settings").select(["key", "value"]).execute()).toEqual([{ key: "a", value: "1" }]);
     await k.insertInto("repos").values({ full_name: "o/r", role: "API" }).execute();
     expect(db.prepare("SELECT full_name FROM repos").all()).toEqual([{ full_name: "o/r" }]);
   });
