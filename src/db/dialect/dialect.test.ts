@@ -40,7 +40,7 @@ describe("方言の助け(SQLite)", () => {
 
   it("upsert: 衝突したら指定の列だけ、挿入しようとした値で更新する", async () => {
     const { k } = project();
-    const put = (key: string, value: string) => dialect.upsert(k.insertInto("settings").values({ key, value }), ["key"], ["value"]).execute();
+    const put = (key: string, value: string) => dialect.upsert(k.insertInto("settings").values({ key, value, project_id: 1 }), ["project_id", "key"], ["value"]).execute();
     await put("a", "1");
     await put("a", "2");
     await put("b", "3");

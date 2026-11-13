@@ -143,7 +143,8 @@ export class Project {
   }
 
   setSetting(key: string, value: string): void {
-    run(this.db, "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value]);
+    // 版 22 で settings の主キーは (project_id, key)。project_id を書かないと、別の project_id の同じ key と衝突しない行が増える
+    run(this.db, "INSERT INTO settings (key, value, project_id) VALUES (?, ?, ?) ON CONFLICT(project_id, key) DO UPDATE SET value = excluded.value", [key, value, this.pdb.projectId]);
   }
 
   addRepo(fullName: string, role: string): number {
