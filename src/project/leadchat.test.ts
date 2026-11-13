@@ -76,7 +76,7 @@ describe("会話を引き継ぐ回数(ADR-0032)", () => {
     });
     // 往復の上限でリーダーの判断に上がらないよう、上限を大きくする
     p.db.prepare("UPDATE policies SET options = json_set(COALESCE(options,'{}'), '$.escalateAfterRounds', 10) WHERE role = 'review'").run();
-    createTicket(p, { title: "A" });
+    await createTicket(p, { title: "A" });
     await new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp") }).drain();
     const dev = harness.calls.filter((c) => c.tools.some((t) => t.name === "submit_pr")).map((c) => !!c.resumeSessionId);
     // 1 回目は新しく、2 回目は引き継ぎ、3 回目は上限(1 回)を超えたので新しく
@@ -96,7 +96,7 @@ describe("チームに渡したあとのデザインの合わせ直し(ADR-0034)
     putArtifact(p, "screen", "designsystem", "main", { principles: [], tokens: [{ group: "color", name: "--c", value: "#000", use: "x" }], components: [{ name: "ボタン", use: "x", states: [], html: "<button/>" }] });
     expect(leadChatPrompt(p, [])).toContain("- list: メモ一覧");
     expect(leadChatPrompt(p, [])).toContain("デザインシステム: あり");
-    const create = leadChatTools(p).find((t) => t.name === "create_ticket")!;
+    const create = (await leadChatTools(p)).find((t) => t.name === "create_ticket")!;
     expect(await create.handler({ title: "x", body: "", screens: ["nope"] } as never)).toContain("企画にありません");
     await create.handler({ title: "デザインシステムの土台", body: "トークン・部品・/_design", design_system: true } as never);
     await create.handler({ title: "一覧を試作に合わせ直す", body: "部品で組み立て直す", screens: ["list"], after: [1] } as never);

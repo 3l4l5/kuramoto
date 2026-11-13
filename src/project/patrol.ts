@@ -159,7 +159,7 @@ function hasPr(p: Project, ticketId: number): number | undefined {
   return get<{ number: number }>(p.db, "SELECT number FROM pull_requests WHERE ticket_id = ? AND COALESCE(gh_state, 'OPEN') = 'OPEN' LIMIT 1", [ticketId])?.number;
 }
 
-export function patrolPrompt(p: Project, signals: LoopSignal[], opts: { start?: boolean } = {}): string {
+export async function patrolPrompt(p: Project, signals: LoopSignal[], opts: { start?: boolean } = {}): Promise<string> {
   const open = all<TicketRow>(p.db, "SELECT * FROM tickets WHERE stage NOT IN ('done','dropped') ORDER BY number");
   const fresh = new Set(newTickets(p).map((t) => t.id));
   const list = open
@@ -172,15 +172,15 @@ export function patrolPrompt(p: Project, signals: LoopSignal[], opts: { start?: 
       return `- #${t.number}${fresh.has(t.id) ? "(新)" : ""} ${t.title} [${stageText(t)}] 担当: ${owner}${pr ? ` / PR #${pr}` : ""}${after.length ? ` / 先に: #${after.join(", #")}` : ""}${areas.length ? ` / 触る場所: ${areas.join(", ")}` : ""}${body ? `\n  ${body}` : ""}`;
     })
     .join("\n");
-  const loops = signals
-    .map((s) => {
+  const loops = (await Promise.all(signals
+    .map(async (s) => {
       const t = s.ticket;
       const recent = all<{ role: string; outcome: string | null; error: string | null; summary: string | null }>(
         p.db,
         "SELECT role, outcome, error, summary FROM runs WHERE ticket_id = ? ORDER BY id DESC LIMIT 6",
         [t.id],
       );
-      const findings = (["review", "sec", "qa"] as const).flatMap((r) => mustResolve(p, t.id, r).map((f) => `  - [${ROLE_LABEL[r]}] 指摘 ${f.id}(${f.status}): ${f.body.slice(0, 200)}`));
+      const findings = (await Promise.all((["review", "sec", "qa"] as const).map(async (r) => (await mustResolve(p, t.id, r)).map((f) => `  - [${ROLE_LABEL[r]}] 指摘 ${f.id}(${f.status}): ${f.body.slice(0, 200)}`)))).flat();
       const notes = p.notes(t.id).slice(-3);
       return `### #${t.number} ${t.title} [${stageText(t)}]
 - 引っかかったところ: ${s.reasons.join("、")}
@@ -191,7 +191,7 @@ ${findings.length ? `- 残っている指摘:\n${findings.join("\n")}` : "- 残�
 ${lastCiFailure(p, t.id, 1500)}
 ${lastTeamCi(p, t.id, 1500)}
 ${notes.length ? `- 最近のメモ:\n${notes.map((n) => `  - ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.body.slice(0, 200)}`).join("\n")}` : ""}`;
-    })
+    })))
     .join("\n\n");
   return `${opts.start ? "始業したので、最初の見回りです" : "定期の見回りです"}。ボードを見て、重複しているチケット・いらなくなったチケットと、同じところを回り続けているチケットに手を打ってください。
 
@@ -302,7 +302,7 @@ export function dropTicketTool(p: Project, closePrs?: (t: TicketRow, reason: str
 /**
  * 差し戻しの往復を止める。最後に差し戻した工程の、残っている指摘を直さずに通し(リーダーの裁定)、次の工程へ進める。
  */
-export function passAsIs(p: Project, number: number, reason: string): string {
+export async function passAsIs(p: Project, number: number, reason: string): Promise<string> {
   const t = byNumber(p, number);
   if (!t) return `#${number} はありません`;
   if (t.stage === "done" || t.stage === "dropped" || t.stage === "merge") return `#${number} は${stageText(t)}です。通すものがありません`;
@@ -312,16 +312,16 @@ export function passAsIs(p: Project, number: number, reason: string): string {
   if (!last) return `#${number} には差し戻しがありません。advise か split を使ってください`;
   const from = last.role;
   const lead = p.fixedMember("lead");
-  tx(p.db, () => {
+  await p.pdb.transaction(async () => {
     run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ? AND status = 'pending'", [t.id]);
     run(p.db, "UPDATE decisions SET decided_by = 'lead', decided_at = ? WHERE ticket_id = ? AND decided_at IS NULL", [p.now(), t.id]);
-    for (const f of mustResolve(p, t.id, from)) {
-      setStatus(p, f.id, "wontfix");
-      comment(p, f.id, { memberId: lead.id, role: "lead" }, "ruled", `見回りで裁定: 直さずに通す。${reason}`);
+    for (const f of await mustResolve(p, t.id, from)) {
+      await setStatus(p, f.id, "wontfix");
+      await comment(p, f.id, { memberId: lead.id, role: "lead" }, "ruled", `見回りで裁定: 直さずに通す。${reason}`);
     }
     p.addNote(t.id, `【見回り・往復を止めました】${ROLE_LABEL[from]}の残りの指摘を直さずに通します。${reason}`, "lead");
     p.event(lead.name, "loop_passed", t.id, { from, reason });
-    advance(p, p.ticket(t.id), from);
+    await advance(p, p.ticket(t.id), from);
   });
   touch(p, t.id);
   return `#${number} の${ROLE_LABEL[from]}の残りの指摘を通し、次の工程へ進めました。`;
@@ -377,17 +377,19 @@ export function patrolTools(p: Project, ws: { closePrs?: (t: TicketRow, reason: 
         tickets: z.array(z.object({ title: z.string().min(1), body: z.string().describe("やること・受け入れ条件・なぜ切り出したか") })).min(1),
         advice: z.string().min(1).describe("今のチケットでどこまでをやるか(担当とレビュアーが読む)"),
       },
-      handler: (a) => {
+      handler: async (a) => {
         const t = byNumber(p, a.number);
         if (!t || t.stage === "done" || t.stage === "dropped") return `#${a.number} は開いていません`;
         const refs = JSON.parse((get<{ plan_refs: string }>(p.db, "SELECT plan_refs FROM tickets WHERE id = ?", [t.id])?.plan_refs ?? "{}")) as { repo?: string };
-        const made = a.tickets.map((x) =>
-          createTicket(p, {
-            title: x.title,
-            body: `${x.body}\n\n---\n#${t.number}「${t.title}」が回り続けていたため、リーダーが見回りで切り出しました。`,
-            planRefs: { splitFrom: t.number, ...(refs.repo ? { repo: refs.repo } : {}) },
-          }),
-        );
+        const made: TicketRow[] = [];
+        for (const x of a.tickets)
+          made.push(
+            await createTicket(p, {
+              title: x.title,
+              body: `${x.body}\n\n---\n#${t.number}「${t.title}」が回り続けていたため、リーダーが見回りで切り出しました。`,
+              planRefs: { splitFrom: t.number, ...(refs.repo ? { repo: refs.repo } : {}) },
+            }),
+          );
         p.addNote(t.id, `【見回り・切り出し】#${made.map((m) => m.number).join("・#")} に切り出しました。このチケットでは: ${a.advice}`, "lead");
         p.event(p.fixedMember("lead").name, "loop_split", t.id, { into: made.map((m) => m.number) });
         touch(p, t.id);

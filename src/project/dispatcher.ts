@@ -73,12 +73,12 @@ export class Dispatcher {
   ) {}
 
   /** 期限切れの判断を片付け、島の席を最大人数ぶん埋めておく(メンバーはずっといる。ADR-0023)。 */
-  housekeep(): void {
-    expireDecisions(this.p);
+  async housekeep(): Promise<void> {
+    await expireDecisions(this.p);
     // 企画スタジオが同じところを回っていたら止める
     if (checkStudioLoop(this.p)) this.stopPlanning();
     // チームの CI を使うなら、GitHub Actions の CI のためのチケットは片付ける(ADR-0028)
-    if (teamCiEnabled(this.p)) dropGithubCiTickets(this.p);
+    if (teamCiEnabled(this.p)) await dropGithubCiTickets(this.p);
     // 始業中なら、新しいチケットの交通整理をリーダーに頼む
     if (this.deps.triage && (this.deps.ticketsAllowed?.() ?? true)) {
       requestTriage(this.p);
@@ -91,7 +91,7 @@ export class Dispatcher {
   /** 次の 1 件を取り出して担当を決める。起こせるものが無ければ null。 */
   async next(): Promise<Job | null> {
     // 全体の予算を使い切ったら、何も起こさない(責任者が予算を足すか無制限にするまで)
-    if (projectExhausted(this.p)) return null;
+    if (await projectExhausted(this.p)) return null;
     const released: number[] = [];
     for (;;) {
       // GitHub に入れない間は、チケットの仕事を取らない(企画・チャットなど、チケットを持たない仕事だけ動かす)
@@ -113,7 +113,7 @@ export class Dispatcher {
   /** 1 件だけ起こして終わるまで待つ。起こすものが無ければ false。 */
   async dispatchOnce(): Promise<boolean> {
     await this.checkGithub();
-    await this.p.pdb.transaction(async () => this.housekeep());
+    await this.p.pdb.transaction(async () => await this.housekeep());
     const job = await this.next();
     if (!job) return false;
     await this.execute(job);
@@ -128,7 +128,7 @@ export class Dispatcher {
     if (!repo || !probe) return;
     const error = await probe.call(this.deps.workspace, repo.full_name).catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
     if (error) githubStillDown(this.p, error);
-    else markGithubUp(this.p);
+    else await markGithubUp(this.p);
   }
 
   /** 動いている企画の起動(止めるときに使う)。 */
@@ -172,7 +172,7 @@ export class Dispatcher {
     let started = 0;
     for (;;) {
       await this.checkGithub();
-      await this.p.pdb.transaction(async () => this.housekeep());
+      await this.p.pdb.transaction(async () => await this.housekeep());
       while (inflight.size < limit() && started < maxRuns) {
         const job = await this.next();
         if (!job) break;
@@ -260,7 +260,7 @@ export class Dispatcher {
         const preDev = (JSON.parse(msg.payload) as { preDev?: boolean }).preDev === true;
         await p.pdb.transaction(async () => {
           await complete(p, msg.id);
-          advance(p, ticket, role, { preDev });
+          await advance(p, ticket, role, { preDev });
         });
         return "handled";
       }
@@ -268,7 +268,8 @@ export class Dispatcher {
     }
 
     // 予算を使い切った島には仕事を回さない。同じ役割の島がほかにあればそちらへ、無ければ予算が足されるまで待つ
-    const affordable = units.filter((u) => !unitExhausted(p, u));
+    const exhausted = await Promise.all(units.map((u) => unitExhausted(p, u)));
+    const affordable = units.filter((_, i) => !exhausted[i]);
     if (!affordable.length) return "wait";
 
     const busy = await this.busyMemberIds();
@@ -320,7 +321,7 @@ export class Dispatcher {
       });
       return "handled";
     }
-    if (unitExhausted(p, unit)) return "wait";
+    if (await unitExhausted(p, unit)) return "wait";
     const busy = await this.busyMemberIds();
     const free = p.membersOfUnit(unit.id).filter((m) => !busy.has(m.id) && m.id !== q.from_member_id);
     if (!free.length) return "wait";
@@ -328,8 +329,8 @@ export class Dispatcher {
   }
 
   /** 起動 1 回の予算。起動 1 回の上限・全体の残り・ほかに渡された残り(チケット・島)の小さい方。 */
-  private runBudget(...left: number[]): number {
-    return Math.min(this.p.settingNumber("run_budget_usd", 2), projectLeftUsd(this.p), ...left);
+  private async runBudget(...left: number[]): Promise<number> {
+    return Math.min(this.p.settingNumber("run_budget_usd", 2), await projectLeftUsd(this.p), ...left);
   }
 
   /** いま起動している(終わっていない)メンバーの id。 */
@@ -347,13 +348,13 @@ export class Dispatcher {
   // ---- 起こす ----
 
   async execute(job: Job): Promise<void> {
-    if (job.msg.kind === "plan") return this.executePlan(job);
-    if (job.msg.kind === "chat") return this.executeLeadChat(job, "chat");
-    if (job.msg.kind === "triage") return this.executeLeadChat(job, "triage");
-    if (job.msg.kind === "patrol") return this.executeLeadChat(job, "patrol");
-    if (job.msg.kind === "unstick") return this.executeUnstick(job);
-    if (job.msg.kind === "member_chat") return this.executeMemberChat(job);
-    if (job.msg.kind === "ask") return this.executeAsk(job);
+    if (job.msg.kind === "plan") return await this.executePlan(job);
+    if (job.msg.kind === "chat") return await this.executeLeadChat(job, "chat");
+    if (job.msg.kind === "triage") return await this.executeLeadChat(job, "triage");
+    if (job.msg.kind === "patrol") return await this.executeLeadChat(job, "patrol");
+    if (job.msg.kind === "unstick") return await this.executeUnstick(job);
+    if (job.msg.kind === "member_chat") return await this.executeMemberChat(job);
+    if (job.msg.kind === "ask") return await this.executeAsk(job);
     const p = this.p;
     const { msg, member, role, ticket } = job;
     const policy = p.policy(role);
@@ -427,7 +428,7 @@ export class Dispatcher {
         cwd: ws.path,
         confine: confinementFor(p, ws, role),
         systemPrompt: systemPromptFor(p, role, policy, { name: use.unitName, focus: use.unitFocus }, member.name) + (preDev ? PRE_DEV_NOTE : ""),
-        prompt: promptFor(p, msg, ticket, { branch, base: ws.base, repo: repo.full_name, ...prNumber(p, ticket.id, repo.id) }) + designPrompt(designs, role, { hasSystem: withSystem, systemTicket, references: new Set(refs.keys()) }),
+        prompt: await promptFor(p, msg, ticket, { branch, base: ws.base, repo: repo.full_name, ...prNumber(p, ticket.id, repo.id) }) + designPrompt(designs, role, { hasSystem: withSystem, systemTicket, references: new Set(refs.keys()) }),
         model: use.model,
         effort: use.effort,
         ...(resumeId ? { resumeSessionId: resumeId } : {}),
@@ -436,9 +437,9 @@ export class Dispatcher {
           ...(role === "dev" && msg.kind !== "implement" ? ciTools(p, this.deps.github, { ticket }) : []),
           ...compareTools,
           ...toolsFor(msg.kind, report, {
-          mustAnswer: msg.kind === "fix" && !JSON.parse(msg.payload).conflict ? mustAnswer(p, ticket.id).map((t) => t.id) : [],
+          mustAnswer: msg.kind === "fix" && !JSON.parse(msg.payload).conflict ? (await mustAnswer(p, ticket.id)).map((t) => t.id) : [],
           preDev,
-          mustResolve: ["review", "sec", "qa"].includes(msg.kind) && !preDev ? mustResolve(p, ticket.id, msg.kind).map((t) => t.id) : [],
+          mustResolve: ["review", "sec", "qa"].includes(msg.kind) && !preDev ? (await mustResolve(p, ticket.id, msg.kind)).map((t) => t.id) : [],
           checkReady: () => this.deps.workspace.checkReady(ws.path, ws.base),
           checkLanded: (commit) => this.deps.workspace.landed(ws.path, ws.base, commit),
           // PR を出す前に、有効な開発ルールを確かめる(形式はコードで、AI が読むものだけエージェントで。ADR-0011)
@@ -470,7 +471,7 @@ export class Dispatcher {
         onProgress: progressRecorder(p, runId),
         // 開発より前の確認は、コードを見ない(組み込みの道具は渡さず、申し送りを残す道具だけ)
         ...(role === "dev" ? {} : { allowedTools: preDev ? [] : ["Read", "Glob", "Grep", "Bash"] }),
-        maxBudgetUsd: this.runBudget(leftUsd(ticketBudgetUsd(p, ticket.id), ticketSpentUsd(p, ticket.id)), unit ? unitLeftUsd(p, unit) : Infinity),
+        maxBudgetUsd: await this.runBudget(leftUsd(ticketBudgetUsd(p, ticket.id), ticketSpentUsd(p, ticket.id)), unit ? await unitLeftUsd(p, unit) : Infinity),
       });
       if (result.status === "error") error = result.error ?? "ハーネスがエラーで終わりました";
       if (result.status === "max_turns") error = "回数の上限に達しました";
@@ -535,7 +536,7 @@ export class Dispatcher {
     }
     if (!error) {
       // applyReport は同期の書き込み。並列の起動の非同期トランザクションと混ざらないよう、順番待ちの中で流す
-      error = await p.pdb.transaction(async () => applyReport(p, { msg, runId, memberId: member.id }, report));
+      error = await p.pdb.transaction(async () => await applyReport(p, { msg, runId, memberId: member.id }, report));
       if (!error) {
         await complete(p, msg.id);
         resetUnstick(p, ticket.id); // 前に進んだので、リーダーの手助けの回数を数え直す
@@ -584,7 +585,7 @@ export class Dispatcher {
         onProgress: progressRecorder(p, runId),
         // 設計のときは外のサイトも見られる(検索・ページを読む。ADR-0035)
         allowedTools: ["Read", "Glob", "Grep", ...planWebTools(p)],
-        maxBudgetUsd: this.runBudget(),
+        maxBudgetUsd: await this.runBudget(),
         signal: abort.signal,
       });
       if (result.status !== "ok" && result.status !== "budget") error = result.error ?? "ハーネスがエラーで終わりました";
@@ -618,7 +619,7 @@ export class Dispatcher {
     }
     await p.pdb.transaction(async () => {
       await complete(p, msg.id);
-      afterPlanningRun(p, msg, role, result?.finalText ?? "");
+      await afterPlanningRun(p, msg, role, result?.finalText ?? "");
     });
   }
 
@@ -658,7 +659,7 @@ export class Dispatcher {
         cwd: ws.path,
         confine: confinementFor(p, ws, "lead"),
         systemPrompt: LEAD_CHAT_SYSTEM + (policy.focus.trim() ? `\n\n## このプロジェクトで重視すること\n${policy.focus.trim()}` : "") + speechNote(member.name),
-        prompt: mode === "chat" ? leadChatPrompt(p, unread) : mode === "triage" ? triagePrompt(p, targets) : patrolPrompt(p, signals, { start: !!(JSON.parse(msg.payload) as { start?: boolean }).start }),
+        prompt: mode === "chat" ? leadChatPrompt(p, unread) : mode === "triage" ? triagePrompt(p, targets) : await patrolPrompt(p, signals, { start: !!(JSON.parse(msg.payload) as { start?: boolean }).start }),
         model: policy.model,
         effort: policy.effort,
         tools:
@@ -668,7 +669,7 @@ export class Dispatcher {
               ? triageTools(p)
               : [...patrolTools(p, { closePrs }), ...ciTools(p, this.deps.github, { rerun: true })],
         allowedTools: ["Read", "Glob", "Grep"],
-        maxBudgetUsd: this.runBudget(),
+        maxBudgetUsd: await this.runBudget(),
         onProgress: progressRecorder(p, runId),
       });
       if (result.status !== "ok" && result.status !== "budget") error = result.error ?? "ハーネスがエラーで終わりました";
@@ -758,7 +759,7 @@ export class Dispatcher {
         ...(resumeId ? { resumeSessionId: resumeId } : {}),
         tools: memberChatTools(p, member, ticket, done),
         allowedTools: ["Read", "Glob", "Grep"],
-        maxBudgetUsd: this.runBudget(unit ? unitLeftUsd(p, unit) : Infinity),
+        maxBudgetUsd: await this.runBudget(unit ? await unitLeftUsd(p, unit) : Infinity),
         onProgress: progressRecorder(p, runId),
       });
       if (result.status !== "ok" && result.status !== "budget") error = result.error ?? "ハーネスがエラーで終わりました";
@@ -828,7 +829,7 @@ export class Dispatcher {
         effort: use.effort,
         tools: replyTools(report),
         allowedTools: ["Read", "Glob", "Grep"],
-        maxBudgetUsd: this.runBudget(unit ? unitLeftUsd(p, unit) : Infinity),
+        maxBudgetUsd: await this.runBudget(unit ? await unitLeftUsd(p, unit) : Infinity),
         onProgress: progressRecorder(p, runId),
       });
       if (result.status !== "ok" && result.status !== "budget") error = result.error ?? "ハーネスがエラーで終わりました";
@@ -863,7 +864,7 @@ export class Dispatcher {
       }
       // GitHub に入れない(認証切れ)のは環境の問題。チケットの失敗に数えず、入れるようになるまで待って取り直す(ADR-0027)
       if (isGithubAuthError(error)) {
-        markGithubDown(p, error);
+        await markGithubDown(p, error);
         await release(p, msg.id, WAIT_MS);
         return;
       }
@@ -929,7 +930,7 @@ export class Dispatcher {
           ...ciTools(p, this.deps.github, { ticket, rerun: true }),
         ],
         allowedTools: ["Read", "Glob", "Grep", "Bash"],
-        maxBudgetUsd: this.runBudget(),
+        maxBudgetUsd: await this.runBudget(),
         onProgress: progressRecorder(p, runId),
       });
       if (result.status !== "ok" && result.status !== "budget") error = result.error ?? "ハーネスがエラーで終わりました";

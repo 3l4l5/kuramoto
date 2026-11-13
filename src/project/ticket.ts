@@ -47,7 +47,7 @@ export type TimelineItem =
   | { type: "question"; at: string; from: string; to: string; body: string; routedToLead: boolean; noRoute: boolean; answer: string | null; answeredBy: string | null; answeredAt: string | null }
   | { type: "rule"; at: string; rule: string; handled: string; detail: string; resolvedAt: string | null };
 
-export function ticketView(p: Project, ticketId: number) {
+export async function ticketView(p: Project, ticketId: number) {
   const t = p.ticket(ticketId);
   const refs = JSON.parse(t.plan_refs || "{}") as { requirement?: string; screens?: string[]; design?: string[]; repo?: string };
   const requirement = get<{ code: string; name: string; acceptance: string }>(
@@ -112,7 +112,7 @@ export function ticketView(p: Project, ticketId: number) {
       role: ROLE_LABEL[rv.role as Role] ?? rv.role,
       round: rv.round,
       verdict: VERDICT[rv.verdict] ?? rv.verdict,
-      findings: threads(p, ticketId, { reviewId: rv.id }),
+      findings: await threads(p, ticketId, { reviewId: rv.id }),
     });
   }
   for (const d of all<{ id: number; question: string; options: string; recommended: number; why: string; escalated: number; choice: number | null; decided_by: string | null; decided_at: string | null }>(
@@ -212,4 +212,4 @@ export function ticketView(p: Project, ticketId: number) {
   };
 }
 
-export type TicketView = ReturnType<typeof ticketView>;
+export type TicketView = Awaited<ReturnType<typeof ticketView>>;

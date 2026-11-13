@@ -39,7 +39,7 @@ function setup(answer: FakeStep = (_req, call) => call("reply", { answer: "境�
 
 /** チケットを 1 枚作って、QA まで通して merge 待ちにする。持ち主(開発のメンバー)も返す。 */
 async function worked(p: Project, d: Dispatcher) {
-  createTicket(p, { title: "CSV 出力" });
+  await createTicket(p, { title: "CSV 出力" });
   await d.drain();
   const ticket = p.tickets()[0]!;
   return { ticket, owner: p.member(ticket.owner_member_id!) };
@@ -137,14 +137,14 @@ describe("島への質問・相談(R16)", () => {
     expect(state(p, ticket.id)).toEqual(before);
     // 答える起動の金額は、聞かれたチケットに数える
     expect(ticketSpentUsd(p, ticket.id)).toBeCloseTo(spent + run.cost_usd, 6);
-    expect(ticketView(p, ticket.id).costUsd).toBeCloseTo(spent + run.cost_usd, 6);
+    expect((await ticketView(p, ticket.id)).costUsd).toBeCloseTo(spent + run.cost_usd, 6);
     // チケットのやりとりに、質問と答えが並ぶ
-    const item = ticketView(p, ticket.id).timeline.find((x) => x.type === "question");
+    const item = (await ticketView(p, ticket.id)).timeline.find((x) => x.type === "question");
     expect(item).toMatchObject({ type: "question", to: "レビュー", routedToLead: false, noRoute: false, body: "CSV の空のときはどう確かめる?", answer: "境界値は 0 件と 1 件を見て", answeredBy: answerer.name });
     // 次にこのチケットの仕事をする担当の指示に、答えが入る
     const { promptFor } = await import("./prompts.js");
     const msg = { id: 0, ticket_id: ticket.id, to_role: "dev", to_member_id: owner.id, kind: "fix", payload: "{}", status: "pending", available_at: "", attempts: 0, created_at: "", claimed_at: null, last_error: null } as const;
-    expect(promptFor(p, msg, p.ticket(ticket.id), {})).toContain("境界値は 0 件と 1 件を見て");
+    expect(await promptFor(p, msg, p.ticket(ticket.id), {})).toContain("境界値は 0 件と 1 件を見て");
   });
 
   it("経路なし: 相手に届かず、リーダーに回る。「経路が無いのでリーダーに回した」がやりとりに残り、担当・工程は変わらない", async () => {
@@ -161,7 +161,7 @@ describe("島への質問・相談(R16)", () => {
 
     await d.drain();
     expect(state(p, ticket.id)).toEqual(before);
-    const item = ticketView(p, ticket.id).timeline.find((x) => x.type === "question");
+    const item = (await ticketView(p, ticket.id)).timeline.find((x) => x.type === "question");
     expect(item).toMatchObject({ type: "question", to: "QA", routedToLead: true, noRoute: true, answer: null });
     // 質問は ticket_questions に残る
     expect(questionsOf(p, ticket.id)).toHaveLength(1);
@@ -171,7 +171,7 @@ describe("島への質問・相談(R16)", () => {
     const { p, d } = setup(undefined, []);
     const { ticket, owner } = await worked(p, d);
     askQuestion(p, owner, p.ticket(ticket.id), "リーダー", "優先度を教えて");
-    expect(ticketView(p, ticket.id).timeline.find((x) => x.type === "question")).toMatchObject({ to: "リーダー", routedToLead: true, noRoute: false });
+    expect((await ticketView(p, ticket.id)).timeline.find((x) => x.type === "question")).toMatchObject({ to: "リーダー", routedToLead: true, noRoute: false });
     expect(askQuestion(p, owner, p.ticket(ticket.id), "開発", "自分たちに")).toContain("自分の島");
     expect(askQuestion(p, owner, p.ticket(ticket.id), "レビュー", "  ")).toContain("質問の中身がありません");
     expect(questionsOf(p, ticket.id)).toHaveLength(1);
@@ -193,7 +193,7 @@ describe("島への質問・相談(R16)", () => {
       } else if (req.tools.some((t) => t.name === "submit_review")) await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] }));
     });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp") });
-    createTicket(p, { title: "CSV 出力" });
+    await createTicket(p, { title: "CSV 出力" });
     await d.drain();
     const t = p.tickets()[0]!;
     expect(tools[0]).toContain("ask_island");

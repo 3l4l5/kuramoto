@@ -32,7 +32,7 @@ const isChat = (req: { tools: { name: string }[] }) => req.tools.some((t) => t.n
 
 /** チケットを 1 枚作って、開発が終わるまで進める。持ち主のメンバーを返す。 */
 async function worked(p: Project, d: Dispatcher) {
-  createTicket(p, { title: "CSV 出力" });
+  await createTicket(p, { title: "CSV 出力" });
   await d.drain();
   const t = p.tickets()[0]!;
   return { ticket: t, member: p.member(t.owner_member_id!) };
@@ -94,7 +94,7 @@ describe("メンバーとの会話", () => {
     // 次にこのチケットの仕事をする担当の指示に、メモとして入る
     const { promptFor } = await import("./prompts.js");
     const msg = { id: 0, ticket_id: ticket.id, to_role: "dev", to_member_id: member.id, kind: "implement", payload: "{}", status: "pending", available_at: "", attempts: 0, created_at: "", claimed_at: null, last_error: null } as const;
-    expect(promptFor(p, msg, p.ticket(ticket.id), {})).toContain("区切り文字を変えたときも見てね");
+    expect(await promptFor(p, msg, p.ticket(ticket.id), {})).toContain("区切り文字を変えたときも見てね");
   });
 
   it("新しい仕事を頼まれたら、リーダーの受信箱に回す。メモには書かない。リーダーがチケットにできる", async () => {
@@ -150,7 +150,7 @@ describe("メンバーとの会話", () => {
       } else await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] }));
     });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp") });
-    createTicket(p, { title: "A" });
+    await createTicket(p, { title: "A" });
     await d.drain();
     expect(order.indexOf("chat")).toBeGreaterThan(order.indexOf("dev"));
     expect(all(p.db, "SELECT 1 FROM runs WHERE about_ticket_id IS NOT NULL")).toHaveLength(1);

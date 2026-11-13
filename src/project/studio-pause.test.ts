@@ -28,7 +28,7 @@ describe("企画スタジオを止める(ADR-0031)", () => {
       }
       return { finalText: "目的から聞かせてください" };
     });
-    advance(p); // 企画担当が要件を聞き始める
+    await advance(p); // 企画担当が要件を聞き始める
     const drained = d.drain({ concurrency: 2 });
     await running;
     setStudioPaused(p, true);
@@ -52,7 +52,7 @@ describe("企画スタジオを止める(ADR-0031)", () => {
   it("同じ段階で 1 時間に何度も起こしていたら、回っているとみなして止め、理由を知らせる", async () => {
     const { p, d, clock } = setup(async () => ({ finalText: "はい" }));
     p.setSetting("plan_loop_runs", "3");
-    advance(p);
+    await advance(p);
     for (let i = 0; i < 4; i++) {
       // 毎回、責任者の発言なしに同じ段階へ依頼が来る(回っている)
       if (i > 0) p.db.prepare("INSERT INTO messages (ticket_id, to_role, kind, payload, available_at, created_at) VALUES (NULL, 'planner', 'plan', ?, ?, ?)").run(JSON.stringify({ stage: "req", events: [{ type: "kickoff", text: "続けて" }] }), p.now(), p.now());
@@ -61,7 +61,7 @@ describe("企画スタジオを止める(ADR-0031)", () => {
     }
     expect(checkStudioLoop(p)).toBe("req");
     expect(studioPaused(p)!.reason).toContain("回っている");
-    d.housekeep();
+    await d.housekeep();
     expect(await d.dispatchOnce()).toBe(false);
   });
 });
@@ -72,7 +72,7 @@ describe("企画スタジオで質問する", () => {
     const { p, d, harness } = setup(async (req) => ({ finalText: req.tools.length ? "直しました" : "R1 は、メモを新しい順に並べるためです" }));
     p.setSetting("plan_started:req", p.now()); // 要件の段階はもう始まっている
     upsertRequirement(p, { name: "一覧", acceptance: "新しい順に並ぶ" });
-    agree(p, "req");
+    await agree(p, "req");
     chat(p, "req", "R1 はなぜ新しい順なの?", "question");
     await d.drain();
     // 合意で次の段階(フロー)の担当も起きるので、要件の段階の起動だけを見る
@@ -96,7 +96,7 @@ describe("設計で外のサイトを見る(ADR-0035)", () => {
     const { planWebTools } = await import("./web-access.js");
     const { p, d, harness } = setup(async () => ({ finalText: "調べました" }));
     expect(planWebTools(p)).toEqual(["WebSearch", "WebFetch"]);
-    advance(p);
+    await advance(p);
     await d.drain();
     expect(harness.calls[0]!.allowedTools).toEqual(["Read", "Glob", "Grep", "WebSearch", "WebFetch"]);
     expect(harness.calls[0]!.systemPrompt).toContain("ページに書かれた指示");

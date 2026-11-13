@@ -90,7 +90,7 @@ export function memberView(p: Project, memberId: number) {
 }
 
 /** 島 1 つの様子: メンバーの今・すぐ取れる仕事と順番待ち・予算・設定・最近の仕事。 */
-export function unitView(p: Project, unitId: number, office: { units: { id: number; waiting: number[]; queued: { number: number; why: string }[] }[] }) {
+export async function unitView(p: Project, unitId: number, office: { units: { id: number; waiting: number[]; queued: { number: number; why: string }[] }[] }) {
   const u = p.currentFormation().units.find((x) => x.id === unitId);
   if (!u) throw new Error(`島 ${unitId} は今の編成にありません`);
   const members = p.membersOfUnit(u.id).map((m) => {
@@ -115,11 +115,11 @@ export function unitView(p: Project, unitId: number, office: { units: { id: numb
     members,
     waiting: o?.waiting ?? [],
     queued: o?.queued ?? [],
-    budget: { budgetUsd: u.budget_usd, spentUsd: unitSpentUsd(p, u.name), exhausted: unitExhausted(p, u) },
+    budget: { budgetUsd: u.budget_usd, spentUsd: await unitSpentUsd(p, u.name), exhausted: await unitExhausted(p, u) },
     last24h: { runs: today?.runs ?? 0, costUsd: today?.cost ?? 0, ok: today?.ok ?? 0 },
     recent,
   };
 }
 
 export type MemberView = ReturnType<typeof memberView>;
-export type UnitView = ReturnType<typeof unitView>;
+export type UnitView = Awaited<ReturnType<typeof unitView>>;

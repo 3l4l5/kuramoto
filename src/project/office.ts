@@ -5,7 +5,7 @@ import { routesAmong } from "../domain/route.js";
 import { ticketRepo } from "./dispatcher.js";
 import { autoMergeEnabled, suggestedMergeOrder } from "./merge.js";
 import { areaWait, blockers, mergeBlockers, mergeUnblocks } from "./triage.js";
-import { unitExhausted, unitSpentUsd } from "./budget.js";
+import { isExhausted, unitSpentMap } from "./budget.js";
 import { runWork } from "./progress.js";
 import type { MemberRow, Project, TicketRow } from "./project.js";
 
@@ -50,7 +50,7 @@ export function workOf(p: Project, member: MemberRow): Work | null {
   };
 }
 
-export function officeView(p: Project) {
+export async function officeView(p: Project) {
   const f = p.currentFormation();
   const tickets = new Map(p.tickets().map((t) => [t.id, t]));
   const isWork = (r: string): r is WorkRole => (WORK_ROLES as readonly string[]).includes(r);
@@ -93,6 +93,7 @@ export function officeView(p: Project) {
   for (const [unitId, nums] of waiting) for (const n of nums) where[n] = `unit:${unitId}`;
   for (const [unitId, qs] of queued) for (const q of qs) where[q.number] = `unit:${unitId}`;
 
+  const spentBy = await unitSpentMap(p, f.units.map((u) => u.name));
   const units = f.units.map((u) => ({
     id: u.id,
     name: u.name,
@@ -101,7 +102,7 @@ export function officeView(p: Project) {
     max: u.max_members,
     repos: u.repos,
     model: u.model ? (MODELS[u.model as keyof typeof MODELS]?.label ?? u.model) : null,
-    budget: { budgetUsd: u.budget_usd, spentUsd: unitSpentUsd(p, u.name), exhausted: unitExhausted(p, u) },
+    budget: { budgetUsd: u.budget_usd, spentUsd: spentBy.get(u.name) ?? 0, exhausted: isExhausted(u.budget_usd, spentBy.get(u.name) ?? 0) },
     members: p.membersOfUnit(u.id).map((m) => {
       const work = workOf(p, m);
       if (work?.ticket) where[work.ticket] = `unit:${u.id}`;
@@ -117,7 +118,7 @@ export function officeView(p: Project) {
   };
   const decisions = [...tickets.values()].filter((t) => t.stage === "decision");
   for (const t of decisions) where[t.number] ??= "lead";
-  const mergeQueue = suggestedMergeOrder(p);
+  const mergeQueue = await suggestedMergeOrder(p);
   const unblocks = mergeUnblocks(p);
   for (const t of mergeQueue) where[t.number] = "merge";
   const done = [...tickets.values()].filter((t) => t.stage === "done").sort((a, b) => String(b.done_at).localeCompare(String(a.done_at)));
@@ -172,4 +173,4 @@ export function officeView(p: Project) {
   };
 }
 
-export type OfficeView = ReturnType<typeof officeView>;
+export type OfficeView = Awaited<ReturnType<typeof officeView>>;

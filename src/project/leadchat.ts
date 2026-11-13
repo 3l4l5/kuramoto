@@ -132,13 +132,13 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
         design_system: z.boolean().optional().describe("デザインシステムの土台のチケットなら true"),
         after: z.array(z.number().int()).optional().describe("先に merge されている必要があるチケットの番号(画面のチケットは、デザインシステムの土台のチケットを書く)"),
       },
-      handler: (a) => {
+      handler: async (a) => {
         const known = new Set(screens(p).keys());
         const bad = (a.screens ?? []).filter((k) => !known.has(k));
         if (bad.length) return `画面 ${bad.join("・")} は企画にありません。使えるのは ${[...known].join("・") || "(なし)"}`;
         const item = a.requirement ? requirements(p).find((r) => r.code === a.requirement) : undefined;
         if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
-        const t = createTicket(p, {
+        const t = await createTicket(p, {
           title: a.title,
           body: a.body,
           kind: a.kind ?? "feature",

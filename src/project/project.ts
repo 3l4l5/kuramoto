@@ -143,12 +143,12 @@ export class Project {
   }
 
   setSetting(key: string, value: string): void {
-    run(this.db, "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value]);
+    run(this.db, "INSERT INTO settings (project_id, key, value) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [this.projectId, key, value]);
   }
 
   addRepo(fullName: string, role: string): number {
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(fullName)) throw new Error(`owner/repo の形ではありません: ${fullName}`);
-    return run(this.db, "INSERT INTO repos (full_name, role) VALUES (?, ?)", [fullName, role]).lastId;
+    return run(this.db, "INSERT INTO repos (project_id, full_name, role) VALUES (?, ?, ?)", [this.projectId, fullName, role]).lastId;
   }
 
   setRepoRole(fullName: string, role: string): void {
@@ -429,8 +429,8 @@ export class Project {
       const jiraPrefix = this.setting("jira_key");
       const id = run(
         this.db,
-        "INSERT INTO tickets (number, jira_key, title, body, kind, dev_done, stage, requirement_item_id, plan_refs, created_at) VALUES (?, ?, ?, ?, ?, ?, 'dev', ?, ?, ?)",
-        [number, jiraPrefix ? `${jiraPrefix}-${number}` : null, t.title, t.body ?? "", t.kind ?? "feature", t.devDone ? 1 : 0, t.requirementItemId ?? null, JSON.stringify(t.planRefs ?? {}), this.now()],
+        "INSERT INTO tickets (project_id, number, jira_key, title, body, kind, dev_done, stage, requirement_item_id, plan_refs, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'dev', ?, ?, ?)",
+        [this.projectId, number, jiraPrefix ? `${jiraPrefix}-${number}` : null, t.title, t.body ?? "", t.kind ?? "feature", t.devDone ? 1 : 0, t.requirementItemId ?? null, JSON.stringify(t.planRefs ?? {}), this.now()],
       ).lastId;
       this.event("lead", "ticket_created", id, { number, title: t.title });
       return this.ticket(id);

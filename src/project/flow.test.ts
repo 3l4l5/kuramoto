@@ -58,7 +58,7 @@ class FakeGitHub implements GitHub {
 describe("仕事の流れ", () => {
   it("チケット → 開発 → レビュー → merge 待ち → 責任者が merge", async () => {
     const { p, d, harness } = setup(script());
-    const t = createTicket(p, { title: "CSV の書き出し" });
+    const t = await createTicket(p, { title: "CSV の書き出し" });
     await d.drain();
 
     expect(p.ticket(t.id).stage).toBe("merge");
@@ -83,7 +83,7 @@ describe("仕事の流れ", () => {
   it("確認のやり直しで前の会話を引き継がない設定なら、確認役は新しく始める(開発の直しは引き継ぐ)", async () => {
     const { p, d, harness } = setup(script({ verdicts: ["changes", "approve"] }));
     p.setSetting("resume_checks", "0");
-    const t = createTicket(p, { title: "退会" });
+    const t = await createTicket(p, { title: "退会" });
     await d.drain();
 
     expect(p.ticket(t.id).stage).toBe("merge");
@@ -96,7 +96,7 @@ describe("仕事の流れ", () => {
 
   it("差し戻されたら持ち主が自分のセッションを再開して直す", async () => {
     const { p, d, harness } = setup(script({ verdicts: ["changes", "approve"] }));
-    const t = createTicket(p, { title: "退会" });
+    const t = await createTicket(p, { title: "退会" });
     await d.drain();
 
     expect(p.ticket(t.id).stage).toBe("merge");
@@ -115,7 +115,7 @@ describe("仕事の流れ", () => {
   it("同じ指摘がまた出たら再発として数える", async () => {
     const { p, d } = setup(script({ verdicts: ["changes", "changes", "approve"] }));
     p.savePolicy("review", { model: "claude-opus-5-5", effort: "high", focus: "", options: { escalateAfterRounds: 5 } });
-    createTicket(p, { title: "x" });
+    await createTicket(p, { title: "x" });
     await d.drain();
     expect(all(p.db, "SELECT status FROM findings ORDER BY id")).toEqual([{ status: "fixed" }, { status: "fixed" }]);
     expect(get(p.db, "SELECT COUNT(*) AS n FROM findings f WHERE fingerprint IN (SELECT fingerprint FROM findings GROUP BY fingerprint HAVING COUNT(*) > 1)")).toEqual({ n: 2 });
@@ -125,7 +125,7 @@ describe("仕事の流れ", () => {
 describe("判断", () => {
   it("往復が上限に達したらリーダーへ。軽い判断はリーダーが推奨で決めて持ち主に返す", async () => {
     const { p, d } = setup(script({ verdicts: ["changes", "changes", "approve"], lead: "decide" }));
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     await d.drain();
 
     const decisions = all<{ decided_by: string; escalated: number }>(p.db, "SELECT decided_by, escalated FROM decisions");
@@ -137,14 +137,14 @@ describe("判断", () => {
   it("ノンストップを切ると、重い判断は責任者に上がり、答えると持ち主に返る", async () => {
     const { p, d } = setup(script({ verdicts: ["changes", "changes", "approve"], lead: "escalate" }));
     p.setSetting("nonstop", "0");
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     await d.drain();
     expect(p.ticket(t.id).stage).toBe("decision");
     const [card] = pendingOwnerDecisions(p);
     expect(card).toBeDefined();
     expect(card!.deadline_at).not.toBeNull();
 
-    answerDecision(p, card!.id, 1); // 今の形で通す
+    await answerDecision(p, card!.id, 1); // 今の形で通す
     await d.drain();
     expect(p.ticket(t.id).stage).toBe("merge");
     expect(await ownerMerge(p, new FakeGitHub(), t.id)).toEqual({ result: "merged" });
@@ -172,13 +172,13 @@ describe("判断", () => {
       }
     });
     p.setSetting("nonstop", "0");
-    const t = createTicket(p, { title: "CI" });
+    const t = await createTicket(p, { title: "CI" });
     await d.drain();
     const [card] = pendingOwnerDecisions(p);
     expect(card!.lead_note).toBe("(1) MySQL の版を決めてください");
     expect(card!.impact).toContain("MinIO のイメージが取れない");
 
-    answerDecision(p, card!.id, 0, "MySQL は 8.4 にする");
+    await answerDecision(p, card!.id, 0, "MySQL は 8.4 にする");
     expect(p.notes(t.id).map((n) => n.body)).toContain("MySQL は 8.4 にする");
     await d.drain();
     expect(prompts.find((x) => x.includes("差し戻されました") && x.includes("MySQL は 8.4 にする"))).toBeDefined();
@@ -187,11 +187,11 @@ describe("判断", () => {
   it("責任者が答えないまま期限を過ぎると推奨で決まり、持ち主に返る", async () => {
     const { p, d, clock } = setup(script({ verdicts: ["changes", "changes"], lead: "escalate" }));
     p.setSetting("nonstop", "0");
-    const t = createTicket(p, { title: "y" });
+    const t = await createTicket(p, { title: "y" });
     await d.drain();
     expect(p.ticket(t.id).stage).toBe("decision");
     clock.advance(3601_000);
-    expect(expireDecisions(p)).toBe(1);
+    expect(await expireDecisions(p)).toBe(1);
     expect(get(p.db, "SELECT decided_by, choice FROM decisions")).toEqual({ decided_by: "timeout", choice: 0 });
     expect(p.ticket(t.id).stage).toBe("dev");
     // 「指摘を直して続ける」は、指摘のスレッドつきの直しとして持ち主に返る
@@ -215,7 +215,7 @@ describe("判断", () => {
         await call("decide", { choice: 0, reason: "消す" });
       }
     });
-    const t = createTicket(p, { title: "退会" });
+    const t = await createTicket(p, { title: "退会" });
     await d.drain();
     expect(p.ticket(t.id).stage).toBe("decision");
     expect(pendingOwnerDecisions(p)).toHaveLength(1);
@@ -244,7 +244,7 @@ describe("止まる条件", () => {
       await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] }));
       return {};
     });
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     for (let i = 0; i < 4; i++) {
       await d.drain();
       clock.advance(10 * 60_000);
@@ -276,7 +276,7 @@ describe("止まる条件", () => {
       return {};
     });
     p.setSetting("unstick_max", "2");
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     for (let i = 0; i < 20 && !pendingOwnerDecisions(p).length; i++) {
       await d.drain();
       clock.advance(10 * 60_000);
@@ -288,11 +288,11 @@ describe("止まる条件", () => {
     expect(JSON.parse(hold!.options)).toMatchObject([{ label: "対応したので再開する", action: "resume" }]);
     // 期限で勝手に再開しない。やめもしない
     clock.advance(48 * 3600_000);
-    expect(expireDecisions(p)).toBe(0);
+    expect(await expireDecisions(p)).toBe(0);
     expect(p.ticket(t.id).stage).toBe("decision");
 
     broken = false;
-    answerDecision(p, hold!.id, 0);
+    await answerDecision(p, hold!.id, 0);
     await d.drain();
     expect(p.ticket(t.id).stage).toBe("merge");
   });
@@ -305,7 +305,7 @@ describe("止まる条件", () => {
       }
       return { status: "error", error: "401 Unauthorized" };
     });
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     for (let i = 0; i < 4; i++) {
       await d.drain();
       clock.advance(10 * 60_000);
@@ -329,8 +329,8 @@ describe("止まる条件", () => {
     });
     const workspace = new StaticWorkspace("/tmp/ws", { landed: (c) => (c === "3677184" ? undefined : `コミット ${c} は origin/main に入っていません`) });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace });
-    const before = createTicket(p, { title: "ログインの回数制限" });
-    const after = createTicket(p, { title: "回数制限の画面表示" });
+    const before = await createTicket(p, { title: "ログインの回数制限" });
+    const after = await createTicket(p, { title: "回数制限の画面表示" });
     run(p.db, "INSERT INTO ticket_deps (ticket_id, depends_on) VALUES (?, ?)", [after.id, before.id]);
     // PR が残っていれば閉じる
     run(p.db, "INSERT INTO pull_requests (ticket_id, repo_id, number, head, gh_state) VALUES (?, 1, 77, 'kuramoto/1', 'OPEN')", [before.id]);
@@ -354,7 +354,7 @@ describe("止まる条件", () => {
       }
       return {};
     });
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     for (let i = 0; i < 4; i++) {
       await d.drain();
       clock.advance(10 * 60_000);
@@ -366,7 +366,7 @@ describe("止まる条件", () => {
 
   it("利用の上限で止まったときは失敗に数えず、時間を置いてやり直す", async () => {
     const { p, d } = setup(() => ({ status: "error", error: "You've hit your 5-hour limit · resets 3am" }));
-    createTicket(p, { title: "x" });
+    await createTicket(p, { title: "x" });
     await d.drain();
     expect(get(p.db, "SELECT status, attempts FROM messages WHERE kind = 'implement'")).toEqual({ status: "pending", attempts: 0 });
     expect(all(p.db, "SELECT 1 FROM messages WHERE kind = 'unstick'")).toEqual([]);
@@ -374,7 +374,7 @@ describe("止まる条件", () => {
 
   it("報告の道具を呼ばずに終わったら失敗として再試行する", async () => {
     const { p, d } = setup(() => {});
-    createTicket(p, { title: "x" });
+    await createTicket(p, { title: "x" });
     await d.drain();
     expect(get(p.db, "SELECT status, attempts, last_error FROM messages")).toEqual({ status: "pending", attempts: 1, last_error: "submit_pr が呼ばれませんでした" });
   });
@@ -387,12 +387,12 @@ describe("止まる条件", () => {
     });
     p.setSetting("ticket_budget_usd", "3");
     p.savePolicy("review", { model: "claude-opus-5-5", effort: "high", focus: "", options: { escalateAfterRounds: 99 } });
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     await d.drain();
     expect(p.ticket(t.id).stage).toBe("decision");
     expect(get(p.db, "SELECT COUNT(*) AS n FROM runs")).toEqual({ n: 3 });
 
-    answerDecision(p, pendingOwnerDecisions(p)[0]!.id, 0);
+    await answerDecision(p, pendingOwnerDecisions(p)[0]!.id, 0);
     await d.drain();
     expect(get(p.db, "SELECT COUNT(*) AS n FROM runs")).toEqual({ n: 6 });
   });
@@ -404,7 +404,7 @@ describe("止まる条件", () => {
       return { usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, costUsd: 1 } };
     });
     p.setSetting("ticket_budget_usd", "1");
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     await d.drain();
     // 実装で 1 ドル使い切り、レビューの前で止まる。同じ判断を重ねて出さない
     await d.drain();
@@ -413,9 +413,9 @@ describe("止まる条件", () => {
     expect(JSON.parse(cards[0]!.options).map((o: { action: string }) => o.action)).toEqual(["continue", "unlimited"]);
     expect(cards[0]!.deadline_at).toBeNull();
     clock.advance(48 * 3600_000);
-    expect(expireDecisions(p)).toBe(0);
+    expect(await expireDecisions(p)).toBe(0);
 
-    answerDecision(p, cards[0]!.id, 1);
+    await answerDecision(p, cards[0]!.id, 1);
     expect(ticketBudgetUsd(p, t.id)).toBeNull();
     await d.drain();
     // 止まったのはレビューなので、レビューから続けて merge 待ちまで進む
@@ -432,7 +432,7 @@ describe("止まる条件", () => {
     });
     setDefaultTicketBudget(p, null);
     expect(defaultTicketBudgetUsd(p)).toBeNull();
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     await d.drain();
     expect(ticketBudgetUsd(p, t.id)).toBeNull();
     expect(pendingOwnerDecisions(p)).toEqual([]);
@@ -447,28 +447,28 @@ describe("止まる条件", () => {
     });
     p.setSetting("ticket_budget_usd", "10");
     p.savePolicy("review", { model: "claude-opus-5-5", effort: "high", focus: "", options: { escalateAfterRounds: 99 } });
-    const t = createTicket(p, { title: "x" });
-    const other = createTicket(p, { title: "y" });
-    setTicketBudget(p, t.id, 2);
+    const t = await createTicket(p, { title: "x" });
+    const other = await createTicket(p, { title: "y" });
+    await setTicketBudget(p, t.id, 2);
     expect(ticketBudgetUsd(p, t.id)).toBe(2);
     expect(ticketBudgetUsd(p, other.id)).toBe(10);
-    expect(() => setTicketBudget(p, t.id, 0)).toThrow("0 より大きい");
+    await expect(setTicketBudget(p, t.id, 0)).rejects.toThrow("0 より大きい");
 
     await d.drain();
     expect(p.ticket(t.id).stage).toBe("decision");
     expect(ticketSpentUsd(p, t.id)).toBe(2);
 
     // 使った額以下では止まったまま。上回ると判断が「続ける」で閉じ、足した分なしで新しい予算になる
-    setTicketBudget(p, t.id, 2);
+    await setTicketBudget(p, t.id, 2);
     expect(pendingOwnerDecisions(p).filter((x) => x.ticket_id === t.id)).toHaveLength(1);
-    setTicketBudget(p, t.id, 4);
+    await setTicketBudget(p, t.id, 4);
     expect(pendingOwnerDecisions(p).filter((x) => x.ticket_id === t.id)).toHaveLength(0);
     expect(ticketBudgetUsd(p, t.id)).toBe(4);
     await d.drain();
     expect(ticketSpentUsd(p, t.id)).toBe(4);
 
     // 既定に戻す
-    setTicketBudget(p, t.id, null);
+    await setTicketBudget(p, t.id, null);
     expect(ticketBudgetUsd(p, t.id)).toBe(10);
   });
 });
@@ -477,7 +477,7 @@ describe("編成", () => {
   it("開発とレビューを兼ねる島では、自分の PR は別のメンバーが確かめる", async () => {
     const { p, d } = setup(script());
     p.saveFormation({ pull: "down", units: [{ name: "島", roles: ["dev", "review"], maxMembers: 3, summonAt: 2, idleSec: 60 }] });
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     await d.drain();
     const runs = all<{ role: string; member_id: number }>(p.db, "SELECT role, member_id FROM runs ORDER BY id");
     expect(runs[0]!.member_id).toBe(p.ticket(t.id).owner_member_id);
@@ -489,11 +489,11 @@ describe("編成", () => {
     const seats = () => p.currentFormation().units.map((u) => p.membersOfUnit(u.id).length);
     expect(seats()).toEqual([4, 3]); // 既定の編成: 開発 4 人・レビュー 3 人
     const before = p.activeMembers().map((m) => m.id);
-    for (const title of ["a", "b", "c"]) createTicket(p, { title });
+    for (const title of ["a", "b", "c"]) await createTicket(p, { title });
     await d.drain({ concurrency: 3 });
     expect(p.events(200).filter((e) => e.type === "summoned")).toHaveLength(0);
     clock.advance(3600_000);
-    d.housekeep();
+    await d.housekeep();
     expect(p.activeMembers().map((m) => m.id)).toEqual(before);
     expect(seats()).toEqual([4, 3]);
     // 人数を増やすと席が埋まり、減らすと席替えで減る
@@ -510,7 +510,7 @@ describe("編成", () => {
         { name: "確認", roles: ["review", "sec"], maxMembers: 3, summonAt: 2, idleSec: 60 },
       ],
     });
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     await d.drain();
     expect(all(p.db, "SELECT role FROM runs ORDER BY id")).toEqual([{ role: "dev" }, { role: "review" }, { role: "sec" }]);
     expect(p.ticket(t.id).stage).toBe("merge");
@@ -519,9 +519,9 @@ describe("編成", () => {
 
   it("下流優先では、新しい実装より先にレビューを取る", async () => {
     const { p, d } = setup(script());
-    createTicket(p, { title: "a" });
+    await createTicket(p, { title: "a" });
     await d.dispatchOnce(); // a の実装
-    createTicket(p, { title: "b" });
+    await createTicket(p, { title: "b" });
     await d.dispatchOnce();
     expect(all(p.db, "SELECT role FROM runs ORDER BY id")).toEqual([{ role: "dev" }, { role: "review" }]);
   });
@@ -530,7 +530,7 @@ describe("編成", () => {
 describe("merge", () => {
   it("押した瞬間に CI が失敗していたら merge せず持ち主に戻す", async () => {
     const { p, d } = setup(script());
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     await d.drain();
     const gh = new FakeGitHub();
     gh.status.set(10, { ci: "failure" });
@@ -542,7 +542,7 @@ describe("merge", () => {
   it("確認が済んだあとに CI の失敗で戻ってきたら、承認のあとの変更だけを 1 回確かめて merge 待ちに戻す(確認を最初からやり直さない)", async () => {
     const { p, d, harness } = setup(script());
     p.saveFormation({ pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 1, summonAt: 2, idleSec: 600 }, { name: "確認", roles: ["review", "sec", "qa"], maxMembers: 1, summonAt: 2, idleSec: 600 }] });
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     await d.drain();
     expect(p.ticket(t.id).stage).toBe("merge");
     const before = all(p.db, "SELECT role FROM runs").length; // 開発・レビュー・セキュリティ・QA
@@ -571,7 +571,7 @@ describe("merge", () => {
       else await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] }));
     });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp/ws", { ownCommits: () => 0 }) });
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     await d.drain();
     const before = all(p.db, "SELECT role FROM runs").length;
     const gh = new FakeGitHub();
@@ -591,8 +591,8 @@ describe("merge", () => {
         await call("submit_pr", { summary: "", responses: fixedAll(req.prompt), ...(conflict ? { conflict_resolution: "mechanical" } : {}) });
       } else await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] }));
     }, (n) => n + 19); // a は PR #20、b は PR #21
-    const a = createTicket(p, { title: "a" });
-    const b = createTicket(p, { title: "b" });
+    const a = await createTicket(p, { title: "a" });
+    const b = await createTicket(p, { title: "b" });
     await d.drain();
     expect([p.ticket(a.id).stage, p.ticket(b.id).stage]).toEqual(["merge", "merge"]);
 
@@ -619,7 +619,7 @@ describe("受信箱", () => {
       await call("submit_pr", { summary: "", responses: fixedAll(req.prompt) });
     });
     p.savePolicy("dev", { model: "claude-opus-5-5", effort: "high", focus: "" });
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     const job = (await d.next())!;
     const running = d.execute(job);
     // 同じチケットへの別のメッセージがあっても取り出されない
@@ -647,7 +647,7 @@ describe("ノンストップ(ADR-0022)", () => {
         replies.push(await call("decide", { choice: 0, reason: "受け入れ条件から MySQL 8.4 に仮決め", note: "MySQL は 8.4 で進める" }));
       }
     });
-    const t = createTicket(p, { title: "CI" });
+    const t = await createTicket(p, { title: "CI" });
     await d.drain();
     expect(replies[0]).toContain("責任者に上げません");
     expect(pendingOwnerDecisions(p)).toEqual([]);
@@ -660,8 +660,8 @@ describe("ノンストップ(ADR-0022)", () => {
     const { autoMerge } = await import("./merge.js");
     const { planWork, blockers } = await import("./triage.js");
     const { p, d, clock } = setup(script());
-    const a = createTicket(p, { title: "土台" });
-    const b = createTicket(p, { title: "画面" });
+    const a = await createTicket(p, { title: "土台" });
+    const b = await createTicket(p, { title: "画面" });
     planWork(p, [{ number: 2, after: [1] }]);
     await d.drain();
     expect(p.ticket(a.id).stage).toBe("merge");
@@ -708,7 +708,7 @@ describe("ノンストップ(ADR-0022)", () => {
       await call("submit_review", withResolutions(req.prompt, { findings: [] }));
       return {};
     });
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     for (let i = 0; i < 5; i++) {
       await d.drain();
       clock.advance(10 * 60_000);

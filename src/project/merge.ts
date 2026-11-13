@@ -1,4 +1,5 @@
-import { all, get, run, tx } from "../db/sqlite.js";
+import { sql, type SqlBool } from "kysely";
+import { dialect } from "../db/dialect/index.js";
 import { pipelineOf } from "../domain/formation.js";
 import type { CiDetail, GitHub, PrStatus } from "../github/github.js";
 import type { Project, TicketRow } from "./project.js";
@@ -24,32 +25,32 @@ export type TeamCiHook = {
 export async function ownerMerge(p: Project, gh: GitHub, ticketId: number, by: "owner" | "team" = "owner", opts: { teamCi?: TeamCiHook } = {}): Promise<MergeResult> {
   const ticket = p.ticket(ticketId);
   if (ticket.stage !== "merge") throw new Error(`チケット #${ticket.number} は merge 待ちではありません`);
-  const prs = prsOf(p, ticketId);
+  const prs = await prsOf(p, ticketId);
   if (prs.length === 0) throw new Error(`チケット #${ticket.number} に PR がありません`);
 
   const statuses = await Promise.all(prs.map(async (pr) => [pr, await gh.prStatus(pr.full_name, pr.number)] as const));
   for (const [pr, s] of statuses) {
-    snapshot(p, pr, s);
+    await snapshot(p, pr, s);
     // CI が通った PR があれば、CI は動いている
-    if (s.ci === "success") markCiRunning(p, pr.full_name);
+    if (s.ci === "success") await markCiRunning(p, pr.full_name);
   }
 
-  const reviewGap = unreviewedRoles(p, ticket);
+  const reviewGap = await unreviewedRoles(p, ticket);
   // チームの CI を使うなら、GitHub の CI は見ない(Actions は止めてある)
   const team = teamCiEnabled(p);
   for (const [pr, s] of statuses) {
     const checked = JSON.stringify({ mergeable: s.mergeable, ci: s.ci, reviewed: reviewGap.length === 0 });
     if (s.mergeable === "CONFLICTING") {
-      tx(p.db, () => {
-        run(p.db, "INSERT INTO merges (pr_id, result, checked, created_at) VALUES (?, 'conflict', ?, ?)", [pr.id, checked, p.now()]);
-        backToOwnerForConflict(p, ticket, pr, null);
+      await p.pdb.transaction(async () => {
+        await addMerge(p, pr.id, "conflict", checked);
+        await backToOwnerForConflict(p, ticket, pr, null);
       });
       return { result: "conflict", reason: "main が先に進み、衝突しています" };
     }
     const reason =
       s.state !== "OPEN" ? `PR が ${s.state} です` : team ? (reviewGap.length ? `確認が済んでいません: ${reviewGap.join("・")}` : s.mergeable === "UNKNOWN" ? "GitHub が merge できるかをまだ計算中です" : null) : s.ci === "failure" ? await onCiFailure(p, gh, ticket, pr) : s.ci === "pending" ? "CI がまだ終わっていません" : reviewGap.length ? `確認が済んでいません: ${reviewGap.join("・")}` : s.mergeable === "UNKNOWN" ? "GitHub が merge できるかをまだ計算中です" : null;
     if (reason) {
-      run(p.db, "INSERT INTO merges (pr_id, result, checked, created_at) VALUES (?, 'blocked', ?, ?)", [pr.id, checked, p.now()]);
+      await addMerge(p, pr.id, "blocked", checked);
       p.event("system", "merge_blocked", ticket.id, { reason });
       // CI の失敗は onCiFailure が持ち主に戻すか待つかを決めた。それ以外は待てば解けるので merge 待ちに置いたままにする。
       return { result: "blocked", reason };
@@ -66,26 +67,26 @@ export async function ownerMerge(p: Project, gh: GitHub, ticketId: number, by: "
       if (pass && head && pass.sha === head && baseNow && pass.baseSha === baseNow) continue;
       const r = await opts.teamCi.run(ticket, pr.full_name, pr.head);
       if (r.ok) continue;
-      run(p.db, "INSERT INTO merges (pr_id, result, checked, created_at) VALUES (?, ?, ?, ?)", [pr.id, r.conflict ? "conflict" : "blocked", JSON.stringify({ teamCi: false }), p.now()]);
+      await addMerge(p, pr.id, r.conflict ? "conflict" : "blocked", JSON.stringify({ teamCi: false }));
       if (r.conflict) {
-        tx(p.db, () => backToOwnerForConflict(p, ticket, pr, null));
+        await p.pdb.transaction(() => backToOwnerForConflict(p, ticket, pr, null));
         return { result: "conflict", reason: r.conflict };
       }
       const reason = r.noCommands ? "チームの CI で流すコマンドが決まっていません(プロジェクトの設定で決めてください)" : `新しい main と合わせると、チームの CI(${r.results.filter((x) => !x.ok).map((x) => x.command).join("・")})が落ちます`;
       p.event("system", "merge_blocked", ticket.id, { reason });
-      if (!r.noCommands) tx(p.db, () => enterStage(p, ticket, "dev", { payload: { ci: true, team: true, sha: r.sha, findings: teamCiFindings(r) } }));
+      if (!r.noCommands) await p.pdb.transaction(async () => await enterStage(p, ticket, "dev", { payload: { ci: true, team: true, sha: r.sha, findings: teamCiFindings(r) } }));
       return { result: "blocked", reason };
     }
   }
 
   for (const [pr] of statuses) {
     await gh.merge(pr.full_name, pr.number);
-    run(p.db, "INSERT INTO merges (pr_id, result, checked, created_at) VALUES (?, 'merged', ?, ?)", [pr.id, JSON.stringify({ ok: true }), p.now()]);
+    await addMerge(p, pr.id, "merged", JSON.stringify({ ok: true }));
   }
   p.setStage(ticket.id, "done");
   p.event(by, "merged", ticket.id, { number: ticket.number, by });
   // 確認で見つかった範囲外のことは、merge したときにまとめて別チケットにする
-  flushFollowups(p, ticket);
+  await flushFollowups(p, ticket);
 
   await recheckConflicts(p, gh, prs);
   return { result: "merged" };
@@ -113,16 +114,16 @@ async function onCiFailure(p: Project, gh: GitHub, ticket: TicketRow, pr: PrRow)
   // ジョブが始まってもいない(請求・上限・ランナーなど、コードの外)。持ち主にも main の CI を直すチケットにも回さず、責任者に 1 回だけ知らせて待つ
   if (detail?.failing.length && detail.failing.every((f) => f.started === false)) {
     const notes = [...new Set(detail.failing.flatMap((f) => f.notes ?? []))];
-    markCiBlocked(p, pr.full_name, notes, runIds);
+    await markCiBlocked(p, pr.full_name, notes, runIds);
     // 間を空けて、直ったかを確かめるためにやり直す
     for (const id of ciProbeDue(p, pr.full_name)) await gh.rerunFailed?.(pr.full_name, id).catch(() => undefined);
     return `CI のジョブが始まっていません(GitHub 側の原因)。${ciBlockAction(notes)}`;
   }
   // ジョブが動いている(落ちてはいる)なら、CI そのものは動いている
-  if (detail?.failing.some((f) => f.started)) markCiRunning(p, pr.full_name);
+  if (detail?.failing.some((f) => f.started)) await markCiRunning(p, pr.full_name);
   const onBase = detail ? names.filter((n) => detail.baseFailing.includes(n)) : [];
   if (detail && onBase.length) {
-    const fixer = ensureBaseCiTicket(p, ticket, pr, detail, onBase);
+    const fixer = await ensureBaseCiTicket(p, ticket, pr, detail, onBase);
     p.event("system", "ci_red_on_base", ticket.id, { checks: onBase, fixer: fixer.number });
     return `${detail.base} でも同じ CI(${onBase.join("・")})が落ちています。#${fixer.number} で直してから merge します`;
   }
@@ -133,7 +134,7 @@ async function onCiFailure(p: Project, gh: GitHub, ticket: TicketRow, pr: PrRow)
     p.event("system", "ci_rerun", ticket.id, { checks: names });
     return `CI(${names.join("・")})が落ちたので、一時的な失敗でないかを確かめるために、落ちたジョブを 1 回やり直しています`;
   }
-  tx(p.db, () => enterStage(p, ticket, "dev", { payload: { ci: true, ...(detail ? { sha: detail.headSha } : {}), findings: ciFindings(detail) } }));
+  await p.pdb.transaction(async () => await enterStage(p, ticket, "dev", { payload: { ci: true, ...(detail ? { sha: detail.headSha } : {}), findings: ciFindings(detail) } }));
   return `CI${names.length ? `(${names.join("・")})` : ""}が失敗しています。ログを渡して持ち主に直してもらいます`;
 }
 
@@ -161,13 +162,19 @@ export function lastCiFailure(p: Project, ticketId: number, maxChars = 3000): st
 }
 
 /** main の CI を直すチケット。開いているものがあればそれを使い、無ければ 1 枚だけ作る。 */
-function ensureBaseCiTicket(p: Project, from: TicketRow, pr: PrRow, detail: CiDetail, checks: string[]): TicketRow {
-  const open = get<TicketRow>(p.db, "SELECT * FROM tickets WHERE stage NOT IN ('done','dropped') AND json_extract(plan_refs, '$.baseCi') = ? ORDER BY number LIMIT 1", [pr.full_name]);
+async function ensureBaseCiTicket(p: Project, from: TicketRow, pr: PrRow, detail: CiDetail, checks: string[]): Promise<TicketRow> {
+  const open = (await p.pdb
+    .from("tickets")
+    .where("stage", "not in", ["done", "dropped"])
+    .where(sql<SqlBool>`${dialect.jsonExtract("tickets.plan_refs", "baseCi")} = ${pr.full_name}`)
+    .orderBy("number")
+    .limit(1)
+    .executeTakeFirst()) as TicketRow | undefined;
   if (open) return open;
   const logs = ciFindings({ ...detail, failing: detail.failing.filter((f) => checks.includes(f.name)) })
     .map((f) => f.body)
     .join("\n\n");
-  return createTicket(p, {
+  return await createTicket(p, {
     title: `${detail.base} の CI を直す(${checks.join("・")})`,
     body: `${detail.base} の最新のコミットで、CI の ${checks.map((c) => `「${c}」`).join("・")} が落ちています。このままでは、どの PR も CI が通らず merge できません(最初に見つけたのは #${from.number} の PR #${pr.number})。\n\n受け入れ条件: ${detail.base} で落ちている確認が通ること。原因がワークフローの設定・秘密情報など、コードの外にあるなら、そう分かった時点で報告すること。\n\n${logs}`,
     planRefs: { repo: pr.full_name, baseCi: pr.full_name },
@@ -177,14 +184,15 @@ function ensureBaseCiTicket(p: Project, from: TicketRow, pr: PrRow, detail: CiDe
 /** merge が終わったのをきっかけに、残りの merge 待ちの衝突を確かめ直す。 */
 export async function recheckConflicts(p: Project, gh: GitHub, causes: PrRow[]): Promise<number> {
   const waiting = p.tickets().filter((t) => t.stage === "merge");
+  const prsByTicket = await prsOfMany(p, waiting.map((t) => t.id));
   let n = 0;
   for (const t of waiting) {
-    for (const pr of prsOf(p, t.id)) {
+    for (const pr of prsByTicket.get(t.id) ?? []) {
       const s = await gh.prStatus(pr.full_name, pr.number);
-      snapshot(p, pr, s);
+      await snapshot(p, pr, s);
       if (s.mergeable !== "CONFLICTING") continue;
       const cause = causes.find((c) => c.repo_id === pr.repo_id) ?? null;
-      tx(p.db, () => backToOwnerForConflict(p, t, pr, cause));
+      await p.pdb.transaction(() => backToOwnerForConflict(p, t, pr, cause));
       n++;
       break;
     }
@@ -192,33 +200,51 @@ export async function recheckConflicts(p: Project, gh: GitHub, causes: PrRow[]):
   return n;
 }
 
-function backToOwnerForConflict(p: Project, ticket: TicketRow, pr: PrRow, cause: PrRow | null): void {
-  run(p.db, "INSERT INTO conflicts (pr_id, cause_pr_id, detected_at) VALUES (?, ?, ?)", [pr.id, cause?.id ?? null, p.now()]);
+async function backToOwnerForConflict(p: Project, ticket: TicketRow, pr: PrRow, cause: PrRow | null): Promise<void> {
+  await p.pdb.insert("conflicts", { pr_id: pr.id, cause_pr_id: cause?.id ?? null, detected_at: p.now() }).execute();
   p.event("system", "conflict", ticket.id, { pr: pr.number, cause: cause?.number ?? null });
-  enterStage(p, ticket, "dev", { payload: { conflict: true, cause: cause ? `${cause.full_name}#${cause.number}` : "main の更新" } });
+  await enterStage(p, ticket, "dev", { payload: { conflict: true, cause: cause ? `${cause.full_name}#${cause.number}` : "main の更新" } });
 }
 
-function snapshot(p: Project, pr: PrRow, s: PrStatus): void {
-  run(p.db, "UPDATE pull_requests SET gh_state = ?, mergeable = ?, ci = ?, fetched_at = ? WHERE id = ?", [s.state, s.mergeable, s.ci, p.now(), pr.id]);
+async function snapshot(p: Project, pr: PrRow, s: PrStatus): Promise<void> {
+  await p.pdb.update("pull_requests", { gh_state: s.state, mergeable: s.mergeable, ci: s.ci, fetched_at: p.now() }).where("id", "=", pr.id).execute();
 }
 
-function prsOf(p: Project, ticketId: number): PrRow[] {
-  return all(p.db, "SELECT pr.*, r.full_name FROM pull_requests pr JOIN repos r ON r.id = pr.repo_id WHERE pr.ticket_id = ? ORDER BY pr.id", [ticketId]);
+async function addMerge(p: Project, prId: number, result: "merged" | "conflict" | "blocked", checked: string): Promise<void> {
+  await p.pdb.insert("merges", { pr_id: prId, result, checked, created_at: p.now() }).execute();
+}
+
+/** チケットの PR(リポジトリ名つき)を、チケットごとに 1 文でまとめて取る。 */
+async function prsOfMany(p: Project, ticketIds: number[]): Promise<Map<number, PrRow[]>> {
+  const out = new Map<number, PrRow[]>();
+  if (ticketIds.length === 0) return out;
+  const rows = await p.pdb.k
+    .selectFrom("pull_requests as pr")
+    .innerJoin("repos as r", "r.id", "pr.repo_id")
+    .select(["pr.id", "pr.ticket_id", "pr.repo_id", "pr.number", "pr.head", "r.full_name"])
+    .where("pr.project_id", "=", p.projectId)
+    .where("r.project_id", "=", p.projectId)
+    .where("pr.ticket_id", "in", ticketIds)
+    .orderBy("pr.id")
+    .execute();
+  for (const r of rows) out.set(r.ticket_id, [...(out.get(r.ticket_id) ?? []), r]);
+  return out;
+}
+
+async function prsOf(p: Project, ticketId: number): Promise<PrRow[]> {
+  return (await prsOfMany(p, [ticketId])).get(ticketId) ?? [];
 }
 
 /**
  * 確認が済んでいない工程。確認を受けた工程は、最後の結果が approve か、その後に「今の形で通す」と決まっている必要がある。
  * 今の編成に確認の工程があるのに 1 度も確認を受けていなければ、それも済んでいないとみなす。
  */
-function unreviewedRoles(p: Project, ticket: TicketRow): string[] {
-  const reviews = all<{ role: string; verdict: string; created_at: string }>(p.db, "SELECT role, verdict, created_at FROM reviews WHERE ticket_id = ? ORDER BY id", [ticket.id]);
-  const passes = all<{ options: string; choice: number; decided_at: string }>(
-    p.db,
-    "SELECT options, choice, decided_at FROM decisions WHERE ticket_id = ? AND decided_at IS NOT NULL",
-    [ticket.id],
-  ).flatMap((d) => {
-    const o = (JSON.parse(d.options) as DecisionOption[])[d.choice];
-    return o?.action === "pass" && o.from ? [{ role: o.from as string, at: d.decided_at }] : [];
+async function unreviewedRoles(p: Project, ticket: TicketRow): Promise<string[]> {
+  const reviews = await p.pdb.from("reviews").select(["role", "verdict", "created_at"]).where("ticket_id", "=", ticket.id).orderBy("id").execute();
+  const decided = await p.pdb.from("decisions").select(["options", "choice", "decided_at"]).where("ticket_id", "=", ticket.id).where("decided_at", "is not", null).execute();
+  const passes = decided.flatMap((d) => {
+    const o = (JSON.parse(d.options) as DecisionOption[])[d.choice ?? -1];
+    return o?.action === "pass" && o.from ? [{ role: o.from as string, at: d.decided_at as string }] : [];
   });
   const last = new Map<string, { verdict: string; created_at: string }>();
   for (const r of reviews) last.set(r.role, r);
@@ -244,7 +270,7 @@ export async function autoMerge(p: Project, gh: GitHub, opts: { retrySec?: numbe
   if (githubDown(p)) return 0;
   const retryMs = (opts.retrySec ?? 60) * 1000;
   let merged = 0;
-  for (const t of suggestedMergeOrder(p)) {
+  for (const t of await suggestedMergeOrder(p)) {
     // 前の merge で衝突が見つかって持ち主に戻ったものは飛ばす
     if (p.ticket(t.id).stage !== "merge") continue;
     const key = `automerge_at:${t.id}`;
@@ -257,7 +283,7 @@ export async function autoMerge(p: Project, gh: GitHub, opts: { retrySec?: numbe
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
       if (isGithubAuthError(reason)) {
-        markGithubDown(p, reason);
+        await markGithubDown(p, reason);
         break;
       }
       p.event("system", "merge_blocked", t.id, { reason });
@@ -269,6 +295,6 @@ export async function autoMerge(p: Project, gh: GitHub, opts: { retrySec?: numbe
 /**
  * merge の順番の案内。衝突しにくい順として、往復が少なく、早く完成したものから並べる。
  */
-export function suggestedMergeOrder(p: Project): TicketRow[] {
-  return all<TicketRow>(p.db, "SELECT * FROM tickets WHERE stage = 'merge' ORDER BY rounds, done_at, number");
+export async function suggestedMergeOrder(p: Project): Promise<TicketRow[]> {
+  return (await p.pdb.from("tickets").where("stage", "=", "merge").orderBy("rounds").orderBy("done_at").orderBy("number").execute()) as TicketRow[];
 }

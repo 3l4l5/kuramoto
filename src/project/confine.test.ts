@@ -25,7 +25,7 @@ describe("作業場所への閉じ込め", () => {
     });
     const workspace = new StaticWorkspace("/tmp/ws");
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace });
-    createTicket(p, { title: "CSV の書き出し" });
+    await createTicket(p, { title: "CSV の書き出し" });
     await d.drain();
 
     const [dev, review] = harness.calls;
@@ -70,7 +70,7 @@ describe("作業場所への閉じ込め", () => {
     });
     const workspace = new StaticWorkspace("/tmp/ws", { ready: () => (dirty ? "コミットしていない変更があります" : undefined) });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace });
-    createTicket(p, { title: "x" });
+    await createTicket(p, { title: "x" });
     await d.dispatchOnce();
     expect(replies[0]).toContain("コミットしていない変更");
     expect(replies[1]).toContain("受け付けました");

@@ -52,7 +52,7 @@ async function main(argv: string[]): Promise<void> {
         return;
       case "ticket": {
         const p = await hq.openProject(Number(rest[0]));
-        const t = createTicket(p, { title: rest[1] ?? "", body: values.body ?? "" });
+        const t = await createTicket(p, { title: rest[1] ?? "", body: values.body ?? "" });
         console.log(`#${t.number} を作りました`);
         p.close();
         return;
@@ -91,7 +91,7 @@ async function main(argv: string[]): Promise<void> {
       }
       case "answer": {
         const p = await hq.openProject(Number(sub));
-        answerDecision(p, Number(rest[0]), Number(rest[1]));
+        await answerDecision(p, Number(rest[0]), Number(rest[1]));
         console.log("答えました");
         p.close();
         return;
@@ -100,7 +100,7 @@ async function main(argv: string[]): Promise<void> {
         const p = await hq.openProject(Number(sub));
         const t = p.tickets().find((x) => x.number === Number(rest[0]));
         if (!t) {
-          console.log(`merge 待ち(この順がおすすめ): ${suggestedMergeOrder(p).map((x) => `#${x.number}`).join(" → ") || "なし"}`);
+          console.log(`merge 待ち(この順がおすすめ): ${(await suggestedMergeOrder(p)).map((x) => `#${x.number}`).join(" → ") || "なし"}`);
         } else {
           console.log(JSON.stringify(await ownerMerge(p, new GhCli(), t.id)));
         }

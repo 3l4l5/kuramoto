@@ -67,7 +67,7 @@ export type DecisionRow = {
 const REVIEW_KINDS: Record<string, WorkRole> = { review: "review", sec: "sec", qa: "qa" };
 
 /** 工程に入れる。その工程のメッセージを出すか、merge 待ちに置く。 */
-export function enterStage(p: Project, ticket: TicketRow, stage: WorkRole | "merge", extra: { toMemberId?: number | null; payload?: Record<string, unknown> } = {}): void {
+export async function enterStage(p: Project, ticket: TicketRow, stage: WorkRole | "merge", extra: { toMemberId?: number | null; payload?: Record<string, unknown> } = {}): Promise<void> {
   p.setStage(ticket.id, stage);
   if (stage === "merge") {
     // 確認がすべて済んだコミットを覚えておく。この後に戻ってきても、承認のあとの変更だけを確かめればよい
@@ -83,7 +83,7 @@ export function enterStage(p: Project, ticket: TicketRow, stage: WorkRole | "mer
   const now = p.ticket(ticket.id);
   const preDev = stage !== "dev" && !now.dev_done && isPreDev(pipelineOf(p.currentFormation(), now.kind), stage);
   // 再レビューは、前にこのチケットを見た同じレビュアーに頼む(実際の PR と同じく、文脈を持っている人が見る)
-  const toMemberId = extra.toMemberId !== undefined ? extra.toMemberId : stage === "dev" ? ticket.owner_member_id : lastReviewer(p, ticket.id, stage);
+  const toMemberId = extra.toMemberId !== undefined ? extra.toMemberId : stage === "dev" ? ticket.owner_member_id : await lastReviewer(p, ticket.id, stage);
   send(p, { ticketId: ticket.id, toRole: stage, kind, toMemberId, payload: { ...(extra.payload ?? {}), ...(preDev ? { preDev: true } : {}) } });
 }
 
@@ -100,7 +100,7 @@ export function firstStage(p: Project, ticket: TicketRow): WorkRole {
  * その後ろにある工程のうち今の並びにある最初のものへ進む(流れの順を入れ替えていても、島のある工程を飛ばさない)。
  * 流れにも無いときだけ、今までの WORK_ROLES の順に頼る。
  */
-export function advance(p: Project, ticket: TicketRow, from: WorkRole, opts: { preDev?: boolean } = {}): void {
+export async function advance(p: Project, ticket: TicketRow, from: WorkRole, opts: { preDev?: boolean } = {}): Promise<void> {
   const t = p.ticket(ticket.id);
   const pipeline = pipelineOf(p.currentFormation(), t.kind, { devDone: !!t.dev_done });
   // 島で絞る前の流れ。開発を通っていれば開発より後ろだけ
@@ -113,7 +113,7 @@ export function advance(p: Project, ticket: TicketRow, from: WorkRole, opts: { p
   else if (opts.preDev && !t.dev_done && pipeline.includes("dev") && (at < 0 || at > flow.indexOf("dev"))) to = "dev";
   else if (at >= 0) to = flow.slice(at + 1).find((r) => pipeline.includes(r)) ?? "merge";
   else to = pipeline.find((r) => WORK_ROLES.indexOf(r) > WORK_ROLES.indexOf(from)) ?? "merge";
-  enterStage(p, t, to);
+  await enterStage(p, t, to);
 }
 
 /** 責任者がチケットの種類を変える。変えたことをやりとりに残し、次の工程から新しい種類の流れで進む(今いる工程はそのまま)。 */
@@ -130,24 +130,24 @@ export function setTicketKind(p: Project, ticketId: number, kind: unknown, by = 
  * 起動 1 回の報告を工程に反映する。
  * @returns 報告が足りないなど、起動を失敗として扱うべきときはその理由
  */
-export function applyReport(p: Project, ctx: { msg: MessageRow; runId: number; memberId: number }, report: RunReport): string | undefined {
+export async function applyReport(p: Project, ctx: { msg: MessageRow; runId: number; memberId: number }, report: RunReport): Promise<string | undefined> {
   const { msg } = ctx;
   if (msg.ticket_id === null) return undefined;
   const ticket = p.ticket(msg.ticket_id);
 
-  return tx(p.db, () => {
+  return p.pdb.transaction(async () => {
     switch (msg.kind) {
       case "implement":
       case "fix":
       case "answer":
-        return applyDev(p, ticket, ctx.memberId, report, JSON.parse(msg.payload) as { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string; rules?: unknown });
+        return await applyDev(p, ticket, ctx.memberId, report, JSON.parse(msg.payload) as { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string; rules?: unknown });
       case "review":
       case "sec":
       case "qa":
-        if ((JSON.parse(msg.payload) as { preDev?: boolean }).preDev) return applyHandoff(p, ticket, REVIEW_KINDS[msg.kind]!, report);
-        return applyReview(p, ticket, REVIEW_KINDS[msg.kind]!, ctx.runId, report);
+        if ((JSON.parse(msg.payload) as { preDev?: boolean }).preDev) return await applyHandoff(p, ticket, REVIEW_KINDS[msg.kind]!, report);
+        return await applyReview(p, ticket, REVIEW_KINDS[msg.kind]!, ctx.runId, report);
       case "decide":
-        return applyLead(p, ticket, JSON.parse(msg.payload) as { decision_id: number }, report);
+        return await applyLead(p, ticket, JSON.parse(msg.payload) as { decision_id: number }, report);
       case "plan":
       case "chat":
       case "triage":
@@ -159,14 +159,14 @@ export function applyReport(p: Project, ctx: { msg: MessageRow; runId: number; m
 }
 
 /** 開発より前の確認(R17)の報告。申し送りを残して次の工程へ。差し戻しは無く、往復(rounds)にも数えない。 */
-function applyHandoff(p: Project, ticket: TicketRow, role: WorkRole, report: RunReport): string | undefined {
+async function applyHandoff(p: Project, ticket: TicketRow, role: WorkRole, report: RunReport): Promise<string | undefined> {
   if (!report.handoff) return "leave_handoff が呼ばれませんでした。チケットの中身を読んで、申し送りを残してください";
   p.addHandoff(ticket.id, role, report.handoff.body);
-  advance(p, ticket, role, { preDev: true });
+  await advance(p, ticket, role, { preDev: true });
   return undefined;
 }
 
-function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunReport, payload: { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string; rules?: unknown } = {}): string | undefined {
+async function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunReport, payload: { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string; rules?: unknown } = {}): Promise<string | undefined> {
   if (ticket.owner_member_id === null) {
     run(p.db, "UPDATE tickets SET owner_member_id = ? WHERE id = ?", [memberId, ticket.id]);
     ticket = p.ticket(ticket.id);
@@ -176,7 +176,7 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
     return undefined;
   }
   if (report.alreadyDone) {
-    closeAlreadyDone(p, ticket, { ...report.alreadyDone, by: p.member(memberId).name });
+    await closeAlreadyDone(p, ticket, { ...report.alreadyDone, by: p.member(memberId).name });
     return undefined;
   }
   if (!report.pr) return "submit_pr が呼ばれませんでした";
@@ -189,9 +189,9 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
   if (!repo) return `登録されていないリポジトリです: ${report.pr.repo}`;
   run(
     p.db,
-    `INSERT INTO pull_requests (ticket_id, repo_id, number, head) VALUES (?, ?, ?, ?)
+    `INSERT INTO pull_requests (project_id, ticket_id, repo_id, number, head) VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(ticket_id, repo_id) DO UPDATE SET number = excluded.number, head = excluded.head`,
-    [ticket.id, repo.id, report.pr.number, report.pr.head],
+    [p.projectId, ticket.id, repo.id, report.pr.number, report.pr.head],
   );
   // 開発を通った。これより前の工程には戻らない
   run(p.db, "UPDATE tickets SET dev_done = 1 WHERE id = ?", [ticket.id]);
@@ -200,14 +200,14 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
   if (report.pr.sha) p.setSetting(`pr_sha:${ticket.id}`, report.pr.sha);
   // 指摘への返事をスレッドに残す
   for (const r of report.responses ?? []) {
-    comment(p, r.findingId, { memberId, role: "dev" }, r.action, r.comment);
-    setStatus(p, r.findingId, r.action === "fixed" ? "addressed" : "disputed");
+    await comment(p, r.findingId, { memberId, role: "dev" }, r.action, r.comment);
+    await setStatus(p, r.findingId, r.action === "fixed" ? "addressed" : "disputed");
   }
   // 「直すまで進めない」開発ルール(R15)に反したまま。PR は出したが、次の工程には進めず、持ち主に戻す
   const blocked = openViolations(p, ticket.id, "blocked");
   if (blocked.length) {
     p.event("system", "rule_blocked", ticket.id, { rules: blocked.map((v) => v.name) });
-    enterStage(p, ticket, "dev", {
+    await enterStage(p, ticket, "dev", {
       payload: { rules: blocked.map((v) => ({ name: v.name, body: v.body, detail: v.detail })), ...(report.pr.sha ? { sha: report.pr.sha } : {}), ...(payload.from ? { from: payload.from } : {}) },
     });
     return undefined;
@@ -216,8 +216,8 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
   if (report.teamCi && !report.teamCi.ok) {
     const r = report.teamCi;
     p.event("team_ci", "sent_back", ticket.id, { sha: r.sha });
-    if (r.conflict) enterStage(p, ticket, "dev", { payload: { conflict: true, cause: r.conflict } });
-    else enterStage(p, ticket, "dev", { payload: { ci: true, team: true, ...(report.pr.sha ? { sha: report.pr.sha } : {}), ...(payload.from ? { from: payload.from } : {}), findings: teamCiFindings(r) } });
+    if (r.conflict) await enterStage(p, ticket, "dev", { payload: { conflict: true, cause: r.conflict } });
+    else await enterStage(p, ticket, "dev", { payload: { ci: true, team: true, ...(report.pr.sha ? { sha: report.pr.sha } : {}), ...(payload.from ? { from: payload.from } : {}), findings: teamCiFindings(r) } });
     return undefined;
   }
   // 衝突の解き方で行き先を分ける(ADR-0013): 機械的に解けたら merge 待ちへ、ロジックに手を入れたら確認をやり直す。
@@ -230,7 +230,7 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
     const resolution = report.pr.conflictResolution ?? "logic";
     run(p.db, "UPDATE conflicts SET resolution = ?, resolved_at = ? WHERE id = ?", [resolution, p.now(), conflict.id]);
     if (resolution === "mechanical") {
-      enterStage(p, ticket, "merge");
+      await enterStage(p, ticket, "merge");
       return undefined;
     }
   }
@@ -241,27 +241,27 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
     // main を取り込んだだけ(自分の変更が無い)なら、そのまま merge 待ちへ
     if (report.pr.ownCommitsSinceApproved === 0) {
       p.event("system", "recheck_skipped", ticket.id, { reason: "main の取り込みだけ" });
-      enterStage(p, ticket, "merge");
+      await enterStage(p, ticket, "merge");
       return undefined;
     }
     // 自分で足した変更があれば、最初の確認の工程が、承認のあとの変更だけを軽く確かめる
     const first = pipeline.find((r) => r !== "dev");
     if (first) {
       p.setSetting(`recheck:${ticket.id}`, approved);
-      enterStage(p, ticket, first);
+      await enterStage(p, ticket, first);
       return undefined;
     }
   }
   // 差し戻しの直しなら、差し戻した工程(同じレビュアー)に戻す。前の工程の承認はそのまま生かす
   if (payload.from && pipeline.includes(payload.from)) {
-    enterStage(p, ticket, payload.from);
+    await enterStage(p, ticket, payload.from);
     return undefined;
   }
-  advance(p, ticket, "dev");
+  await advance(p, ticket, "dev");
   return undefined;
 }
 
-function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: number, report: RunReport): string | undefined {
+async function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: number, report: RunReport): Promise<string | undefined> {
   if (!report.review) return "submit_review が呼ばれませんでした";
   const { resolutions } = report.review;
   // 「レビューで指摘」の開発ルール(R15)の違反は、最初の確認の工程が、まだ指摘にしていないものを指摘に足す
@@ -275,22 +275,23 @@ function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: numbe
   const round = ticket.rounds + 1;
 
   // 前回までの指摘に答える。「直さない」に対して再オープンしたものは、意見が割れたものとして控える
-  const prior = new Map(mustResolve(p, ticket.id, role).map((t) => [t.id, t]));
+  const prior = new Map((await mustResolve(p, ticket.id, role)).map((t) => [t.id, t]));
   const disputes: number[] = [];
   for (const r of resolutions) {
     const t = prior.get(r.findingId);
     if (!t) continue;
-    if (r.result === "resolved") setStatus(p, t.id, "fixed");
-    else if (r.result === "accept") setStatus(p, t.id, "wontfix");
+    if (r.result === "resolved") await setStatus(p, t.id, "fixed");
+    else if (r.result === "accept") await setStatus(p, t.id, "wontfix");
     else {
       if (t.status === "disputed") disputes.push(t.id);
-      setStatus(p, t.id, "open");
+      await setStatus(p, t.id, "open");
     }
-    comment(p, t.id, who, r.result === "resolved" ? "resolved" : r.result === "accept" ? "accepted" : "reopened", r.comment ?? "");
+    await comment(p, t.id, who, r.result === "resolved" ? "resolved" : r.result === "accept" ? "accepted" : "reopened", r.comment ?? "");
   }
   const blocking = findings.some((f) => f.blocking !== false) || resolutions.some((r) => r.result === "reopen" && prior.has(r.findingId));
   const verdict = blocking ? "changes" : "approve";
-  const reviewId = run(p.db, "INSERT INTO reviews (ticket_id, role, round, run_id, verdict, created_at) VALUES (?, ?, ?, ?, ?, ?)", [
+  const reviewId = run(p.db, "INSERT INTO reviews (project_id, ticket_id, role, round, run_id, verdict, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [
+    p.projectId,
     ticket.id,
     role,
     round,
@@ -298,14 +299,14 @@ function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: numbe
     verdict,
     p.now(),
   ]).lastId;
-  recordFindings(p, ticket.id, role, reviewId, findings, who);
+  await recordFindings(p, ticket.id, role, reviewId, findings, who);
   createFollowups(p, ticket, role, report.review.followups ?? []);
 
   if (verdict === "approve") {
     p.event(role, "approved", ticket.id, { round });
     // 承認のあとの変更だけを確かめる軽い確認なら、ほかの工程はやり直さずに merge 待ちへ
-    if (p.setting(`recheck:${ticket.id}`)) enterStage(p, ticket, "merge");
-    else advance(p, ticket, role);
+    if (p.setting(`recheck:${ticket.id}`)) await enterStage(p, ticket, "merge");
+    else await advance(p, ticket, role);
     return undefined;
   }
 
@@ -350,7 +351,7 @@ function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: numbe
       recommended: 0,
       why: "指摘が残ったまま通すと、後の手戻りが大きくなりやすいため",
       // 新しい指摘だけでなく、まだ直っていない(差し戻し直した)前の指摘も載せる。無いと判断する人が中身を見られない
-      impact: mustResolve(p, ticket.id, role).map(threadText).join("\n") || findings.map((f) => `[${f.severity}] ${f.body}`).join("\n") || "(残っている指摘はありません)",
+      impact: (await mustResolve(p, ticket.id, role)).map(threadText).join("\n") || findings.map((f) => `[${f.severity}] ${f.body}`).join("\n") || "(残っている指摘はありません)",
       reversible: true,
     }, [
       { label: "指摘を直して続ける", action: "fix", from: role },
@@ -359,7 +360,7 @@ function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: numbe
     ]);
     return undefined;
   }
-  enterStage(p, ticket, "dev", { payload: { from: role } });
+  await enterStage(p, ticket, "dev", { payload: { from: role } });
   return undefined;
 }
 
@@ -390,7 +391,7 @@ function createFollowups(p: Project, from: TicketRow, role: WorkRole, followups:
 }
 
 /** merge されたチケットの、控えておいた followups を別チケットにする。同じタイトルのチケットが既にあれば作らない。 */
-export function flushFollowups(p: Project, from: TicketRow): void {
+export async function flushFollowups(p: Project, from: TicketRow): Promise<void> {
   const key = `pending_followups:${from.id}`;
   const pending = JSON.parse(p.setting(key) || "[]") as (Followup & { role: string })[];
   p.setSetting(key, "[]");
@@ -399,7 +400,7 @@ export function flushFollowups(p: Project, from: TicketRow): void {
     const role = f.role;
     if (get(p.db, "SELECT 1 AS x FROM tickets WHERE title = ?", [title])) continue;
     const refs = JSON.parse((get<{ plan_refs: string }>(p.db, "SELECT plan_refs FROM tickets WHERE id = ?", [from.id])?.plan_refs ?? "{}")) as { repo?: string };
-    const t = createTicket(p, {
+    const t = await createTicket(p, {
       title,
       body: `${f.body.trim()}\n\n---\n#${from.number}「${from.title}」の${ROLE_TEXT[role] ?? role}で見つかった、チケットの範囲外のこと。`,
       ...(refs.repo ? { planRefs: { repo: refs.repo, followupOf: from.number } } : { planRefs: { followupOf: from.number } }),
@@ -411,14 +412,15 @@ export function flushFollowups(p: Project, from: TicketRow): void {
 /**
  * 指摘を記録する。前の周回で開いていた指摘は「直した」にし、同じ指紋の指摘がまた出たら「再発」にする。
  */
-function recordFindings(p: Project, ticketId: number, role: string, reviewId: number, findings: Finding[], who: { memberId: number; role: string }): void {
+async function recordFindings(p: Project, ticketId: number, role: string, reviewId: number, findings: Finding[], who: { memberId: number; role: string }): Promise<void> {
   // 前に直したはずの指摘と同じものがまた出たら「再発」
   const seen = new Set(
     all<{ fingerprint: string }>(p.db, "SELECT f.fingerprint FROM findings f JOIN reviews r ON r.id = f.review_id WHERE r.ticket_id = ? AND r.role = ? AND r.id <> ?", [ticketId, role, reviewId]).map((f) => f.fingerprint),
   );
   for (const f of findings) {
     const fp = fingerprint(f);
-    const id = run(p.db, "INSERT INTO findings (review_id, category, severity, path, line, body, fingerprint, status, blocking) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+    const id = run(p.db, "INSERT INTO findings (project_id, review_id, category, severity, path, line, body, fingerprint, status, blocking) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+      p.projectId,
       reviewId,
       f.category,
       f.severity,
@@ -429,7 +431,7 @@ function recordFindings(p: Project, ticketId: number, role: string, reviewId: nu
       seen.has(fp) ? "recurred" : "open",
       f.blocking === false ? 0 : 1,
     ]).lastId;
-    comment(p, id, who, "raised", f.body);
+    await comment(p, id, who, "raised", f.body);
   }
 }
 
@@ -446,9 +448,9 @@ function insertDecision(p: Project, ticket: TicketRow, q: Question, opts: { esca
   const deadline = opts.escalated && !opts.noDeadline ? iso(new Date(p.clock.now().getTime() + p.settingNumber("decision_timeout_sec", 3600) * 1000)) : null;
   return run(
     p.db,
-    `INSERT INTO decisions (ticket_id, question, options, recommended, why, impact, reversible, escalated, deadline_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [ticket.id, `${q.context}\n${q.question}`, JSON.stringify(options), q.recommended, q.why, q.impact, q.reversible ? 1 : 0, opts.escalated ? 1 : 0, deadline],
+    `INSERT INTO decisions (project_id, ticket_id, question, options, recommended, why, impact, reversible, escalated, deadline_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [p.projectId, ticket.id, `${q.context}\n${q.question}`, JSON.stringify(options), q.recommended, q.why, q.impact, q.reversible ? 1 : 0, opts.escalated ? 1 : 0, deadline],
   ).lastId;
 }
 
@@ -471,7 +473,7 @@ export function raiseToOwner(p: Project, ticketId: number, q: Omit<Question, "op
   return id;
 }
 
-function applyLead(p: Project, ticket: TicketRow, payload: { decision_id: number }, report: RunReport): string | undefined {
+async function applyLead(p: Project, ticket: TicketRow, payload: { decision_id: number }, report: RunReport): Promise<string | undefined> {
   const d = decision(p, payload.decision_id);
   if (report.leadDecision && !report.escalate) {
     const options = JSON.parse(d.options) as DecisionOption[];
@@ -483,7 +485,7 @@ function applyLead(p: Project, ticket: TicketRow, payload: { decision_id: number
     }
     const { choice, reason, note } = report.leadDecision;
     if (note?.trim()) p.addNote(ticket.id, note.trim(), "lead");
-    resolve(p, d, choice, "lead");
+    await resolve(p, d, choice, "lead");
     p.event("lead", "decided_by_recommendation", ticket.id, { decision_id: d.id, choice, reason });
     // 止めずに進め、責任者には何をどう決めたかを報告する(違えばあとから指示できる)
     run(p.db, "INSERT INTO lead_messages (who, body, at) VALUES ('lead', ?, ?)", [
@@ -517,29 +519,29 @@ export function decision(p: Project, id: number): DecisionRow {
  * 責任者が画面で答えた。note を書いたら、チケットのメモとして残し、次に動く担当(持ち主・レビュアー)が読む。
  * リーダーの問いへの答え(版を決める・線引きをする)は、ここに書く。
  */
-export function answerDecision(p: Project, id: number, choice: number, note?: string): void {
-  tx(p.db, () => {
+export async function answerDecision(p: Project, id: number, choice: number, note?: string): Promise<void> {
+  await p.pdb.transaction(async () => {
     const d = decision(p, id);
     if (d.decided_at) throw new Error("この判断はもう決まっています");
     if (!d.escalated) throw new Error("この判断はまだリーダーが見ています");
     if (choice < 0 || choice >= (JSON.parse(d.options) as unknown[]).length) throw new Error("選択肢の範囲外です");
     if (note?.trim()) p.addNote(d.ticket_id, note.trim(), "owner");
-    resolve(p, d, choice, "owner");
+    await resolve(p, d, choice, "owner");
   });
 }
 
 /** 保留を解いて、止まったところから続ける(保留の原因が無くなったと Kuramoto が確かめたとき)。 */
-export function resumeHold(p: Project, id: number, by: "owner" | "lead"): void {
-  tx(p.db, () => {
+export async function resumeHold(p: Project, id: number, by: "owner" | "lead"): Promise<void> {
+  await p.pdb.transaction(async () => {
     const d = decision(p, id);
     if (d.decided_at) return;
     const i = (JSON.parse(d.options) as DecisionOption[]).findIndex((o) => o.action === "resume");
-    if (i >= 0) resolve(p, d, i, by);
+    if (i >= 0) await resolve(p, d, i, by);
   });
 }
 
 /** 期限を過ぎた判断を推奨で決める。 */
-export function expireDecisions(p: Project): number {
+export async function expireDecisions(p: Project): Promise<number> {
   const due = all<DecisionRow>(p.db, "SELECT * FROM decisions WHERE escalated = 1 AND decided_at IS NULL AND deadline_at <= ?", [p.now()]);
   let n = 0;
   for (const d of due) {
@@ -549,13 +551,13 @@ export function expireDecisions(p: Project): number {
       run(p.db, "UPDATE decisions SET deadline_at = NULL WHERE id = ?", [d.id]);
       continue;
     }
-    tx(p.db, () => resolve(p, d, d.recommended, "timeout"));
+    await p.pdb.transaction(async () => await resolve(p, d, d.recommended, "timeout"));
     n++;
   }
   return n;
 }
 
-function resolve(p: Project, d: DecisionRow, choice: number, by: "owner" | "lead" | "timeout"): void {
+async function resolve(p: Project, d: DecisionRow, choice: number, by: "owner" | "lead" | "timeout"): Promise<void> {
   run(p.db, "UPDATE decisions SET decided_by = ?, choice = ?, decided_at = ? WHERE id = ?", [by, choice, p.now(), d.id]);
   const option = (JSON.parse(d.options) as DecisionOption[])[choice]!;
   const ticket = p.ticket(d.ticket_id);
@@ -566,22 +568,22 @@ function resolve(p: Project, d: DecisionRow, choice: number, by: "owner" | "lead
     return;
   }
   if (option.action === "pass" && option.from) {
-    advance(p, ticket, option.from);
+    await advance(p, ticket, option.from);
     return;
   }
   if (option.action === "fix" && option.from) {
-    enterStage(p, ticket, "dev", { payload: { from: option.from } });
+    await enterStage(p, ticket, "dev", { payload: { from: option.from } });
     return;
   }
   if (option.action === "waive" && option.from) {
     // 裁定: 割れた指摘は直さない。ほかに必須の指摘が残っていれば直しに戻し、無ければ次の工程へ
     for (const id of option.findings ?? []) {
-      setStatus(p, id, "wontfix");
-      comment(p, id, { memberId: null, role: by === "owner" ? "owner" : "lead" }, "ruled", "直さずに通す");
+      await setStatus(p, id, "wontfix");
+      await comment(p, id, { memberId: null, role: by === "owner" ? "owner" : "lead" }, "ruled", "直さずに通す");
     }
-    const left = mustResolve(p, ticket.id, option.from).filter((t) => t.status === "open" || t.status === "recurred");
-    if (left.length) enterStage(p, ticket, "dev", { payload: { from: option.from } });
-    else advance(p, ticket, option.from);
+    const left = (await mustResolve(p, ticket.id, option.from)).filter((t) => t.status === "open" || t.status === "recurred");
+    if (left.length) await enterStage(p, ticket, "dev", { payload: { from: option.from } });
+    else await advance(p, ticket, option.from);
     return;
   }
   if (option.action === "continue" && ticketExhausted(p, ticket.id)) {
@@ -671,7 +673,7 @@ export function hasOwnBudget(p: Project, ticketId: number): boolean {
  * チケットの予算を決める(null ならプロジェクトの既定に戻す)。決めた額がそのまま予算になるよう、足した分は消す。
  * 予算切れで止まっていて、新しい予算が使った額を上回るなら、止めた判断を「続ける」で閉じて仕事に戻す。
  */
-export function setTicketBudget(p: Project, ticketId: number, usd: number | null | "unlimited"): void {
+export async function setTicketBudget(p: Project, ticketId: number, usd: number | null | "unlimited"): Promise<void> {
   if (usd !== null && usd !== "unlimited" && !(Number.isFinite(usd) && usd > 0)) throw new Error("予算は 0 より大きい金額にしてください");
   const ticket = p.ticket(ticketId);
   if (!ticket) throw new Error(`チケット ${ticketId} はありません`);
@@ -687,7 +689,7 @@ export function setTicketBudget(p: Project, ticketId: number, usd: number | null
   );
   if (!stopped) return;
   const options = JSON.parse(stopped.options) as DecisionOption[];
-  tx(p.db, () => resolve(p, stopped, options.findIndex((o) => o.action === "continue"), "owner"));
+  await p.pdb.transaction(async () => await resolve(p, stopped, options.findIndex((o) => o.action === "continue"), "owner"));
 }
 
 export function ticketSpentUsd(p: Project, ticketId: number): number {
@@ -695,13 +697,13 @@ export function ticketSpentUsd(p: Project, ticketId: number): number {
 }
 
 /** チケットを作り、開発の受信箱に入れる。 */
-export function createTicket(p: Project, t: Parameters<Project["addTicket"]>[0]): TicketRow {
-  return tx(p.db, () => {
+export async function createTicket(p: Project, t: Parameters<Project["addTicket"]>[0]): Promise<TicketRow> {
+  return p.pdb.transaction(async () => {
     const ticket = p.addTicket(t);
     // リーダーの交通整理を待つ(交通整理をしない設定なら、そのまま取られる)
     run(p.db, "UPDATE tickets SET triaged = 0 WHERE id = ?", [ticket.id]);
     // 種類の流れの先頭から始める(開発より前の工程があれば、そこから)
-    enterStage(p, ticket, firstStage(p, ticket));
+    await enterStage(p, ticket, firstStage(p, ticket));
     return p.ticket(ticket.id);
   });
 }
@@ -725,14 +727,14 @@ export function resumeWork(p: Project, ticket: TicketRow, m: ResumeMessage): voi
  * コミットが main に入っていることは、呼ぶ前に Kuramoto が確かめておく(Workspace.landed)。
  * 待っている判断と仕事を片付け、チケットを完了にする。後に待っていたチケットはそのまま動き出す。
  */
-export function closeAlreadyDone(p: Project, ticket: TicketRow, a: { commit: string; reason: string; by: string }): void {
-  tx(p.db, () => {
+export async function closeAlreadyDone(p: Project, ticket: TicketRow, a: { commit: string; reason: string; by: string }): Promise<void> {
+  await p.pdb.transaction(async () => {
     run(p.db, "UPDATE decisions SET decided_by = 'lead', decided_at = ? WHERE ticket_id = ? AND decided_at IS NULL", [p.now(), ticket.id]);
     run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ? AND status = 'pending'", [ticket.id]);
     p.setStage(ticket.id, "merge"); // 完了の時刻を入れる
     p.setStage(ticket.id, "done");
     p.addNote(ticket.id, `【すでに main に入っていました】${a.reason}(コミット ${a.commit})`, "lead");
-    flushFollowups(p, ticket);
+    await flushFollowups(p, ticket);
     p.event(a.by, "already_done", ticket.id, { commit: a.commit, reason: a.reason });
   });
 }

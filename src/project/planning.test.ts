@@ -123,7 +123,7 @@ describe("企画スタジオ", () => {
     const { p, d, harness } = setup();
 
     // リポジトリを登録すると、企画担当が聞き始める
-    advance(p);
+    await advance(p);
     await d.drain();
     expect(messages(p, "req").map((m) => m.who)).toEqual(["plan"]);
     expect(stageRow(p, "flow").version).toBe(1);
@@ -132,17 +132,17 @@ describe("企画スタジオ", () => {
     chat(p, "req", "予約サイトを作りたい");
     await d.drain();
     expect(agreeBlocker(p, "req")).toMatch(/未決/);
-    answerOpenItem(p, openItems(p, "req")[0]!.id, "作らない");
+    await answerOpenItem(p, openItems(p, "req")[0]!.id, "作らない");
     await d.drain();
     expect(studioView(p).requirements.find((r) => r.code === "R2")!.acceptance).toContain("変更は作らない");
     // 次の段階は、前の段階を終えるまで始まらない
     expect(harness.calls.some((c) => c.tools.some((t) => t.name === "set_flow"))).toBe(false);
-    agree(p, "req");
+    await agree(p, "req");
 
     // フロー: 要件の合意をきっかけにデザイナーが描く
     await d.drain();
     expect(studioView(p).flow!.nodes).toHaveLength(2);
-    agree(p, "flow");
+    await agree(p, "flow");
 
     // 画面: 2 案から選び、コメントを付けると直してくる
     await d.drain();
@@ -154,7 +154,7 @@ describe("企画スタジオ", () => {
     agreeScreen(p, "search");
     agreeScreen(p, "confirm");
     expect(studioView(p).screens.find((s) => s.key === "search")!.variants[0]!.html).toBe("<p>A2</p>");
-    agree(p, "screen");
+    await agree(p, "screen");
 
     // インフラ: 画面の合意をきっかけにアーキテクトが書く。画面の中身も渡されている。戻せない選択は未決に入る
     await d.drain();
@@ -163,9 +163,9 @@ describe("企画スタジオ", () => {
     expect(infraCall.prompt).toContain('"screens"');
     expect(agreeBlocker(p, "infra")).toMatch(/未決/);
     expect(harness.calls.some((c) => c.tools.some((t) => t.name === "set_domain_model"))).toBe(false);
-    answerOpenItem(p, openItems(p, "infra")[0]!.id, "東京");
+    await answerOpenItem(p, openItems(p, "infra")[0]!.id, "東京");
     await d.drain();
-    agree(p, "infra");
+    await agree(p, "infra");
 
     // アーキテクチャとデータ: インフラの合意をきっかけに、アーキテクチャスタイルから書く。戻せない判断は未決に入る
     await d.drain();
@@ -173,9 +173,9 @@ describe("企画スタジオ", () => {
     expect(harness.calls.find((c) => c.tools.some((t) => t.name === "set_domain_model"))!.prompt).toContain('"infra"');
     expect(openItems(p, "model").filter((o) => o.answer === null)).toHaveLength(1);
     expect(handoffBlocker(p)).toMatch(/アーキテクチャとデータ/);
-    answerOpenItem(p, openItems(p, "model")[0]!.id, "新しい表");
+    await answerOpenItem(p, openItems(p, "model")[0]!.id, "新しい表");
     await d.drain();
-    agree(p, "model");
+    await agree(p, "model");
 
     // チームに渡す: リーダーがチケットを作る
     expect(handoffBlocker(p)).toBeNull();
@@ -211,18 +211,18 @@ describe("企画スタジオ", () => {
         return { finalText: "作りました" };
       }
     });
-    setMode(p, "infra", "skip");
-    advance(p);
+    await setMode(p, "infra", "skip");
+    await advance(p);
     chat(p, "req", "メモアプリ");
     await d.drain();
-    agree(p, "req");
+    await agree(p, "req");
     await d.drain();
-    answerOpenItem(p, openItems(p, "flow")[0]!.id, "消す");
+    await answerOpenItem(p, openItems(p, "flow")[0]!.id, "消す");
     await d.drain();
 
     expect(stageRow(p, "req")).toMatchObject({ version: 2, agreed_version: 2 });
     expect(messages(p, "req").at(-1)!.body).toContain("書き足しました");
-    agree(p, "flow");
+    await agree(p, "flow");
     await d.drain();
     expect(harness.calls.some((c) => c.tools.some((t) => t.name === "upsert_screen"))).toBe(true);
     expect(studioView(p).screens).toHaveLength(1);
@@ -230,17 +230,17 @@ describe("企画スタジオ", () => {
 
   it("合意した段階が後から下書きに戻っても、次の段階は止まらない(引き渡しには合意し直しが要る)", async () => {
     const { p, d } = setup();
-    setMode(p, "infra", "skip");
-    advance(p);
+    await setMode(p, "infra", "skip");
+    await advance(p);
     chat(p, "req", "予約サイトを作りたい");
     await d.drain();
-    answerOpenItem(p, openItems(p, "req")[0]!.id, "作らない");
+    await answerOpenItem(p, openItems(p, "req")[0]!.id, "作らない");
     await d.drain();
-    agree(p, "req");
+    await agree(p, "req");
     const { upsertRequirement } = await import("./planning.js");
     upsertRequirement(p, { code: "R1", name: "空き枠を探す", acceptance: "責任者が直接直した" });
     await d.drain();
-    agree(p, "flow");
+    await agree(p, "flow");
     await d.drain();
     expect(studioView(p).screens.length).toBeGreaterThan(0);
     expect(handoffBlocker(p)).toMatch(/要件/);
@@ -248,12 +248,12 @@ describe("企画スタジオ", () => {
 
   it("合意済みの段階を直すと版が上がり、合意し直しになる", async () => {
     const { p, d } = setup();
-    advance(p);
+    await advance(p);
     chat(p, "req", "予約サイトを作りたい");
     await d.drain();
-    answerOpenItem(p, openItems(p, "req")[0]!.id, "作らない");
+    await answerOpenItem(p, openItems(p, "req")[0]!.id, "作らない");
     await d.drain();
-    agree(p, "req");
+    await agree(p, "req");
     expect(stageRow(p, "req")).toMatchObject({ version: 1, agreed_version: 1 });
     expect(stageDone(p, "req")).toBe(true);
 
@@ -266,17 +266,17 @@ describe("企画スタジオ", () => {
 
   it("省いた段階は飛ばし、お任せの段階は担当が決めて仕上げる。要件は省けない", async () => {
     const { p, d } = setup();
-    expect(() => setMode(p, "req", "skip")).toThrow(/省けません/);
-    setMode(p, "infra", "skip");
-    setMode(p, "flow", "skip");
-    setMode(p, "screen", "skip");
-    setMode(p, "model", "delegate");
-    advance(p);
+    await expect(setMode(p, "req", "skip")).rejects.toThrow(/省けません/);
+    await setMode(p, "infra", "skip");
+    await setMode(p, "flow", "skip");
+    await setMode(p, "screen", "skip");
+    await setMode(p, "model", "delegate");
+    await advance(p);
     chat(p, "req", "予約サイトを作りたい");
     await d.drain();
-    answerOpenItem(p, openItems(p, "req")[0]!.id, "作らない");
+    await answerOpenItem(p, openItems(p, "req")[0]!.id, "作らない");
     await d.drain();
-    agree(p, "req");
+    await agree(p, "req");
     await d.drain();
     // フローと画面は省略、ドメインはお任せで仕上がっている
     expect(stageDone(p, "infra") && stageDone(p, "flow") && stageDone(p, "screen") && stageDone(p, "model")).toBe(true);
@@ -290,9 +290,9 @@ describe("企画スタジオ", () => {
       const id = Number((await call("add_open_item", { question: "データを消すか", options: ["消す", "残す"], recommended: 1, why: "戻せない", reversible: false })).match(/#(\d+)/)![1]);
       return { finalText: await call("answer_open_item", { id, answer: "消す" }) };
     });
-    setMode(p, "req", "delegate");
+    await setMode(p, "req", "delegate");
     await d.drain();
-    advance(p);
+    await advance(p);
     await d.drain();
     expect(messages(p, "req").at(-1)!.body).toMatch(/責任者に聞きます/);
     expect(openItems(p, "req")[0]!.answer).toBeNull();
@@ -300,7 +300,7 @@ describe("企画スタジオ", () => {
 
   it("担当の起動がエラーになったら、会話にそう出して再試行する", async () => {
     const { p, d } = setup(() => ({ status: "error", error: "claude にログインしていません" }));
-    advance(p);
+    await advance(p);
     await d.drain();
     expect(messages(p, "req").at(-1)).toMatchObject({ who: "system" });
     expect(messages(p, "req").at(-1)!.body).toContain("ログインしていません");
@@ -311,7 +311,7 @@ describe("技術選定", () => {
   it("選んだものが候補に無い書き方は、アーキテクトの道具が断る", async () => {
     const { planningTools } = await import("./planning-agent.js");
     const p = new Project(":memory:", new ManualClock());
-    const tool = planningTools(p, "model").find((t) => t.name === "set_architecture")!;
+    const tool = (await planningTools(p, "model")).find((t) => t.name === "set_architecture")!;
     const base = {
       style: { name: "モノリス", why: "", alternatives: [] },
       modules: [],

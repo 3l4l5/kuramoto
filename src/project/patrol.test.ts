@@ -15,8 +15,8 @@ function setup() {
   const p = new Project(":memory:", clock);
   p.addRepo("acme/shop", "API");
   // 交通整理は済ませておく(見回りだけを見る)
-  const make = (title: string, body = "") => {
-    const t = createTicket(p, { title, body });
+  const make = async (title: string, body = "") => {
+    const t = await createTicket(p, { title, body });
     run(p.db, "UPDATE tickets SET triaged = 1 WHERE id = ?", [t.id]);
     return t;
   };
@@ -50,9 +50,9 @@ function pingPong(p: Project, ticketId: number, n: number): number {
 }
 
 describe("リーダーの見回り(ADR-0026)", () => {
-  it("回っているチケットを数えて見つけ、間隔ごとに 1 回だけ見回りを頼む。見るものが無ければ頼まない", () => {
+  it("回っているチケットを数えて見つけ、間隔ごとに 1 回だけ見回りを頼む。見るものが無ければ頼まない", async () => {
     const { p, clock, make } = setup();
-    const a = make("一覧");
+    const a = await make("一覧");
     // 前回の見回りの後に新しいチケットが無く、回っているものも無い
     p.setSetting("patrol_last_ticket", String(a.number));
     expect(requestPatrol(p)).toBe(false); // 初めては、ここから間隔を数え始める
@@ -76,9 +76,9 @@ describe("リーダーの見回り(ADR-0026)", () => {
     expect(requestPatrol(p)).toBe(false);
   });
 
-  it("始業したときは、見るものが無くても必ず見回る。間隔は設定で変えられ、0 なら見回らない", () => {
+  it("始業したときは、見るものが無くても必ず見回る。間隔は設定で変えられ、0 なら見回らない", async () => {
     const { p, clock, make } = setup();
-    make("一覧");
+    await make("一覧");
     const patrols = () => all(p.db, "SELECT payload FROM messages WHERE kind = 'patrol' AND status = 'pending'");
     expect(startPatrol(p)).toBe(true);
     expect(patrols()).toEqual([{ payload: JSON.stringify({ start: true }) }]);
@@ -101,10 +101,10 @@ describe("リーダーの見回り(ADR-0026)", () => {
     expect(() => setPatrolMinutes(p, -1)).toThrow();
   });
 
-  it("同じエラーが続いている・merge 待ちから何度も戻っているチケットも見つける", () => {
+  it("同じエラーが続いている・merge 待ちから何度も戻っているチケットも見つける", async () => {
     const { p, make } = setup();
-    const a = make("CI");
-    const b = make("保存");
+    const a = await make("CI");
+    const b = await make("保存");
     for (let i = 0; i < 3; i++) addRun(p, a.id, "dev", "npm test が落ちる");
     for (let i = 0; i < 3; i++) p.event("system", "ready_to_merge", b.id, {});
     const s = loopSignals(p);
@@ -116,10 +116,10 @@ describe("リーダーの見回り(ADR-0026)", () => {
   it("リーダーが見回りで、往復を止めて通し、取りかかった後の重複を片付けて PR を閉じる。見たものは次から数え直す", async () => {
     const { p, make } = setup();
     p.saveFormation({ pull: "down", units: [{ name: "開発の島", roles: ["dev"], maxMembers: 1, summonAt: 2, idleSec: 600 }, { name: "レビューの島", roles: ["review"], maxMembers: 1, summonAt: 2, idleSec: 600 }] });
-    const loop = make("メモ一覧");
-    const keep = make("412 のときの文言");
-    const dup = make("手で押す保存で 412 が出たときの文言", "自動保存とそろえる");
-    const later = make("保存のテスト");
+    const loop = await make("メモ一覧");
+    const keep = await make("412 のときの文言");
+    const dup = await make("手で押す保存で 412 が出たときの文言", "自動保存とそろえる");
+    const later = await make("保存のテスト");
     run(p.db, "INSERT INTO ticket_deps (ticket_id, depends_on) VALUES (?, ?)", [later.id, dup.id]);
     const finding = pingPong(p, loop.id, 4);
     // 重複の方も取りかかっていて、PR がある
@@ -161,8 +161,8 @@ describe("リーダーの見回り(ADR-0026)", () => {
   it("起動中・merge 待ちのチケットは片付けない", async () => {
     const { p, make } = setup();
     const { dropDuplicate } = await import("./patrol.js");
-    const a = make("A");
-    const b = make("B");
+    const a = await make("A");
+    const b = await make("B");
     run(p.db, "UPDATE tickets SET stage = 'merge' WHERE id = ?", [a.id]);
     expect(await dropDuplicate(p, a.number, b.number)).toContain("merge 待ち");
     const msg = run(p.db, "INSERT INTO messages (ticket_id, to_role, kind, status, available_at, created_at) VALUES (?, 'dev', 'implement', 'claimed', '', '')", [b.id]).lastId;
@@ -174,14 +174,14 @@ describe("リーダーの見回り(ADR-0026)", () => {
     const { p, make } = setup();
     const { dropUnneeded } = await import("./patrol.js");
     const { leadChatTools } = await import("./leadchat.js");
-    const a = make("CSV 出力");
-    const b = make("CSV のテスト");
+    const a = await make("CSV 出力");
+    const b = await make("CSV のテスト");
     run(p.db, "INSERT INTO ticket_deps (ticket_id, depends_on) VALUES (?, ?)", [b.id, a.id]);
     run(p.db, "INSERT INTO pull_requests (ticket_id, repo_id, number, head) VALUES (?, ?, 7, 'kuramoto/1')", [a.id, p.repos()[0]!.id]);
     const closed: number[] = [];
 
     // チャットでも使える
-    expect(leadChatTools(p).map((t) => t.name)).toContain("drop_ticket");
+    expect((await leadChatTools(p)).map((t) => t.name)).toContain("drop_ticket");
     expect(await dropUnneeded(p, a.number, "", async () => {})).toContain("理由");
     expect(await dropUnneeded(p, a.number, "責任者がチャットで CSV はいらないと言ったため", async (t) => void closed.push(t.number))).toContain("取りやめました");
 
@@ -202,8 +202,8 @@ describe("リーダーの見回り(ADR-0026)", () => {
   it("重複の片付けも、取りやめた理由として残る", async () => {
     const { p, make } = setup();
     const { dropAsDuplicate } = await import("./triage.js");
-    const keep = make("412 の文言");
-    const dup = make("保存で 412 の文言");
+    const keep = await make("412 の文言");
+    const dup = await make("保存で 412 の文言");
     dropAsDuplicate(p, dup.number, keep.number);
     expect(droppedInfo(p, dup.id)).toMatchObject({ by: "lead", reason: `#${keep.number}「412 の文言」と重複していたため` });
   });

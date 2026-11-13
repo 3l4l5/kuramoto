@@ -382,14 +382,14 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
             design_system: z.boolean().optional().describe("デザインシステムの土台(トークン・共通の部品・カタログ)を作るチケットなら true"),
             after: z.array(z.number().int()).optional().describe("先に merge されている必要があるチケットの番号(画面を作るチケットは、デザインシステムの土台のチケットを書く)"),
           },
-          handler: (a) => {
+          handler: async (a) => {
             const repos = p.repos().map((r) => r.full_name);
             if (a.repo && !repos.includes(a.repo)) return `登録されていないリポジトリです。使えるのは ${repos.join(", ")}`;
             const item = a.requirement ? requirements(p).find((r) => r.code === a.requirement) : undefined;
             if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
             const modes = Object.fromEntries(STAGES.map((s) => [s, stageRow(p, s).mode]));
             const versions = Object.fromEntries(STAGES.map((s) => [s, stageRow(p, s).version]));
-            const t = createTicket(p, {
+            const t = await createTicket(p, {
               title: a.title,
               body: a.body,
               kind: a.kind ?? "feature",
@@ -416,10 +416,10 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
                   title: z.string().optional().describe("チケットのタイトル(省くと PR のタイトル)"),
                   body: z.string().optional().describe("やること・受け入れ条件(省くと PR の本文)"),
                 },
-                handler: (a) => {
+                handler: async (a) => {
                   const item = a.requirement ? requirements(p).find((r) => r.code === a.requirement) : undefined;
                   if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
-                  const r = adoptPull(p, { repo: a.repo ?? p.repos()[0]!.full_name, number: a.number, ...(a.title ? { title: a.title } : {}), ...(a.body ? { body: a.body } : {}), ...(item ? { requirementItemId: item.id } : {}) });
+                  const r = await adoptPull(p, { repo: a.repo ?? p.repos()[0]!.full_name, number: a.number, ...(a.title ? { title: a.title } : {}), ...(a.body ? { body: a.body } : {}), ...(item ? { requirementItemId: item.id } : {}) });
                   return typeof r === "string" ? r : `#${r.number} を作り、PR #${a.number} を確認の工程から続けます。`;
                 },
               }),
@@ -508,11 +508,11 @@ function recentPlanChat(p: Project, stage: Stage | "handoff"): string {
 const SPEAKER_NAME: Record<string, string> = { plan: "企画", design: "デザイナー", arch: "アーキテクト", lead: "リーダー" };
 
 /** 起動が終わったあと: 返事を会話に残し、段階が終わっていれば次の段階を起こす。 */
-export function afterPlanningRun(p: Project, msg: MessageRow, role: Role, finalText: string): void {
+export async function afterPlanningRun(p: Project, msg: MessageRow, role: Role, finalText: string): Promise<void> {
   const payload = JSON.parse(msg.payload) as PlanPayload;
   if (finalText.trim()) say(p, payload.stage, SPEAKER[role] ?? role, finalText.trim());
   if (payload.stage === "handoff" && p.setting("plan_handed_at")) {
     say(p, "handoff", "lead", `チームに渡しました。チケットを ${p.tickets().length} 件作りました。オフィスで「始業」を押すと、開発が始まります。`);
   }
-  advance(p);
+  await advance(p);
 }

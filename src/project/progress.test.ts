@@ -26,7 +26,7 @@ describe("途中経過", () => {
     });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp"), ticketsAllowed: () => false });
 
-    advance(p);
+    await advance(p);
     expect(studioView(p).work).toEqual({ req: { state: "queued" } });
     await d.drain();
 

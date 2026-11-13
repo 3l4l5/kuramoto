@@ -123,9 +123,9 @@ export function draftVersion(p: Project, s: Stage): number {
   return r.version;
 }
 
-export function setMode(p: Project, s: Stage, mode: Mode): void {
+export async function setMode(p: Project, s: Stage, mode: Mode): Promise<void> {
   if (s === "req" && mode === "skip") throw new Error("要件は省けません");
-  tx(p.db, () => {
+  await p.pdb.transaction(async () => {
     const before = stageRow(p, s);
     run(p.db, "UPDATE plan_stages SET mode = ? WHERE stage = ?", [mode, s]);
     // お任せから自分で確かめるに戻したら、合意し直す
@@ -136,7 +136,7 @@ export function setMode(p: Project, s: Stage, mode: Mode): void {
       sendPlan(p, s, { type: "delegate", text: "この段階はお任せになりました。未決は推奨で決め、版を仕上げて、決めた内容を報告してください。戻せない判断だけは未決に残してください。" });
     }
     if (before.mode === "skip" && mode === "agree") say(p, s, "me", "省くのをやめて、この段階を作ります");
-    advance(p);
+    await advance(p);
   });
 }
 
@@ -160,15 +160,15 @@ export function agreeBlocker(p: Project, s: Stage): string | null {
   return null;
 }
 
-export function agree(p: Project, s: Stage): void {
-  tx(p.db, () => {
+export async function agree(p: Project, s: Stage): Promise<void> {
+  await p.pdb.transaction(async () => {
     const why = agreeBlocker(p, s);
     if (why) throw new Error(why);
     const r = stageRow(p, s);
     run(p.db, "UPDATE plan_stages SET agreed_version = version WHERE stage = ?", [s]);
     say(p, s, "planner", `${STAGE_LABEL[s]} v${r.version} に合意をもらいました。`);
     p.event("owner", "plan_agreed", null, { stage: s, version: r.version });
-    advance(p);
+    await advance(p);
   });
 }
 
@@ -224,7 +224,7 @@ function stageStarted(p: Project, s: Stage): boolean {
  * 段階が終わったら次の段階の担当を起こす(前の段階を終えてから次へ。ADR-0008)。
  * 省いた段階は飛ばす。
  */
-export function advance(p: Project): void {
+export async function advance(p: Project): Promise<void> {
   for (const s of STAGES) {
     if (!stageStarted(p, s)) {
       if (stageRow(p, s).mode === "skip") continue;
@@ -463,14 +463,14 @@ function openItem(p: Project, id: number): OpenItem {
 }
 
 /** 責任者が未決に答えた。担当に伝えて、図や要件に反映してもらう。 */
-export function answerOpenItem(p: Project, id: number, answer: string): void {
-  tx(p.db, () => {
+export async function answerOpenItem(p: Project, id: number, answer: string): Promise<void> {
+  await p.pdb.transaction(async () => {
     const o = openItem(p, id);
     if (o.answer !== null || o.withdrawn) throw new Error("この未決はもう閉じています");
     run(p.db, "UPDATE plan_open_items SET answer = ?, decided_by = 'owner', answered_at = ? WHERE id = ?", [answer, p.now(), id]);
     say(p, o.stage, "me", `「${o.question}」は「${answer}」で`);
     sendPlan(p, o.stage, { type: "answer", text: `未決 #${id}「${o.question}」に責任者が「${answer}」と答えました。図・要件・設計に反映して版を上げてください。この答えで聞く意味がなくなった未決があれば、理由を添えて取り下げてください。` });
-    advance(p);
+    await advance(p);
   });
 }
 

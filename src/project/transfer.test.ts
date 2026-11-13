@@ -47,14 +47,14 @@ async function fullProject(hq: Hq) {
   putArtifact(p, "req", "brief", "main", { purpose: "予約を 1 分で", users: ["会員"], outOfScope: ["決済"] });
   upsertRequirement(p, { name: "空き枠を探す", acceptance: "残りのある枠が並ぶ" });
   upsertRequirement(p, { name: "予約する", acceptance: "確定すると予約できる" });
-  answerOpenItem(p, addOpenItem(p, "req", { question: "変更を作るか", options: ["作らない", "作る"], recommended: 0, why: "足りる", reversible: true }), "作らない");
+  await answerOpenItem(p, addOpenItem(p, "req", { question: "変更を作るか", options: ["作らない", "作る"], recommended: 0, why: "足りる", reversible: true }), "作らない");
   withdrawOpenItem(p, addOpenItem(p, "req", { question: "取り下げる問い", options: ["a", "b"], recommended: 0, why: "", reversible: true }), "聞く意味がなくなった");
   chat(p, "req", "予約サイトを作りたい");
-  agree(p, "req");
+  await agree(p, "req");
   // 合意した要件を直して、版を上げておく
   upsertRequirement(p, { code: "R2", name: "予約する", acceptance: "確定すると予約でき、メールが届く" });
   putArtifact(p, "flow", "flow", "main", { nodes: [{ id: "S1", label: "探す", col: 2, row: 1 }], edges: [] });
-  agree(p, "flow");
+  await agree(p, "flow");
   putScreen(p, "search", { name: "空き枠を探す", device: "phone", requirements: ["R1"], variants: [{ id: "A", html: "<p>A</p>" }, { id: "B", html: "<p>B</p>" }], chosen: null, agreed: false });
   putScreen(p, "confirm", { name: "予約の確認", device: "desktop", requirements: ["R2"], variants: [{ id: "A", html: "<p>C</p>" }], chosen: "A", agreed: false });
   pickVariant(p, "search", "B");
@@ -62,8 +62,8 @@ async function fullProject(hq: Hq) {
   resolveComment(p, c1);
   addComment(p, "search", { variant: "B", x: 10, y: 20, body: "まだ直っていない" });
   agreeScreen(p, "confirm");
-  setMode(p, "infra", "skip");
-  setMode(p, "model", "delegate");
+  await setMode(p, "infra", "skip");
+  await setMode(p, "model", "delegate");
   addOpenItem(p, "model", { question: "データを消すか", options: ["消す", "残す"], recommended: 1, why: "戻せない", reversible: false });
   putArtifact(p, "model", "architecture", "main", {
     style: { name: "モジュラーモノリス", why: "速い", alternatives: [] },
@@ -73,7 +73,7 @@ async function fullProject(hq: Hq) {
     frontend: { rendering: "SPA", state: "" },
     stack: [],
   });
-  createTicket(p, { title: "予約の表を足す", body: "R2", planRefs: { fromPlan: true, requirement: "R2", screens: [], design: [] } });
+  await createTicket(p, { title: "予約の表を足す", body: "R2", planRefs: { fromPlan: true, requirement: "R2", screens: [], design: [] } });
   return { rec, p };
 }
 
@@ -82,16 +82,16 @@ describe("設計書からの復元", () => {
     const hq = newHq();
     const rec = await hq.createProject("途中", [{ fullName: "acme/mid", role: "API" }]);
     const p = await hq.openProject(rec.id);
-    advance(p); // 要件の段階を始める
+    await advance(p); // 要件の段階を始める
     upsertRequirement(p, { name: "探す", acceptance: "並ぶ" });
-    agree(p, "req"); // フローの担当が起こされる(まだ描いていない)
+    await agree(p, "req"); // フローの担当が起こされる(まだ描いていない)
     expect(p.setting("plan_started:flow")).toBeTruthy();
     const data = extractTransfer(exportDesignDoc(p, "途中"));
 
     const q = await hq.openProject((await hq.createProject("途中", data.repos)).id);
-    restoreTransfer(q, data);
+    await restoreTransfer(q, data);
     expect(q.setting("plan_started:flow")).toBeUndefined();
-    advance(q);
+    await advance(q);
     expect(q.db.prepare("SELECT to_role, json_extract(payload, '$.stage') AS stage FROM messages WHERE status = 'pending'").all()).toEqual([
       { to_role: "designer", stage: "flow" },
     ]);
@@ -112,7 +112,7 @@ describe("設計書からの復元", () => {
     const rec2 = await hq.createProject(data.project.name, data.repos);
     expect(rec2.data_dir).toMatch(/reserve-web-2$/); // 同じリポジトリでも置き場所は分ける
     const q = await hq.openProject(rec2.id);
-    restoreTransfer(q, data);
+    await restoreTransfer(q, data);
 
     // 書き出した中身が同じ(書き出した時刻・会話の「復元しました」・チケットの番号以外)
     const strip = (t: ReturnType<typeof collectTransfer>) => ({ ...t, exportedAt: "", messages: t.messages.filter((m) => !m.body.includes("復元しました")) });
@@ -138,22 +138,22 @@ describe("設計書からの復元", () => {
     const hq = newHq();
     const rec = await hq.createProject("種類", [{ fullName: "acme/kind", role: "API" }]);
     const p = await hq.openProject(rec.id);
-    const bug = createTicket(p, { title: "直す", kind: "bugfix" });
-    const doc = createTicket(p, { title: "書く", kind: "docs" });
-    createTicket(p, { title: "機能", kind: "feature" });
+    const bug = await createTicket(p, { title: "直す", kind: "bugfix" });
+    const doc = await createTicket(p, { title: "書く", kind: "docs" });
+    await createTicket(p, { title: "機能", kind: "feature" });
     run(p.db, "UPDATE tickets SET dev_done = 1 WHERE id = ?", [doc.id]);
     const data = extractTransfer(exportDesignDoc(p, "種類"));
     expect(data.tickets.map((t) => [t.kind, t.devDone])).toEqual([["bugfix", false], ["docs", true], ["feature", false]]);
 
     const q = await hq.openProject((await hq.createProject("種類", data.repos)).id);
-    restoreTransfer(q, data);
+    await restoreTransfer(q, data);
     expect(q.tickets().map((t) => [t.title, t.kind, t.dev_done])).toEqual([["直す", "bugfix", 0], ["書く", "docs", 1], ["機能", "feature", 0]]);
     expect(q.ticket(bug.id).kind).toBe("bugfix");
 
     // 種類のない古い書き出しは feature・開発前として読める
     const old = { ...data, tickets: data.tickets.map(({ kind: _k, devDone: _d, ...t }) => t) };
     const r = await hq.openProject((await hq.createProject("種類", data.repos)).id);
-    restoreTransfer(r, transferSchema.parse(old));
+    await restoreTransfer(r, transferSchema.parse(old));
     expect(r.tickets().map((t) => [t.kind, t.dev_done])).toEqual([["feature", 0], ["feature", 0], ["feature", 0]]);
   });
 
@@ -165,6 +165,6 @@ describe("設計書からの復元", () => {
 
     const hq = newHq();
     const { p } = await fullProject(hq);
-    expect(() => restoreTransfer(p, extractTransfer(exportDesignDoc(p, "予約サイト")))).toThrow(/空のプロジェクト/);
+    await expect(restoreTransfer(p, extractTransfer(exportDesignDoc(p, "予約サイト")))).rejects.toThrow(/空のプロジェクト/);
   });
 });
