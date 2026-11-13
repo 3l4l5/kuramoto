@@ -91,6 +91,7 @@
   --art-blush: #f7a9b4; /* 絵: ほっぺ */
   --art-mouth: #c0606e; /* 絵: 口 */
   --art-shade: #000000; /* 絵: 髪の影を作るときに混ぜる色 */
+  --art-role-arch: #008da6; /* 絵: アーキテクトの服(開発の青とは別の青緑) */
   --f-body: 'Noto Sans JP', -apple-system, 'Hiragino Sans', sans-serif; /* 本文・見出し */
   --f-mono: 'Noto Sans Mono', ui-monospace, monospace; /* チケット番号・版・数値 */
   --fs-xs: 11px; /* 番号・版・図の中の字・吹き出し */

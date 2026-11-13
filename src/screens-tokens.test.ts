@@ -46,6 +46,7 @@ describe("既存の画面をトークンにそろえる", () => {
       }
       for (const [all, v] of src.matchAll(/\bborderRadius:\s*([^,}]+)/g)) expect(v!.trim(), `${f}: ${all}`).toMatch(/^"var\(--r-(sm|md|lg|pill)\)"$/);
     }
+    for (const [all, v] of read("studio/diagrams.tsx").matchAll(/\brx=\{(\d+)\}/g)) expect(["6", "8", "12"], all).toContain(v);
     for (const [n, px] of [["sm", 6], ["md", 8], ["lg", 12]] as const) expect(tokensCss).toContain(`--r-${n}: ${px}px;`);
   });
 
@@ -54,6 +55,14 @@ describe("既存の画面をトークンにそろえる", () => {
     expect(rootBlocks).toEqual(["color-scheme: light;"]);
     expect(style).not.toMatch(/--color-/);
     expect(style).not.toMatch(/var\(--(floor|table|table-edge|laptop|route|f-display)\)/);
+  });
+
+  it("ピルだった要素は --r-pill のまま。アーキテクトの服は開発の青と別の色", () => {
+    for (const sel of [".pill", ".inbox .cnt", ".eff", ".proj .state", ".sectabs .cnt"]) {
+      expect(style, sel).toMatch(new RegExp(`\\n${sel.replace(".", "\\.")} \\{[^}]*border-radius: var\\(--r-pill\\)`));
+    }
+    expect(style).toMatch(/of-r-arch \.of-body \{ fill: var\(--art-role-arch\)/);
+    expect(tokensCss).toMatch(/--art-role-arch: #008da6/);
   });
 
   it("主ボタンは --action、青(--dev)は地に使わない", () => {

@@ -169,7 +169,7 @@ export function FlowSvg({ flow, selected, onSelect }: { flow: Flow; selected: st
         return (
           <g key={n.id} className={cls} tabIndex={0} role="button" aria-label={n.label} onClick={() => onSelect(n.id)} onKeyDown={(e) => e.key === "Enter" && onSelect(n.id)}>
             <title>{[n.label, n.sub].filter(Boolean).join("\n")}</title>
-            <rect x={p.x} y={p.y} width={t.w} height={t.h} rx={10} />
+            <rect x={p.x} y={p.y} width={t.w} height={t.h} rx={8} />
             {t.title.map((s, i) => (
               <text key={`t${i}`} x={p.x + 12} y={p.y + 22 + i * 17} fontWeight={700}>
                 {s}
@@ -217,7 +217,7 @@ export function ModelSvg({ domain }: { domain: Domain }) {
           if (!p) return null;
           return (
             <g key={e.name}>
-              <rect x={p.x} y={p.y} width={s.w} height={s.h} rx={10} fill="var(--surface)" stroke={e.isNew ? "var(--dev)" : "var(--line-strong)"} strokeWidth={1.5} />
+              <rect x={p.x} y={p.y} width={s.w} height={s.h} rx={8} fill="var(--surface)" stroke={e.isNew ? "var(--dev)" : "var(--line-strong)"} strokeWidth={1.5} />
               <text x={p.x + 12} y={p.y + 22} fontWeight={700} fill="var(--ink)" style={{ fontSize: "var(--fs-md)" }}>
                 {wrap(e.name, 13, BW - 60, 1)[0]}
                 {"  "}
@@ -291,7 +291,7 @@ export function InfraSvg({ infra }: { infra: Infra }) {
             return (
               <g key={c.name}>
                 <title>{`${c.name}\n${c.service}\n${c.purpose}`}</title>
-                <rect x={p.x} y={p.y} width={t.w} height={t.h} rx={10} fill="var(--surface)" stroke={KIND_COLOR[c.kind] ?? "var(--line-strong)"} strokeWidth={1.8} strokeDasharray={c.isNew ? undefined : "4 3"} />
+                <rect x={p.x} y={p.y} width={t.w} height={t.h} rx={8} fill="var(--surface)" stroke={KIND_COLOR[c.kind] ?? "var(--line-strong)"} strokeWidth={1.8} strokeDasharray={c.isNew ? undefined : "4 3"} />
                 <text x={p.x + 12} y={p.y + 22} fontWeight={700} fill="var(--ink)" style={{ fontSize: "var(--fs-md)" }}>
                   {t.title[0]}
                 </text>
