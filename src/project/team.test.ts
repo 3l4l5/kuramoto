@@ -454,7 +454,7 @@ describe("同じ場所を触るチケットは同時に開発しない(ADR-0024)
     expect(areaWait(p, t2!.id)).toEqual([{ number: 1, areas: ["scripts/ci-screenshots.mjs"] }]);
     // 先に取りかかった #1 は #2 を待たない
     expect(areaWait(p, t1!.id)).toEqual([]);
-    const q = officeView(p).units[0]!.queued;
+    const q = (await officeView(p)).units[0]!.queued;
     expect(q).toEqual([{ number: 2, why: "同じ場所(scripts/ci-screenshots.mjs)を触る #1 の完了待ち" }]);
     release();
     await drained;
@@ -673,7 +673,7 @@ describe("取りやめを戻す・オフィスの順番待ち", () => {
     run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = (SELECT id FROM tickets WHERE number = 1)");
     planWork(p, [{ number: 2, after: [1] }, { number: 3, after: [] }]);
     markTriaged(p, p.tickets().map((t) => t.id));
-    const dev = officeView(p).units.find((u) => u.roleKeys.includes("dev"))!;
+    const dev = (await officeView(p)).units.find((u) => u.roleKeys.includes("dev"))!;
     expect(dev.waiting).toEqual([3]);
     expect(dev.queued).toEqual([{ number: 2, why: "#1 の merge 待ち" }]);
   });
@@ -687,14 +687,14 @@ describe("オフィスの様子(メンバー・島)", () => {
     const t = createTicket(p, { title: "一覧" });
     await d.drain();
     const owner = p.ticket(t.id).owner_member_id!;
-    const m = memberView(p, owner);
+    const m = (await memberView(p, owner));
     expect(m.owned).toMatchObject([{ number: 1, title: "一覧", stage: "merge" }]);
     expect(m.history[0]).toMatchObject({ ticket: { number: 1 }, kind: "実装", outcome: "終わった", running: false });
     expect(m.totals.runs).toBe(1);
     expect(m.work).toBeNull();
 
     const dev = p.currentFormation().units.find((u) => u.roles.includes("dev"))!;
-    const u = unitView(p, dev.id, officeView(p));
+    const u = (await unitView(p, dev.id, (await officeView(p))));
     expect(u.name).toBe(dev.name);
     expect(u.members.map((x) => x.id)).toContain(owner);
     expect(u.budget.budgetUsd).toBeNull();

@@ -1,4 +1,4 @@
-import { all, get } from "../db/sqlite.js";
+import { inScope, scopeIds } from "../db/count.js";
 import { MODELS, ROLE_LABEL, WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
 import { flowFor, KIND_LABEL as TICKET_KIND_LABEL, TICKET_KINDS } from "../domain/flow.js";
 import { routesAmong } from "../domain/route.js";
@@ -27,12 +27,35 @@ type Work = {
   lastActivityAt: string;
 };
 
-export function workOf(p: Project, member: MemberRow): Work | null {
-  const r = get<{ id: number; ticket_id: number | null; role: string; model: string | null; kind: string }>(
-    p.db,
-    "SELECT r.id, COALESCE(r.ticket_id, r.about_ticket_id) AS ticket_id, r.role, r.model, m.kind FROM runs r JOIN messages m ON m.id = r.message_id WHERE r.member_id = ? AND r.ended_at IS NULL ORDER BY r.id DESC LIMIT 1",
-    [member.id],
-  );
+type OpenRun = { id: number; ticket_id: number | null; role: string; model: string | null; kind: string };
+
+/** いま動いている起動(メンバーごとに、いちばん新しいもの)。メンバーを渡さなければ全員ぶんを 1 文でまとめて取る。 */
+export async function openRuns(p: Project, memberIds?: number[]): Promise<Map<number, OpenRun>> {
+  let q = inScope(p.pdb, "runs").where("ended_at", "is", null).orderBy("id");
+  if (memberIds) q = q.where("member_id", "in", memberIds);
+  const runs = memberIds && !memberIds.length ? [] : await q.execute();
+  const out = new Map<number, OpenRun>();
+  if (!runs.length) return out;
+  const msgs = await p.pdb.k
+    .selectFrom("messages")
+    .select(["id", "kind"])
+    .where("project_id", "in", scopeIds(p.pdb))
+    .where("id", "in", [...new Set(runs.map((r) => r.message_id))])
+    .execute();
+  const kindOf = new Map(msgs.map((m) => [m.id, m.kind]));
+  // id の昇順に入れていくので、メンバーごとに最後(いちばん新しい)が残る
+  for (const r of runs) {
+    const kind = kindOf.get(r.message_id);
+    if (kind !== undefined) out.set(r.member_id, { id: r.id, ticket_id: r.ticket_id ?? r.about_ticket_id, role: r.role, model: r.model, kind });
+  }
+  return out;
+}
+
+export async function workOf(p: Project, member: MemberRow): Promise<Work | null> {
+  return workFrom(p, (await openRuns(p, [member.id])).get(member.id));
+}
+
+export function workFrom(p: Project, r: OpenRun | undefined): Work | null {
   if (!r) return null;
   const w = runWork(p, r.id, 1);
   const t = r.ticket_id ? p.ticket(r.ticket_id) : null;
@@ -50,8 +73,10 @@ export function workOf(p: Project, member: MemberRow): Work | null {
   };
 }
 
-export function officeView(p: Project) {
+export async function officeView(p: Project) {
   const f = p.currentFormation();
+  const runsOf = await openRuns(p);
+  const workOfMember = (m: MemberRow) => workFrom(p, runsOf.get(m.id));
   const tickets = new Map(p.tickets().map((t) => [t.id, t]));
   const isWork = (r: string): r is WorkRole => (WORK_ROLES as readonly string[]).includes(r);
 
@@ -59,10 +84,16 @@ export function officeView(p: Project) {
   // 先に終わらせるチケットを待っているもの・交通整理がまだのものは、すぐには取れないので「順番待ち」に分ける
   const waiting = new Map<number, number[]>();
   const queued = new Map<number, { number: number; why: string }[]>();
-  for (const m of all<{ ticket_id: number; to_role: string; to_member_id: number | null; kind: string }>(
-    p.db,
-    "SELECT ticket_id, to_role, to_member_id, kind FROM messages WHERE status = 'pending' AND ticket_id IS NOT NULL ORDER BY id",
-  )) {
+  const triagedOf = new Map((await inScope(p.pdb, "tickets").execute()).map((t) => [t.id, t.triaged]));
+  const pending = await p.pdb.k
+    .selectFrom("messages")
+    .select(["ticket_id", "to_role", "to_member_id", "kind"])
+    .where("project_id", "in", scopeIds(p.pdb))
+    .where("status", "=", "pending")
+    .where("ticket_id", "is not", null)
+    .orderBy("id")
+    .execute();
+  for (const m of pending as { ticket_id: number; to_role: string; to_member_id: number | null; kind: string }[]) {
     if (!isWork(m.to_role)) continue;
     const t = tickets.get(m.ticket_id);
     if (!t || t.stage === "done" || t.stage === "dropped") continue;
@@ -70,7 +101,7 @@ export function officeView(p: Project) {
     const home = m.to_member_id ? p.member(m.to_member_id).unit_id : null;
     const unit = f.units.find((u) => u.id === home && u.roles.includes(m.to_role as WorkRole)) ?? p.unitsForRole(m.to_role as WorkRole, repo)[0];
     if (!unit) continue;
-    const triaged = get<{ triaged: number }>(p.db, "SELECT triaged FROM tickets WHERE id = ?", [t.id])?.triaged ?? 1;
+    const triaged = triagedOf.get(t.id) ?? 1;
     const before = m.kind === "implement" ? blockers(p, t.id) : [];
     const same = m.kind === "implement" ? areaWait(p, t.id) : [];
     if (m.kind === "implement" && (!triaged || before.length || same.length)) {
@@ -103,7 +134,7 @@ export function officeView(p: Project) {
     model: u.model ? (MODELS[u.model as keyof typeof MODELS]?.label ?? u.model) : null,
     budget: { budgetUsd: u.budget_usd, spentUsd: unitSpentUsd(p, u.name), exhausted: unitExhausted(p, u) },
     members: p.membersOfUnit(u.id).map((m) => {
-      const work = workOf(p, m);
+      const work = workOfMember(m);
       if (work?.ticket) where[work.ticket] = `unit:${u.id}`;
       return { id: m.id, name: m.name, helper: !m.is_base, joinedAt: m.joined_at, work };
     }),
@@ -113,7 +144,7 @@ export function officeView(p: Project) {
 
   const fixed = (role: Role) => {
     const m = p.fixedMember(role);
-    return { id: m.id, name: m.name, work: workOf(p, m) };
+    return { id: m.id, name: m.name, work: workOfMember(m) };
   };
   const decisions = [...tickets.values()].filter((t) => t.stage === "decision");
   for (const t of decisions) where[t.number] ??= "lead";
@@ -148,10 +179,13 @@ export function officeView(p: Project) {
   const routes = routesAmong(f.routes, [...ends.keys()])
     .filter((r) => r.mode === "ask")
     .map((r) => ({ a: ends.get(r.from)!, b: ends.get(r.to)! }));
-  const asks = all<{ unit_id: number | null; to_target: string }>(
-    p.db,
-    "SELECT m.unit_id, q.to_target FROM ticket_questions q JOIN members m ON m.id = q.from_member_id WHERE q.answered_at IS NULL AND q.routed_to_lead = 0 AND m.unit_id IS NOT NULL",
-  ).flatMap((q) => (ends.has(q.to_target) ? [{ a: `unit:${q.unit_id}`, b: ends.get(q.to_target)! }] : []));
+  const openAsks = await inScope(p.pdb, "ticket_questions").where("answered_at", "is", null).where("routed_to_lead", "=", 0).where("from_member_id", "is not", null).execute();
+  const askers = openAsks.length ? await inScope(p.pdb, "members").where("id", "in", [...new Set(openAsks.map((q) => q.from_member_id as number))]).execute() : [];
+  const unitOf = new Map(askers.map((m) => [m.id, m.unit_id]));
+  const asks = openAsks.flatMap((q) => {
+    const unitId = unitOf.get(q.from_member_id as number);
+    return unitId != null && ends.has(q.to_target) ? [{ a: `unit:${unitId}`, b: ends.get(q.to_target)! }] : [];
+  });
 
   // 路線の上に置く札: 開いているチケットの種類(where の居場所と合わせて、その種類の路線の、いまの駅に置く)
   const ticketKinds: Record<number, string> = {};
@@ -172,4 +206,4 @@ export function officeView(p: Project) {
   };
 }
 
-export type OfficeView = ReturnType<typeof officeView>;
+export type OfficeView = Awaited<ReturnType<typeof officeView>>;

@@ -17,9 +17,9 @@ function setup(flows: Parameters<Project["saveFormation"]>[0]["flows"], routes: 
 }
 
 describe("オフィスの路線図(R16・R17)", () => {
-  it("流れが同じ種類は 1 本の路線にまとまり、既定の流れと同じ路線は既定線、飛ばした工程は skipped に入る", () => {
+  it("流れが同じ種類は 1 本の路線にまとまり、既定の流れと同じ路線は既定線、飛ばした工程は skipped に入る", async () => {
     const p = setup({ default: ["review", "dev", "qa"], bugfix: ["qa", "dev", "review"], refactor: ["dev", "qa"] });
-    const v = officeView(p);
+    const v = (await officeView(p));
     const id = (name: string) => v.units.find((u) => u.name === name)!.id;
     // 機能とドキュメントは既定の流れ(1 本)、バグ修正、リファクタの 3 本
     expect(v.lines.map((l) => l.kinds.map((k) => k.kind))).toEqual([["feature", "docs"], ["bugfix"], ["refactor"]]);
@@ -35,21 +35,21 @@ describe("オフィスの路線図(R16・R17)", () => {
     expect(line("feature").skipped).toEqual([]);
   });
 
-  it("どの種類も流れを決めていなければ、路線は既定線 1 本にまとまる", () => {
-    const v = officeView(setup(undefined));
+  it("どの種類も流れを決めていなければ、路線は既定線 1 本にまとまる", async () => {
+    const v = await officeView(setup(undefined));
     expect(v.lines).toHaveLength(1);
     expect(v.lines[0]).toMatchObject({ isDefault: true, skipped: [] });
     expect(v.lines[0]!.kinds.map((k) => k.kind)).toEqual(["feature", "bugfix", "refactor", "docs"]);
   });
 
-  it("許されている連絡経路は、向きを持たない線として駅の名前(unit:ID / lead / arch)で返る", () => {
+  it("許されている連絡経路は、向きを持たない線として駅の名前(unit:ID / lead / arch)で返る", async () => {
     const p = setup(undefined, [
       { from: "開発", to: "レビュー", mode: "ask" },
       { from: "QA", to: "lead", mode: "ask" },
       { from: "開発", to: "architect", mode: "ask" },
       { from: "開発", to: "QA", mode: "none" },
     ]);
-    const v = officeView(p);
+    const v = (await officeView(p));
     const id = (name: string) => `unit:${v.units.find((u) => u.name === name)!.id}`;
     const pairs = v.routes.map((r) => [r.a, r.b].sort().join("|"));
     expect(pairs.sort()).toEqual([[id("開発"), id("レビュー")], [id("QA"), "lead"], [id("開発"), "arch"]].map((x) => [...x].sort().join("|")).sort());
@@ -58,10 +58,10 @@ describe("オフィスの路線図(R16・R17)", () => {
 });
 
 describe("路線の上の札", () => {
-  it("開いているチケットは、その種類と居場所(where)で返る。完了したものは返さない", () => {
+  it("開いているチケットは、その種類と居場所(where)で返る。完了したものは返さない", async () => {
     const p = setup({ bugfix: ["qa", "dev"] });
     const t = createTicket(p, { title: "ずれる", kind: "bugfix" });
-    const v = officeView(p);
+    const v = (await officeView(p));
     expect(v.ticketKinds[t.number]).toBe("bugfix");
     // 開発より前の QA から始まるので、居場所は QA の島
     expect(v.where[t.number]).toBe(`unit:${v.units.find((u) => u.name === "QA")!.id}`);

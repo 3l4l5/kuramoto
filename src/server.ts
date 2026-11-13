@@ -473,7 +473,7 @@ export class KuramotoServer {
       setDevRuleEnabled(p, Number(c), body.enabled === true);
       return devRulesView(p);
     }
-    if (b === "office" && method === "GET") return { ...officeView(p), running: this.running.has(id) };
+    if (b === "office" && method === "GET") return { ...(await officeView(p)), running: this.running.has(id) };
     // メンバーの今していること・話す欄(オフィスでメンバーを押して開く引き出し)
     if (b === "members" && c && parts[4] === "now" && method === "GET") return memberNow(p, Number(c));
     if (b === "members" && c && parts[4] === "chat" && method === "GET") return memberChatView(p, Number(c));
@@ -483,7 +483,7 @@ export class KuramotoServer {
       return memberChatView(p, Number(c));
     }
     if (b === "members" && c && method === "GET") return memberView(p, Number(c));
-    if (b === "units" && c && method === "GET") return unitView(p, Number(c), officeView(p));
+    if (b === "units" && c && method === "GET") return unitView(p, Number(c), await officeView(p));
     if (b === "lead-chat" && method === "GET") return leadChatView(p);
     if (b === "lead-chat" && method === "POST") {
       sayToLead(p, String(body.body ?? ""));
@@ -803,7 +803,7 @@ export type StudioView = Awaited<ReturnType<KuramotoServer["studioViewOf"]>>;
 export type TeamView = ReturnType<typeof teamView>;
 export type DevRulesView = ReturnType<typeof devRulesView>;
 export type ProductivityView = Awaited<ReturnType<typeof productivity>>;
-export type OfficeView = ReturnType<typeof officeView> & { running: boolean };
+export type OfficeView = Awaited<ReturnType<typeof officeView>> & { running: boolean };
 export type { MemberView, UnitView };
 export type TicketView = Awaited<ReturnType<typeof ticketView>>;
 export type LeadChatView = ReturnType<typeof leadChatView>;

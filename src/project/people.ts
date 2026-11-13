@@ -1,7 +1,9 @@
-import { all, get } from "../db/sqlite.js";
+import type { Selectable } from "kysely";
+import { inScope } from "../db/count.js";
+import type { RunsTable } from "../db/tables.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
 import { unitExhausted, unitSpentUsd } from "./budget.js";
-import { KIND_LABEL, workOf } from "./office.js";
+import { KIND_LABEL, openRuns, workFrom, workOf } from "./office.js";
 import type { Project } from "./project.js";
 
 /**
@@ -27,8 +29,42 @@ type RunRow = {
   model: string | null;
 };
 
-const RUN_SQL = `SELECT r.id, r.member_id, m.name, r.ticket_id, t.number, t.title, r.role, msg.kind, r.started_at, r.ended_at, r.outcome, r.error, r.summary, r.cost_usd, r.model
-  FROM runs r JOIN members m ON m.id = r.member_id JOIN messages msg ON msg.id = r.message_id LEFT JOIN tickets t ON t.id = r.ticket_id`;
+/** 起動の行に、メンバーの名前・チケット・メッセージの種類を足す。名前・チケット・種類は、それぞれ 1 文でまとめて取る(IN)。 */
+async function runRows(p: Project, runs: Selectable<RunsTable>[]): Promise<RunRow[]> {
+  if (!runs.length) return [];
+  const ids = (xs: (number | null)[]) => [...new Set(xs.filter((x): x is number => x !== null))];
+  const ticketIds = ids(runs.map((r) => r.ticket_id));
+  const [members, messages, tickets] = await Promise.all([
+    inScope(p.pdb, "members").where("id", "in", ids(runs.map((r) => r.member_id))).execute(),
+    inScope(p.pdb, "messages").where("id", "in", ids(runs.map((r) => r.message_id))).execute(),
+    ticketIds.length ? inScope(p.pdb, "tickets").where("id", "in", ticketIds).execute() : [],
+  ]);
+  const name = new Map(members.map((m) => [m.id, m.name]));
+  const kind = new Map(messages.map((m) => [m.id, m.kind]));
+  const ticket = new Map(tickets.map((t) => [t.id, t]));
+  // 名前と種類が引けない起動は出さない(前は内側結合だった)
+  return runs
+    .filter((r) => name.has(r.member_id) && kind.has(r.message_id))
+    .map((r) => ({
+      id: r.id,
+      member_id: r.member_id,
+      name: name.get(r.member_id)!,
+      ticket_id: r.ticket_id,
+      number: ticket.get(r.ticket_id ?? -1)?.number ?? null,
+      title: ticket.get(r.ticket_id ?? -1)?.title ?? null,
+      role: r.role,
+      kind: kind.get(r.message_id)!,
+      started_at: r.started_at,
+      ended_at: r.ended_at,
+      outcome: r.outcome,
+      error: r.error,
+      summary: r.summary,
+      cost_usd: r.cost_usd,
+      model: r.model,
+    }));
+}
+
+const tally = (runs: Selectable<RunsTable>[]) => ({ runs: runs.length, cost: runs.reduce((x, r) => x + (r.cost_usd ?? 0), 0), ok: runs.filter((r) => r.outcome === "ok").length });
 
 const OUTCOME_LABEL: Record<string, string> = { ok: "終わった", error: "エラー", budget: "予算で止まった", max_turns: "回数の上限", abandoned: "中断" };
 
@@ -54,26 +90,32 @@ function runItem(r: RunRow) {
 }
 
 /** メンバー 1 人の様子: 今の仕事(途中経過つき)・受け持ちのチケット・これまでの仕事。 */
-export function memberView(p: Project, memberId: number) {
+export async function memberView(p: Project, memberId: number) {
   const m = p.member(memberId);
   if (!m) throw new Error(`メンバー ${memberId} はいません`);
-  const unit = m.unit_id === null ? null : get<{ name: string; roles: string }>(p.db, "SELECT name, roles FROM units WHERE id = ?", [m.unit_id]);
-  const work = workOf(p, m);
-  const openRun = get<{ id: number }>(p.db, "SELECT id FROM runs WHERE member_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1", [m.id]);
-  const steps = openRun ? all<{ at: string; kind: string; text: string }>(p.db, "SELECT at, kind, text FROM run_steps WHERE run_id = ? ORDER BY id DESC LIMIT 30", [openRun.id]).reverse() : [];
-  const history = all<RunRow>(p.db, `${RUN_SQL} WHERE r.member_id = ? ORDER BY r.id DESC LIMIT 40`, [m.id]).map(runItem);
-  const totals = get<{ runs: number; cost: number | null; ok: number | null }>(p.db, "SELECT COUNT(*) AS runs, SUM(cost_usd) AS cost, SUM(outcome = 'ok') AS ok FROM runs WHERE member_id = ?", [m.id]);
-  const owned = all<{ id: number; number: number; title: string; stage: string }>(
-    p.db,
-    "SELECT id, number, title, stage FROM tickets WHERE owner_member_id = ? ORDER BY CASE WHEN stage IN ('done','dropped') THEN 1 ELSE 0 END, number DESC LIMIT 30",
-    [m.id],
-  );
+  const [unit, work, mine, ownedRows, pending] = await Promise.all([
+    m.unit_id === null ? null : inScope(p.pdb, "units").where("id", "=", m.unit_id).executeTakeFirst(),
+    workOf(p, m),
+    inScope(p.pdb, "runs").where("member_id", "=", m.id).orderBy("id", "desc").execute(),
+    inScope(p.pdb, "tickets").where("owner_member_id", "=", m.id).execute(),
+    inScope(p.pdb, "messages").where("to_member_id", "=", m.id).where("status", "=", "pending").where("ticket_id", "is not", null).orderBy("id").execute(),
+  ]);
+  const openRun = mine.find((r) => r.ended_at === null);
+  const steps = openRun ? (await inScope(p.pdb, "run_steps").where("run_id", "=", openRun.id).orderBy("id", "desc").limit(30).execute()).reverse().map((x) => ({ at: x.at, kind: x.kind, text: x.text })) : [];
+  const history = (await runRows(p, mine.slice(0, 40))).map(runItem);
+  const totals = tally(mine);
+  const final = (stage: string) => (stage === "done" || stage === "dropped" ? 1 : 0);
+  const owned = ownedRows
+    .sort((a, b) => final(a.stage) - final(b.stage) || b.number - a.number)
+    .slice(0, 30)
+    .map((t) => ({ id: t.id, number: t.number, title: t.title, stage: t.stage }));
   // 次に頼まれている仕事(名指しで待っているもの)
-  const queued = all<{ number: number; title: string; kind: string }>(
-    p.db,
-    "SELECT t.number, t.title, msg.kind FROM messages msg JOIN tickets t ON t.id = msg.ticket_id WHERE msg.to_member_id = ? AND msg.status = 'pending' ORDER BY msg.id",
-    [m.id],
-  ).map((q) => ({ number: q.number, title: q.title, kind: KIND_LABEL[q.kind] ?? q.kind }));
+  const queuedTickets = pending.length ? await inScope(p.pdb, "tickets").where("id", "in", [...new Set(pending.map((x) => x.ticket_id as number))]).execute() : [];
+  const ticketOf = new Map(queuedTickets.map((t) => [t.id, t]));
+  const queued = pending.flatMap((q) => {
+    const t = ticketOf.get(q.ticket_id as number);
+    return t ? [{ number: t.number, title: t.title, kind: KIND_LABEL[q.kind] ?? q.kind }] : [];
+  });
   return {
     id: m.id,
     name: m.name,
@@ -85,22 +127,24 @@ export function memberView(p: Project, memberId: number) {
     queued,
     owned,
     history,
-    totals: { runs: totals?.runs ?? 0, costUsd: totals?.cost ?? 0, ok: totals?.ok ?? 0 },
+    totals: { runs: totals.runs, costUsd: totals.cost, ok: totals.ok },
   };
 }
 
 /** 島 1 つの様子: メンバーの今・すぐ取れる仕事と順番待ち・予算・設定・最近の仕事。 */
-export function unitView(p: Project, unitId: number, office: { units: { id: number; waiting: number[]; queued: { number: number; why: string }[] }[] }) {
+export async function unitView(p: Project, unitId: number, office: { units: { id: number; waiting: number[]; queued: { number: number; why: string }[] }[] }) {
   const u = p.currentFormation().units.find((x) => x.id === unitId);
   if (!u) throw new Error(`島 ${unitId} は今の編成にありません`);
+  const open = await openRuns(p);
   const members = p.membersOfUnit(u.id).map((m) => {
-    const w = workOf(p, m);
+    const w = workFrom(p, open.get(m.id));
     return { id: m.id, name: m.name, helper: !m.is_base, work: w ? { ticket: w.ticket, title: w.title, kind: w.kind, startedAt: w.startedAt, lastStep: w.lastStep } : null };
   });
   const o = office.units.find((x) => x.id === u.id);
-  const recent = all<RunRow>(p.db, `${RUN_SQL} WHERE r.unit_name = ? ORDER BY r.id DESC LIMIT 30`, [u.name]).map(runItem);
   const day = new Date(p.clock.now().getTime() - 24 * 3600 * 1000).toISOString();
-  const today = get<{ runs: number; cost: number | null; ok: number | null }>(p.db, "SELECT COUNT(*) AS runs, SUM(cost_usd) AS cost, SUM(outcome = 'ok') AS ok FROM runs WHERE unit_name = ? AND started_at >= ?", [u.name, day]);
+  const unitRuns = await inScope(p.pdb, "runs").where("unit_name", "=", u.name).orderBy("id", "desc").execute();
+  const recent = (await runRows(p, unitRuns.slice(0, 30))).map(runItem);
+  const today = tally(unitRuns.filter((r) => r.started_at >= day));
   return {
     id: u.id,
     name: u.name,
@@ -116,10 +160,10 @@ export function unitView(p: Project, unitId: number, office: { units: { id: numb
     waiting: o?.waiting ?? [],
     queued: o?.queued ?? [],
     budget: { budgetUsd: u.budget_usd, spentUsd: unitSpentUsd(p, u.name), exhausted: unitExhausted(p, u) },
-    last24h: { runs: today?.runs ?? 0, costUsd: today?.cost ?? 0, ok: today?.ok ?? 0 },
+    last24h: { runs: today.runs, costUsd: today.cost, ok: today.ok },
     recent,
   };
 }
 
-export type MemberView = ReturnType<typeof memberView>;
-export type UnitView = ReturnType<typeof unitView>;
+export type MemberView = Awaited<ReturnType<typeof memberView>>;
+export type UnitView = Awaited<ReturnType<typeof unitView>>;
