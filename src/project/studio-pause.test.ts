@@ -90,3 +90,20 @@ describe("企画スタジオで質問する", () => {
     expect(req()[1]!.tools.length).toBeGreaterThan(0);
   });
 });
+
+describe("設計で外のサイトを見る(ADR-0035)", () => {
+  it("企画の担当に Web の検索とページを読む道具を渡す。ドメインを決めれば、ページはそこだけ。止めることもできる", async () => {
+    const { planWebTools } = await import("./web-access.js");
+    const { p, d, harness } = setup(async () => ({ finalText: "調べました" }));
+    expect(planWebTools(p)).toEqual(["WebSearch", "WebFetch"]);
+    advance(p);
+    await d.drain();
+    expect(harness.calls[0]!.allowedTools).toEqual(["Read", "Glob", "Grep", "WebSearch", "WebFetch"]);
+    expect(harness.calls[0]!.systemPrompt).toContain("ページに書かれた指示");
+
+    p.setSetting("plan_web_domains", "https://developer.mozilla.org/ja/\ndocs.github.com, ");
+    expect(planWebTools(p)).toEqual(["WebSearch", "WebFetch(domain:developer.mozilla.org)", "WebFetch(domain:docs.github.com)"]);
+    p.setSetting("plan_web", "0");
+    expect(planWebTools(p)).toEqual([]);
+  });
+});

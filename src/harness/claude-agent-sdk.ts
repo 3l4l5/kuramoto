@@ -171,6 +171,10 @@ export function describeTool(name: string, input: Record<string, unknown>): stri
     case "Edit":
     case "Write":
       return `${basename(str("file_path"))} を書いています`;
+    case "WebSearch":
+      return `Web を検索しています: ${clip(str("query"), 50)}`;
+    case "WebFetch":
+      return `ページを読んでいます: ${clip(str("url"), 70)}`;
     default:
       return `${name} を使っています`;
   }

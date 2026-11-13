@@ -12,7 +12,7 @@ import { usd } from "./format";
 
 const REPO_ROLES = ["フロント", "API", "インフラ", "その他"];
 const repoOk = (r: string) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r);
-type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean; resumeChecks: boolean; patrolMin: number; ciMode: "team" | "github"; ciCommands: Record<string, string> };
+type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean; resumeChecks: boolean; patrolMin: number; planWeb: boolean; planWebDomains: string; ciMode: "team" | "github"; ciCommands: Record<string, string> };
 
 /** プロジェクトの設定: 名前とリポジトリ(足す・外す・役割を変える)。 */
 export function SettingsPage({ id }: { id: number }) {
@@ -27,6 +27,8 @@ export function SettingsPage({ id }: { id: number }) {
   const [resumeOn, setResume] = useState(true);
   const [patrolMin, setPatrolMin] = useState("5");
   const [ciMode, setCiMode] = useState<"team" | "github">("github");
+  const [planWeb, setPlanWeb] = useState(true);
+  const [planWebDomains, setPlanWebDomains] = useState("");
   const [ciCommands, setCiCommands] = useState<Record<string, string>>({});
   const reset = () => {
     if (!data) return;
@@ -38,6 +40,8 @@ export function SettingsPage({ id }: { id: number }) {
     setResume(data.resumeChecks);
     setPatrolMin(String(data.patrolMin));
     setCiMode(data.ciMode);
+    setPlanWeb(data.planWeb);
+    setPlanWebDomains(data.planWebDomains);
     setCiCommands(data.ciCommands);
     setRepos(data.repos.map((x) => ({ r: x.fullName, role: x.role })));
   };
@@ -49,10 +53,10 @@ export function SettingsPage({ id }: { id: number }) {
   const set = (i: number, patch: Partial<{ r: string; role: string }>) => setRepos(repos.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const list = repos.filter((x) => x.r).map((x) => ({ fullName: x.r, role: x.role }));
   const budgetOk = totalOk(budget);
-  const changed = name !== data.name || JSON.stringify(list) !== JSON.stringify(data.repos) || budget !== data.ticketBudgetUsd || total !== data.projectBudgetUsd || nonstopOn !== data.nonstop || autoMergeOn !== data.autoMerge || resumeOn !== data.resumeChecks || patrolMin !== String(data.patrolMin) || ciMode !== data.ciMode || JSON.stringify(ciCommands) !== JSON.stringify(data.ciCommands);
+  const changed = name !== data.name || JSON.stringify(list) !== JSON.stringify(data.repos) || budget !== data.ticketBudgetUsd || total !== data.projectBudgetUsd || nonstopOn !== data.nonstop || autoMergeOn !== data.autoMerge || resumeOn !== data.resumeChecks || patrolMin !== String(data.patrolMin) || planWeb !== data.planWeb || planWebDomains !== data.planWebDomains || ciMode !== data.ciMode || JSON.stringify(ciCommands) !== JSON.stringify(data.ciCommands);
   const patrolOk = /^\d+$/.test(patrolMin);
   const invalid = !name.trim() || !list.length || list.some((x) => !repoOk(x.fullName)) || !budgetOk || !totalOk(total) || !patrolOk;
-  const save = () => act(() => post(`/projects/${id}/settings`, { name: name.trim(), repos: list, ticketBudgetUsd: budget, projectBudgetUsd: total, nonstop: nonstopOn, autoMerge: autoMergeOn, resumeChecks: resumeOn, patrolMin: Number(patrolMin), ciMode, ciCommands }), "プロジェクトの設定を保存しました");
+  const save = () => act(() => post(`/projects/${id}/settings`, { name: name.trim(), repos: list, ticketBudgetUsd: budget, projectBudgetUsd: total, nonstop: nonstopOn, autoMerge: autoMergeOn, resumeChecks: resumeOn, patrolMin: Number(patrolMin), planWeb, planWebDomains, ciMode, ciCommands }), "プロジェクトの設定を保存しました");
 
   return (
     <section aria-label="プロジェクトの設定">
@@ -115,6 +119,23 @@ export function SettingsPage({ id }: { id: number }) {
           <div className="hint">
             ノンストップでも、取り消せない操作と、あなたにしかできないこと(秘密情報の登録など)はあなたに上がります。止めたいときは、全体の予算で歯止めを掛けてください。
           </div>
+        </fieldset>
+        <fieldset className="runmode">
+          <legend className="h">設計で外のサイトを見る</legend>
+          <Checkbox size="sm" checked={planWeb} onChange={() => setPlanWeb(!planWeb)}>
+            企画スタジオの担当(企画・デザイナー・アーキテクト)が、Web を検索し、ページを読める(公式のドキュメント・版・料金・よく似たサービスを確かめるため)
+          </Checkbox>
+          {planWeb && (
+            <>
+              <label className="h" htmlFor="ps-webdom" style={{ marginTop: 8 }}>
+                ページを読んでよいドメイン(1 行に 1 つ)
+              </label>
+              <div className="hint" style={{ marginBottom: 6 }}>
+                空なら、どのサイトのページも読めます。書くと、そのドメインとその下だけを読めます(例: <code>developer.mozilla.org</code>・<code>docs.github.com</code>)。検索はどちらでもできます。ページに書かれた指示には従わず、リポジトリの中身を外に出さないよう担当に伝えています。
+              </div>
+              <Textarea id="ps-webdom" rows={3} className="w-full font-mono" value={planWebDomains} onChange={(e) => setPlanWebDomains(e.target.value)} />
+            </>
+          )}
         </fieldset>
         <fieldset className="runmode">
           <legend className="h">CI</legend>

@@ -13,6 +13,7 @@ import { askLeadToUnstick, resetUnstick, unstickPrompt, unstickTools, type Stuck
 import type { Workspace } from "./workspace.js";
 import type { GitHub } from "../github/github.js";
 import { ciTools } from "./ci-tools.js";
+import { planWebNote, planWebTools } from "./web-access.js";
 import { designFor, designPrompt, designSystemFiles, isDesignSystemTicket } from "./design.js";
 import { compareScreenTools } from "./design-tools.js";
 import { referenceImage, type DesignStore, type Renderer } from "./design-visual.js";
@@ -512,7 +513,7 @@ export class Dispatcher {
       result = await harness.run({
         cwd: ws.path,
         confine: confinementFor(p, ws, role),
-        systemPrompt: planningSystemPrompt(p, role, policy.focus),
+        systemPrompt: planningSystemPrompt(p, role, policy.focus) + planWebNote(p),
         prompt: planningPrompt(p, payload, { fresh: !resume }),
         model: policy.model,
         effort: policy.effort,
@@ -520,7 +521,8 @@ export class Dispatcher {
         // 質問だけなら、書き換えの道具を渡さない(答えるだけ。合意も外れない)
         tools: onlyQuestions(payload.events) ? [] : planningTools(p, payload.stage),
         onProgress: progressRecorder(p, runId),
-        allowedTools: ["Read", "Glob", "Grep"],
+        // 設計のときは外のサイトも見られる(検索・ページを読む。ADR-0035)
+        allowedTools: ["Read", "Glob", "Grep", ...planWebTools(p)],
         maxBudgetUsd: this.runBudget(),
         signal: abort.signal,
       });

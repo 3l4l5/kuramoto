@@ -22,6 +22,7 @@ import { runTeamCi, SandboxRunner, teamCiEnabled, type CommandRunner } from "./p
 import { leadReply } from "./project/leadchat.js";
 import { FileDesignStore, imageRow, playwrightRenderer, referenceImage, type DesignStore, type Renderer } from "./project/design-visual.js";
 import { zip } from "./project/zip.js";
+import { planWebDomains, planWebEnabled } from "./project/web-access.js";
 import { metrics } from "./project/metrics.js";
 import { exportDesignDoc } from "./project/export.js";
 import { extractTransfer, restoreTransfer } from "./project/transfer.js";
@@ -416,6 +417,8 @@ export class KuramotoServer {
         autoMerge: autoMergeEnabled(p),
         resumeChecks: resumeChecks(p),
         patrolMin: patrolMinutes(p),
+        planWeb: planWebEnabled(p),
+        planWebDomains: planWebDomains(p).join("\n"),
         ciMode: teamCiEnabled(p) ? "team" : "github",
         // チームの CI で流すコマンド(リポジトリごと)。空なら package.json から決める
         ciCommands: Object.fromEntries(p.repos().map((r) => [r.full_name, p.setting(`team_ci_commands:${r.full_name}`) ?? ""])),
@@ -433,6 +436,8 @@ export class KuramotoServer {
       if (typeof body.autoMerge === "boolean") p.setSetting("auto_merge", body.autoMerge ? "1" : "0");
       if (typeof body.resumeChecks === "boolean") p.setSetting("resume_checks", body.resumeChecks ? "1" : "0");
       if (body.patrolMin !== undefined) setPatrolMinutes(p, Number(body.patrolMin));
+      if (typeof body.planWeb === "boolean") p.setSetting("plan_web", body.planWeb ? "1" : "0");
+      if (typeof body.planWebDomains === "string") p.setSetting("plan_web_domains", body.planWebDomains.trim());
       if (body.ciCommands && typeof body.ciCommands === "object")
         for (const [repo, cmds] of Object.entries(body.ciCommands as Record<string, unknown>)) p.setSetting(`team_ci_commands:${repo}`, String(cmds ?? "").trim());
       if ((body.ciMode === "team" || body.ciMode === "github") && (body.ciMode === "team") !== teamCiEnabled(p)) await this.setCiMode(p, body.ciMode);
