@@ -98,6 +98,102 @@ describe("設定ファイル", () => {
     expect(fail(undefined, { KURAMOTO_DATABASE_URL: "sqlite:///x" })).toContain("KURAMOTO_DATABASE_URL");
   });
 
+  describe("docs/mysql.md の書き方(url と passwordFile)", () => {
+    const ENV_FILE = "MYSQL_ROOT_PASSWORD=rootpw\nMYSQL_DATABASE=kuramoto\nMYSQL_USER=kuramoto\nMYSQL_PASSWORD=kpw\n";
+    const doc = "database:\n  type: mysql\n  url: mysql://kuramoto@127.0.0.1:3306/kuramoto\n  passwordFile: /h/.kuramoto/mysql.env\n";
+    const loadWith = (text: string, content: string, seen: string[] = []) =>
+      loadConfigText(text, PATH, {}, (f) => {
+        seen.push(f);
+        return content;
+      });
+
+    it("手順書の例のとおりに読め、MYSQL_PASSWORD だけを使う(root のパスワードは使わない)", () => {
+      const seen: string[] = [];
+      const c = loadWith(doc, ENV_FILE, seen);
+      expect(c.database).toEqual({ type: "mysql", url: "mysql://kuramoto:kpw@127.0.0.1:3306/kuramoto" });
+      expect(JSON.stringify(c)).not.toContain("rootpw");
+      expect(seen).toEqual(["/h/.kuramoto/mysql.env"]);
+      const line = describeConfig(c);
+      expect(line).toContain("MySQL 127.0.0.1:3306 / kuramoto");
+      expect(line).not.toContain("kpw");
+      expect(line).not.toContain("rootpw");
+    });
+
+    it("MYSQL_PASSWORD の行が無ければ、root のパスワードがあっても起動しない", () => {
+      const msg = fail2(doc, "MYSQL_ROOT_PASSWORD=rootpw\nMYSQL_USER=kuramoto\n");
+      expect(msg).toContain("MYSQL_PASSWORD");
+      expect(msg).toContain("database.passwordFile");
+      expect(msg).not.toContain("rootpw");
+      expect(fail2(doc, "MYSQL_PASSWORD=\n")).toContain("MYSQL_PASSWORD");
+    });
+
+    it("名前が似ている行・コメントは読まない。引用符・export・特殊文字は扱える", () => {
+      expect(() => loadWith(doc, "# MYSQL_PASSWORD=x\nXMYSQL_PASSWORD=x\nMYSQL_PASSWORD_OLD=x\n")).toThrow(ConfigError);
+      expect(loadWith(doc, 'export MYSQL_PASSWORD="a b"\n').database).toMatchObject({ url: "mysql://kuramoto:a%20b@127.0.0.1:3306/kuramoto" });
+      expect(loadWith(doc, "MYSQL_PASSWORD=p@ss:/w#rd\r\n").database).toMatchObject({ url: "mysql://kuramoto:p%40ss%3A%2Fw%23rd@127.0.0.1:3306/kuramoto" });
+    });
+
+    it("url にもパスワードがあるときは、どちらを使うか決められないので起動しない", () => {
+      const both = "database:\n  type: mysql\n  url: mysql://kuramoto:x@127.0.0.1/kuramoto\n  passwordFile: /h/m.env\n";
+      expect(fail2(both, ENV_FILE)).toContain("どちらか一方");
+    });
+
+    it("KURAMOTO_DATABASE_URL にパスワードが無ければ passwordFile を足す", () => {
+      const c = loadConfigText(doc, PATH, { KURAMOTO_DATABASE_URL: "mysql://kuramoto@envhost/envdb" }, () => ENV_FILE);
+      expect(c.database).toEqual({ type: "mysql", url: "mysql://kuramoto:kpw@envhost/envdb" });
+    });
+
+    it("ファイルが読めないときは、どの項目か出して起動しない", () => {
+      const msg = (() => {
+        try {
+          loadConfigText(doc, PATH, {}, () => {
+            throw new Error("ENOENT: no such file");
+          });
+        } catch (e) {
+          return (e as Error).message;
+        }
+        return "";
+      })();
+      expect(msg).toContain("database.passwordFile");
+      expect(msg).toContain("/h/.kuramoto/mysql.env");
+    });
+
+    it("sqlite に passwordFile を書いたら起動しない", () => {
+      expect(fail("database:\n  type: sqlite\n  passwordFile: /h/m.env\n")).toContain("passwordFile");
+    });
+
+    it("手順書の古い仮のキー(host/port/name/user)は知らない項目として起動しない", () => {
+      for (const key of ["host", "port", "name", "user"]) {
+        expect(fail(`database:\n  type: mysql\n  ${key}: x\n`)).toContain(`database.${key}`);
+      }
+    });
+
+    it("実ファイルの mysql.env から読む(~/ は家のディレクトリ)", () => {
+      const dir = mkdtempSync(join(tmpdir(), "kuramoto-config-"));
+      try {
+        const file = join(dir, "mysql.env");
+        writeFileSync(file, ENV_FILE, { mode: 0o600 });
+        const path = join(dir, "config.yaml");
+        writeFileSync(path, `database:\n  type: mysql\n  url: mysql://kuramoto@127.0.0.1:3306/kuramoto\n  passwordFile: ${file}\n`, { mode: 0o600 });
+        expect(loadConfig(path, {}).database).toEqual({ type: "mysql", url: "mysql://kuramoto:kpw@127.0.0.1:3306/kuramoto" });
+        writeFileSync(path, "database:\n  type: mysql\n  url: mysql://kuramoto@127.0.0.1:3306/kuramoto\n  passwordFile: ~/.kuramoto-no-such-dir/mysql.env\n", { mode: 0o600 });
+        expect(() => loadConfig(path, {})).toThrow(/\.kuramoto-no-such-dir\/mysql\.env/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    function fail2(text: string, content: string): string {
+      try {
+        loadWith(text, content);
+      } catch (e) {
+        expect(e).toBeInstanceOf(ConfigError);
+        return (e as Error).message;
+      }
+      throw new Error("失敗するはずでした");
+    }
+  });
+
   it("本人以外が読めるときは注意を 1 行", () => {
     expect(permissionWarning(PATH, 0o100600)).toBeUndefined();
     expect(permissionWarning(PATH, 0o100644)).toContain("chmod 600");

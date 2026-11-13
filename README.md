@@ -33,7 +33,8 @@ npm run dev:ui       # 画面を作るとき: Vite の開発サーバー(http://
 # ~/.kuramoto/config.yaml(chmod 600 にしてください。本人以外が読めると注意が出ます)
 database:
   type: mysql                # sqlite(既定)か mysql
-  url: mysql://kuramoto@db.example.com:3306/kuramoto   # パスワードはここに書かず、KURAMOTO_DATABASE_URL で渡すのがおすすめ
+  url: mysql://kuramoto@db.example.com:3306/kuramoto   # パスワードはここに書かず、passwordFile か KURAMOTO_DATABASE_URL で渡す
+  passwordFile: ~/.kuramoto/mysql.env                  # 読むのは MYSQL_PASSWORD の 1 行だけ(root のパスワードは読まない。任意)
   tls:
     ca: /etc/ssl/certs/db-ca.pem                       # TLS の CA のファイル(任意)
 ```
