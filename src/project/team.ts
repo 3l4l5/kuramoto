@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { all } from "../db/sqlite.js";
+import { inScope } from "../db/count.js";
 import { flowsSchema, parseFlows } from "../domain/flow.js";
 import type { FormationSpec } from "../domain/formation.js";
 import { parseRoutes, routesSchema } from "../domain/route.js";
@@ -70,9 +70,13 @@ export function saveFormationInput(p: Project, input: unknown) {
 
 // ---- 画面に出す: 今の設定と、版の歴史 ----
 
-export function teamView(p: Project) {
-  const formations = all<{ id: number; version: number; pull: "down" | "start"; flows: string; created_at: string; routes: string }>(p.db, "SELECT * FROM formations ORDER BY version").map((f) => {
-    const units = all<{ id: number; name: string; roles: string; max_members: number; summon_at: number; idle_sec: number; repos: string; model: string | null; effort: string | null; focus: string | null; budget_usd: number | null }>(p.db, "SELECT * FROM units WHERE formation_id = ? ORDER BY id", [f.id]).map((u) => ({
+export async function teamView(p: Project) {
+  for (const role of POLICY_ROLES) p.policy(role); // 後から足した役割は既定の方針を置く(読む前に)
+  const [formationRows, policyRows] = await Promise.all([inScope(p.pdb, "formations").orderBy("version").execute(), inScope(p.pdb, "policies").orderBy("version").execute()]);
+  // 島は、版ごとに引かず 1 文でまとめて取る
+  const unitRows = formationRows.length ? await inScope(p.pdb, "units").where("formation_id", "in", formationRows.map((f) => f.id)).orderBy("id").execute() : [];
+  const formations = formationRows.map((f) => {
+    const units = unitRows.filter((u) => u.formation_id === f.id).map((u) => ({
       name: u.name,
       roles: JSON.parse(u.roles) as WorkRole[],
       maxMembers: u.max_members,
@@ -84,16 +88,13 @@ export function teamView(p: Project) {
       focus: u.focus,
       budgetUsd: u.budget_usd,
     }));
-    return { id: f.id, version: f.version, pull: f.pull, flows: parseFlows(f.flows), routes: parseRoutes(f.routes), createdAt: f.created_at, units };
+    return { id: f.id, version: f.version, pull: f.pull as "down" | "start", flows: parseFlows(f.flows), routes: parseRoutes(f.routes), createdAt: f.created_at, units };
   });
   const current = p.currentFormation();
   const policies = POLICY_ROLES.map((role) => {
-    p.policy(role); // 後から足した役割は既定の方針を置く
-    const versions = all<{ id: number; version: number; model: string; effort: string; focus: string; options: string; created_at: string }>(
-      p.db,
-      "SELECT * FROM policies WHERE role = ? ORDER BY version",
-      [role],
-    ).map((v) => ({ id: v.id, version: v.version, model: v.model, effort: v.effort, focus: v.focus, options: JSON.parse(v.options) as Record<string, unknown>, createdAt: v.created_at }));
+    const versions = policyRows
+      .filter((v) => v.role === role)
+      .map((v) => ({ id: v.id, version: v.version, model: v.model, effort: v.effort, focus: v.focus, options: JSON.parse(v.options) as Record<string, unknown>, createdAt: v.created_at }));
     return { role, label: ROLE_LABEL[role], versions };
   });
   return {

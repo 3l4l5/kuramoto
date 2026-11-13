@@ -51,7 +51,7 @@ const state = (p: Project, id: number) => {
 };
 
 describe("連絡経路の保存(R16)", () => {
-  it("島・流れ・経路を 1 回の保存で、版が 1 つ上がる。既定は連絡しない(経路なし)", () => {
+  it("島・流れ・経路を 1 回の保存で、版が 1 つ上がる。既定は連絡しない(経路なし)", async () => {
     const p = new Project(":memory:", new ManualClock());
     p.addRepo("acme/shop", "API");
     const v1 = p.saveFormation({ pull: "down", units: UNITS });
@@ -61,7 +61,7 @@ describe("連絡経路の保存(R16)", () => {
     expect(p.currentFormation().flows).toEqual({ default: ["dev", "review"] });
     // 向きは持たない。「連絡しない」は持たず、端は名前の順にそろう
     expect(p.currentFormation().routes).toEqual([{ from: "レビュー", to: "開発", mode: "ask" }]);
-    expect(teamView(p).formation.versions.slice(-2).map((v) => [v.version, v.routes.length])).toEqual([[v1.version, 0], [v2.version, 1]]);
+    expect((await teamView(p)).formation.versions.slice(-2).map((v) => [v.version, v.routes.length])).toEqual([[v1.version, 0], [v2.version, 1]]);
   });
 
   it("経路を渡さない保存は、前の版の経路を引き継ぐ。無くなった島の経路は外す", () => {

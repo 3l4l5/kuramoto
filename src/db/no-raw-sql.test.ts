@@ -32,7 +32,6 @@ const NOT_MIGRATED = new Set([
   "project/prompts.ts",
   "project/questions.ts",
   "project/review.ts",
-  "project/team.ts",
   "project/triage.ts",
   "project/unstick.ts",
   "project/workflow.ts",

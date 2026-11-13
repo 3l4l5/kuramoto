@@ -46,7 +46,7 @@ describe("チームの編成と方針", () => {
     ]);
   });
 
-  it("おかしな方針・編成は理由を出して断る", () => {
+  it("おかしな方針・編成は理由を出して断る", async () => {
     const { p } = setup();
     expect(() => savePolicyInput(p, "dev", { model: "gpt-5", effort: "high", focus: "" })).toThrow(/知らないモデル/);
     expect(() => savePolicyInput(p, "review", { model: "claude-opus-5-5", effort: "high", focus: "", options: { strictness: "very" } })).toThrow(/レビューの設定/);
@@ -54,7 +54,7 @@ describe("チームの編成と方針", () => {
     expect(() => savePolicyInput(p, "owner", { model: "claude-opus-5-5", effort: "high", focus: "" })).toThrow(/変えられません/);
     expect(() => saveFormationInput(p, { pull: "down", units: [{ name: "島", roles: ["review"], maxMembers: 3, summonAt: 2, idleSec: 300 }] })).toThrow(/開発の役割は必須/);
     expect(() => saveFormationInput(p, { pull: "down", units: [{ name: "", roles: ["dev"], maxMembers: 3, summonAt: 2, idleSec: 300 }] })).toThrow(/島の名前/);
-    expect(teamView(p).formation.current).toBe(1);
+    expect((await teamView(p)).formation.current).toBe(1);
   });
 
 });
@@ -200,7 +200,7 @@ describe("島を増やし、同じ役割を複数の島に持たせる(ADR-0019)
     const b = createTicket(p, { title: "b" });
     await d.drain({ concurrency: 2 });
     expect(new Set([devUnitOf(p, a.id), devUnitOf(p, b.id)])).toEqual(new Set(["開発 A", "開発 B"]));
-    expect(teamView(p).formation.versions.at(-1)!.units.map((u) => u.name)).toEqual(["開発 A", "開発 B", "レビュー"]);
+    expect((await teamView(p)).formation.versions.at(-1)!.units.map((u) => u.name)).toEqual(["開発 A", "開発 B", "レビュー"]);
   });
 });
 
