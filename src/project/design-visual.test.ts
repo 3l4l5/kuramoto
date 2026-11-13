@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import { ManualClock } from "../clock.js";
 import { FakeHarness, fixedAll, withResolutions } from "../harness/fake.js";
 import { ticketView } from "./ticket.js";
-import { compareImages, FileDesignStore, isLocalUrl, playwrightRenderer, referenceImage, type Renderer, type UrlRenderer } from "./design-visual.js";
+import { createServer } from "node:http";
+import { blockRenderPort, compareImages, FileDesignStore, isLocalUrl, playwrightLocalHtmlRenderer, playwrightRenderer, playwrightUrlRenderer, referenceImage, renderableUrl, type Renderer, type UrlRenderer } from "./design-visual.js";
 import { Dispatcher } from "./dispatcher.js";
 import { agreeBlocker, putArtifact, putScreen, upsertRequirement, type DesignSystem } from "./planning.js";
 import { planningTools } from "./planning-agent.js";
@@ -128,20 +129,110 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
         await call("submit_pr", { summary: "", responses: fixedAll(req.prompt) });
       });
       const workspace = new StaticWorkspace(ws);
-      await new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace, renderer: html, urlRenderer: url }).drain();
+      await new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace, localHtmlRenderer: html, urlRenderer: url }).drain();
       expect(harness.calls[0]!.tools.map((x) => x.name)).toContain("render_page");
       expect(rendered).toEqual(["url 1280 http://localhost:5173/", "url 390 http://127.0.0.1:5173/memos", "html 390 <h1>試作</h1>"]);
       expect(replies[0]).toContain(".kuramoto/design/shots/app-1280.png");
       expect(replies[2]).toContain(".kuramoto/design/shots/___list-390.png");
       // この機械の外の URL・file:・作業場所の外・無いファイルは描かない
-      expect(replies[3]).toContain("この機械の中");
-      expect(replies[4]).toContain("この機械の中");
+      expect(replies[3]).toContain("外の URL");
+      expect(replies[4]).toContain("外の URL");
       expect(replies[5]).toContain("見つかりません");
       expect(replies[6]).toContain("見つかりません");
       expect(workspace.designs.map((d) => d.file)).toEqual([".kuramoto/design/shots/app-1280.png", ".kuramoto/design/shots/app-390.png", ".kuramoto/design/shots/___list-390.png"]);
       expect(PNG.sync.read(workspace.designs[1]!.data as Buffer).width).toBe(390);
     } finally {
       rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it("プロジェクトが担当からのローカルの通信を閉じている(sandbox_strict_sockets)ときは、URL を描かない。HTML は描く", async () => {
+    const ws = mkdtempSync(join(tmpdir(), "kuramoto-ws-"));
+    try {
+      const p = await Project.open(":memory:", new ManualClock());
+      await p.addRepo("acme/shop", "API");
+      await p.setSetting("sandbox_strict_sockets", "1");
+      await createTicket(p, { title: "一覧" });
+      let urlCalls = 0;
+      const replies: string[] = [];
+      const harness = new FakeHarness(async (req, call) => {
+        if (!req.tools.some((x) => x.name === "submit_pr")) return void (await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] })));
+        writeFileSync(join(ws, "a.html"), "<p>x</p>");
+        replies.push(String(await call("render_page", { target: "http://localhost:5173/", width: 390, name: "app" })));
+        replies.push(String(await call("render_page", { target: "a.html", width: 390, name: "a" })));
+        await call("submit_pr", { summary: "", responses: fixedAll(req.prompt) });
+      });
+      const workspace = new StaticWorkspace(ws);
+      const url: UrlRenderer = async (_u, w) => (urlCalls++, png(w, 10, [0, 0, 255]));
+      await new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace, localHtmlRenderer: async (_h, w) => png(w, 10, [255, 255, 255]), urlRenderer: url }).drain();
+      expect(replies[0]).toContain("sandbox_strict_sockets");
+      expect(urlCalls).toBe(0);
+      expect(replies[1]).toContain("a-390.png");
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it("描かせないポート(Kuramoto 自身)は、URL としても描かない。描けなかった理由は URL と HTML で分けて返す", async () => {
+    const ws = mkdtempSync(join(tmpdir(), "kuramoto-ws-"));
+    try {
+      blockRenderPort(4300);
+      expect(renderableUrl("http://localhost:4300/api/projects")).toBe(false);
+      expect(renderableUrl("http://localhost:5173/")).toBe(true);
+      const p = await Project.open(":memory:", new ManualClock());
+      await p.addRepo("acme/shop", "API");
+      await createTicket(p, { title: "一覧" });
+      const replies: string[] = [];
+      const harness = new FakeHarness(async (req, call) => {
+        if (!req.tools.some((x) => x.name === "submit_pr")) return void (await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] })));
+        writeFileSync(join(ws, "a.html"), "<p>x</p>");
+        replies.push(String(await call("render_page", { target: "http://localhost:4300/api/projects", width: 390, name: "self" })));
+        replies.push(String(await call("render_page", { target: "http://localhost:5173/", width: 390, name: "u" })));
+        replies.push(String(await call("render_page", { target: "a.html", width: 390, name: "h" })));
+        await call("submit_pr", { summary: "", responses: fixedAll(req.prompt) });
+      });
+      const fail: Renderer = async () => {
+        throw new Error("boom");
+      };
+      const failUrl: UrlRenderer = async () => {
+        throw new Error("boom");
+      };
+      await new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace(ws), localHtmlRenderer: fail, urlRenderer: failUrl }).drain();
+      expect(replies[0]).toContain("Kuramoto 自身の画面は描けません");
+      expect(replies[1]).toContain("アプリが起動していて");
+      expect(replies[2]).toContain("HTML のファイルを確かめて");
+      expect(replies[2]).not.toContain("アプリが起動していて");
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  // 実ブラウザで、ローカルのサーバのページを 390/1280 で撮れること、外への読み込みが止まることを確かめる(darwin のみ)
+  it.skipIf(process.platform !== "darwin")("render_page の描き手は、ローカルのページを 390px・1280px で撮り、外への読み込みを止める(URL も HTML も)", async () => {
+    const hits: string[] = [];
+    const server = createServer((req, res) => {
+      hits.push(`${req.headers.host}${req.url}`);
+      if (req.url === "/") {
+        res.setHeader("content-type", "text/html");
+        // localhost. は、名前の上では外(許す名前に無い)だが、解決すれば手元のこのサーバに届く。止まっていれば /blocked には来ない
+        res.end(`<body style="margin:0"><div style="height:900px;background:#2f67d4"></div><img src="/ok.png"><img src="http://localhost.:${(server.address() as { port: number }).port}/blocked.png"></body>`);
+      } else res.end("");
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as { port: number }).port;
+    try {
+      for (const width of [390, 1280]) {
+        const img = PNG.sync.read(await playwrightUrlRenderer(`http://localhost:${port}/`, width));
+        expect(img.width).toBe(width);
+        expect(img.height).toBeGreaterThanOrEqual(900);
+      }
+      const htmlShot = await playwrightLocalHtmlRenderer(`<body><img src="http://localhost.:${port}/blocked-html.png"><img src="http://localhost:${port}/ok-html.png"></body>`, 390);
+      expect(PNG.sync.read(htmlShot).width).toBe(390);
+      expect(hits.some((h) => h.endsWith("/ok.png"))).toBe(true);
+      expect(hits.some((h) => h.endsWith("/ok-html.png"))).toBe(true);
+      expect(hits.filter((h) => h.includes("blocked"))).toEqual([]);
+    } finally {
+      server.close();
     }
   });
 

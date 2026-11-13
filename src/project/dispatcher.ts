@@ -53,7 +53,9 @@ export type DispatcherDeps = {
   /** 画面の画像(お手本・実装・違い)の置き場所と、試作を画像にする描き手(ADR-0034)。無ければ画像では見比べない。 */
   designStore?: DesignStore;
   renderer?: Renderer;
-  /** URL を描く(担当の作業場所では描けないので、サーバの側で描く)。 */
+  /** 担当が書いた HTML を描く(render_page 用。ページの通信はこの機械の中だけ)。 */
+  localHtmlRenderer?: Renderer;
+  /** URL を描く(担当の作業場所では描けないので、サーバの側で描く。ページの通信はこの機械の中だけ)。 */
   urlRenderer?: UrlRenderer;
 };
 
@@ -484,7 +486,9 @@ export class Dispatcher {
       const compareTools =
         refs.size && (role === "dev" || role === "qa") && this.deps.designStore ? compareScreenTools(p, this.deps.designStore, ticket, ws.path, ws.gitDir, refs, this.deps.workspace) : [];
       const renderTools =
-        (role === "dev" || role === "qa") && this.deps.renderer && this.deps.urlRenderer ? renderPageTools(ws.path, ws.gitDir, this.deps.workspace, { html: this.deps.renderer, url: this.deps.urlRenderer }) : [];
+        (role === "dev" || role === "qa") && this.deps.localHtmlRenderer && this.deps.urlRenderer
+          ? renderPageTools(ws.path, ws.gitDir, this.deps.workspace, { html: this.deps.localHtmlRenderer, url: this.deps.urlRenderer, allowUrl: (await p.setting("sandbox_strict_sockets")) !== "1" })
+          : [];
       result = await harness.run({
         cwd: ws.path,
         confine: await confinementFor(p, ws, role),

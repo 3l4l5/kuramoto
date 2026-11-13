@@ -3,7 +3,7 @@ import { isAbsolute, join, relative } from "node:path";
 import { z } from "zod";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
 import { DESIGN_DIR, DIFF_WARN } from "./design.js";
-import { DEVICE_WIDTH, isLocalUrl, recordComparison, type DesignStore, type Renderer, type UrlRenderer } from "./design-visual.js";
+import { DEVICE_WIDTH, recordComparison, renderableUrl, type DesignStore, type Renderer, type UrlRenderer } from "./design-visual.js";
 import type { Project, TicketRow } from "./project.js";
 import type { Workspace } from "./workspace.js";
 
@@ -69,30 +69,34 @@ export function compareScreenTools(
  * 担当の作業場所(サンドボックス)の中ではブラウザを起動できない(Chrome が一時ディレクトリとソケットを作れない)ので、
  * サンドボックスの外のサーバが描き、PNG を作業場所に置く。描く先は、担当が動かしたアプリ(ローカルの URL)か、作業場所の HTML(試作など)。
  */
-export function renderPageTools(wsPath: string, gitDir: string, ws: Workspace, render: { html: Renderer; url: UrlRenderer }): KuramotoTool[] {
+export function renderPageTools(wsPath: string, gitDir: string, ws: Workspace, render: { html: Renderer; url: UrlRenderer; /** false なら URL は描かない(プロジェクトが担当からのローカルの通信を閉じているとき) */ allowUrl?: boolean }): KuramotoTool[] {
   return [
     defineTool({
       name: "render_page",
       description: `画面を、実際の端末の幅(スマホ ${DEVICE_WIDTH.phone}px・パソコン ${DEVICE_WIDTH.desktop}px)のブラウザで描き、ページ全体のスクリーンショット(PNG)を作業場所の ${DESIGN_DIR}/shots/ に置く。作業場所の中ではブラウザが動かないので、撮るときはこれを使う。`,
       input: {
-        target: z.string().describe(`描くもの。担当が動かしたアプリのローカルの URL(例: http://localhost:5173/)か、作業場所の HTML の場所(例: ${DESIGN_DIR}/list.html)`),
+        target: z.string().describe(`描くもの。担当が動かしたアプリのローカルの URL(例: http://localhost:5173/)か、作業場所の HTML の場所。ページが読むのはこの機械の中だけ(外のフォントや画像は読まない)(例: ${DESIGN_DIR}/list.html)`),
         width: z.union([z.literal(DEVICE_WIDTH.phone), z.literal(DEVICE_WIDTH.desktop)]).describe(`幅(スマホ ${DEVICE_WIDTH.phone}・パソコン ${DEVICE_WIDTH.desktop})`),
         name: z.string().describe("保存する名前(英数字と - _。例: list-app)。ファイルは <name>-<幅>.png になる"),
       },
       handler: async (a) => {
         const name = a.name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 60) || "page";
         let png: Buffer;
+        const isUrl = /^[a-z][a-z0-9+.-]*:/i.test(a.target);
+        if (isUrl) {
+          if (render.allowUrl === false) return "このプロジェクトは、担当からのローカルの通信を閉じている(sandbox_strict_sockets)ので、URL は描けません。作業場所の HTML のファイルを渡してください。";
+          if (!renderableUrl(a.target)) return "描けるのは、担当が動かしたアプリの URL(http://localhost:… か http://127.0.0.1:…)だけです。外の URL と、Kuramoto 自身の画面は描けません。";
+        }
         try {
-          if (/^[a-z][a-z0-9+.-]*:/i.test(a.target)) {
-            if (!isLocalUrl(a.target)) return "描けるのは、この機械の中の URL(http://localhost:… か http://127.0.0.1:…)だけです。";
-            png = await render.url(a.target, a.width);
-          } else {
+          if (isUrl) png = await render.url(a.target, a.width);
+          else {
             const f = workspaceFile(wsPath, a.target);
             if ("error" in f) return f.error;
             png = await render.html(readFileSync(f.path, "utf8"), a.width);
           }
         } catch (e) {
-          return `描けませんでした。アプリが起動していて、URL が開けるか確かめてください: ${(e instanceof Error ? e.message : String(e)).split("\n")[0]!.slice(0, 200)}`;
+          const why = (e instanceof Error ? e.message : String(e)).split("\n")[0]!.slice(0, 200);
+          return isUrl ? `描けませんでした。アプリが起動していて、URL が開けるか確かめてください: ${why}` : `描けませんでした。HTML のファイルを確かめてください(外の読み込みは止めています): ${why}`;
         }
         const file = `${DESIGN_DIR}/shots/${name}-${a.width}.png`;
         await ws.writeDesign?.(wsPath, gitDir, [{ file, data: png }]);

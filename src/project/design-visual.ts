@@ -38,12 +38,34 @@ export type Renderer = (html: string, width: number) => Promise<Buffer>;
 export const DEVICE_WIDTH = { phone: 390, desktop: 1280 } as const;
 const DEVICE_HEIGHT = { phone: 844, desktop: 800 } as const;
 
-/** ブラウザを開き、決まった幅でページ全体を撮る。手元の Chrome(無ければ Playwright の Chromium)を使う。 */
-async function shoot(width: number, open: (page: import("@playwright/test").Page) => Promise<void>): Promise<Buffer> {
+type Page = import("@playwright/test").Page;
+
+/** この機械の中への通信か(ページが読みに行ってよい先)。 */
+function allowedRequest(raw: string): boolean {
+  return raw.startsWith("data:") || raw.startsWith("blob:") || raw === "about:blank" || renderableUrl(raw);
+}
+
+/**
+ * ブラウザを開き、決まった幅でページ全体を撮る。手元の Chrome(無ければ Playwright の Chromium)を使う。
+ * local のときは、ページの通信をこの機械の中(と data:・blob:)だけにする。担当が書いた HTML や、担当が動かしたアプリは、
+ * サンドボックスの外のサーバのブラウザで動くので、外へ送らせない。
+ * - 要求(http・https)は page.route で、WebSocket は routeWebSocket で、外の宛先を止める
+ * - ブラウザ自体にも、届かないプロキシを指定する(ループバックだけがプロキシを通らず届く)。止め漏れがあっても外へは出ない
+ */
+async function shoot(width: number, open: (page: Page) => Promise<void>, local = false): Promise<Buffer> {
   const { chromium } = await import("@playwright/test");
-  const browser = await chromium.launch({ channel: "chrome" }).catch(() => chromium.launch());
+  const options = local ? { proxy: { server: "http://127.0.0.1:9" } } : {};
+  const browser = await chromium.launch({ channel: "chrome", ...options }).catch(() => chromium.launch(options));
   try {
-    const page = await browser.newPage({ viewport: { width, height: width === DEVICE_WIDTH.phone ? DEVICE_HEIGHT.phone : DEVICE_HEIGHT.desktop }, deviceScaleFactor: 1 });
+    const context = await browser.newContext({ viewport: { width, height: width === DEVICE_WIDTH.phone ? DEVICE_HEIGHT.phone : DEVICE_HEIGHT.desktop }, deviceScaleFactor: 1 });
+    if (local) {
+      await context.route("**/*", (route) => (allowedRequest(route.request().url()) ? route.continue() : route.abort()));
+      await context.routeWebSocket(/.*/, (ws) => {
+        if (renderableUrl(ws.url().replace(/^ws/, "http"))) ws.connectToServer();
+        else void ws.close();
+      });
+    }
+    const page = await context.newPage();
     await open(page);
     return await page.screenshot({ fullPage: true });
   } finally {
@@ -51,8 +73,11 @@ async function shoot(width: number, open: (page: import("@playwright/test").Page
   }
 }
 
-/** 手元の Chrome(無ければ Playwright の Chromium)で描く。 */
+/** 手元の Chrome(無ければ Playwright の Chromium)で描く。お手本の画像用。外のフォントなども読む。 */
 export const playwrightRenderer: Renderer = (html, width) => shoot(width, (page) => page.setContent(html, { waitUntil: "load" }));
+
+/** 担当が書いた HTML を描く。ページの通信はこの機械の中だけ(render_page 用)。 */
+export const playwrightLocalHtmlRenderer: Renderer = (html, width) => shoot(width, (page) => page.setContent(html, { waitUntil: "load" }), true);
 
 /** URL を、決まった幅のブラウザで描いた画像(ページ全体)。担当の作業場所では描けないので、サーバの側で描く(ADR-0034)。 */
 export type UrlRenderer = (url: string, width: number) => Promise<Buffer>;
@@ -68,19 +93,39 @@ export function isLocalUrl(raw: string): boolean {
   return (u.protocol === "http:" || u.protocol === "https:") && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
 }
 
+/** URL のポート(省略なら既定のポート)。 */
+export function portOf(raw: string): number {
+  const u = new URL(raw);
+  return Number(u.port || (u.protocol === "https:" ? 443 : 80));
+}
+
 /**
- * ローカルの URL を描く。ページが読みに行く先もこの機械の中だけにする(外へは出さない)。
+ * ローカルの URL を描く。ページの通信もこの機械の中だけにする(外へは出さない)。
  * 画面が落ち着く(通信が止まる)まで少し待つ。待ちきれなくても、その時点の画面を撮る。
  */
 export const playwrightUrlRenderer: UrlRenderer = (url, width) =>
-  shoot(width, async (page) => {
-    await page.route("**/*", (route) => {
-      const u = route.request().url();
-      return u.startsWith("data:") || u.startsWith("blob:") || isLocalUrl(u) ? route.continue() : route.abort();
-    });
-    await page.goto(url, { waitUntil: "load", timeout: 30_000 });
-    await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
-  });
+  shoot(
+    width,
+    async (page) => {
+      await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+      await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
+    },
+    true,
+  );
+
+/**
+ * 描かせないポート。Kuramoto 自身のポートを入れる(ローカルからは合言葉なしで入れるので、別のプロジェクトの中身まで画像で読めてしまう)。
+ * URL の描画でも、描いている間のページの通信でも、ここに入れたポートへは行かない。
+ */
+const blockedPorts = new Set<number>();
+export function blockRenderPort(port: number): void {
+  blockedPorts.add(port);
+}
+
+/** 描いてよい URL か(この機械の中で、描かせないポートでない)。 */
+export function renderableUrl(raw: string): boolean {
+  return isLocalUrl(raw) && !blockedPorts.has(portOf(raw));
+}
 
 export type DesignImage = { id: number; ticket_id: number | null; screen_key: string; kind: "reference" | "actual" | "diff"; store_key: string; width: number; height: number; diff_ratio: number | null; created_at: string };
 
