@@ -7,7 +7,7 @@ export const OFFICE_VIEWS: Record<OfficeView, string> = { floor: "オフィス",
 /**
  * オフィス / ボード / ツリーの切り替え。パソコンの幅では共通ヘッダー(試作どおり)に、スマホの幅ではオフィスの枠の上に出す
  * (どちらか一方を CSS で隠す)。チケットの画面から押したときは、選んだ見方でオフィスへ戻る。
- * `home` を渡すと、押したあとにそのハッシュへ移る(チケットの画面用)。
+ * `home` を渡すと、押したあとにそのハッシュへ移る(チケットの画面用。来たもとの見方が選ばれた状態で出る)。
  */
 export function OfficeViewSwitch({ className, home }: { className: string; home?: string }) {
   const { view } = usePhoneNav();
@@ -16,9 +16,9 @@ export function OfficeViewSwitch({ className, home }: { className: string; home?
       {(Object.keys(OFFICE_VIEWS) as OfficeView[]).map((v) => (
         <Btn
           key={v}
-          kind={view === v && !home ? "solid-fill" : "outline"}
+          kind={view === v ? "solid-fill" : "outline"}
           size="sm"
-          aria-pressed={view === v && !home}
+          aria-pressed={view === v}
           onClick={() => {
             setPhoneNav({ view: v });
             if (home) go(home);

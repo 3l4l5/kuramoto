@@ -777,7 +777,6 @@ test("チケットの種類: 詳細で変えられ、ボードは種類の流れ
   expect((await page.request.post(`/api/projects/${id}/tickets`, { headers: write, data: { title: "落ちるのを直す", kind: "bugfix" } })).ok()).toBe(true);
   expect((await page.request.post(`/api/projects/${id}/tickets`, { headers: write, data: { title: "新しい画面を足す" } })).ok()).toBe(true);
   await page.goto(`/#/p/${id}`);
-  await page.getByRole("group", { name: "プロジェクトの画面" }).getByRole("button", { name: "オフィス" }).click();
   await page.getByRole("group", { name: "オフィスの見方" }).getByRole("button", { name: "ボード" }).click();
   const board = page.getByRole("region", { name: "ボード" });
   const heads = board.locator(".board .col > h3");
