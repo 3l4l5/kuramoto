@@ -5,7 +5,7 @@ import { Btn } from "./ui";
 import { Input, Select } from "./ds";
 
 const REPO_ROLES = ["フロント", "API", "インフラ", "その他"];
-const repoOk = (r: string) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r);
+const repoOk = (r: string) => /^(?!\.{1,2}\/)(?!.*\/\.{1,2}$)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r);
 
 /** プロジェクトを作る(docs/design.md 6.1)。作ると企画スタジオに進む。 */
 export function NewProject() {

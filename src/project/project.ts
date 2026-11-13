@@ -8,6 +8,7 @@ import { isTicketKind, parseFlows, type FlowsSpec, type TicketKind } from "../do
 import { parseRoutes, normalizeRoutes, routesAmong, type RouteSpec } from "../domain/route.js";
 import { covers, DEFAULT_FORMATION, validateFormation, type FormationSpec, type Pull, type UnitSpec } from "../domain/formation.js";
 import { DEFAULT_POLICIES, type Effort, type Role, type WorkRole } from "../domain/roles.js";
+import { isRepoFullName } from "../domain/repo-name.js";
 import { FIXED_CAST, MEMBER_POOL } from "../domain/cast.js";
 
 export type TicketStage = "dev" | "review" | "sec" | "qa" | "decision" | "merge" | "done" | "dropped";
@@ -158,7 +159,7 @@ export class Project {
   }
 
   async addRepo(fullName: string, role: string): Promise<number> {
-    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(fullName)) throw new Error(`owner/repo の形ではありません: ${fullName}`);
+    if (!isRepoFullName(fullName)) throw new Error(`owner/repo の形ではありません: ${fullName}`);
     return this.pdb.dialect.insertedId(this.pdb.insert("repos", { full_name: fullName, role }));
   }
 
