@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { DatabaseSync } from "node:sqlite";
-import type { DeleteQueryBuilder, DeleteResult, InsertQueryBuilder, Kysely, Selectable, SelectQueryBuilder, Transaction, UpdateQueryBuilder, UpdateResult } from "kysely";
+import type { DeleteQueryBuilder, DeleteResult, InsertQueryBuilder, Kysely, KyselyPlugin, Selectable, SelectQueryBuilder, Transaction, UpdateQueryBuilder, UpdateResult } from "kysely";
+import { projectIdGuardPlugins } from "./guard.js";
 import { createKysely } from "./kysely.js";
 import { registerAsyncOwner } from "./tx.js";
 import type { HqDatabase, ProjectDatabase } from "./tables.js";
@@ -15,8 +16,8 @@ export class Conn<DB> {
   private readonly owner;
   private readonly base: Kysely<DB>;
 
-  constructor(readonly raw: DatabaseSync) {
-    this.base = createKysely<DB>(raw);
+  constructor(readonly raw: DatabaseSync, plugins: KyselyPlugin[] = []) {
+    this.base = createKysely<DB>(raw, plugins);
     this.owner = registerAsyncOwner(raw, this.als as AsyncLocalStorage<unknown>);
   }
 
@@ -41,8 +42,8 @@ export class Conn<DB> {
 
 /** 表の行を、スコープの列(project_id・workspace_id)で絞る・書くときに値を入れる口。 */
 export class ScopedConn<DB, Col extends string> extends Conn<DB> {
-  constructor(raw: DatabaseSync, readonly scopeColumn: Col, readonly scopeId: number) {
-    super(raw);
+  constructor(raw: DatabaseSync, readonly scopeColumn: Col, readonly scopeId: number, plugins: KyselyPlugin[] = []) {
+    super(raw, plugins);
   }
 
   // 表の名前が総称(T)なので、Kysely の型は any で受け、返すときに型を付ける
@@ -75,7 +76,7 @@ export class ScopedConn<DB, Col extends string> extends Conn<DB> {
 /** プロジェクト DB の口。このファイルのプロジェクトの行(project_id)だけを見る・書く。 */
 export class ProjectDb extends ScopedConn<ProjectDatabase, "project_id"> {
   constructor(raw: DatabaseSync, projectId: number) {
-    super(raw, "project_id", projectId);
+    super(raw, "project_id", projectId, projectIdGuardPlugins());
   }
   get projectId(): number {
     return this.scopeId;
