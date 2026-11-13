@@ -256,7 +256,7 @@ describe("ローカルサーバー", () => {
     const t = await createTicket(p, { title: "A" });
     const other = await createTicket(p, { title: "B" });
     const rule = await addDevRule(p, { template: "migration-alone" });
-    run(p.db, "INSERT INTO rule_violations (rule_id, ticket_id, handled, created_at, detail) VALUES (?, ?, 'blocked', ?, '')", [rule.id, t.id, p.now()]);
+    run(p.db, "INSERT INTO rule_violations (rule_id, ticket_id, handled, created_at, detail, project_id) VALUES (?, ?, 'blocked', ?, '', ?)", [rule.id, t.id, p.now(), created.id]);
     const tickets = (await call("GET", `/api/projects/${created.id}`)).json.tickets as { id: number; ruleBlocked: string[] }[];
     expect(tickets.find((x) => x.id === t.id)!.ruleBlocked).toEqual(["マイグレーションは単独の PR"]);
     expect(tickets.find((x) => x.id === other.id)!.ruleBlocked).toEqual([]);

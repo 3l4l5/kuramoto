@@ -1,6 +1,6 @@
 import { parseFlows } from "../domain/flow.js";
 import { parseRoutes } from "../domain/route.js";
-import { inScope, scopeIds } from "../db/count.js";
+import { inScope } from "../db/count.js";
 import type { Project } from "./project.js";
 
 /** 版が上がったとき、何を変えたか。routes: 連絡経路 / flows: 流れ / units: 島(取り方・島の設定)。 */

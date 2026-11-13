@@ -18,17 +18,25 @@ export async function untriaged(p: Project): Promise<TicketRow[]> {
   return (await p.pdb.from("tickets").where("triaged", "=", 0).where("stage", "not in", ["done", "dropped"]).orderBy("number").execute()) as TicketRow[];
 }
 
-/** チケットが待っているチケット(先に終わらせるもの)を、条件つきで選ぶ(番号順)。 */
-function depNumbers(p: Project, ticketId: number, stage?: { in?: TicketRow["stage"][]; notIn?: TicketRow["stage"][] }): Promise<number[]> {
+/** チケットが待っているチケット(先に終わらせるもの)を、条件つきで選ぶ(番号順)。複数のチケットぶんを 1 文で引く(チケット → 番号)。 */
+async function depNumbersOf(p: Project, ticketIds: number[], stage?: { in?: TicketRow["stage"][]; notIn?: TicketRow["stage"][] }): Promise<Map<number, number[]>> {
+  const out = new Map<number, number[]>();
+  const ids = [...new Set(ticketIds)];
+  if (!ids.length) return out;
   let q = p.pdb.k
     .selectFrom("ticket_deps as d")
     .innerJoin("tickets as t", "t.id", "d.depends_on")
-    .select("t.number")
+    .select(["d.ticket_id", "t.number"])
     .where("d.project_id", "=", p.pdb.projectId)
-    .where("d.ticket_id", "=", ticketId);
+    .where("d.ticket_id", "in", ids);
   if (stage?.in) q = q.where("t.stage", "in", stage.in);
   if (stage?.notIn) q = q.where("t.stage", "not in", stage.notIn);
-  return q.orderBy("t.number").execute().then((rows) => rows.map((r) => r.number));
+  for (const r of await q.orderBy("t.number").execute()) out.set(r.ticket_id, [...(out.get(r.ticket_id) ?? []), r.number]);
+  return out;
+}
+
+async function depNumbers(p: Project, ticketId: number, stage?: { in?: TicketRow["stage"][]; notIn?: TicketRow["stage"][] }): Promise<number[]> {
+  return (await depNumbersOf(p, [ticketId], stage)).get(ticketId) ?? [];
 }
 
 export function dependsOn(p: Project, ticketId: number): Promise<number[]> {
@@ -38,6 +46,11 @@ export function dependsOn(p: Project, ticketId: number): Promise<number[]> {
 /** 先に終わらせるチケットのうち、まだ merge されていないもの。 */
 export function blockers(p: Project, ticketId: number): Promise<number[]> {
   return depNumbers(p, ticketId, { notIn: ["done", "dropped"] });
+}
+
+/** blockers を複数のチケットぶん 1 文で引く(ボード用。チケット → 番号。待つものが無いチケットは入らない)。 */
+export function blockersOf(p: Project, ticketIds: number[]): Promise<Map<number, number[]>> {
+  return depNumbersOf(p, ticketIds, { notIn: ["done", "dropped"] });
 }
 
 /**
@@ -51,15 +64,18 @@ export async function areasOf(p: Project, ticketId: number): Promise<string[]> {
   return (await p.pdb.from("ticket_areas").select("area").where("ticket_id", "=", ticketId).orderBy("area").execute()).map((r) => r.area);
 }
 
-/** 同じ場所を触っていて、先に進んでいるチケット(番号と、重なっている場所)。 */
-export async function areaBlockers(p: Project, ticketId: number): Promise<{ number: number; areas: string[] }[]> {
+/** 同じ場所を触っていて、先に進んでいるチケット(番号と、重なっている場所)を、複数のチケットぶん 1 文で引く(チケット → 一覧)。 */
+async function areaBlockersOf(p: Project, ticketIds: number[]): Promise<Map<number, { number: number; areas: string[] }[]>> {
+  const out = new Map<number, { number: number; areas: string[] }[]>();
+  const ids = [...new Set(ticketIds)];
+  if (!ids.length) return out;
   const rows = await p.pdb.k
     .selectFrom("ticket_areas as a")
     .innerJoin("ticket_areas as b", (j) => j.onRef("b.area", "=", "a.area").onRef("b.ticket_id", "<>", "a.ticket_id").onRef("b.project_id", "=", "a.project_id"))
     .innerJoin("tickets as o", "o.id", "b.ticket_id")
-    .select(["o.number", "a.area"])
+    .select(["a.ticket_id as ticket_id", "o.number", "a.area"])
     .where("a.project_id", "=", p.pdb.projectId)
-    .where("a.ticket_id", "=", ticketId)
+    .where("a.ticket_id", "in", ids)
     .where("o.stage", "not in", ["done", "dropped"])
     .where((eb) =>
       eb.or([
@@ -70,20 +86,41 @@ export async function areaBlockers(p: Project, ticketId: number): Promise<{ numb
     .orderBy("o.number")
     .orderBy("a.area")
     .execute();
-  const by = new Map<number, string[]>();
-  for (const r of rows) by.set(r.number, [...(by.get(r.number) ?? []), r.area]);
-  return [...by].map(([number, areas]) => ({ number, areas }));
+  const by = new Map<number, Map<number, string[]>>();
+  for (const r of rows) {
+    const m = by.get(r.ticket_id) ?? new Map<number, string[]>();
+    m.set(r.number, [...(m.get(r.number) ?? []), r.area]);
+    by.set(r.ticket_id, m);
+  }
+  for (const [tid, m] of by) out.set(tid, [...m].map(([number, areas]) => ({ number, areas })));
+  return out;
+}
+
+export async function areaBlockers(p: Project, ticketId: number): Promise<{ number: number; areas: string[] }[]> {
+  return (await areaBlockersOf(p, [ticketId])).get(ticketId) ?? [];
 }
 
 /** まだ開発に取りかかっていないチケットが、同じ場所を触るチケットを待っているか(取りかかった後は待たない)。 */
 export async function areaWait(p: Project, ticketId: number): Promise<{ number: number; areas: string[] }[]> {
-  if (await p.pdb.from("runs").select("id").where("ticket_id", "=", ticketId).where("role", "=", "dev").limit(1).executeTakeFirst()) return [];
-  return areaBlockers(p, ticketId);
+  return (await areaWaitOf(p, [ticketId])).get(ticketId) ?? [];
+}
+
+/** areaWait を複数のチケットぶんまとめて引く(ボード用。チケット → 待っている相手。待たないチケットは入らない)。 */
+export async function areaWaitOf(p: Project, ticketIds: number[]): Promise<Map<number, { number: number; areas: string[] }[]>> {
+  const ids = [...new Set(ticketIds)];
+  if (!ids.length) return new Map();
+  const started = new Set((await p.pdb.from("runs").select("ticket_id").where("ticket_id", "in", ids).where("role", "=", "dev").execute()).map((r) => r.ticket_id));
+  return areaBlockersOf(p, ids.filter((id) => !started.has(id)));
 }
 
 /** 先に終わらせるチケットのうち、merge 待ちの棚にあるもの(責任者が merge を押せば外れる)。 */
 export function mergeBlockers(p: Project, ticketId: number): Promise<number[]> {
   return depNumbers(p, ticketId, { in: ["merge"] });
+}
+
+/** mergeBlockers を複数のチケットぶん 1 文で引く(ボード用)。 */
+export function mergeBlockersOf(p: Project, ticketIds: number[]): Promise<Map<number, number[]>> {
+  return depNumbersOf(p, ticketIds, { in: ["merge"] });
 }
 
 export type Unblocks = {

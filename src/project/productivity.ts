@@ -1,6 +1,6 @@
 import { formationMarks } from "./formation-marks.js";
 import { sql, type Selectable } from "kysely";
-import { countFrom, countOf, inScope, scopeIds } from "../db/count.js";
+import { countFrom, countOf, inScope } from "../db/count.js";
 import type { DecisionsTable, RunsTable, TicketsTable } from "../db/tables.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
 import { violationTotals } from "./dev-rules.js";
@@ -50,7 +50,7 @@ export async function productivity(p: Project) {
     p.pdb.k
       .selectFrom("messages")
       .select(["id", "kind", sql<string>`CASE WHEN kind = 'plan' THEN payload ELSE '' END`.as("payload")])
-      .where("project_id", "in", scopeIds(p.pdb))
+      .where("project_id", "=", p.pdb.projectId)
       .execute(),
     inScope(p.pdb, "policies").execute(),
   ]);

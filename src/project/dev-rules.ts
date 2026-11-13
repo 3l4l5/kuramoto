@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { sql } from "kysely";
-import { inScope, scopeIds } from "../db/count.js";
+import { inScope } from "../db/count.js";
 import { defineTool, type Harness, type HarnessUsage } from "../harness/types.js";
 import type { Project, TicketRow } from "./project.js";
 
@@ -114,7 +114,7 @@ export async function devRulesView(p: Project) {
 /** 開発ルールの今の版。ルールを足す・直す・消す・有効 / 無効にするたびに 1 つ上がり、そのときのルールの一覧を dev_rule_versions に残す。 */
 export async function devRulesVersion(p: Project): Promise<number> {
   // 版はプロジェクトごと(主キーは (project_id, version))。まだ 0 のままの行(同期の INSERT)も、このプロジェクトのものとして数える
-  const r = await p.pdb.k.selectFrom("dev_rule_versions").select(sql<number | null>`MAX(version)`.as("v")).where("project_id", "in", scopeIds(p.pdb)).executeTakeFirst();
+  const r = await p.pdb.k.selectFrom("dev_rule_versions").select(sql<number | null>`MAX(version)`.as("v")).where("project_id", "=", p.pdb.projectId).executeTakeFirst();
   return Number(r?.v ?? 1);
 }
 
@@ -346,7 +346,7 @@ function violationsWithRule(p: Project, ticketId: number) {
     .innerJoin("dev_rules as r", "r.id", "v.rule_id")
     .selectAll("v")
     .select(["r.name as name", "r.body as body"])
-    .where("v.project_id", "in", scopeIds(p.pdb))
+    .where("v.project_id", "=", p.pdb.projectId)
     .where("v.ticket_id", "=", ticketId)
     .orderBy("v.id");
 }
@@ -358,6 +358,27 @@ export async function openViolations(p: Project, ticketId: number, handled?: Han
   return (await q.execute()) as unknown as (ViolationRow & { name: string; body: string })[];
 }
 
+/** openViolations を複数のチケットぶん 1 文で引く(ボード用。チケット → 違反。無いチケットは入らない)。 */
+export async function openViolationsOf(p: Project, ticketIds: number[], handled?: Handled): Promise<Map<number, (ViolationRow & { name: string; body: string })[]>> {
+  const out = new Map<number, (ViolationRow & { name: string; body: string })[]>();
+  const ids = [...new Set(ticketIds)];
+  if (!ids.length) return out;
+  let q = p.pdb.k
+    .selectFrom("rule_violations as v")
+    .innerJoin("dev_rules as r", "r.id", "v.rule_id")
+    .selectAll("v")
+    .select(["r.name as name", "r.body as body"])
+    .where("v.project_id", "=", p.pdb.projectId)
+    .where("v.ticket_id", "in", ids)
+    .where("v.resolved_at", "is", null)
+    .where("r.enabled", "=", 1)
+    .where("r.deleted_at", "is", null)
+    .orderBy("v.id");
+  if (handled) q = q.where("v.handled", "=", handled);
+  for (const v of (await q.execute()) as unknown as (ViolationRow & { name: string; body: string })[]) out.set(v.ticket_id, [...(out.get(v.ticket_id) ?? []), v]);
+  return out;
+}
+
 /** チケットのやりとりに出す、違反の記録(ルールの名前つき)。 */
 export async function violationsOf(p: Project, ticketId: number): Promise<(ViolationRow & { name: string })[]> {
   return (await violationsWithRule(p, ticketId).execute()) as unknown as (ViolationRow & { name: string })[];
@@ -365,7 +386,7 @@ export async function violationsOf(p: Project, ticketId: number): Promise<(Viola
 
 /** 生産性: ルール違反の件数と、うち自動で直した件数(handled = 'autofixed')。 */
 export async function violationTotals(p: Project): Promise<{ total: number; autofixed: number }> {
-  const rows = await p.pdb.k.selectFrom("rule_violations").select("handled").where("project_id", "in", scopeIds(p.pdb)).execute();
+  const rows = await p.pdb.k.selectFrom("rule_violations").select("handled").where("project_id", "=", p.pdb.projectId).execute();
   return { total: rows.length, autofixed: rows.filter((r) => r.handled === "autofixed").length };
 }
 

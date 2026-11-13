@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { inScope, scopeIds } from "../db/count.js";
+import { inScope } from "../db/count.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
 import { send } from "./inbox.js";
@@ -201,7 +201,7 @@ export async function memberNow(p: Project, memberId: number, steps = 8): Promis
     .selectFrom("runs as r")
     .innerJoin("messages as msg", "msg.id", "r.message_id")
     .select(["r.id as id", "r.role as role", "r.model as model", "r.started_at as started_at", "r.about_ticket_id as about", "r.ticket_id as ticket_id", "msg.kind as kind"])
-    .where("r.project_id", "in", scopeIds(p.pdb))
+    .where("r.project_id", "=", p.pdb.projectId)
     .where("r.member_id", "=", memberId)
     .where("r.ended_at", "is", null)
     .orderBy("r.id", "desc")

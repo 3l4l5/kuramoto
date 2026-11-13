@@ -12,10 +12,8 @@ import { describe, expect, it } from "vitest";
 const ROOT = join(import.meta.dirname, "..");
 const files = [join(ROOT, "hq.ts"), join(ROOT, "server.ts"), ...readdirSync(join(ROOT, "project")).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts")).map((f) => join(ROOT, "project", f))];
 
-/** 同期の生 SQL をまだ使っているファイル(src からの相対)。移したら消す。移す単位は ADR-0040 の A〜D(別チケット)。D が済んだら空にする。 */
-const NOT_MIGRATED = new Set([
-  "server.ts",
-]);
+/** 同期の生 SQL をまだ使っているファイル(src からの相対)。移したら消す。全部移し終えたので空(ADR-0040)。 */
+const NOT_MIGRATED = new Set<string>([]);
 
 const rel = (f: string) => f.slice(ROOT.length + 1);
 const SYNC_IMPORT = /import \{[^}]*\b(all|get|run|tx)\b[^}]*\} from "(\.\.\/db|\.\/db)\/sqlite\.js"/;

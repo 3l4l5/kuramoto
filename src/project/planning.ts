@@ -1,5 +1,5 @@
 import { sql } from "kysely";
-import { inScope, scopeIds } from "../db/count.js";
+import { inScope } from "../db/count.js";
 import type { Role } from "../domain/roles.js";
 import { send } from "./inbox.js";
 import type { Project } from "./project.js";
@@ -279,7 +279,7 @@ export async function sendPlan(p: Project, s: Stage | "handoff", event: { type: 
     const pending = await p.pdb.k
       .selectFrom("messages")
       .select(["id", "payload"])
-      .where("project_id", "in", scopeIds(p.pdb))
+      .where("project_id", "=", p.pdb.projectId)
       .where("kind", "=", "plan")
       .where("status", "=", "pending")
       .where("to_role", "=", role)
@@ -527,7 +527,7 @@ export async function commentsByScreen(p: Project): Promise<Map<string, Comment[
     .selectFrom("plan_comments as c")
     .innerJoin("plan_artifacts as a", "a.id", "c.artifact_id")
     .select(["c.id", "c.x", "c.y", "c.body", "c.variant", "c.resolved_in", "a.key as screen_key"])
-    .where("c.project_id", "in", scopeIds(p.pdb))
+    .where("c.project_id", "=", p.pdb.projectId)
     .where("a.stage", "=", "screen")
     .where("a.kind", "=", "screen")
     .orderBy("c.id")
@@ -648,7 +648,7 @@ export async function checkStudioLoop(p: Project): Promise<string | null> {
     .selectFrom("runs as r")
     .innerJoin("messages as m", "m.id", "r.message_id")
     .select(p.pdb.dialect.jsonExtract<string>("m.payload", "stage").as("stage"))
-    .where("r.project_id", "in", scopeIds(p.pdb))
+    .where("r.project_id", "=", p.pdb.projectId)
     .where("m.kind", "=", "plan")
     .where("r.started_at", ">=", since)
     .execute();
@@ -679,7 +679,7 @@ export async function studioProgress(p: Project) {
       "r.cost_usd as cost",
       "mb.name as member",
     ])
-    .where("r.project_id", "in", scopeIds(p.pdb))
+    .where("r.project_id", "=", p.pdb.projectId)
     .where("m.kind", "=", "plan")
     .orderBy("r.id")
     .execute();
@@ -702,7 +702,7 @@ export async function studioView(p: Project) {
   const thinkingRows = await p.pdb.k
     .selectFrom("messages")
     .select(p.pdb.dialect.jsonExtract<string>("payload", "stage").as("stage"))
-    .where("project_id", "in", scopeIds(p.pdb))
+    .where("project_id", "=", p.pdb.projectId)
     .where("kind", "=", "plan")
     .where("status", "in", ["pending", "claimed"])
     .execute();

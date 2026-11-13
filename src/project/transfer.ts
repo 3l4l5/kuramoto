@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { inScope, scopeIds } from "../db/count.js";
+import { inScope } from "../db/count.js";
 import { dialect } from "../db/dialect/index.js";
 import { inferDevDone } from "../domain/dev-done.js";
 import { TICKET_KINDS } from "../domain/flow.js";
@@ -113,7 +113,7 @@ export async function restoreTransfer(p: Project, d: TransferData): Promise<void
     if ((await inScope(p.pdb, "plan_artifacts").limit(1).executeTakeFirst()) || (await p.tickets()).length) throw new Error("空のプロジェクトにだけ戻せます");
     for (const [k, v] of Object.entries(d.settings)) if (KEEP_SETTING.test(k)) await p.setSetting(k, v);
 
-    for (const s of d.stages) await p.pdb.k.updateTable("plan_stages").set({ mode: s.mode, version: s.version, agreed_version: s.agreedVersion }).where("project_id", "in", scopeIds(p.pdb)).where("stage", "=", s.stage).execute();
+    for (const s of d.stages) await p.pdb.k.updateTable("plan_stages").set({ mode: s.mode, version: s.version, agreed_version: s.agreedVersion }).where("project_id", "=", p.pdb.projectId).where("stage", "=", s.stage).execute();
     const version = (s: Stage) => d.stages.find((x) => x.stage === s)?.version ?? 1;
 
     const reqV = version("req");
@@ -153,9 +153,9 @@ export async function restoreTransfer(p: Project, d: TransferData): Promise<void
     // 書き出したときに担当が作業中・順番待ちだった依頼は持ち越していない。
     // 始まっているのに中身が無い段階は「まだ始まっていない」に戻し、advance() で担当を起こし直す
     for (const s of STAGES) {
-      if (await p.setting(`plan_started:${s}`) && !await hasContent(p, s)) await p.pdb.k.deleteFrom("settings").where("project_id", "in", scopeIds(p.pdb)).where("key", "=", `plan_started:${s}`).execute();
+      if (await p.setting(`plan_started:${s}`) && !await hasContent(p, s)) await p.pdb.k.deleteFrom("settings").where("project_id", "=", p.pdb.projectId).where("key", "=", `plan_started:${s}`).execute();
     }
-    if (await p.setting("plan_handoff_requested_at") && !await p.setting("plan_handed_at")) await p.pdb.k.deleteFrom("settings").where("project_id", "in", scopeIds(p.pdb)).where("key", "=", "plan_handoff_requested_at").execute();
+    if (await p.setting("plan_handoff_requested_at") && !await p.setting("plan_handed_at")) await p.pdb.k.deleteFrom("settings").where("project_id", "=", p.pdb.projectId).where("key", "=", "plan_handoff_requested_at").execute();
     await p.event("system", "restored", null, { exportedAt: d.exportedAt });
   });
 }

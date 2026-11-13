@@ -1,4 +1,4 @@
-import { inScope, scopeIds } from "../db/count.js";
+import { inScope } from "../db/count.js";
 import { MODELS, ROLE_LABEL, WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
 import { flowFor, KIND_LABEL as TICKET_KIND_LABEL, TICKET_KINDS } from "../domain/flow.js";
 import { routesAmong } from "../domain/route.js";
@@ -82,7 +82,7 @@ export async function officeView(p: Project) {
   const pending = await p.pdb.k
     .selectFrom("messages")
     .select(["ticket_id", "to_role", "to_member_id", "kind"])
-    .where("project_id", "in", scopeIds(p.pdb))
+    .where("project_id", "=", p.pdb.projectId)
     .where("status", "=", "pending")
     .where("ticket_id", "is not", null)
     .orderBy("id")

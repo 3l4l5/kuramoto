@@ -55,15 +55,6 @@ export function enableProjectIdGuard(on = true): void {
   guardOn = on;
 }
 
-/**
- * 同期の run() の見張り(他の流れの非同期トランザクションの最中なら投げる)も、テストでだけ有効にする。
- * 移し終えるまでの本番では、トランザクションの中で外部 I/O を await する流れがあると、画面操作や p.event が時々例外になるため。
- * (tx() の見張りは #16 から本番でも有効のまま)
- */
-export function syncWriteGuardOn(): boolean {
-  return guardOn;
-}
-
 export function projectIdGuardPlugins(): KyselyPlugin[] {
   return guardOn ? [requireProjectIdPlugin] : [];
 }

@@ -781,12 +781,21 @@ export async function dropTicket(p: Project, ticketId: number, d: { by: "lead" |
   });
 }
 
+export type DroppedInfo = { by: "lead" | "owner" | null; reason: string | null; at: string | null };
+
 /** 取りやめたチケットの、誰が・いつ・なぜ。取りやめていなければ null。 */
-export async function droppedInfo(p: Project, ticketId: number): Promise<{ by: "lead" | "owner" | null; reason: string | null; at: string | null } | null> {
-  const r = (await p.pdb.from("tickets").select(["stage", "dropped_by", "dropped_reason", "dropped_at"]).where("id", "=", ticketId).executeTakeFirst()) as
-    | { stage: string; dropped_by: "lead" | "owner" | null; dropped_reason: string | null; dropped_at: string | null }
-    | undefined;
-  return r && r.stage === "dropped" ? { by: r.dropped_by, reason: r.dropped_reason, at: r.dropped_at } : null;
+export async function droppedInfo(p: Project, ticketId: number): Promise<DroppedInfo | null> {
+  return (await droppedInfos(p, [ticketId])).get(ticketId) ?? null;
+}
+
+/** droppedInfo を複数のチケットぶん 1 文で引く(ボード用。チケット → 情報。取りやめていないチケットは入らない)。 */
+export async function droppedInfos(p: Project, ticketIds: number[]): Promise<Map<number, DroppedInfo>> {
+  const out = new Map<number, DroppedInfo>();
+  const ids = [...new Set(ticketIds)];
+  if (!ids.length) return out;
+  const rows = await p.pdb.from("tickets").select(["id", "dropped_by", "dropped_reason", "dropped_at"]).where("id", "in", ids).where("stage", "=", "dropped").execute();
+  for (const r of rows) out.set(r.id, { by: r.dropped_by as DroppedInfo["by"], reason: r.dropped_reason, at: r.dropped_at });
+  return out;
 }
 
 export async function holdTicket(p: Project, ticketId: number, h: { reason: string; ownerAction: string; resume: ResumeMessage }): Promise<number> {

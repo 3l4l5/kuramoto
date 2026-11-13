@@ -102,7 +102,7 @@ describe("プロジェクトの編集", () => {
 
     // PR のあるリポジトリは外さない(何も変えずに止める)
     const t = await createTicket(p, { title: "x" });
-    run(p.db, "INSERT INTO pull_requests (ticket_id, repo_id, number, head) VALUES (?, ?, 1, 'b')", [t.id, (await p.repos())[1]!.id]);
+    run(p.db, "INSERT INTO pull_requests (ticket_id, repo_id, number, head, project_id) VALUES (?, ?, 1, 'b', ?)", [t.id, (await p.repos())[1]!.id, rec.id]);
     await expect(hq.updateProject(p, rec.id, { name: "変える", repos: [{ fullName: "acme/web", role: "API" }] })).rejects.toThrow(/acme\/new には PR や作業の記録があるので外せません/);
     expect((await hq.project(rec.id)).name).toBe("お試し 2");
     expect(await p.repos()).toHaveLength(2);

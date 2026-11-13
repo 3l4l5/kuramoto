@@ -2,10 +2,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFile } from "node:fs/promises";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { sql } from "kysely";
+import { countFrom, countOf } from "./db/count.js";
 import { networkInterfaces } from "node:os";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { all, get } from "./db/sqlite.js";
 import { isPreDev, pipelineOf } from "./domain/formation.js";
 import { KIND_LABEL, TICKET_KINDS, type TicketKind } from "./domain/flow.js";
 import { ROLE_LABEL } from "./domain/roles.js";
@@ -29,20 +30,20 @@ import { planWebDomains, planWebEnabled } from "./project/web-access.js";
 import { metrics } from "./project/metrics.js";
 import { exportDesignDoc } from "./project/export.js";
 import { extractTransfer, restoreTransfer } from "./project/transfer.js";
-import { runWork } from "./project/progress.js";
+import { runWorks } from "./project/progress.js";
 import { saveFormationInput, savePolicyInput, teamView } from "./project/team.js";
-import { addDevRule, deleteDevRule, devRulesView, openViolations, setDevRuleEnabled, updateDevRule } from "./project/dev-rules.js";
+import { addDevRule, deleteDevRule, devRulesView, openViolationsOf, setDevRuleEnabled, updateDevRule } from "./project/dev-rules.js";
 import { productivity } from "./project/productivity.js";
 import { officeView } from "./project/office.js";
 import { memberView, unitView, type MemberView, type UnitView } from "./project/people.js";
 import { ticketView } from "./project/ticket.js";
 import { leadChatView, sayToLead } from "./project/leadchat.js";
 import { memberChatView, memberNow, sayToMember } from "./project/member-chat.js";
-import { areaWait, blockers, dependsOn, mergeBlockers, mergeUnblocks } from "./project/triage.js";
+import { areaWaitOf, blockersOf, dependsOn, mergeBlockersOf, mergeUnblocks } from "./project/triage.js";
 import { budgetView, projectBudgetUsd, projectSpentUsd, setProjectBudget } from "./project/budget.js";
-import type { Project } from "./project/project.js";
+import type { Project, TicketRow } from "./project/project.js";
 import { GitWorkspace, type Workspace } from "./project/workspace.js";
-import { answerDecision, createTicket, defaultTicketBudgetUsd, droppedInfo, nonstop, pendingOwnerDecisions, reopenTicket, resumeChecks, setDefaultTicketBudget, setTicketBudget, setTicketKind, type DecisionOption } from "./project/workflow.js";
+import { answerDecision, createTicket, defaultTicketBudgetUsd, droppedInfos, nonstop, pendingOwnerDecisions, reopenTicket, resumeChecks, setDefaultTicketBudget, setTicketBudget, setTicketKind, type DecisionOption } from "./project/workflow.js";
 import {
   addComment,
   advance,
@@ -636,7 +637,7 @@ export class KuramotoServer {
         decisions: (await pendingOwnerDecisions(p)).length,
         merges: (await suggestedMergeOrder(p)).length,
         open: (await p.tickets()).filter((t) => !["done", "dropped"].includes(t.stage)).length,
-        working: get<{ n: number }>(p.db, "SELECT COUNT(*) AS n FROM runs WHERE ended_at IS NULL")?.n ?? 0,
+        working: await countOf(countFrom(p.pdb, "runs").where("ended_at", "is", null)),
         metrics: m,
       };
     }));
@@ -663,21 +664,50 @@ export class KuramotoServer {
   async projectView(id: number) {
     const p = await this.open(id);
     const rec = this.record(id);
-    const members = new Map((await p.activeMembers()).concat(all(p.db, "SELECT * FROM members WHERE left_at IS NOT NULL")).map((m) => [m.id, m.name]));
+    const k = p.pdb.k;
+    const pid = p.pdb.projectId;
+    const members = new Map((await k.selectFrom("members").select(["id", "name"]).where("project_id", "=", pid).orderBy("id").execute()).map((m) => [m.id, m.name]));
     const working = new Map(
-      all<{ id: number; ticket_id: number; member_id: number; role: string }>(p.db, "SELECT id, ticket_id, member_id, role FROM runs WHERE ended_at IS NULL AND ticket_id IS NOT NULL").map((r) => [r.ticket_id, r]),
+      (await k.selectFrom("runs").select(["id", "ticket_id", "member_id", "role"]).where("project_id", "=", pid).where("ended_at", "is", null).where("ticket_id", "is not", null).execute()).map((r) => [r.ticket_id as number, r]),
     );
     const prs = new Map(
-      all<{ ticket_id: number; number: number; full_name: string; ci: string | null; mergeable: string | null; fetched_at: string | null }>(
-        p.db,
-        "SELECT pr.ticket_id, pr.number, r.full_name, pr.ci, pr.mergeable, pr.fetched_at FROM pull_requests pr JOIN repos r ON r.id = pr.repo_id",
+      (
+        await k
+          .selectFrom("pull_requests as pr")
+          .innerJoin("repos as r", "r.id", "pr.repo_id")
+          .select(["pr.ticket_id", "pr.number", "r.full_name", "pr.ci", "pr.mergeable", "pr.fetched_at"])
+          .where("pr.project_id", "=", pid)
+          .execute()
       ).map((r) => [r.ticket_id, r]),
     );
     const formation = await p.currentFormation();
     const unblocks = await mergeUnblocks(p);
     // 開発に一度でも取りかかったチケット(ボードで「未着手」と「開発中」を分ける)
-    const started = new Set(all<{ ticket_id: number }>(p.db, "SELECT DISTINCT ticket_id FROM runs WHERE ticket_id IS NOT NULL AND role = 'dev'").map((r) => r.ticket_id));
-    const tickets = await Promise.all((await p.tickets()).map(async (t) => {
+    const started = new Set((await k.selectFrom("runs").select("ticket_id").distinct().where("project_id", "=", pid).where("ticket_id", "is not", null).where("role", "=", "dev").execute()).map((r) => r.ticket_id));
+    const ticketRows = (await p.tickets()) as (TicketRow & { triaged: number })[];
+    const ticketIds = ticketRows.map((t) => t.id);
+    // ボードの 1 枚ごとに引いていたものは、チケット全部ぶんを IN (…) でまとめて引く
+    const [works, waitFor, waitArea, waitMerge, dropped, ruleBlocked, conflicting] = await Promise.all([
+      runWorks(p, [...working.values()].map((w) => w.id), 3),
+      blockersOf(p, ticketIds),
+      areaWaitOf(p, ticketIds),
+      mergeBlockersOf(p, ticketIds),
+      droppedInfos(p, ticketIds),
+      openViolationsOf(p, ticketIds, "blocked"),
+      ticketIds.length
+        ? k
+            .selectFrom("conflicts as c")
+            .innerJoin("pull_requests as pr", "pr.id", "c.pr_id")
+            .select("pr.ticket_id")
+            .distinct()
+            .where("c.project_id", "=", pid)
+            .where("pr.ticket_id", "in", ticketIds)
+            .where("c.resolved_at", "is", null)
+            .execute()
+            .then((rows) => new Set(rows.map((r) => r.ticket_id)))
+        : new Set<number>(),
+    ]);
+    const tickets = ticketRows.map((t) => {
       const w = working.get(t.id);
       return {
         id: t.id,
@@ -692,24 +722,24 @@ export class KuramotoServer {
         rounds: t.rounds,
         started: started.has(t.id) || !!w,
         owner: t.owner_member_id ? members.get(t.owner_member_id) : null,
-        worker: w ? { name: members.get(w.member_id), role: ROLE_LABEL[w.role as keyof typeof ROLE_LABEL], work: await runWork(p, w.id, 3) } : null,
+        worker: w ? { name: members.get(w.member_id), role: ROLE_LABEL[w.role as keyof typeof ROLE_LABEL], work: works.get(w.id) ?? null } : null,
         pr: prs.get(t.id) ?? null,
         // リーダーの交通整理: まだなら triaging、先に終わらせるチケットが残っていれば waitFor
-        triaging: !(get<{ triaged: number }>(p.db, "SELECT triaged FROM tickets WHERE id = ?", [t.id])?.triaged ?? 1),
-        waitFor: await blockers(p, t.id),
+        triaging: !t.triaged,
+        waitFor: waitFor.get(t.id) ?? [],
         // 同じ場所を触るチケットが先に進んでいて、まだ取りかかれないもの(ADR-0024)
-        waitArea: await areaWait(p, t.id),
+        waitArea: waitArea.get(t.id) ?? [],
         // waitFor のうち merge 待ちの棚にあるもの(責任者が merge を押せば外れる)
-        waitMerge: await mergeBlockers(p, t.id),
+        waitMerge: waitMerge.get(t.id) ?? [],
         // merge 待ちのとき: merge すると動き出すチケット
         unblocks: unblocks.get(t.id) ?? null,
-        conflict: !!get(p.db, "SELECT 1 AS x FROM conflicts c JOIN pull_requests pr ON pr.id = c.pr_id WHERE pr.ticket_id = ? AND c.resolved_at IS NULL", [t.id]),
+        conflict: conflicting.has(t.id),
         // 取りやめたとき: 誰が・なぜ・いつ(ボードの「取りやめ」に出す)
-        dropped: await droppedInfo(p, t.id),
+        dropped: dropped.get(t.id) ?? null,
         // 「直すまで進めない」ルールに反して止まっているルールの名前(ボードの赤い札)
-        ruleBlocked: (await openViolations(p, t.id, "blocked")).map((v) => v.name),
+        ruleBlocked: (ruleBlocked.get(t.id) ?? []).map((v) => v.name),
       };
-    }));
+    });
     const decisions = await Promise.all((await pendingOwnerDecisions(p)).map(async (d) => {
       const t = await p.ticket(d.ticket_id);
       return {
@@ -759,7 +789,7 @@ export class KuramotoServer {
       ciBlocked: (await ciBlocked(p)).map((b) => ({ ...b, action: ciBlockAction(b.notes) })),
       events: await p.events(30),
       metrics: await metrics(p),
-      spentUsd: get<{ s: number | null }>(p.db, "SELECT SUM(cost_usd) AS s FROM runs")?.s ?? 0,
+      spentUsd: Number((await k.selectFrom("runs").select(sql<number | null>`SUM(cost_usd)`.as("s")).where("project_id", "=", pid).executeTakeFirst())?.s ?? 0),
     };
   }
 

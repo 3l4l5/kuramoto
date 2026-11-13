@@ -90,7 +90,7 @@ describe("生産性: ルール違反(R15)", () => {
   });
 });
 
-describe("生産性: 同期の書き込みの行(project_id は TRIGGER が埋める)", () => {
+describe("生産性: project_id を持つプロジェクトの行", () => {
   it("projectId が 0 でないプロジェクトで、p.event と createTicket が書いた直後の動きも、流れの指標に入る", async () => {
     const clock = new ManualClock(new Date("2026-11-12T00:00:00Z"));
     const p = await Project.open(":memory:", clock, 7);
@@ -101,7 +101,7 @@ describe("生産性: 同期の書き込みの行(project_id は TRIGGER が埋�
     clock.advance(H);
     await p.event("team", "merged", a.id, {});
     run(p.db, "UPDATE tickets SET stage = 'done', done_at = ? WHERE id = ?", [p.now(), a.id]);
-    // 同期の書き込みは project_id を書かないが、開いている間は TEMP TRIGGER がすぐ埋める(0 のまま残らない)
+    // 書いた行は、project_id(7)で入っている
     expect(p.db.prepare("SELECT COUNT(*) AS n FROM events WHERE type = 'merged' AND project_id = 7").get()).toEqual({ n: 1 });
 
     const v = await productivity(p);
