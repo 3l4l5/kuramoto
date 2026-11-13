@@ -35,6 +35,16 @@ export async function ownerMerge(p: Project, gh: GitHub, ticketId: number, by: "
     if (s.ci === "success") await markCiRunning(p, pr.full_name);
   }
 
+  // 外(GitHub の画面など)で先に merge された: 「PR が MERGED です」と断り続けず、完了にする(待っているチケットが解ける)
+  if (statuses.every(([, s]) => s.state === "MERGED")) {
+    for (const [pr] of statuses) await addMerge(p, pr.id, "merged", JSON.stringify({ external: true }));
+    p.setStage(ticket.id, "done");
+    p.event(by, "merged", ticket.id, { number: ticket.number, by, external: true });
+    await flushFollowups(p, ticket);
+    await recheckConflicts(p, gh, prs);
+    return { result: "merged" };
+  }
+
   const reviewGap = await unreviewedRoles(p, ticket);
   // チームの CI を使うなら、GitHub の CI は見ない(Actions は止めてある)
   const team = teamCiEnabled(p);

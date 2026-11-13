@@ -7,13 +7,14 @@ import type { Project, TicketRow } from "./project.js";
 import { comment, mustResolve, setStatus } from "./review.js";
 import { lastCiFailure } from "./merge.js";
 import { lastTeamCi, teamCiEnabled } from "./team-ci.js";
-import { areasOf, dependsOn, dropAsDuplicate, teamStatus } from "./triage.js";
+import { areaWait, areasOf, blockers, dependsOn, dropAsDuplicate, teamStatus } from "./triage.js";
 import { advance, createTicket, dropTicket, holdTicket, ticketSpentUsd, type ResumeMessage } from "./workflow.js";
 
 /**
  * リーダーの見回り(ADR-0026)。始業中は、始業したときと、間隔(設定 patrol_min、既定 5 分。"0" で止める)ごとにボードを見て、
  * - 同じことを扱うチケット(重複)を片付ける。取りかかった後のものも、残す方にまとめて PR を閉じる
  * - 同じところを回り続けている(差し戻しの往復・merge 待ちからの戻り・同じエラー・起動の回数)チケットを止めて、手を打つ
+ * - 待ち(after)が解けずに止まっている(デッドロック)チケットを、待ちの付け直しや、解消するチケットで片付ける
  * 回っているかどうかの見立ては Kuramoto が数えて(LLM を使わずに)出し、何もなければリーダーを起こさない(始業のときは必ず見回る)。
  */
 
@@ -109,6 +110,207 @@ export async function loopSignals(p: Project): Promise<LoopSignal[]> {
   return out;
 }
 
+/** デッドロック(待ちが解けずに止まっている状態)の 1 件。 */
+export type Deadlock = {
+  /** 同じ止まりを見分ける印(見たことにして、毎回見せないのに使う) */
+  key: string;
+  kind: "cycle" | "merged-wait" | "dropped-wait" | "idle-head";
+  /** 関わっているチケットの番号(原因のものが先) */
+  tickets: number[];
+  /** どの待ちが原因か(リーダーに見せる) */
+  reason: string;
+};
+
+type DeadTicket = { id: number; number: number; stage: TicketRow["stage"]; triaged: number };
+
+/** 輪になっている待ち(強連結成分)を、番号の組で返す。自分を待つものも輪とみなす。 */
+function waitCycles(open: Set<number>, waits: Map<number, number[]>): number[][] {
+  let counter = 0;
+  const index = new Map<number, number>();
+  const low = new Map<number, number>();
+  const onStack = new Set<number>();
+  const stack: number[] = [];
+  const out: number[][] = [];
+  const visit = (v: number): void => {
+    index.set(v, counter);
+    low.set(v, counter++);
+    stack.push(v);
+    onStack.add(v);
+    for (const w of waits.get(v) ?? []) {
+      if (!open.has(w)) continue;
+      if (!index.has(w)) {
+        visit(w);
+        low.set(v, Math.min(low.get(v)!, low.get(w)!));
+      } else if (onStack.has(w)) low.set(v, Math.min(low.get(v)!, index.get(w)!));
+    }
+    if (low.get(v) === index.get(v)) {
+      const comp: number[] = [];
+      let w: number;
+      do {
+        w = stack.pop()!;
+        onStack.delete(w);
+        comp.push(w);
+      } while (w !== v);
+      if (comp.length > 1 || (waits.get(v) ?? []).includes(v)) out.push(comp);
+    }
+  };
+  for (const v of open) if (!index.has(v)) visit(v);
+  return out;
+}
+
+/** 輪の中の 1 周(最小の番号から、待ちをたどって戻るまで)。 */
+function cyclePath(start: number, comp: Set<number>, waits: Map<number, number[]>): number[] {
+  const prev = new Map<number, number>();
+  const queue = [start];
+  while (queue.length) {
+    const v = queue.shift()!;
+    for (const w of waits.get(v) ?? []) {
+      if (!comp.has(w)) continue;
+      if (w === start) {
+        const path = [v];
+        while (path[0] !== start) path.unshift(prev.get(path[0]!)!);
+        return [...path, start];
+      }
+      if (!prev.has(w)) {
+        prev.set(w, v);
+        queue.push(w);
+      }
+    }
+  }
+  return [start, start];
+}
+
+/** 開発の席に手すきがあるか(空いている席・割り当ての無い手すきの人)。 */
+async function devSeatFree(p: Project): Promise<boolean> {
+  const busy = new Set<number>((await p.pdb.from("runs").select("member_id").where("ended_at", "is", null).execute()).map((r) => r.member_id));
+  for (const m of (await p.pdb.from("messages").select("to_member_id").where("status", "=", "pending").where("to_member_id", "is not", null).execute()).map((r) => r.to_member_id)) if (m !== null) busy.add(m);
+  for (const u of p.currentFormation().units.filter((x) => x.roles.includes("dev" as WorkRole))) {
+    const members = p.membersOfUnit(u.id);
+    if (members.length < u.max_members || members.some((m) => !busy.has(m.id))) return true;
+  }
+  return false;
+}
+
+/**
+ * 今、待ちが解けずに止まっているもの(見せたかどうかに関わらず、全部)。
+ * - 待ちの循環: A は B を待ち、B は A を待つ(長い輪も)
+ * - merge 済みなのに終わっていない待ち先: PR は merged なのに、ボードで done になっていないチケットを、ほかが待っている
+ * - 取りやめた待ち先: 待ち先が dropped なのに待ちが残っている
+ * - 手すきがいるのに取られない先頭: 待つものが無く、席も空いているのに、一定時間(設定 patrol_stuck_min、既定 10 分)誰にも取られていない
+ */
+export async function detectDeadlocks(p: Project): Promise<Deadlock[]> {
+  const all = (await p.pdb.from("tickets").select(["id", "number", "stage", "triaged"]).execute()) as DeadTicket[];
+  const byId = new Map(all.map((t) => [t.id, t]));
+  const isOpen = (t: DeadTicket) => t.stage !== "done" && t.stage !== "dropped";
+  const open = new Set(all.filter(isOpen).map((t) => t.id));
+  // 待っている側 → 待たれている側(終わっていないチケットが待っているものだけ)
+  const waits = new Map<number, number[]>();
+  for (const d of await p.pdb.from("ticket_deps").select(["ticket_id", "depends_on"]).execute()) {
+    if (!open.has(d.ticket_id) || !byId.has(d.depends_on)) continue;
+    waits.set(d.ticket_id, [...(waits.get(d.ticket_id) ?? []), d.depends_on]);
+  }
+  const num = (id: number) => byId.get(id)!.number;
+  const nums = (ids: number[]) => [...new Set(ids.map(num))].sort((a, b) => a - b);
+  const label = (ids: number[]) => nums(ids).map((n) => `#${n}`).join("・");
+  const out: Deadlock[] = [];
+
+  // 1. 待ちの循環
+  for (const comp of waitCycles(open, waits)) {
+    const members = nums(comp);
+    const path = cyclePath(comp.find((id) => num(id) === members[0])!, new Set(comp), waits);
+    out.push({
+      key: `cycle:${members.join(",")}`,
+      kind: "cycle",
+      tickets: members,
+      reason: `待ちが輪になっていて、どれも始まれません: ${path.map((id) => `#${num(id)}`).join(" → ")}(after の付け直しが要ります)`,
+    });
+  }
+
+  // 2. 待ち先の PR が merge 済みなのに、ボードで done になっていない
+  const waitedOpen = [...new Set([...waits.values()].flat())].filter((id) => open.has(id));
+  const prs = waitedOpen.length ? await p.pdb.from("pull_requests").select(["id", "ticket_id", "number", "gh_state"]).where("ticket_id", "in", waitedOpen).orderBy("id").execute() : [];
+  const mergedPrIds = new Set(
+    prs.length ? (await p.pdb.from("merges").select("pr_id").where("pr_id", "in", prs.map((r) => r.id)).where("result", "=", "merged").execute()).map((r) => r.pr_id) : [],
+  );
+  const mergedStale = new Set<number>();
+  for (const id of waitedOpen) {
+    const mine = prs.filter((r) => r.ticket_id === id);
+    if (!mine.length || !mine.every((r) => r.gh_state === "MERGED" || mergedPrIds.has(r.id))) continue;
+    mergedStale.add(id);
+    const waiters = [...waits].filter(([, ws]) => ws.includes(id)).map(([w]) => w);
+    out.push({
+      key: `merged-wait:${num(id)}`,
+      kind: "merged-wait",
+      tickets: [num(id), ...nums(waiters)],
+      reason: `#${num(id)} は PR(${mine.map((r) => `#${r.number}`).join("・")})が merge 済みなのに、ボードでは「${stageText(byId.get(id)!)}」のまま done になっていません。待っている ${label(waiters)} が進めません`,
+    });
+  }
+
+  // 3. 待ち先が取りやめなのに、待ちが残っている
+  for (const [id, ws] of waits) {
+    const gone = ws.filter((d) => byId.get(d)?.stage === "dropped");
+    if (gone.length) out.push({ key: `dropped-wait:${num(id)}`, kind: "dropped-wait", tickets: [num(id)], reason: `#${num(id)} は、取りやめになった ${label(gone)} を待ったままです(待つのをやめるか、代わりの待ち先に付け直します)` });
+  }
+
+  // 4. 席が空いているのに、取りかかれるはずの先頭が取られていない
+  const stuckMs = Math.max(1, p.settingNumber("patrol_stuck_min", 10)) * 60_000;
+  const now = p.clock.now().getTime();
+  const pending = await p.pdb.from("messages").select(["ticket_id", "to_member_id", "created_at", "available_at"]).where("kind", "=", "implement").where("status", "=", "pending").execute();
+  let seatFree: boolean | undefined;
+  const runningMembers = async () => new Set((await p.pdb.from("runs").select("member_id").where("ended_at", "is", null).execute()).map((r) => r.member_id));
+  for (const m of pending) {
+    const t = m.ticket_id === null ? undefined : byId.get(m.ticket_id);
+    if (!t || t.stage !== "dev" || !t.triaged || mergedStale.has(t.id)) continue;
+    if (m.available_at > p.now()) continue;
+    // 待つものが無い(先頭)・同じ場所を先に触っているものが無い・動いていない・責任者の対応待ちでもない
+    if ((await blockers(p, t.id)).length || (await areaWait(p, t.id)).length) continue;
+    if (await runningNow(p, t.id)) continue;
+    if (await waitingOwner(p, t.id)) continue;
+    if (m.to_member_id !== null && (await runningMembers()).has(m.to_member_id)) continue;
+    // 待つものが無くなったとき(待ち先の merge・取りやめ、待ちの付け直し)・仕事が入ったときから数える
+    const deps = await p.pdb.from("ticket_deps").select("depends_on").where("ticket_id", "=", t.id).execute();
+    const resolved = await p.pdb.from("events").select("at").where("type", "in", ["merged", "ticket_dropped", "duplicate_dropped"]).where("ticket_id", "in", deps.length ? deps.map((d) => d.depends_on) : [-1]).execute();
+    const planned = await p.pdb.from("events").select("at").where("type", "=", "ticket_planned").where("ticket_id", "=", t.id).execute();
+    const since = Math.max(0, ...[m.created_at, ...resolved.map((e) => e.at), ...planned.map((e) => e.at)].map((a) => Date.parse(a) || 0));
+    if (now - since < stuckMs) continue;
+    if ((seatFree ??= await devSeatFree(p)) === false) continue;
+    const behind = new Set<number>();
+    const queue = [t.id];
+    while (queue.length) {
+      const id = queue.shift()!;
+      for (const [w, ws] of waits) if (ws.includes(id) && !behind.has(w)) (behind.add(w), queue.push(w));
+    }
+    const mins = Math.floor((now - since) / 60_000);
+    out.push({
+      key: `idle-head:${t.number}`,
+      kind: "idle-head",
+      tickets: [t.number, ...nums([...behind])],
+      reason: `#${t.number} は待つものが無く、開発の席も空いているのに、${mins} 分以上誰にも取られていません${m.to_member_id !== null ? "(担当を名指ししてあります)" : ""}${behind.size ? `。これを待っている ${label([...behind])} も動けません` : ""}`,
+    });
+  }
+  return out.sort((a, b) => a.tickets[0]! - b.tickets[0]! || a.key.localeCompare(b.key));
+}
+
+/** 見せたデッドロックの印と、見せた時刻(まだ続いているものを、間を空けて見せ直すのに使う)。 */
+function deadlockSeen(p: Project): Record<string, string> {
+  const v = p.setting("patrol_deadlock_seen");
+  return v ? (JSON.parse(v) as Record<string, string>) : {};
+}
+
+/**
+ * 今見せるべきデッドロック。前の見回りで見せたものは、続いていても見せない(同じ止まりで毎回チケットを作らないため)。
+ * 見せてから設定 patrol_deadlock_recheck_min(既定 60 分、0 で見せ直さない)が過ぎても続いていれば、もう一度見せる。
+ */
+export async function deadlockSignals(p: Project): Promise<Deadlock[]> {
+  const seen = deadlockSeen(p);
+  const again = p.settingNumber("patrol_deadlock_recheck_min", 60) * 60_000;
+  const now = p.clock.now().getTime();
+  return (await detectDeadlocks(p)).filter((d) => {
+    const at = seen[d.key];
+    return !at || (again > 0 && now - Date.parse(at) >= again);
+  });
+}
+
 /** 前回の見回りのあとに入ったチケット(重複が増えていないかを見る)。交通整理がまだのものは、交通整理が先に見るので数えない。 */
 async function newTickets(p: Project): Promise<TicketRow[]> {
   const after = p.settingNumber("patrol_last_ticket", 0);
@@ -146,7 +348,7 @@ export async function startPatrol(p: Project): Promise<boolean> {
 }
 
 /**
- * 間隔が過ぎていて、見るもの(回っていそうなチケット・前回の後に入ったチケット)があれば、リーダーに見回りを頼む。
+ * 間隔が過ぎていて、見るもの(回っていそうなチケット・待ちが解けずに止まっているもの・前回の後に入ったチケット)があれば、リーダーに見回りを頼む。
  * 何も無ければ起こさない(トークンを使わない)。
  */
 export async function requestPatrol(p: Project): Promise<boolean> {
@@ -162,20 +364,32 @@ export async function requestPatrol(p: Project): Promise<boolean> {
   if (await patrolPending(p)) return false;
   const fresh = await newTickets(p);
   // 重複は 2 枚以上ないと起きない。回っているものが無く、新しいチケットも無ければ見回らない
-  if (!(await loopSignals(p)).length && !(fresh.length && (await openCount(p)) >= 2)) return false;
+  if (!(await loopSignals(p)).length && !(await deadlockSignals(p)).length && !(fresh.length && (await openCount(p)) >= 2)) return false;
   p.setSetting("patrol_last_at", iso(p.clock.now()));
   send(p, { ticketId: null, toRole: "lead", kind: "patrol", payload: {} });
   return true;
 }
 
-/** 見回りを終えた。見せたチケットは見たことにして、同じものを次の見回りで繰り返し見せない。 */
-export async function finishPatrol(p: Project, shown: LoopSignal[]): Promise<void> {
+/**
+ * 見回りを終えた。見せたチケットは見たことにして、同じものを次の見回りで繰り返し見せない。
+ * 見せたデッドロックも覚える。もう止まっていないものは忘れる(あとで同じ止まりが起きたら、新しく見せる)。
+ */
+export async function finishPatrol(p: Project, shown: LoopSignal[], deadlocks: Deadlock[] = []): Promise<void> {
   for (const s of shown) await markSeen(p, s.ticket.id);
   const max = await maxOf(p, "tickets", "number");
   p.setSetting("patrol_last_ticket", String(max));
+  const before = deadlockSeen(p);
+  const now = iso(p.clock.now());
+  const next: Record<string, string> = {};
+  for (const d of await detectDeadlocks(p)) {
+    const wasShown = deadlocks.some((x) => x.key === d.key);
+    const at = wasShown ? now : before[d.key];
+    if (at) next[d.key] = at;
+  }
+  p.setSetting("patrol_deadlock_seen", JSON.stringify(next));
 }
 
-function stageText(t: TicketRow): string {
+function stageText(t: { stage: TicketRow["stage"] }): string {
   return { dev: "開発", review: "レビュー", sec: "セキュリティ", qa: "QA", decision: "判断待ち", merge: "merge 待ち", done: "完了", dropped: "取りやめ" }[t.stage];
 }
 
@@ -188,7 +402,18 @@ async function openPrNumbers(p: Project, ticketIds: number[]): Promise<Map<numbe
   return out;
 }
 
-export async function patrolPrompt(p: Project, signals: LoopSignal[], opts: { start?: boolean } = {}): Promise<string> {
+const DEADLOCK_LABEL: Record<Deadlock["kind"], string> = { cycle: "待ちの循環", "merged-wait": "merge 済みなのに done でない待ち先", "dropped-wait": "取りやめた待ち先", "idle-head": "手すきがいるのに取られない先頭" };
+
+/** デッドロックの解消の手順(プロンプトに入れる)。 */
+const DEADLOCK_STEPS = `- デッドロック(上の「デッドロック」の節): 見つかったものを 1 件ずつ、原因を見立てて解消します。自分で直せるものは plan_work、仕組みの不具合は create_ticket で使い分けます。
+  - 自分で直せるもの(待ちの付け直し・担当の割り当て)は plan_work で直します。plan_work は、書いたチケットの after を書いたものに置き換えるので、残したい待ちも after にすべて書きます(areas は省けば変わりません)。
+    - 待ちの循環: どちらが先かを決め、輪を切る方の after から外します。
+    - 取りやめた待ち先: after から外すか、代わりに待つべきチケットに付け直します。
+    - 手すきがいるのに取られない先頭: assignee に手すきのメンバーか島の名前を書いて割り当て直します。それでも取られないなら、仕組みの不具合を疑います。
+  - 仕組み側の不具合が原因のもの(merge 済みなのにボードで done にならない・待ち先が進んでいるのに待ちが解けない・席が空いて待ちも無いのに取られない理由が分からない、など)は、plan_work では根本が直りません。create_ticket で「解消するチケット」(kind は bugfix。見つけた事実・どのチケットが止まっているか・直すべきところの見立てを本文に書く)を作ります。同じ原因のチケットがボードに(開いたまま)既にあれば、作りません。待たされているチケットは、plan_work で待ちを外して先に進めて構いません。
+  - 解消したものも、様子を見るものも、報告に書きます。一度見せたデッドロックは、続いていても次の見回りでは(しばらく)見せません。`;
+
+export async function patrolPrompt(p: Project, signals: LoopSignal[], opts: { start?: boolean; deadlocks?: Deadlock[] } = {}): Promise<string> {
   const open = (await openTickets(p).execute()) as TicketRow[];
   const fresh = new Set((await newTickets(p)).map((t) => t.id));
   const prs = await openPrNumbers(p, open.map((t) => t.id));
@@ -221,13 +446,18 @@ ${notes.length ? `- 最近のメモ:\n${notes.map((n) => `  - ${n.who === "lead"
   }
   const loops = loopBlocks.join("\n\n");
   const status = await teamStatus(p);
-  return `${opts.start ? "始業したので、最初の見回りです" : "定期の見回りです"}。ボードを見て、重複しているチケット・いらなくなったチケットと、同じところを回り続けているチケットに手を打ってください。
+  const deadlocks = opts.deadlocks ?? [];
+  const deadlockText = deadlocks.map((d) => `- [${DEADLOCK_LABEL[d.kind]}] ${d.reason}`).join("\n");
+  return `${opts.start ? "始業したので、最初の見回りです" : "定期の見回りです"}。ボードを見て、重複しているチケット・いらなくなったチケットと、同じところを回り続けているチケット、待ちが解けずに止まっているチケット(デッドロック)に手を打ってください。
 
 ## 開いているチケット
 ${list || "(なし)"}
 
 ## 回っていそうなチケット(Kuramoto が数えたもの)
 ${loops || "(なし)"}
+
+## デッドロック(待ちが解けずに止まっているもの。Kuramoto が見つけたもの)
+${deadlockText || "(なし)"}
 
 ## チームの今
 ${status}
@@ -242,8 +472,9 @@ ${status}
   - 責任者にしかできないこと(秘密情報・権限・契約)が無いと進まないときだけ、hold で止めて責任者に頼みます。
   - 見た上で、順調に進んでいて手を打たなくてよいなら、何もしません(次の見回りでは、ここから先の回数だけを数えます)。
 ${teamCiEnabled(p) ? "- CI はチームの CI(Kuramoto が手元で流す確認)を使っています。GitHub Actions は止めてあり、merge にも使いません。GitHub の CI の失敗を理由に手を打たず、そのためだけのチケットは drop_ticket で取りやめます。" : "- CI が絡むものは、ci_status・ci_run・ci_settings で Kuramoto に GitHub を見てもらえます(あなたの作業場所からは見えません)。ci_rerun で落ちたジョブをやり直せます。"}
+${DEADLOCK_STEPS}
 - 動いている最中のチケット(起動中)には手を打てません。道具が断ったら、次の見回りに回します。
-- 最後のテキストは、責任者への短い報告にします(片付けた重複・取りやめたチケット・手を打ったチケットとその理由)。何もしなかったなら「見回りました。手を打つものはありませんでした」とだけ書きます。`;
+- 最後のテキストは、責任者への短い報告にします(片付けた重複・取りやめたチケット・手を打ったチケットとその理由。デッドロックは、何が原因で、plan_work で何を直したか・create_ticket でどのチケットを作ったかも書く)。何もしなかったなら「見回りました。手を打つものはありませんでした」とだけ書きます。`;
 }
 
 /** 起動中なら手を打てない(リーダー自身がそのチケットを調べている起動は数えない)。 */

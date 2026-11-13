@@ -4,7 +4,9 @@ import { all, get, run } from "../db/sqlite.js";
 import { FakeHarness } from "../harness/fake.js";
 import { Dispatcher } from "./dispatcher.js";
 import { leadMessages } from "./leadchat.js";
-import { loopSignals, requestPatrol, setPatrolMinutes, startPatrol } from "./patrol.js";
+import type { GitHub, PrStatus } from "../github/github.js";
+import { deadlockSignals, detectDeadlocks, finishPatrol, loopSignals, patrolPrompt, requestPatrol, setPatrolMinutes, startPatrol } from "./patrol.js";
+import { ownerMerge } from "./merge.js";
 import { Project } from "./project.js";
 import { blockers } from "./triage.js";
 import { createTicket, droppedInfo, reopenTicket } from "./workflow.js";
@@ -206,5 +208,236 @@ describe("リーダーの見回り(ADR-0026)", () => {
     const dup = await make("保存で 412 の文言");
     await dropAsDuplicate(p, dup.number, keep.number);
     expect(await droppedInfo(p, dup.id)).toMatchObject({ by: "lead", reason: `#${keep.number}「412 の文言」と重複していたため` });
+  });
+
+  describe("デッドロック(待ちが解けずに止まっている)", () => {
+    const wait = (p: Project, id: number, on: number) => run(p.db, "INSERT INTO ticket_deps (ticket_id, depends_on) VALUES (?, ?)", [id, on]);
+    const setStage = (p: Project, id: number, stage: string) => run(p.db, "UPDATE tickets SET stage = ? WHERE id = ?", [stage, id]);
+    const addPr = (p: Project, ticketId: number, number: number, state: string | null) =>
+      run(p.db, "INSERT INTO pull_requests (ticket_id, repo_id, number, head, gh_state) VALUES (?, ?, ?, ?, ?)", [ticketId, p.repos()[0]!.id, number, `kuramoto/${number}`, state]);
+    const kinds = async (p: Project) => (await detectDeadlocks(p)).map((d) => [d.kind, d.tickets]);
+
+    it("待ちの循環(A→B→A・長い輪・自分を待つもの)を見つけ、輪の中の道すじを理由に出す。輪の外は含めない", async () => {
+      const { p, make } = setup();
+      const [a, b, c, d, e, f] = [await make("A"), await make("B"), await make("C"), await make("D"), await make("E"), await make("F")];
+      wait(p, a.id, b.id);
+      wait(p, b.id, a.id); // 2 枚の輪
+      wait(p, c.id, d.id);
+      wait(p, d.id, e.id);
+      wait(p, e.id, c.id); // 3 枚の輪
+      wait(p, f.id, a.id); // 輪を待っているだけ(輪ではない)
+      const found = (await detectDeadlocks(p)).filter((x) => x.kind === "cycle");
+      expect(found.map((x) => x.tickets)).toEqual([[a.number, b.number], [c.number, d.number, e.number]]);
+      expect(found[0]!.reason).toContain(`#${a.number} → #${b.number} → #${a.number}`);
+      expect(found[1]!.reason).toContain(`#${c.number} → #${d.number} → #${e.number} → #${c.number}`);
+      // 輪の中の待ちが merge されれば、輪ではなくなる
+      setStage(p, b.id, "done");
+      expect((await detectDeadlocks(p)).filter((x) => x.kind === "cycle").map((x) => x.tickets)).toEqual([[c.number, d.number, e.number]]);
+    });
+
+    it("待ち先の PR が merge 済みなのにボードで done でないものを見つける(#44 が merge のまま、#45・#57 が待っていた形)", async () => {
+      const { p, make } = setup();
+      const base = await make("DB の非同期化");
+      const next = await make("プロンプトの非同期化");
+      const later = await make("見回り");
+      setStage(p, base.id, "merge");
+      addPr(p, base.id, 54, "MERGED");
+      wait(p, next.id, base.id);
+      wait(p, later.id, base.id);
+      wait(p, later.id, next.id);
+      const found = (await detectDeadlocks(p)).filter((x) => x.kind === "merged-wait");
+      expect(found.map((x) => [x.key, x.tickets])).toEqual([[`merged-wait:${base.number}`, [base.number, next.number, later.number]]]);
+      expect(found[0]!.reason).toContain(`#${base.number} は PR(#54)が merge 済みなのに`);
+      expect(found[0]!.reason).toContain("merge 待ち");
+      // 開いたままの PR(まだ merge されていない)や、待つ人のいない merge 済みは、デッドロックではない
+      const open = await make("別の土台");
+      const waiter = await make("別の続き");
+      setStage(p, open.id, "merge");
+      addPr(p, open.id, 60, "OPEN");
+      wait(p, waiter.id, open.id);
+      const lone = await make("待たれていない");
+      setStage(p, lone.id, "merge");
+      addPr(p, lone.id, 61, "MERGED");
+      expect((await detectDeadlocks(p)).filter((x) => x.kind === "merged-wait")).toHaveLength(1);
+    });
+
+    it("外で merge された PR は、merge の確認で done になり、待っていたチケットが解ける(merge 済みなのに done にならない原因の修正)", async () => {
+      const { p, make } = setup();
+      const base = await make("土台");
+      const next = await make("続き");
+      setStage(p, base.id, "merge");
+      addPr(p, base.id, 54, null);
+      wait(p, next.id, base.id);
+      const gh: GitHub = {
+        prStatus: async (): Promise<PrStatus> => ({ state: "MERGED", mergeable: "UNKNOWN", ci: "none" }),
+        merge: async () => {
+          throw new Error("もう merge 済みなので、merge は呼ばない");
+        },
+        comment: async () => "c",
+      };
+      expect(await ownerMerge(p, gh, base.id, "team")).toEqual({ result: "merged" });
+      expect(p.ticket(base.id).stage).toBe("done");
+      expect(await blockers(p, next.id)).toEqual([]);
+      expect(await detectDeadlocks(p)).toEqual([]);
+    });
+
+    it("待ち先が取りやめなのに待ちが残っているものを見つける", async () => {
+      const { p, make } = setup();
+      const gone = await make("やめた土台");
+      const stuck = await make("続き");
+      const fine = await make("別の続き");
+      const ok = await make("終わった土台");
+      wait(p, stuck.id, gone.id);
+      wait(p, fine.id, ok.id);
+      setStage(p, gone.id, "dropped"); // dropTicket を通さず、待ちが残った形
+      setStage(p, ok.id, "done");
+      const found = (await detectDeadlocks(p)).filter((x) => x.kind === "dropped-wait");
+      expect(found.map((x) => [x.key, x.tickets])).toEqual([[`dropped-wait:${stuck.number}`, [stuck.number]]]);
+      expect(found[0]!.reason).toContain(`#${gone.number}`);
+    });
+
+    it("手すきの席があるのに、取りかかれるはずの先頭が一定時間取られていないものを見つける(待っているものも道連れに数える)", async () => {
+      const { p, clock, make } = setup();
+      p.saveFormation({ pull: "down", units: [{ name: "開発の島", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 600 }] });
+      const head = await make("先頭");
+      const behind = await make("後ろ");
+      const behind2 = await make("その後ろ");
+      wait(p, behind.id, head.id);
+      wait(p, behind2.id, behind.id);
+      expect(await detectDeadlocks(p)).toEqual([]); // さっき入ったばかり
+      clock.advance(9 * 60_000);
+      expect(await detectDeadlocks(p)).toEqual([]); // まだ一定時間(既定 10 分)に満たない
+      clock.advance(2 * 60_000);
+      const found = await detectDeadlocks(p);
+      expect(found.map((x) => [x.kind, x.tickets])).toEqual([["idle-head", [head.number, behind.number, behind2.number]]]);
+      expect(found[0]!.reason).toContain("誰にも取られていません");
+      expect(found[0]!.reason).toContain(`#${behind.number}`);
+
+      // 待ち先が merge されたときから数え直す(merge の直後は、普通に取られるのを待つ)
+      setStage(p, head.id, "done");
+      p.event("system", "merged", head.id, {});
+      expect((await detectDeadlocks(p)).map((x) => x.tickets)).toEqual([]);
+      clock.advance(11 * 60_000);
+      expect((await detectDeadlocks(p)).map((x) => [x.kind, x.tickets])).toEqual([["idle-head", [behind.number, behind2.number]]]);
+    });
+
+    it("席が埋まっている・責任者の対応待ち・取りかかる前の交通整理待ちは、取られていなくてもデッドロックではない", async () => {
+      const { p, clock, make } = setup();
+      p.saveFormation({ pull: "down", units: [{ name: "開発の島", roles: ["dev"], maxMembers: 1, summonAt: 2, idleSec: 600 }] });
+      const busy = await make("動いているもの");
+      const free = await make("取られていないもの");
+      // 開発の島の 1 人は、別のチケットで動いている
+      const member = p.membersOfUnit(p.currentFormation().units[0]!.id)[0]!;
+      const msg = run(p.db, "INSERT INTO messages (ticket_id, to_role, kind, status, available_at, created_at) VALUES (?, 'dev', 'implement', 'claimed', '', '')", [busy.id]).lastId;
+      run(p.db, "INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at) VALUES (?, ?, ?, 'dev', 1, 1, '')", [msg, busy.id, member.id]);
+      run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ? AND id <> ?", [busy.id, msg]);
+      clock.advance(30 * 60_000);
+      expect(await detectDeadlocks(p)).toEqual([]);
+
+      // 席が空けば、止まっている
+      run(p.db, "UPDATE runs SET ended_at = '' WHERE ticket_id = ?", [busy.id]);
+      run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ?", [busy.id]);
+      expect((await detectDeadlocks(p)).map((x) => x.tickets)).toEqual([[free.number]]);
+      // 交通整理がまだなら、交通整理が先に見る
+      run(p.db, "UPDATE tickets SET triaged = 0 WHERE id = ?", [free.id]);
+      expect(await detectDeadlocks(p)).toEqual([]);
+    });
+
+    it("見せたデッドロックは覚え、続いていても見せない。止まりが解ければ忘れ、間隔が過ぎれば見せ直す", async () => {
+      const { p, clock, make } = setup();
+      const a = await make("A");
+      const b = await make("B");
+      wait(p, a.id, b.id);
+      wait(p, b.id, a.id);
+      expect(await requestPatrol(p)).toBe(false); // 初めては、ここから間隔を数え始める
+      clock.advance(6 * 60_000);
+      p.setSetting("patrol_last_ticket", String(b.number));
+      const shown = await deadlockSignals(p);
+      expect(shown).toHaveLength(1);
+      expect(await requestPatrol(p)).toBe(true); // デッドロックだけでも、リーダーを起こす
+      run(p.db, "UPDATE messages SET status = 'done' WHERE kind = 'patrol'");
+
+      await finishPatrol(p, [], shown);
+      expect(await deadlockSignals(p)).toEqual([]);
+      clock.advance(6 * 60_000);
+      expect(await requestPatrol(p)).toBe(false); // 続いていても、見せたものでは起こさない
+      // 見せ直す間隔(既定 60 分)が過ぎたら、もう一度見せる
+      clock.advance(60 * 60_000);
+      expect(await deadlockSignals(p)).toHaveLength(1);
+      p.setSetting("patrol_deadlock_recheck_min", "0");
+      expect(await deadlockSignals(p)).toEqual([]); // 0 なら見せ直さない
+
+      // 解けたら忘れ、また同じ止まりが起きたら新しく見せる
+      run(p.db, "DELETE FROM ticket_deps");
+      await finishPatrol(p, [], []);
+      expect(p.setting("patrol_deadlock_seen")).toBe("{}");
+      wait(p, a.id, b.id);
+      wait(p, b.id, a.id);
+      expect(await deadlockSignals(p)).toHaveLength(1);
+    });
+
+    it("見回りのプロンプトに、デッドロックの節と、原因・解消の手順(plan_work と create_ticket の使い分け)が出る", async () => {
+      const { p, make } = setup();
+      const a = await make("A");
+      const b = await make("B");
+      wait(p, a.id, b.id);
+      wait(p, b.id, a.id);
+      const none = await patrolPrompt(p, [], { deadlocks: [] });
+      expect(none).toContain("## デッドロック");
+      expect(none).toMatch(/## デッドロック[^\n]*\n\(なし\)/);
+      const prompt = await patrolPrompt(p, [], { deadlocks: await detectDeadlocks(p) });
+      expect(prompt).toMatch(/## デッドロック[^\n]*\n- \[待ちの循環\] 待ちが輪になっていて/);
+      expect(prompt).toContain(`#${a.number} → #${b.number} → #${a.number}`);
+      expect(prompt).toContain("plan_work で直します");
+      expect(prompt).toContain("create_ticket で「解消するチケット」");
+      expect(prompt).toContain("既にあれば、作りません");
+    });
+
+    it("リーダーが見回りの中で、plan_work で循環を切り、create_ticket で解消のチケットを作る。2 回目の見回りでは重ねて作らない", async () => {
+      const { p, clock, make } = setup();
+      const a = await make("A");
+      const b = await make("B");
+      const base = await make("土台");
+      const waiter = await make("続き");
+      wait(p, a.id, b.id);
+      wait(p, b.id, a.id);
+      setStage(p, base.id, "merge");
+      addPr(p, base.id, 54, "MERGED");
+      wait(p, waiter.id, base.id);
+      run(p.db, "UPDATE messages SET available_at = '9999' WHERE kind <> 'patrol'");
+      p.setSetting("patrol_last_at", "2000-01-01T00:00:00.000Z");
+      p.setSetting("patrol_last_ticket", String(waiter.number));
+
+      const prompts: string[] = [];
+      const harness = new FakeHarness(async (req, call) => {
+        if (!req.tools.some((t) => t.name === "pass_as_is")) return {};
+        prompts.push(req.prompt);
+        expect(req.tools.map((t) => t.name)).toEqual(expect.arrayContaining(["plan_work", "create_ticket"]));
+        if (prompts.length === 1) {
+          expect(await call("plan_work", { items: [{ number: a.number, after: [] }] })).toContain("決めました");
+          expect(await call("create_ticket", { title: "merge 済みなのに done にならない", body: `#${base.number} が止まっている`, kind: "bugfix" })).toContain("作りました");
+        }
+        return { finalText: "デッドロックを 2 件見つけ、1 件は待ちを付け直し、1 件は解消のチケットを作りました。" };
+      });
+      const run1 = async () => {
+        const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp"), triage: true, recheckMs: 10 });
+        await d.drain({ concurrency: 1, maxRuns: 1 });
+      };
+      await run1();
+
+      expect(prompts[0]).toContain(`[待ちの循環] 待ちが輪になっていて`);
+      expect(prompts[0]).toContain(`[merge 済みなのに done でない待ち先] #${base.number}`);
+      expect(await blockers(p, a.id)).toEqual([]); // 循環は plan_work で切った
+      expect(p.tickets().filter((t) => t.title.includes("done にならない"))).toHaveLength(1);
+      expect(leadMessages(p).at(-1)!.body).toContain("デッドロックを 2 件");
+
+      // 切った循環は消え、merge 済み待ちは続いているが見せ済み: 次の見回りでは起こさず、起こしても重ねて作らない
+      clock.advance(6 * 60_000);
+      p.setSetting("patrol_last_ticket", String(Math.max(...p.tickets().map((t) => t.number))));
+      expect(await detectDeadlocks(p)).toHaveLength(1);
+      expect(await deadlockSignals(p)).toEqual([]);
+      expect(await requestPatrol(p)).toBe(false);
+      expect(p.tickets().filter((t) => t.title.includes("done にならない"))).toHaveLength(1);
+    });
   });
 });
