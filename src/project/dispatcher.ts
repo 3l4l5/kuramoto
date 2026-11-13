@@ -3,6 +3,7 @@ import { mustAnswer, mustResolve } from "./review.js";
 import { all, get, isUniqueViolation, run, tx } from "../db/sqlite.js";
 import { WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
 import type { Harness, HarnessResult, HarnessUsage } from "../harness/types.js";
+import { dialect } from "../db/dialect/index.js";
 import { claimNext, complete, fail, pendingCount, release, send, type MessageKind, type MessageRow } from "./inbox.js";
 import type { MemberRow, Project, TicketRow } from "./project.js";
 import { PRE_DEV_NOTE, promptFor, systemPromptFor } from "./prompts.js";
@@ -88,7 +89,7 @@ export class Dispatcher {
   }
 
   /** 次の 1 件を取り出して担当を決める。起こせるものが無ければ null。 */
-  next(): Job | null {
+  async next(): Promise<Job | null> {
     // 全体の予算を使い切ったら、何も起こさない(責任者が予算を足すか無制限にするまで)
     if (projectExhausted(this.p)) return null;
     const released: number[] = [];
@@ -96,9 +97,9 @@ export class Dispatcher {
       // GitHub に入れない間は、チケットの仕事を取らない(企画・チャットなど、チケットを持たない仕事だけ動かす)
       const planningOnly = (this.deps.ticketsAllowed ? !this.deps.ticketsAllowed() : false) || !!githubDown(this.p);
       // 企画スタジオを止めている間は、企画の担当を起こさない
-      const msg = claimNext(this.p, { exclude: released, planningOnly, triage: !!this.deps.triage, noPlan: !!studioPaused(this.p) });
+      const msg = await claimNext(this.p, { exclude: released, planningOnly, triage: !!this.deps.triage, noPlan: !!studioPaused(this.p) });
       if (!msg) return null;
-      const job = this.assign(msg);
+      const job = await this.assign(msg);
       if (job === "wait") {
         release(this.p, msg.id, WAIT_MS);
         released.push(msg.id);
@@ -112,8 +113,8 @@ export class Dispatcher {
   /** 1 件だけ起こして終わるまで待つ。起こすものが無ければ false。 */
   async dispatchOnce(): Promise<boolean> {
     await this.checkGithub();
-    this.housekeep();
-    const job = this.next();
+    await this.p.pdb.transaction(async () => this.housekeep());
+    const job = await this.next();
     if (!job) return false;
     await this.execute(job);
     return true;
@@ -171,9 +172,9 @@ export class Dispatcher {
     let started = 0;
     for (;;) {
       await this.checkGithub();
-      this.housekeep();
+      await this.p.pdb.transaction(async () => this.housekeep());
       while (inflight.size < limit() && started < maxRuns) {
-        const job = this.next();
+        const job = await this.next();
         if (!job) break;
         started++;
         const pr: Promise<void> = this.execute(job).finally(() => inflight.delete(pr));
@@ -196,29 +197,29 @@ export class Dispatcher {
 
   // ---- 担当を決める ----
 
-  private assign(msg: MessageRow): Job | "wait" | "handled" {
+  private async assign(msg: MessageRow): Promise<Job | "wait" | "handled"> {
     const p = this.p;
     // メンバーとの会話は、宛先のメンバーがそのまま受ける(チケットも島の席も見ない)
     if (msg.kind === "member_chat") {
       const m = msg.to_member_id === null ? undefined : p.member(msg.to_member_id);
       if (!m || m.left_at !== null) {
-        complete(p, msg.id);
+        await complete(p, msg.id);
         return "handled";
       }
-      const busy = get(p.db, "SELECT 1 AS x FROM runs WHERE member_id = ? AND ended_at IS NULL", [m.id]);
+      const busy = (await this.busyMemberIds()).has(m.id);
       return busy ? "wait" : { msg, role: msg.to_role, ticket: null, member: m };
     }
     // 島への質問は、質問の宛先の島の手すきの人が受ける(聞いた本人は除く。チケットは持たない)
-    if (msg.kind === "ask") return this.assignAsk(msg);
+    if (msg.kind === "ask") return await this.assignAsk(msg);
     const ticket = msg.ticket_id === null ? null : p.ticket(msg.ticket_id);
     if (ticket && (ticket.stage === "dropped" || ticket.stage === "done")) {
-      complete(p, msg.id);
+      await complete(p, msg.id);
       return "handled";
     }
     // リーダーの手助けはチケットの予算で止めない(詰まりを解くための仕事なので)
     if (ticket && msg.kind !== "unstick" && ticketExhausted(p, ticket.id)) {
-      tx(p.db, () => {
-        complete(p, msg.id);
+      await p.pdb.transaction(async () => {
+        await complete(p, msg.id);
         // 同じチケットで予算の判断を待っているなら、重ねて聞かない
         const waiting = get(p.db, "SELECT 1 AS x FROM decisions WHERE ticket_id = ? AND decided_at IS NULL AND options LIKE '%\"unlimited\"%'", [ticket.id]);
         if (waiting) return;
@@ -257,8 +258,8 @@ export class Dispatcher {
       // 開発より前の工程(preDev)なら、飛ばしたあとも開発へ進む(今の流れで工程が開発より後ろに見えても、開発を飛ばさない)
       if (ticket && role !== "dev") {
         const preDev = (JSON.parse(msg.payload) as { preDev?: boolean }).preDev === true;
-        tx(p.db, () => {
-          complete(p, msg.id);
+        await p.pdb.transaction(async () => {
+          await complete(p, msg.id);
           advance(p, ticket, role, { preDev });
         });
         return "handled";
@@ -270,7 +271,7 @@ export class Dispatcher {
     const affordable = units.filter((u) => !unitExhausted(p, u));
     if (!affordable.length) return "wait";
 
-    const busy = new Set(all<{ member_id: number }>(p.db, "SELECT member_id FROM runs WHERE ended_at IS NULL").map((r) => r.member_id));
+    const busy = await this.busyMemberIds();
 
     if (msg.to_member_id !== null) {
       // 持ち主への直し。持ち主がこの仕事を受け持つ島の席にいれば、その人がやる
@@ -283,8 +284,8 @@ export class Dispatcher {
       const free = affordable.flatMap((u) => p.membersOfUnit(u.id)).filter((x) => !busy.has(x.id) && (role === "dev" || x.id !== ticket?.owner_member_id));
       if (!free.length) return "wait";
       const next = this.leastLoaded(free);
-      tx(p.db, () => {
-        run(p.db, "UPDATE messages SET to_member_id = ? WHERE id = ?", [next.id, msg.id]);
+      await p.pdb.transaction(async () => {
+        await p.pdb.update("messages", { to_member_id: next.id }).where("id", "=", msg.id).execute();
         if (ticket && role === "dev") {
           run(p.db, "UPDATE tickets SET owner_member_id = ? WHERE id = ?", [next.id, ticket.id]);
           p.addNote(ticket.id, `【引き継ぎ】持ち主だった ${m.name} が島を離れたので、${next.name} が引き継ぎます。今のブランチの続きから進めてください。`, "lead");
@@ -303,24 +304,24 @@ export class Dispatcher {
     return "wait";
   }
 
-  private assignAsk(msg: MessageRow): Job | "wait" | "handled" {
+  private async assignAsk(msg: MessageRow): Promise<Job | "wait" | "handled"> {
     const p = this.p;
     const q = question(p, (JSON.parse(msg.payload) as AskPayload).questionId);
     if (q.answer !== null) {
-      complete(p, msg.id);
+      await complete(p, msg.id);
       return "handled";
     }
     const unit = targetUnit(p, q);
     if (!unit) {
       // 編成が変わって、宛先の島が無くなった。経路が無いものとしてリーダーに回す
-      tx(p.db, () => {
-        complete(p, msg.id);
+      await p.pdb.transaction(async () => {
+        await complete(p, msg.id);
         reroutedToLead(p, q, p.ticket(q.ticket_id));
       });
       return "handled";
     }
     if (unitExhausted(p, unit)) return "wait";
-    const busy = new Set(all<{ member_id: number }>(p.db, "SELECT member_id FROM runs WHERE ended_at IS NULL").map((r) => r.member_id));
+    const busy = await this.busyMemberIds();
     const free = p.membersOfUnit(unit.id).filter((m) => !busy.has(m.id) && m.id !== q.from_member_id);
     if (!free.length) return "wait";
     return { msg, role: unit.roles[0]!, ticket: null, member: this.leastLoaded(free) };
@@ -329,6 +330,12 @@ export class Dispatcher {
   /** 起動 1 回の予算。起動 1 回の上限・全体の残り・ほかに渡された残り(チケット・島)の小さい方。 */
   private runBudget(...left: number[]): number {
     return Math.min(this.p.settingNumber("run_budget_usd", 2), projectLeftUsd(this.p), ...left);
+  }
+
+  /** いま起動している(終わっていない)メンバーの id。 */
+  private async busyMemberIds(): Promise<Set<number>> {
+    const rows = await this.p.pdb.from("runs").select("member_id").where("ended_at", "is", null).execute();
+    return new Set(rows.map((r) => r.member_id));
   }
 
   private leastLoaded(ms: MemberRow[]): MemberRow {
@@ -360,7 +367,7 @@ export class Dispatcher {
     const preDev = ["review", "sec", "qa"].includes(msg.kind) && (JSON.parse(msg.payload) as { preDev?: boolean }).preDev === true;
 
     if (!harness || !repo || !ticket) {
-      this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : !ticket ? "チケットの無いメッセージはまだ扱えません" : "リポジトリが登録されていません");
+      await this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : !ticket ? "チケットの無いメッセージはまだ扱えません" : "リポジトリが登録されていません");
       return;
     }
 
@@ -379,14 +386,10 @@ export class Dispatcher {
 
     let runId: number;
     try {
-      runId = run(
-        p.db,
-        "INSERT INTO runs (message_id, ticket_id, member_id, role, session_id, policy_id, formation_id, started_at, model, effort, unit_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [msg.id, ticket.id, member.id, role, resumeId ? session!.id : null, policy.id, formation.id, p.now(), use.model, use.effort, use.unitName],
-      ).lastId;
+      runId = await dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: ticket.id, member_id: member.id, role: role, session_id: resumeId ? session!.id : null, policy_id: policy.id, formation_id: formation.id, started_at: p.now(), model: use.model, effort: use.effort, unit_name: use.unitName }));
     } catch (e) {
       if (!isUniqueViolation(e)) throw e;
-      release(p, msg.id, WAIT_MS); // 同じチケットを別の起動が触っている
+      await release(p, msg.id, WAIT_MS); // 同じチケットを別の起動が触っている
       return;
     }
     p.event(member.name, "run_started", ticket.id, { role, kind: msg.kind, model: use.model, effort: use.effort, policyVersion: policy.version, from: use.from });
@@ -505,19 +508,9 @@ export class Dispatcher {
     }
 
     const elapsed = p.clock.now().getTime() - started;
-    tx(p.db, () => {
+    await p.pdb.transaction(async () => {
       const u = result?.usage;
-      run(p.db, "UPDATE runs SET ended_at = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cost_usd = ?, outcome = ?, error = ?, summary = ? WHERE id = ?", [
-        p.now(),
-        (u?.inputTokens ?? 0) + judged.inputTokens,
-        (u?.outputTokens ?? 0) + judged.outputTokens,
-        (u?.cacheReadTokens ?? 0) + judged.cacheReadTokens,
-        (u?.costUsd ?? 0) + judged.costUsd,
-        error ? "error" : (result?.status ?? "error"),
-        error ?? null,
-        (report.pr?.summary || report.draft?.summary || result?.finalText || "").trim() || null,
-        runId,
-      ]);
+      await p.pdb.update("runs", { ended_at: p.now(), input_tokens: (u?.inputTokens ?? 0) + judged.inputTokens, output_tokens: (u?.outputTokens ?? 0) + judged.outputTokens, cache_read_tokens: (u?.cacheReadTokens ?? 0) + judged.cacheReadTokens, cost_usd: (u?.costUsd ?? 0) + judged.costUsd, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null, summary: (report.pr?.summary || report.draft?.summary || result?.finalText || "").trim() || null }).where("id", "=", runId).execute();
       run(p.db, "UPDATE tickets SET active_ms = active_ms + ? WHERE id = ?", [elapsed, ticket.id]);
       if (result?.sessionId) {
         run(
@@ -533,23 +526,24 @@ export class Dispatcher {
 
     if (result?.status === "budget") {
       // 起動 1 回の予算に達した。次の起動でチケットの予算を確かめ直す。
-      tx(p.db, () => {
-        complete(p, msg.id);
+      await p.pdb.transaction(async () => {
+        await complete(p, msg.id);
         send(p, { ticketId: ticket.id, toRole: msg.to_role, toMemberId: msg.to_member_id, kind: msg.kind, payload: JSON.parse(msg.payload) });
         p.event(member.name, "run_budget_reached", ticket.id, {});
       });
       return;
     }
     if (!error) {
-      error = applyReport(p, { msg, runId, memberId: member.id }, report);
+      // applyReport は同期の書き込み。並列の起動の非同期トランザクションと混ざらないよう、順番待ちの中で流す
+      error = await p.pdb.transaction(async () => applyReport(p, { msg, runId, memberId: member.id }, report));
       if (!error) {
-        complete(p, msg.id);
+        await complete(p, msg.id);
         resetUnstick(p, ticket.id); // 前に進んだので、リーダーの手助けの回数を数え直す
         p.event(member.name, "run_finished", ticket.id, { role, kind: msg.kind });
         return;
       }
     }
-    this.failed(msg, ticket, error);
+    await this.failed(msg, ticket, error);
   }
 
   /** 企画スタジオの担当を 1 回起こす。道具は起動の中で企画の中身を直接書き換える。 */
@@ -561,18 +555,14 @@ export class Dispatcher {
     const harness = this.deps.harnesses[policy.harness];
     const repo = p.repos()[0];
     if (!harness || !repo) {
-      this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
+      await this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
       return;
     }
     // 企画の会話は段階ごとに分け、引き継ぐのは上限まで(段階をまたいで 1 つの会話を引き継ぐと、回ごとに高くなっていた)
     const sessionKey = `plan_session:${member.id}:${payload.stage}`;
     const saved = p.setting(sessionKey);
     const resume = canResume(p, saved) ? saved : undefined;
-    const runId = run(
-      p.db,
-      "INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at, model, effort) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)",
-      [msg.id, member.id, role, policy.id, p.currentFormation().id, p.now(), policy.model, policy.effort],
-    ).lastId;
+    const runId = await dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, member_id: member.id, role: role, policy_id: policy.id, formation_id: p.currentFormation().id, started_at: p.now(), model: policy.model, effort: policy.effort }));
     p.event(member.name, "plan_run_started", null, { stage: payload.stage, model: policy.model, effort: policy.effort, policyVersion: policy.version });
 
     let result: HarnessResult | undefined;
@@ -605,25 +595,16 @@ export class Dispatcher {
     }
     // 企画スタジオを止めたので途中でやめた。失敗に数えず、再開したら同じ依頼を取り直す
     if (abort.signal.aborted) {
-      tx(p.db, () => {
-        run(p.db, "UPDATE runs SET ended_at = ?, outcome = 'cancelled', error = ?, cost_usd = ? WHERE id = ?", [p.now(), "企画スタジオを止めたので、途中でやめました", result?.usage?.costUsd ?? 0, runId]);
-        release(p, msg.id, 0);
+      await p.pdb.transaction(async () => {
+        await p.pdb.update("runs", { ended_at: p.now(), outcome: "cancelled", error: "企画スタジオを止めたので、途中でやめました", cost_usd: result?.usage?.costUsd ?? 0 }).where("id", "=", runId).execute();
+        await release(p, msg.id, 0);
       });
       return;
     }
 
-    tx(p.db, () => {
+    await p.pdb.transaction(async () => {
       const u = result?.usage;
-      run(p.db, "UPDATE runs SET ended_at = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cost_usd = ?, outcome = ?, error = ? WHERE id = ?", [
-        p.now(),
-        u?.inputTokens ?? 0,
-        u?.outputTokens ?? 0,
-        u?.cacheReadTokens ?? 0,
-        u?.costUsd ?? 0,
-        error ? "error" : (result?.status ?? "error"),
-        error ?? null,
-        runId,
-      ]);
+      await p.pdb.update("runs", { ended_at: p.now(), input_tokens: u?.inputTokens ?? 0, output_tokens: u?.outputTokens ?? 0, cache_read_tokens: u?.cacheReadTokens ?? 0, cost_usd: u?.costUsd ?? 0, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null }).where("id", "=", runId).execute();
       if (result?.sessionId) {
         p.setSetting(sessionKey, result.sessionId);
         noteSession(p, result.sessionId, resume);
@@ -632,11 +613,11 @@ export class Dispatcher {
 
     if (error) {
       say(p, payload.stage, "system", `${member.name} の起動がエラーで止まりました: ${error}`);
-      this.failed(msg, null, error);
+      await this.failed(msg, null, error);
       return;
     }
-    tx(p.db, () => {
-      complete(p, msg.id);
+    await p.pdb.transaction(async () => {
+      await complete(p, msg.id);
       afterPlanningRun(p, msg, role, result?.finalText ?? "");
     });
   }
@@ -647,13 +628,13 @@ export class Dispatcher {
     const { msg, member } = job;
     const targets = mode === "triage" ? untriaged(p) : [];
     if (mode === "triage" && !targets.length) {
-      complete(p, msg.id);
+      await complete(p, msg.id);
       return;
     }
     // チャット: 読んでいない責任者のメッセージが無ければ起こさない(前の起動でまとめて返事をしたなど)
     const unread = mode === "chat" ? unreadOwnerMessages(p) : [];
     if (mode === "chat" && !unread.length) {
-      complete(p, msg.id);
+      await complete(p, msg.id);
       return;
     }
     const signals: LoopSignal[] = mode === "patrol" ? loopSignals(p) : [];
@@ -661,17 +642,13 @@ export class Dispatcher {
     const harness = this.deps.harnesses[policy.harness];
     const repo = p.repos()[0];
     if (!harness || !repo) {
-      this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
+      await this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
       return;
     }
     // 取りやめ・重複の片付けで、開いている PR を閉じる
     const closePrs = (t: TicketRow, reason: string) => closeOpenPrs(this.deps.workspace, p, t, { commit: "", reason });
     // チャット・交通整理・見回りは毎回まっさらに始める。チャットの前のやりとりは、指示に最近の分を入れて渡す(ADR-0032)
-    const runId = run(
-      p.db,
-      "INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at, model, effort) VALUES (?, NULL, ?, 'lead', ?, ?, ?, ?, ?)",
-      [msg.id, member.id, policy.id, p.currentFormation().id, p.now(), policy.model, policy.effort],
-    ).lastId;
+    const runId = await dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, member_id: member.id, role: "lead", policy_id: policy.id, formation_id: p.currentFormation().id, started_at: p.now(), model: policy.model, effort: policy.effort }));
     p.event(member.name, `${mode}_run_started`, null, { model: policy.model, tickets: (mode === "patrol" ? signals.map((s) => s.ticket) : targets).map((t) => t.number) });
     let result: HarnessResult | undefined;
     let error: string | undefined;
@@ -698,32 +675,22 @@ export class Dispatcher {
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
-    tx(p.db, () => {
+    await p.pdb.transaction(async () => {
       const u = result?.usage;
-      run(p.db, "UPDATE runs SET ended_at = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cost_usd = ?, outcome = ?, error = ?, summary = ? WHERE id = ?", [
-        p.now(),
-        u?.inputTokens ?? 0,
-        u?.outputTokens ?? 0,
-        u?.cacheReadTokens ?? 0,
-        u?.costUsd ?? 0,
-        error ? "error" : (result?.status ?? "error"),
-        error ?? null,
-        result?.finalText?.trim() || null,
-        runId,
-      ]);
+      await p.pdb.update("runs", { ended_at: p.now(), input_tokens: u?.inputTokens ?? 0, output_tokens: u?.outputTokens ?? 0, cache_read_tokens: u?.cacheReadTokens ?? 0, cost_usd: u?.costUsd ?? 0, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null, summary: result?.finalText?.trim() || null }).where("id", "=", runId).execute();
     });
     if (error) {
       run(p.db, "INSERT INTO lead_messages (who, body, at) VALUES ('system', ?, ?)", [
         `${member.name} の${{ chat: "返事", triage: "交通整理", patrol: "見回り" }[mode]}がエラーで止まりました: ${error}`,
         p.now(),
       ]);
-      this.failed(msg, null, error);
+      await this.failed(msg, null, error);
       // 交通整理の再試行が尽きたら、チケットを止めずに流す
-      if (mode === "triage" && get<{ status: string }>(p.db, "SELECT status FROM messages WHERE id = ?", [msg.id])?.status === "failed") giveUpTriage(p);
+      if (mode === "triage" && (await p.pdb.from("messages").select("status").where("id", "=", msg.id).executeTakeFirst())?.status === "failed") giveUpTriage(p);
       return;
     }
-    tx(p.db, () => {
-      complete(p, msg.id);
+    await p.pdb.transaction(async () => {
+      await complete(p, msg.id);
       if (mode === "triage") {
         markTriaged(p, targets.map((t) => t.id));
         p.event(member.name, "triaged", null, { tickets: targets.map((t) => t.number) });
@@ -755,7 +722,7 @@ export class Dispatcher {
     const ticketId = unread[0]?.ticketId ?? null;
     const batch = unread.filter((m) => m.ticketId === ticketId);
     if (ticketId === null || !batch.length) {
-      complete(p, msg.id);
+      await complete(p, msg.id);
       return;
     }
     const ticket = p.ticket(ticketId);
@@ -766,7 +733,7 @@ export class Dispatcher {
     const harness = this.deps.harnesses[policy.harness];
     const repo = ticketRepo(p, ticket);
     if (!harness || !repo) {
-      this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
+      await this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
       return;
     }
     const session = get<{ id: number; harness_session_id: string }>(p.db, "SELECT id, harness_session_id FROM sessions WHERE member_id = ? AND ticket_id = ? AND repo_id = ?", [member.id, ticket.id, repo.id]);
@@ -774,11 +741,7 @@ export class Dispatcher {
     // 終わったチケット(ブランチが消えていることがある)では、チケットのブランチを取り出さず、既定のブランチで答える
     const finished = isFinishedTicket(ticket);
     const branch = finished ? "" : devBranch(p, ticket, repo.id);
-    const runId = run(
-      p.db,
-      "INSERT INTO runs (message_id, ticket_id, about_ticket_id, member_id, role, session_id, policy_id, formation_id, started_at, model, effort, unit_name) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [msg.id, ticket.id, member.id, role, resumeId ? session!.id : null, policy.id, formation.id, p.now(), use.model, use.effort, use.unitName],
-    ).lastId;
+    const runId = await dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, about_ticket_id: ticket.id, member_id: member.id, role: role, session_id: resumeId ? session!.id : null, policy_id: policy.id, formation_id: formation.id, started_at: p.now(), model: use.model, effort: use.effort, unit_name: use.unitName }));
     p.event(member.name, "member_chat_started", ticket.id, { model: use.model });
     const done: { handedOver?: boolean } = {};
     let result: HarnessResult | undefined;
@@ -802,19 +765,9 @@ export class Dispatcher {
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
-    tx(p.db, () => {
+    await p.pdb.transaction(async () => {
       const u = result?.usage;
-      run(p.db, "UPDATE runs SET ended_at = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cost_usd = ?, outcome = ?, error = ?, summary = ? WHERE id = ?", [
-        p.now(),
-        u?.inputTokens ?? 0,
-        u?.outputTokens ?? 0,
-        u?.cacheReadTokens ?? 0,
-        u?.costUsd ?? 0,
-        error ? "error" : (result?.status ?? "error"),
-        error ?? null,
-        result?.finalText?.trim() || null,
-        runId,
-      ]);
+      await p.pdb.update("runs", { ended_at: p.now(), input_tokens: u?.inputTokens ?? 0, output_tokens: u?.outputTokens ?? 0, cache_read_tokens: u?.cacheReadTokens ?? 0, cost_usd: u?.costUsd ?? 0, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null, summary: result?.finalText?.trim() || null }).where("id", "=", runId).execute();
       // 同じ会話の続きとして覚える(このあと同じチケットの仕事を始めるときも、ここから続ける)
       if (result?.sessionId) {
         run(
@@ -829,11 +782,11 @@ export class Dispatcher {
     });
     if (error) {
       run(p.db, "INSERT INTO member_messages (member_id, ticket_id, who, body, at) VALUES (?, ?, 'system', ?, ?)", [member.id, ticket.id, `${member.name} の返事がエラーで止まりました: ${error}`, p.now()]);
-      this.failed(msg, null, error);
+      await this.failed(msg, null, error);
       return;
     }
-    tx(p.db, () => {
-      complete(p, msg.id);
+    await p.pdb.transaction(async () => {
+      await complete(p, msg.id);
       finishMemberChat(p, member, batch, result?.finalText ?? "", !!done.handedOver);
       p.event(member.name, "member_chat_finished", ticket.id, { handedOver: !!done.handedOver });
     });
@@ -856,14 +809,10 @@ export class Dispatcher {
     const harness = this.deps.harnesses[policy.harness];
     const repo = ticketRepo(p, ticket);
     if (!harness || !repo) {
-      this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
+      await this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
       return;
     }
-    const runId = run(
-      p.db,
-      "INSERT INTO runs (message_id, ticket_id, about_ticket_id, member_id, role, session_id, policy_id, formation_id, started_at, model, effort, unit_name) VALUES (?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
-      [msg.id, ticket.id, member.id, role, policy.id, formation.id, p.now(), use.model, use.effort, use.unitName],
-    ).lastId;
+    const runId = await dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, about_ticket_id: ticket.id, member_id: member.id, role: role, session_id: null, policy_id: policy.id, formation_id: formation.id, started_at: p.now(), model: use.model, effort: use.effort, unit_name: use.unitName }));
     p.event(member.name, "ask_started", ticket.id, { questionId: q.id, model: use.model });
     const report: AnswerReport = {};
     let result: HarnessResult | undefined;
@@ -889,46 +838,36 @@ export class Dispatcher {
     // reply を呼ばずに終わったときは、最後のテキストを答えとする
     const answer = report.answer ?? result?.finalText?.trim();
     if (!error && !answer) error = "答えが返りませんでした";
-    tx(p.db, () => {
+    await p.pdb.transaction(async () => {
       const u = result?.usage;
-      run(p.db, "UPDATE runs SET ended_at = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cost_usd = ?, outcome = ?, error = ?, summary = ? WHERE id = ?", [
-        p.now(),
-        u?.inputTokens ?? 0,
-        u?.outputTokens ?? 0,
-        u?.cacheReadTokens ?? 0,
-        u?.costUsd ?? 0,
-        error ? "error" : (result?.status ?? "error"),
-        error ?? null,
-        answer || null,
-        runId,
-      ]);
+      await p.pdb.update("runs", { ended_at: p.now(), input_tokens: u?.inputTokens ?? 0, output_tokens: u?.outputTokens ?? 0, cache_read_tokens: u?.cacheReadTokens ?? 0, cost_usd: u?.costUsd ?? 0, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null, summary: answer || null }).where("id", "=", runId).execute();
     });
     if (error) {
-      this.failed(msg, null, error);
+      await this.failed(msg, null, error);
       return;
     }
-    tx(p.db, () => {
-      complete(p, msg.id);
+    await p.pdb.transaction(async () => {
+      await complete(p, msg.id);
       recordAnswer(p, q, member, answer!);
     });
   }
 
-  private failed(msg: MessageRow, ticket: TicketRow | null, error: string): void {
+  private async failed(msg: MessageRow, ticket: TicketRow | null, error: string): Promise<void> {
     const p = this.p;
-    tx(p.db, () => {
+    await p.pdb.transaction(async () => {
       // 利用の上限(5 時間あたりなど)は、待てば解ける。失敗に数えず、間を空けて取り直す
       if (isUsageLimit(error)) {
-        release(p, msg.id, p.settingNumber("usage_limit_wait_sec", 900) * 1000);
+        await release(p, msg.id, p.settingNumber("usage_limit_wait_sec", 900) * 1000);
         p.event("system", "usage_limited", ticket?.id ?? null, { error });
         return;
       }
       // GitHub に入れない(認証切れ)のは環境の問題。チケットの失敗に数えず、入れるようになるまで待って取り直す(ADR-0027)
       if (isGithubAuthError(error)) {
         markGithubDown(p, error);
-        release(p, msg.id, WAIT_MS);
+        await release(p, msg.id, WAIT_MS);
         return;
       }
-      const exhausted = fail(p, msg, error);
+      const exhausted = await fail(p, msg, error);
       p.event("system", exhausted ? "stuck" : "retry", ticket?.id ?? null, { reason: "error", error, attempts: msg.attempts });
       if (!exhausted || !ticket) return;
       if (msg.kind === "unstick") {
@@ -951,7 +890,7 @@ export class Dispatcher {
     const p = this.p;
     const { msg, member, ticket } = job;
     if (!ticket) {
-      complete(p, msg.id);
+      await complete(p, msg.id);
       return;
     }
     const payload = JSON.parse(msg.payload) as StuckPayload;
@@ -959,14 +898,10 @@ export class Dispatcher {
     const harness = this.deps.harnesses[policy.harness];
     const repo = ticketRepo(p, ticket);
     if (!harness || !repo) {
-      this.failed(msg, ticket, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
+      await this.failed(msg, ticket, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
       return;
     }
-    const runId = run(
-      p.db,
-      "INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at, model, effort) VALUES (?, ?, ?, 'lead', ?, ?, ?, ?, ?)",
-      [msg.id, ticket.id, member.id, policy.id, p.currentFormation().id, p.now(), policy.model, policy.effort],
-    ).lastId;
+    const runId = await dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: ticket.id, member_id: member.id, role: "lead", policy_id: policy.id, formation_id: p.currentFormation().id, started_at: p.now(), model: policy.model, effort: policy.effort }));
     p.event(member.name, "unstick_run_started", ticket.id, { error: payload.error });
     const done: { action?: "retry" | "hold" | "closed" | "dropped" } = {};
     let result: HarnessResult | undefined;
@@ -1002,26 +937,16 @@ export class Dispatcher {
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
-    tx(p.db, () => {
+    await p.pdb.transaction(async () => {
       const u = result?.usage;
-      run(p.db, "UPDATE runs SET ended_at = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cost_usd = ?, outcome = ?, error = ?, summary = ? WHERE id = ?", [
-        p.now(),
-        u?.inputTokens ?? 0,
-        u?.outputTokens ?? 0,
-        u?.cacheReadTokens ?? 0,
-        u?.costUsd ?? 0,
-        error ? "error" : (result?.status ?? "error"),
-        error ?? null,
-        result?.finalText?.trim() || null,
-        runId,
-      ]);
+      await p.pdb.update("runs", { ended_at: p.now(), input_tokens: u?.inputTokens ?? 0, output_tokens: u?.outputTokens ?? 0, cache_read_tokens: u?.cacheReadTokens ?? 0, cost_usd: u?.costUsd ?? 0, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null, summary: result?.finalText?.trim() || null }).where("id", "=", runId).execute();
     });
     if (error) {
-      this.failed(msg, ticket, error);
+      await this.failed(msg, ticket, error);
       return;
     }
-    tx(p.db, () => {
-      complete(p, msg.id);
+    await p.pdb.transaction(async () => {
+      await complete(p, msg.id);
       const text = result?.finalText?.trim();
       const what = { hold: "保留にして、あなたに対応をお願いしました。", closed: "変更がすでに main に入っていたので、完了にしました。", dropped: "やることが無いチケットだったので、取りやめました。", retry: "助言を渡して、やり直してもらいます。" }[done.action ?? "retry"];
       leadReply(p, `【#${ticket.number} の手助け】${what}${text ? `\n${text}` : ""}`);

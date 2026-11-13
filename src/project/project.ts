@@ -1,6 +1,7 @@
 import { iso, systemClock, type Clock } from "../clock.js";
 import { all, get, openDb, run, tx, type Db } from "../db/sqlite.js";
-import { PROJECT_MIGRATIONS } from "../db/schema.js";
+import { PROJECT_ID_TABLES, PROJECT_MIGRATIONS } from "../db/schema.js";
+import { ProjectDb } from "../db/conn.js";
 import { isTicketKind, parseFlows, type FlowsSpec, type TicketKind } from "../domain/flow.js";
 import { parseRoutes, normalizeRoutes, routesAmong, type RouteSpec } from "../domain/route.js";
 import { covers, DEFAULT_FORMATION, validateFormation, type FormationSpec, type Pull, type UnitSpec } from "../domain/formation.js";
@@ -76,10 +77,14 @@ export type FormationRow = { id: number; version: number; pull: Pull; units: Uni
 /** 1 つのプロジェクトの DB(ADR-0004)。 */
 export class Project {
   readonly db: Db;
+  /** スコープつきの口(このファイルのプロジェクトの project_id の行だけを見る・書く)。移した範囲はここを通る。 */
+  readonly pdb: ProjectDb;
 
-  /** projectId: 本部でのこのプロジェクトの id。マイグレーションが各表の project_id を埋めるのに使う。 */
+  /** projectId: 本部でのこのプロジェクトの id。マイグレーションと、開くときの埋め直しが各表の project_id を埋めるのに使う。渡されなければ 0。 */
   constructor(path: string, readonly clock: Clock = systemClock, projectId?: number) {
     this.db = openDb(path, PROJECT_MIGRATIONS, { projectId });
+    this.pdb = new ProjectDb(this.db, projectId ?? 0);
+    this.backfillProjectId();
     this.seed();
     this.fillSeats();
   }
@@ -90,6 +95,22 @@ export class Project {
 
   now(): string {
     return iso(this.clock.now());
+  }
+
+  get projectId(): number {
+    return this.pdb.projectId;
+  }
+
+  /**
+   * 版 21 より後に入った行(seed・まだ移していない書き方の INSERT)は project_id が 0 のまま。
+   * 開くたびに、残っている 0 の行をこのファイルのプロジェクトの id で埋める(ADR-0037)。
+   */
+  private backfillProjectId(): void {
+    const id = this.pdb.projectId;
+    if (id === 0) return;
+    tx(this.db, () => {
+      for (const t of PROJECT_ID_TABLES) run(this.db, `UPDATE ${t} SET project_id = ? WHERE project_id = 0`, [id]);
+    });
   }
 
   private seed(): void {
