@@ -366,7 +366,7 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
   await test.step("方針: 開発を Sonnet 5.5 にして保存すると、次の実装はそのモデルで動く", async () => {
     await page.getByRole("button", { name: "チームの方針", exact: true }).click();
     const drawer = page.getByRole("complementary", { name: "チームの方針" });
-    await expect(drawer.getByRole("tab", { name: "開発" })).toHaveAttribute("aria-selected", "true");
+    await expect(drawer.getByRole("tab", { name: "開発", exact: true })).toHaveAttribute("aria-selected", "true");
     await drawer.getByLabel("モデル").selectOption({ label: "Sonnet 5.5" });
     await drawer.getByLabel("重視すること").fill("既存の書き方に合わせる");
     await shot(page, "team-policy");
@@ -409,6 +409,61 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await page.getByRole("group", { name: "表示" }).getByRole("button", { name: "表" }).click();
     await expect(page.getByRole("table", { name: "チケットごとの指標" })).toContainText("CSV を書き出す");
     await shot(page, "productivity");
+  });
+});
+
+test("チームの方針の開発ルール: ひな形から足す・空のルールを足す・無効にする。生産性にルール違反が出る", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await createProject(page, "ルール", "acme/rules");
+  await page.getByRole("group", { name: "プロジェクトの画面" }).getByRole("button", { name: "オフィス" }).click();
+  await page.getByRole("button", { name: "チームの方針", exact: true }).click();
+  const drawer = page.getByRole("complementary", { name: "チームの方針" });
+  await drawer.getByRole("tab", { name: "開発ルール" }).click();
+  const list = drawer.getByRole("list", { name: "ルール" });
+  await expect(drawer.getByText("ルール(有効 0 / 0)")).toBeVisible();
+
+  await test.step("ひな形から足すと、一覧に有効で入り、ひな形は押せなくなる", async () => {
+    await drawer.getByRole("button", { name: "+ Jira 番号をそろえる" }).click();
+    await expect(page.getByRole("status", { name: "お知らせ" })).toContainText("「Jira 番号をそろえる」を足しました");
+    await expect(list.getByRole("listitem")).toHaveCount(1);
+    await expect(list.getByRole("switch", { name: "Jira 番号をそろえるを有効にする" })).toHaveAttribute("aria-checked", "true");
+    await expect(drawer.getByRole("button", { name: "✓ Jira 番号をそろえる" })).toBeDisabled();
+    await expect(drawer.getByText("ルール(有効 1 / 1)")).toBeVisible();
+    await expect(drawer.getByRole("group", { name: "どこに効くか" }).getByRole("button", { name: "✓ ブランチ名" })).toBeVisible();
+  });
+
+  await test.step("空のルールは、名前・どこに効くか・確かめ方がそろうまで足せない", async () => {
+    await drawer.getByRole("button", { name: "+ 空のルールを足す" }).click();
+    const add = drawer.getByRole("button", { name: "このルールを足す" });
+    await expect(add).toBeDisabled();
+    await drawer.getByLabel("名前").fill("README を更新する");
+    await drawer.getByLabel("何を守るか").fill("機能を足したら README の使い方も直す。");
+    await drawer.getByRole("group", { name: "どこに効くか" }).getByRole("button", { name: "変更したファイル" }).click();
+    await drawer.getByRole("radiogroup", { name: "確かめ方" }).getByRole("radio", { name: "AI が読む" }).click();
+    await drawer.getByRole("radiogroup", { name: "違反したとき" }).getByRole("radio", { name: "レビューで指摘" }).click();
+    await expect(drawer.getByRole("tab", { name: /開発ルール/ })).toContainText("1");
+    await shot(page, "dev-rules");
+    await add.click();
+    await expect(list.getByRole("listitem")).toHaveCount(2);
+    await expect(list).toContainText("README を更新する");
+    await expect(drawer.getByText("ルール(有効 2 / 2)")).toBeVisible();
+  });
+
+  await test.step("無効にすると押せない見た目になり、有効の数が減る。もう一度押すと戻る", async () => {
+    const sw = list.getByRole("switch", { name: "Jira 番号をそろえるを有効にする" });
+    await sw.click();
+    await expect(sw).toHaveAttribute("aria-checked", "false");
+    await expect(list.getByRole("listitem").first()).toHaveAttribute("aria-disabled", "true");
+    await expect(drawer.getByText("ルール(有効 1 / 2)")).toBeVisible();
+    await sw.click();
+    await expect(sw).toHaveAttribute("aria-checked", "true");
+  });
+
+  await test.step("生産性に「ルール違反 / うち自動で直した」が出る", async () => {
+    await page.getByRole("group", { name: "プロジェクトの画面" }).getByRole("button", { name: "生産性" }).click();
+    const tile = page.getByRole("list", { name: "合計" }).getByRole("listitem").filter({ hasText: "ルール違反" });
+    await expect(tile).toContainText("0");
+    await expect(tile).toContainText("うち自動で直した 0");
   });
 });
 

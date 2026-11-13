@@ -46,6 +46,7 @@ const FINDING_STATUS: Record<string, string> = {
   recurred: "再発",
   wontfix: "直さないことで決着",
 };
+const HANDLED: Record<string, string> = { autofixed: "持ち主が自動で直した", review: "レビューで指摘", blocked: "直すまで進めない" };
 const ACTION: Record<string, string> = { fixed: "直した", wontfix: "直さない", resolved: "解決を確認", accepted: "直さないのを了承", reopened: "まだ直っていない", ruled: "裁定" };
 const DECIDED_BY: Record<string, string> = { owner: "あなた", lead: "リーダー", timeout: "期限切れで推奨" };
 
@@ -70,6 +71,7 @@ function TicketDialog({ projectId, ticketId, close }: { projectId: number; ticke
             <ChipLabel variant="filled-1" color={data.stage === "done" ? "green" : data.stage === "decision" ? "yellow" : "blue"}>
               {STAGE[data.stage] ?? data.stage}
             </ChipLabel>
+            {data.ruleBlocked.length > 0 && <ChipLabel variant="filled-1" color="red">ルール違反で止まっている: {data.ruleBlocked.join("・")}</ChipLabel>}
             {data.stage === "dropped" && <Reopen projectId={projectId} id={data.id} />}
             <Btn kind="text" size="sm" style={{ marginLeft: "auto" }} onClick={() => ref.current?.close()}>
               閉じる
@@ -396,6 +398,19 @@ function item(x: TicketView["timeline"][number]): ReactNode {
               ))}
             </ul>
           )}
+        </>
+      );
+    case "rule":
+      return (
+        <>
+          <b>
+            ルール「{x.rule}」に反していました{" "}
+            <ChipLabel variant="filled-1" color={x.handled === "autofixed" ? "green" : x.handled === "blocked" ? "red" : "yellow"}>
+              {HANDLED[x.handled] ?? x.handled}
+            </ChipLabel>
+          </b>
+          {x.detail && <p className="said">{x.detail}</p>}
+          <span className="meta">{x.resolvedAt ? `${hhmm(x.resolvedAt)} に直りました` : "まだ直っていません"}</span>
         </>
       );
     case "decision":

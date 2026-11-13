@@ -3,6 +3,7 @@ import { post, type ProjectView } from "./api";
 import { TicketTree } from "./Tree";
 import { areaWaitText, droppedText, hhmm, kfmt, pct, stalledText, timeLeft, unblockText, usd, waitText } from "./format";
 import { duration, go, useAct, useNow, useProject } from "./hooks";
+import { Chip } from "./ds";
 import { TeamDrawer, type Drawer } from "./Team";
 import { OfficeFloor } from "./Office";
 import { TicketLink, TicketProvider } from "./Ticket";
@@ -367,6 +368,11 @@ function Board({ d }: { d: ProjectView }) {
                       <span>{t.conflict ? <span className="cf">衝突</span> : t.rounds ? `往復 ${t.rounds}` : ""}</span>
                     </span>
                     <TicketLink id={t.id}>{t.title}</TicketLink>
+                    {t.ruleBlocked.length > 0 && (
+                      <Chip tone="danger" title={t.ruleBlocked.join("・")}>
+                        ルール違反で止まっている
+                      </Chip>
+                    )}
                     {k === "dropped" ? (
                       <span className="who drop">{droppedText(t.dropped)}</span>
                     ) : t.worker ? (

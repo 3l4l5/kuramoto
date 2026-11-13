@@ -109,7 +109,7 @@ export type DrawerTab<K extends string> = {
   /** 決まりに反しているときの赤い印 */
   error?: boolean;
 };
-export function Drawer<K extends string>({ title, version, onClose, tabs, activeTab, onTabChange, footer, children, className, style }: {
+export function Drawer<K extends string>({ title, version, onClose, tabs, activeTab, onTabChange, footer, children, className, style, label }: {
   title: ReactNode;
   /** 見出しの横の版(例 "v12") */
   version?: string;
@@ -121,9 +121,11 @@ export function Drawer<K extends string>({ title, version, onClose, tabs, active
   children?: ReactNode;
   className?: string;
   style?: CSSProperties;
+  /** 引き出しの名前(あると画面の脇の領域として読み上げる) */
+  label?: string;
 }) {
   return (
-    <section className={cx("ds-drawer", className)} style={style}>
+    <section className={cx("ds-drawer", className)} style={style} aria-label={label} role={label ? "complementary" : undefined}>
       <header className="ds-drawer__head">
         <h2 className="ds-drawer__title">
           {title} {version && <span className="ds-drawer__version">{version}</span>}

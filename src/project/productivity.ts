@@ -137,7 +137,7 @@ export function productivity(p: Project) {
   );
 
   // ---- チケットごと ----
-  const tickets = all<{ id: number; number: number; title: string; stage: string; rounds: number; tokens: number | null; cost: number | null; runs: number; prs: number; conflicts: number; help: number; retries: number }>(
+  const tickets = all<{ id: number; number: number; title: string; stage: string; rounds: number; tokens: number | null; cost: number | null; runs: number; prs: number; conflicts: number; help: number; retries: number; violations: number; autofixed: number }>(
     p.db,
     `SELECT t.id, t.number, t.title, t.stage, t.rounds,
        (SELECT SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0) + COALESCE(cache_read_tokens,0)) FROM runs r WHERE r.ticket_id = t.id) AS tokens,
@@ -146,7 +146,9 @@ export function productivity(p: Project) {
        (SELECT COUNT(*) FROM pull_requests pr WHERE pr.ticket_id = t.id) AS prs,
        (SELECT COUNT(*) FROM conflicts c JOIN pull_requests pr ON pr.id = c.pr_id WHERE pr.ticket_id = t.id) AS conflicts,
        (SELECT COUNT(*) FROM decisions d WHERE d.ticket_id = t.id AND d.escalated = 1) AS help,
-       (SELECT COUNT(*) FROM runs r WHERE r.ticket_id = t.id AND r.outcome = 'error') AS retries
+       (SELECT COUNT(*) FROM runs r WHERE r.ticket_id = t.id AND r.outcome = 'error') AS retries,
+       (SELECT COUNT(*) FROM rule_violations v WHERE v.ticket_id = t.id) AS violations,
+       (SELECT COUNT(*) FROM rule_violations v WHERE v.ticket_id = t.id AND v.handled = 'autofixed') AS autofixed
      FROM tickets t ORDER BY t.number DESC`,
   ).map((t) => ({ ...t, tokens: t.tokens ?? 0, costUsd: t.cost ?? 0 }));
 
