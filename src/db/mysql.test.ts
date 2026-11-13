@@ -51,6 +51,15 @@ describe("起動時に届かないときは、理由を出して起動しない"
     expect((err as Error).message).not.toContain("s3cret-pw");
   });
 
+  it("startDatabase も、届かなければ理由つきで落ちる(入口はこれを出して起動しない)", async () => {
+    const lines: string[] = [];
+    const err = await startDatabase({ file: undefined, database: { type: "mysql", url: "mysql://kuramoto:s3cret-pw@127.0.0.1:1/kuramoto" }, databaseUrlFromEnv: false }, (l) => lines.push(l)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DatabaseConnectError);
+    expect((err as Error).message).toContain("ECONNREFUSED");
+    expect((err as Error).message).not.toContain("s3cret-pw");
+    expect(lines).toEqual([]);
+  });
+
   it("外の DB で tls.ca が無いと、繋ぎにも行かずに落ちる", async () => {
     await expect(startDatabase({ file: undefined, database: { type: "mysql", url: "mysql://u:pw@db.example.com/db" }, databaseUrlFromEnv: false }, () => {})).rejects.toThrow(/TLS が必要です/);
   });

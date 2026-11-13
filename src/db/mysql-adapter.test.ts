@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createServer, connect, type Server, type Socket } from "node:net";
 import type { Connection } from "mysql2/promise";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -7,6 +10,9 @@ import { ProjectDb } from "./conn.js";
 import { mysqlDialect } from "./dialect/mysql.js";
 import { connectMysql, type MysqlHandle } from "./mysql.js";
 import { DbHealth, isConnectionError } from "./mysql-health.js";
+import { HQ_MIGRATIONS } from "./schema.js";
+import { openDb } from "./sqlite.js";
+import { SQLITE_NOT_MIGRATED, startDatabase } from "./startup.js";
 import { MYSQL_MIGRATIONS } from "./mysql-schema.js";
 import { connectTest, MYSQL_TEST_URL, resetDatabase } from "./mysql-test-support.js";
 
@@ -201,5 +207,30 @@ describe.skipIf(!admin)("切断と再接続(mysql-test の実機)", () => {
       await h.close();
       await r.end();
     }
+  });
+});
+
+describe.skipIf(!admin)("起動時の MySQL(startDatabase。mysql-test の実機)", () => {
+  it("startDatabase: 初めて繋いだとき SQLite にプロジェクトが残っていれば 1 行出す。2 回目と、残っていないときは出さない", async () => {
+    await resetDatabase(admin!);
+    const withProject = mkdtempSync(join(tmpdir(), "kuramoto-home-"));
+    const hq = openDb(join(withProject, "hq.sqlite"), HQ_MIGRATIONS);
+    hq.exec("INSERT INTO projects (name, data_dir, status, created_at) VALUES ('p', '/d', 'planning', '2026-01-01')");
+    hq.close();
+    const empty = mkdtempSync(join(tmpdir(), "kuramoto-home-"));
+    const cfg = { file: undefined, database: { type: "mysql" as const, url: MYSQL_TEST_URL }, databaseUrlFromEnv: false };
+    const run = async (home: string) => {
+      const lines: string[] = [];
+      const d = await startDatabase(cfg, (l) => lines.push(l), home);
+      expect(d.health).toBeDefined();
+      await d.close();
+      return lines;
+    };
+    const first = await run(withProject);
+    expect(first).toEqual([`MySQL に繋ぎました(スキーマの版 ${LATEST})`, SQLITE_NOT_MIGRATED]);
+    expect(await run(withProject)).toEqual([`MySQL に繋ぎました(スキーマの版 ${LATEST})`]);
+    await resetDatabase(admin!);
+    expect(await run(empty)).toEqual([`MySQL に繋ぎました(スキーマの版 ${LATEST})`]);
+    await resetDatabase(admin!);
   });
 });
