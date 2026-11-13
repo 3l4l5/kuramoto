@@ -85,7 +85,7 @@ describe("生産性: ルール違反(R15)", () => {
     const v = productivity(p);
     expect(v.totals.ruleViolations).toEqual({ total: 3, autofixed: 2 });
     const row = (id: number) => v.tickets.find((t) => t.id === id)!;
-    expect(row(a.id)).toMatchObject({ violations: 3, autofixed: 2 });
+    expect(row(a.id)).toMatchObject({ violations: 3, autofixed: 2, reviewed: 0, blocked: 1 });
     expect(row(b.id)).toMatchObject({ violations: 0, autofixed: 0 });
   });
 });

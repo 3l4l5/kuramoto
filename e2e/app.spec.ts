@@ -453,8 +453,12 @@ test("チームの方針の開発ルール: ひな形から足す・空のルー
     const sw = list.getByRole("switch", { name: "Jira 番号をそろえるを有効にする" });
     await sw.click();
     await expect(sw).toHaveAttribute("aria-checked", "false");
-    await expect(list.getByRole("listitem").first()).toHaveAttribute("aria-disabled", "true");
+    await expect(list.getByRole("listitem").first()).toHaveClass(/ds-list__item--off/);
     await expect(drawer.getByText("ルール(有効 1 / 2)")).toBeVisible();
+    // 無効にしたルールも選べて、中身を見られる
+    await list.getByRole("listitem").nth(1).click();
+    await list.getByRole("listitem").first().click();
+    await expect(drawer.getByText("ブランチ名・PR タイトル・コミットに Jira の課題番号")).toBeVisible();
     await sw.click();
     await expect(sw).toHaveAttribute("aria-checked", "true");
   });

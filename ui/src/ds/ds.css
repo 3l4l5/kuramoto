@@ -91,6 +91,8 @@ a.ds-btn { text-decoration: none; }
 .ds-list__item--button:hover { background: var(--bg); }
 .ds-list__item[aria-selected="true"] { background: var(--dev-soft); box-shadow: inset 3px 0 0 var(--dev); }
 .ds-list__item[aria-disabled="true"] { background: var(--bg); color: var(--muted); cursor: default; }
+.ds-list__item--off { background: var(--bg); color: var(--muted); }
+.ds-list__item--off .ds-list__main { font-weight: var(--fw-regular); }
 .ds-list__main { flex: 1; font-weight: var(--fw-bold); }
 .ds-list__item[aria-disabled="true"] .ds-list__main { font-weight: var(--fw-regular); }
 .ds-list__meta { font-size: var(--fs-sm); color: var(--muted); }

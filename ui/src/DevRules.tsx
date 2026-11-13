@@ -89,7 +89,7 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
                 <ListItem
                   key={r.id}
                   selected={r.id === current?.id}
-                  disabled={!r.enabled}
+                  off={!r.enabled}
                   onClick={() => {
                     setDraft(null);
                     setSelected(r.id);

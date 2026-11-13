@@ -1,3 +1,4 @@
+import { Chip } from "./ds";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type ProductivityView } from "./api";
@@ -313,7 +314,17 @@ function Tickets({ data, mode }: P) {
               <td>{x.rounds}</td>
               <td>{x.conflicts}</td>
               <td>{x.retries}</td>
-              <td>{x.violations > 0 ? `${x.violations}${x.autofixed > 0 ? `(自動で直した ${x.autofixed})` : ""}` : 0}</td>
+              <td>
+                {x.violations === 0 ? (
+                  "—"
+                ) : (
+                  <span className="viol">
+                    {x.autofixed > 0 && <Chip tone="ok">{x.autofixed} · 自動で直した</Chip>}
+                    {x.reviewed > 0 && <Chip tone="warn">{x.reviewed} · レビューで指摘</Chip>}
+                    {x.blocked > 0 && <Chip tone="danger">{x.blocked} · 直すまで止める</Chip>}
+                  </span>
+                )}
+              </td>
               <td>{x.help}</td>
             </tr>
           ))}

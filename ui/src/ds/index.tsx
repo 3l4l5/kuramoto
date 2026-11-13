@@ -158,18 +158,20 @@ export function SectionHeading({ children }: { children: ReactNode }) {
 export function List({ children, className, label }: { children: ReactNode; className?: string; label?: string }) {
   return <ul className={cx("ds-list", className)} aria-label={label}>{children}</ul>;
 }
-export function ListItem({ title, meta, selected, disabled, onClick }: {
+export function ListItem({ title, meta, selected, disabled, off, onClick }: {
   title: ReactNode;
   /** 右の補足 */
   meta?: ReactNode;
   selected?: boolean;
   disabled?: boolean;
+  /** 無効の見た目(薄い地・細い字)にするが、押して選べる */
+  off?: boolean;
   onClick?: () => void;
 }) {
   const clickable = !!onClick && !disabled;
   return (
     <li
-      className={cx("ds-list__item", clickable && "ds-list__item--button")}
+      className={cx("ds-list__item", clickable && "ds-list__item--button", off && "ds-list__item--off")}
       aria-selected={selected || undefined}
       aria-disabled={disabled || undefined}
       tabIndex={clickable ? 0 : undefined}

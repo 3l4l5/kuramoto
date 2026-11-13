@@ -369,9 +369,10 @@ function Board({ d }: { d: ProjectView }) {
                     </span>
                     <TicketLink id={t.id}>{t.title}</TicketLink>
                     {t.ruleBlocked.length > 0 && (
-                      <Chip tone="danger" title={t.ruleBlocked.join("・")}>
-                        ルール違反で止まっている
-                      </Chip>
+                      <>
+                        <Chip tone="danger">ルール違反で止まっている</Chip>
+                        <span className="who drop">「{t.ruleBlocked.join("」「")}」を直すまで進めません</span>
+                      </>
                     )}
                     {k === "dropped" ? (
                       <span className="who drop">{droppedText(t.dropped)}</span>
