@@ -42,6 +42,8 @@ export interface Workspace {
   prepare(req: WorkspaceRequest): Promise<PreparedWorkspace>;
   /** 報告を受けてよい状態か(コミットし忘れ・コミットが無いなど)。問題があればその理由。 */
   checkReady(path: string, base: string): Promise<string | undefined>;
+  /** 開発ルールで確かめる、このブランチの変更(コミットの 1 行目・変更したファイル・足した行)。 */
+  changes?(path: string, base: string): Promise<import("./dev-rules.js").RuleChanges>;
   /** ブランチを push し、PR が無ければ作る。 */
   publish(req: PublishRequest): Promise<{ number: number; head: string; sha?: string }>;
   /**
@@ -127,6 +129,15 @@ export class GitWorkspace implements Workspace {
     const ahead = Number((await git(path, "rev-list", "--count", `origin/${base}..HEAD`)).trim());
     if (!ahead) return `origin/${base} から進んだコミットがありません。変更をコミットしてから呼び直してください。`;
     return undefined;
+  }
+
+  async changes(path: string, base: string): Promise<{ commits: string[]; files: string[]; code: string }> {
+    const lines = (s: string) => s.split("\n").filter(Boolean);
+    const commits = lines(await git(path, "log", "--no-merges", "--format=%s", `origin/${base}..HEAD`));
+    const files = lines(await git(path, "diff", "--name-only", `origin/${base}...HEAD`));
+    const diff = await git(path, "diff", "-U0", `origin/${base}...HEAD`).catch(() => "");
+    const code = diff.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n");
+    return { commits, files, code: code.slice(0, 200_000) };
   }
 
   async ownCommits(path: string, base: string, since: string): Promise<number | null> {
@@ -255,7 +266,7 @@ export class StaticWorkspace implements Workspace {
   readonly published: PublishRequest[] = [];
   constructor(
     private readonly path: string,
-    private readonly opts: { prNumber?: (req: PublishRequest) => number; ready?: (path: string) => string | undefined; landed?: (commit: string) => string | undefined; ownCommits?: (since: string) => number | null; publishError?: () => string | undefined; github?: () => string | undefined; baseSha?: () => string } = {},
+    private readonly opts: { prNumber?: (req: PublishRequest) => number; ready?: (path: string) => string | undefined; landed?: (commit: string) => string | undefined; ownCommits?: (since: string) => number | null; publishError?: () => string | undefined; github?: () => string | undefined; baseSha?: () => string; changes?: () => { commits?: string[]; files?: string[]; code?: string } } = {},
   ) {}
   /** テスト用: チームの CI の場所は、決まった場所に PR のコミット(sha-<push の回数>)と main を合わせたものとする。 */
   async prepareCheck(): Promise<CheckWorkspace> {
@@ -274,6 +285,11 @@ export class StaticWorkspace implements Workspace {
   }
   async prepare(): Promise<PreparedWorkspace> {
     return { path: this.path, base: "main", gitDir: join(this.path, ".git") };
+  }
+  /** テスト用: 決めた変更を返す(決めなければ空)。 */
+  async changes(): Promise<{ commits: string[]; files: string[]; code: string }> {
+    const c = this.opts.changes?.() ?? {};
+    return { commits: c.commits ?? [], files: c.files ?? [], code: c.code ?? "" };
   }
   async checkReady(path: string): Promise<string | undefined> {
     return this.opts.ready?.(path);

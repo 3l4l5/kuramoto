@@ -29,6 +29,7 @@ import { exportDesignDoc } from "./project/export.js";
 import { extractTransfer, restoreTransfer } from "./project/transfer.js";
 import { runWork } from "./project/progress.js";
 import { saveFormationInput, savePolicyInput, teamView } from "./project/team.js";
+import { addDevRule, devRulesView, setDevRuleEnabled } from "./project/dev-rules.js";
 import { productivity } from "./project/productivity.js";
 import { officeView } from "./project/office.js";
 import { memberView, unitView, type MemberView, type UnitView } from "./project/people.js";
@@ -397,6 +398,23 @@ export class KuramotoServer {
     }
     if (b === "team" && method === "GET") return teamView(p);
     if (b === "productivity" && method === "GET") return productivity(p);
+    if (b === "dev-rules" && !c && method === "GET") return devRulesView(p);
+    if (b === "dev-rules" && !c && method === "POST") {
+      addDevRule(p, {
+        ...(typeof body.template === "string" ? { template: body.template } : {}),
+        ...(typeof body.name === "string" ? { name: body.name } : {}),
+        ...(typeof body.body === "string" ? { body: body.body } : {}),
+        ...(Array.isArray(body.appliesTo) ? { appliesTo: body.appliesTo as never } : {}),
+        ...(typeof body.check === "string" ? { check: body.check as never } : {}),
+        ...(typeof body.pattern === "string" ? { pattern: body.pattern } : {}),
+        ...(typeof body.onFail === "string" ? { onFail: body.onFail as never } : {}),
+      });
+      return devRulesView(p);
+    }
+    if (b === "dev-rules" && c && parts[4] === "enabled" && method === "POST") {
+      setDevRuleEnabled(p, Number(c), body.enabled === true);
+      return devRulesView(p);
+    }
     if (b === "office" && method === "GET") return { ...officeView(p), running: this.running.has(id) };
     if (b === "members" && c && method === "GET") return memberView(p, Number(c));
     if (b === "units" && c && method === "GET") return unitView(p, Number(c), officeView(p));

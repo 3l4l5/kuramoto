@@ -99,6 +99,24 @@ describe("ローカルサーバー", () => {
     expect((await call("GET", "/api/hq")).json.projects[0]).toMatchObject({ running: false, planning: { handed: false, current: "req" } });
   });
 
+  it("開発ルールを API で 一覧・追加・有効 / 無効 にできる", async () => {
+    const { call } = await boot();
+    const { json: created } = await call("POST", "/api/projects", { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }] });
+    const base = `/api/projects/${created.id}/dev-rules`;
+    expect((await call("GET", base)).json.rules).toEqual([]);
+    expect((await call("GET", base)).json.templates).toHaveLength(4);
+
+    const added = (await call("POST", base, { template: "jira" })).json;
+    expect(added.rules).toMatchObject([{ name: "Jira 番号をそろえる", onFail: "autofix", enabled: true, template: "jira" }]);
+    expect((await call("POST", base, { template: "jira" })).status).toBe(400);
+    const own = (await call("POST", base, { name: "作った", body: "x", appliesTo: ["pr_body"], check: "pattern", pattern: "^対象", onFail: "block" })).json;
+    expect(own.rules).toHaveLength(2);
+
+    const off = (await call("POST", `${base}/${added.rules[0].id}/enabled`, { enabled: false })).json;
+    expect(off.rules[0].enabled).toBe(false);
+    expect((await call("GET", `/api/projects/${created.id}/productivity`)).json.totals.ruleViolations).toEqual({ total: 0, autofixed: 0 });
+  });
+
   it("独自ヘッダーの無い書き込みと、localhost 以外の Host は断る", async () => {
     const { call, port } = await boot();
     expect((await call("POST", "/api/projects", { name: "x", repos: [] }, {})).status).toBe(403);
