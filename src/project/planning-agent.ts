@@ -382,14 +382,14 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
             design_system: z.boolean().optional().describe("デザインシステムの土台(トークン・共通の部品・カタログ)を作るチケットなら true"),
             after: z.array(z.number().int()).optional().describe("先に merge されている必要があるチケットの番号(画面を作るチケットは、デザインシステムの土台のチケットを書く)"),
           },
-          handler: (a) => {
+          handler: async (a) => {
             const repos = p.repos().map((r) => r.full_name);
             if (a.repo && !repos.includes(a.repo)) return `登録されていないリポジトリです。使えるのは ${repos.join(", ")}`;
             const item = a.requirement ? requirements(p).find((r) => r.code === a.requirement) : undefined;
             if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
             const modes = Object.fromEntries(STAGES.map((s) => [s, stageRow(p, s).mode]));
             const versions = Object.fromEntries(STAGES.map((s) => [s, stageRow(p, s).version]));
-            const t = createTicket(p, {
+            const t = await createTicket(p, {
               title: a.title,
               body: a.body,
               kind: a.kind ?? "feature",

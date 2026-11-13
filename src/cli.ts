@@ -52,7 +52,7 @@ async function main(argv: string[]): Promise<void> {
         return;
       case "ticket": {
         const p = await hq.openProject(Number(rest[0]));
-        const t = createTicket(p, { title: rest[1] ?? "", body: values.body ?? "" });
+        const t = await createTicket(p, { title: rest[1] ?? "", body: values.body ?? "" });
         console.log(`#${t.number} を作りました`);
         p.close();
         return;
@@ -82,7 +82,7 @@ async function main(argv: string[]): Promise<void> {
       }
       case "decisions": {
         const p = await hq.openProject(Number(sub));
-        for (const d of pendingOwnerDecisions(p)) {
+        for (const d of await pendingOwnerDecisions(p)) {
           const opts = (JSON.parse(d.options) as DecisionOption[]).map((o, i) => `  ${i}. ${o.label}${i === d.recommended ? "(推奨)" : ""}`).join("\n");
           console.log(`[${d.id}] ${d.question}\n${opts}\n  理由: ${d.why}\n  間違えると: ${d.impact}(${d.reversible ? "戻せる" : "戻せない"})\n  期限: ${d.deadline_at}(過ぎると推奨で進みます)\n`);
         }
@@ -91,7 +91,7 @@ async function main(argv: string[]): Promise<void> {
       }
       case "answer": {
         const p = await hq.openProject(Number(sub));
-        answerDecision(p, Number(rest[0]), Number(rest[1]));
+        await answerDecision(p, Number(rest[0]), Number(rest[1]));
         console.log("答えました");
         p.close();
         return;

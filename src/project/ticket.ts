@@ -47,7 +47,7 @@ export type TimelineItem =
   | { type: "question"; at: string; from: string; to: string; body: string; routedToLead: boolean; noRoute: boolean; answer: string | null; answeredBy: string | null; answeredAt: string | null }
   | { type: "rule"; at: string; rule: string; handled: string; detail: string; resolvedAt: string | null };
 
-export function ticketView(p: Project, ticketId: number) {
+export async function ticketView(p: Project, ticketId: number) {
   const t = p.ticket(ticketId);
   const refs = JSON.parse(t.plan_refs || "{}") as { requirement?: string; screens?: string[]; design?: string[]; repo?: string };
   const requirement = get<{ code: string; name: string; acceptance: string }>(
@@ -176,10 +176,10 @@ export function ticketView(p: Project, ticketId: number) {
   return {
     id: t.id,
     number: t.number,
-    after: dependsOn(p, t.id),
-    waitFor: blockers(p, t.id),
-    waitMerge: mergeBlockers(p, t.id),
-    unblocks: mergeUnblocks(p).get(t.id) ?? null,
+    after: await dependsOn(p, t.id),
+    waitFor: await blockers(p, t.id),
+    waitMerge: await mergeBlockers(p, t.id),
+    unblocks: (await mergeUnblocks(p)).get(t.id) ?? null,
     triaged: !!get<{ triaged: number }>(p.db, "SELECT triaged FROM tickets WHERE id = ?", [t.id])?.triaged,
     jiraKey: t.jira_key,
     title: t.title,
@@ -203,7 +203,7 @@ export function ticketView(p: Project, ticketId: number) {
     ownBudget: hasOwnBudget(p, t.id),
     defaultBudgetUsd: defaultTicketBudgetUsd(p),
     tokens: cost?.tokens ?? 0,
-    dropped: droppedInfo(p, t.id),
+    dropped: await droppedInfo(p, t.id),
     // 「直すまで進めない」ルールに反して止まっているか(ボードの赤い札)
     ruleBlocked: openViolations(p, t.id, "blocked").map((v) => v.name),
     // 画面ごとの最新の見比べ(お手本・実装・違いの画像と、違いの割合。ADR-0034)

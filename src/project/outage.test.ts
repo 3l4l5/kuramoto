@@ -61,18 +61,18 @@ describe("GitHub に入れない(認証切れ)とき(ADR-0027)", () => {
   it("チケットの失敗にせず、1 回だけ知らせて待ち、入れるようになったら自動で再開する", async () => {
     let down = true;
     const { p, d, clock, workspace } = setup({ publishError: () => (down ? AUTH : undefined), github: () => (down ? "HTTP 401: Bad credentials" : undefined) });
-    const a = createTicket(p, { title: "A" });
-    createTicket(p, { title: "B" });
+    const a = await createTicket(p, { title: "A" });
+    await createTicket(p, { title: "B" });
     // 前に(この仕組みの前に)認証切れで保留になっていたチケット
-    const held = createTicket(p, { title: "C" });
+    const held = await createTicket(p, { title: "C" });
     run(p.db, "UPDATE messages SET status = 'failed' WHERE ticket_id = ?", [held.id]);
-    holdTicket(p, held.id, { reason: "gh pr list が HTTP 401 (Requires authentication) を返す", ownerAction: "gh を認証し直す", resume: { toRole: "dev", toMemberId: null, kind: "implement", payload: {} } });
+    await holdTicket(p, held.id, { reason: "gh pr list が HTTP 401 (Requires authentication) を返す", ownerAction: "gh を認証し直す", resume: { toRole: "dev", toMemberId: null, kind: "implement", payload: {} } });
 
     await d.drain({ maxRuns: 5 });
     expect(githubDown(p)).toMatchObject({ error: expect.stringContaining("401") });
     // 失敗に数えない・保留にしない・リーダーの手助けも頼まない
     expect(all(p.db, "SELECT 1 FROM messages WHERE (status = 'failed' AND ticket_id <> ?) OR kind = 'unstick'", [held.id])).toEqual([]);
-    expect(pendingOwnerDecisions(p).length).toBe(1); // 前からある C の保留だけ
+    expect((await pendingOwnerDecisions(p)).length).toBe(1); // 前からある C の保留だけ
     expect(leadMessages(p).filter((m) => m.body.includes("【GitHub に入れません】")).length).toBe(1);
     expect(leadMessages(p).at(-1)!.body).toContain("gh auth login");
     // 入れない間は、チケットの仕事を起こさない
@@ -87,7 +87,7 @@ describe("GitHub に入れない(認証切れ)とき(ADR-0027)", () => {
     await d.drain();
     expect(githubDown(p)).toBeNull();
     expect(leadMessages(p).some((m) => m.body.includes("【GitHub に戻れました】"))).toBe(true);
-    expect(pendingOwnerDecisions(p)).toEqual([]);
+    expect(await pendingOwnerDecisions(p)).toEqual([]);
     expect(p.tickets().map((t) => t.stage)).toEqual(["merge", "merge", "merge"]);
     expect(workspace.published.length).toBe(3);
     expect(p.ticket(a.id).stage).toBe("merge");
@@ -95,7 +95,7 @@ describe("GitHub に入れない(認証切れ)とき(ADR-0027)", () => {
 
   it("merge の見回りで認証切れに気づいたら、merge を止めて知らせる", async () => {
     const { p, d } = setup();
-    const t = createTicket(p, { title: "A" });
+    const t = await createTicket(p, { title: "A" });
     await d.drain();
     expect(p.ticket(t.id).stage).toBe("merge");
     const gh = new FakeGitHub();
@@ -121,7 +121,7 @@ describe("CI が落ちたとき(ADR-0027)", () => {
 
   it("まず落ちたジョブを 1 回やり直す。それでも落ちたら、ログを持ち主に渡す。同じコミットのまま出し直したら受け付けない", async () => {
     const { p, d, prompts } = setup({ sha: "sha-same" });
-    const t = createTicket(p, { title: "A" });
+    const t = await createTicket(p, { title: "A" });
     await d.drain();
     const gh = new FakeGitHub();
     gh.detail = () => failing("FAIL test/a.test.ts > 保存する\nExpected 200, received 412");
@@ -147,8 +147,8 @@ describe("CI が落ちたとき(ADR-0027)", () => {
 
   it("main でも同じ確認が落ちていたら、持ち主に戻さず、main の CI を直すチケットを 1 枚だけ作って待つ", async () => {
     const { p, d } = setup();
-    const a = createTicket(p, { title: "A" });
-    const b = createTicket(p, { title: "B" });
+    const a = await createTicket(p, { title: "A" });
+    const b = await createTicket(p, { title: "B" });
     await d.drain();
     const gh = new FakeGitHub();
     gh.detail = (n) => ({ ...failing("Error: secret DB_URL is not set"), headSha: `sha-${n}`, baseFailing: ["test"] });
@@ -165,8 +165,8 @@ describe("CI が落ちたとき(ADR-0027)", () => {
 
   it("ジョブが始まってもいない(請求・上限など)なら、持ち主にも main の CI を直すチケットにも回さず、1 回だけ知らせて待ち、動き出したら再開する", async () => {
     const { p, d, clock } = setup();
-    const a = createTicket(p, { title: "A" });
-    const b = createTicket(p, { title: "B" });
+    const a = await createTicket(p, { title: "A" });
+    const b = await createTicket(p, { title: "B" });
     await d.drain();
     const gh = new FakeGitHub();
     const note = "failure: The job was not started because recent account payments have failed or your spending limit needs to be increased.";
@@ -201,7 +201,7 @@ describe("CI が落ちたとき(ADR-0027)", () => {
 describe("CI を調べる道具(ADR-0027)", () => {
   it("開発とリーダーは、Kuramoto に GitHub の CI を見てもらえる。やり直しはリーダーだけ", async () => {
     const { p, d } = setup();
-    const t = createTicket(p, { title: "A" });
+    const t = await createTicket(p, { title: "A" });
     await d.drain();
     const gh = new FakeGitHub();
     gh.detail = () => ({ headSha: "sha-1", base: "main", failing: [{ name: "check", link: null, runId: 9, log: "Error: boom", started: true, notes: [], failedStep: "Run tests" }], baseFailing: [] });

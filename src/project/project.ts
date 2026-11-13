@@ -84,6 +84,12 @@ export class Project {
   constructor(path: string, readonly clock: Clock = systemClock, projectId?: number) {
     this.db = openDb(path, PROJECT_MIGRATIONS, { projectId });
     this.pdb = new ProjectDb(this.db, projectId ?? 0);
+    // まだ移していない同期の INSERT は project_id を書かない(0 のまま)。移した側(pdb)は project_id で絞るので、
+    // 入れた行を見失わないよう、この接続の間だけ、0 で入った行をこのプロジェクトの id に直す(同期の書き込みが無くなったら外す)
+    if (projectId) {
+      for (const t of PROJECT_ID_TABLES)
+        this.db.exec(`CREATE TEMP TRIGGER IF NOT EXISTS fill_project_id_${t} AFTER INSERT ON ${t} WHEN NEW.project_id = 0 BEGIN UPDATE ${t} SET project_id = ${Number(projectId)} WHERE rowid = NEW.rowid; END`);
+    }
     this.backfillProjectId();
     this.seed();
     this.fillSeats();

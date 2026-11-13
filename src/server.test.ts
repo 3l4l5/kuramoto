@@ -239,8 +239,8 @@ describe("ローカルサーバー", () => {
     const { call, app } = await boot();
     const { json: created } = await call("POST", "/api/projects", { name: "止まる", repos: [{ fullName: "acme/shop", role: "API" }] });
     const p = app.project(created.id);
-    const t = createTicket(p, { title: "A" });
-    const other = createTicket(p, { title: "B" });
+    const t = await createTicket(p, { title: "A" });
+    const other = await createTicket(p, { title: "B" });
     const rule = addDevRule(p, { template: "migration-alone" });
     run(p.db, "INSERT INTO rule_violations (rule_id, ticket_id, handled, created_at, detail) VALUES (?, ?, 'blocked', ?, '')", [rule.id, t.id, p.now()]);
     const tickets = (await call("GET", `/api/projects/${created.id}`)).json.tickets as { id: number; ruleBlocked: string[] }[];

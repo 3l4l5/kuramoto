@@ -1,7 +1,7 @@
 import { all, get } from "../db/sqlite.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
 import { unitExhausted, unitSpentUsd } from "./budget.js";
-import { KIND_LABEL, workOf } from "./office.js";
+import { KIND_LABEL, workOf, workOfMany } from "./office.js";
 import type { Project } from "./project.js";
 
 /**
@@ -54,11 +54,11 @@ function runItem(r: RunRow) {
 }
 
 /** メンバー 1 人の様子: 今の仕事(途中経過つき)・受け持ちのチケット・これまでの仕事。 */
-export function memberView(p: Project, memberId: number) {
+export async function memberView(p: Project, memberId: number) {
   const m = p.member(memberId);
   if (!m) throw new Error(`メンバー ${memberId} はいません`);
   const unit = m.unit_id === null ? null : get<{ name: string; roles: string }>(p.db, "SELECT name, roles FROM units WHERE id = ?", [m.unit_id]);
-  const work = workOf(p, m);
+  const work = await workOf(p, m);
   const openRun = get<{ id: number }>(p.db, "SELECT id FROM runs WHERE member_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1", [m.id]);
   const steps = openRun ? all<{ at: string; kind: string; text: string }>(p.db, "SELECT at, kind, text FROM run_steps WHERE run_id = ? ORDER BY id DESC LIMIT 30", [openRun.id]).reverse() : [];
   const history = all<RunRow>(p.db, `${RUN_SQL} WHERE r.member_id = ? ORDER BY r.id DESC LIMIT 40`, [m.id]).map(runItem);
@@ -90,11 +90,13 @@ export function memberView(p: Project, memberId: number) {
 }
 
 /** 島 1 つの様子: メンバーの今・すぐ取れる仕事と順番待ち・予算・設定・最近の仕事。 */
-export function unitView(p: Project, unitId: number, office: { units: { id: number; waiting: number[]; queued: { number: number; why: string }[] }[] }) {
+export async function unitView(p: Project, unitId: number, office: { units: { id: number; waiting: number[]; queued: { number: number; why: string }[] }[] }) {
   const u = p.currentFormation().units.find((x) => x.id === unitId);
   if (!u) throw new Error(`島 ${unitId} は今の編成にありません`);
-  const members = p.membersOfUnit(u.id).map((m) => {
-    const w = workOf(p, m);
+  const unitMembers = p.membersOfUnit(u.id);
+  const works = await workOfMany(p, unitMembers);
+  const members = unitMembers.map((m) => {
+    const w = works.get(m.id) ?? null;
     return { id: m.id, name: m.name, helper: !m.is_base, work: w ? { ticket: w.ticket, title: w.title, kind: w.kind, startedAt: w.startedAt, lastStep: w.lastStep } : null };
   });
   const o = office.units.find((x) => x.id === u.id);

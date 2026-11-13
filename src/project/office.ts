@@ -5,8 +5,9 @@ import { routesAmong } from "../domain/route.js";
 import { ticketRepo } from "./dispatcher.js";
 import { autoMergeEnabled, suggestedMergeOrder } from "./merge.js";
 import { areaWait, blockers, mergeBlockers, mergeUnblocks } from "./triage.js";
+import { sql } from "kysely";
 import { unitExhausted, unitSpentUsd } from "./budget.js";
-import { runWork } from "./progress.js";
+import { runWorks } from "./progress.js";
 import type { MemberRow, Project, TicketRow } from "./project.js";
 
 /**
@@ -27,31 +28,48 @@ type Work = {
   lastActivityAt: string;
 };
 
-export function workOf(p: Project, member: MemberRow): Work | null {
-  const r = get<{ id: number; ticket_id: number | null; role: string; model: string | null; kind: string }>(
-    p.db,
-    "SELECT r.id, COALESCE(r.ticket_id, r.about_ticket_id) AS ticket_id, r.role, r.model, m.kind FROM runs r JOIN messages m ON m.id = r.message_id WHERE r.member_id = ? AND r.ended_at IS NULL ORDER BY r.id DESC LIMIT 1",
-    [member.id],
-  );
-  if (!r) return null;
-  const w = runWork(p, r.id, 1);
-  const t = r.ticket_id ? p.ticket(r.ticket_id) : null;
-  const model = r.model ?? p.policy(r.role as Role).model;
-  return {
-    ticket: t?.number ?? null,
-    title: t?.title ?? null,
-    kind: KIND_LABEL[r.kind] ?? r.kind,
-    role: ROLE_LABEL[r.role as Role] ?? r.role,
-    model: MODELS[model as keyof typeof MODELS]?.label ?? model,
-    live: w?.live ?? null,
-    lastStep: w?.steps.at(-1)?.text ?? null,
-    startedAt: w?.startedAt ?? new Date().toISOString(),
-    lastActivityAt: w?.lastActivityAt ?? new Date().toISOString(),
-  };
+/** メンバーごとの、いまの仕事(終わっていない起動)。起動と途中経過は、メンバー全員ぶんをまとめて 2〜3 回で引く。 */
+export async function workOfMany(p: Project, members: MemberRow[]): Promise<Map<number, Work | null>> {
+  const out = new Map<number, Work | null>(members.map((m) => [m.id, null]));
+  if (!members.length) return out;
+  const rows = await p.pdb.k
+    .selectFrom("runs as r")
+    .innerJoin("messages as m", "m.id", "r.message_id")
+    .select(["r.id", "r.member_id", sql<number | null>`COALESCE(r.ticket_id, r.about_ticket_id)`.as("ticket_id"), "r.role", "r.model", "m.kind"])
+    .where("r.project_id", "=", p.pdb.projectId)
+    .where("r.member_id", "in", members.map((m) => m.id))
+    .where("r.ended_at", "is", null)
+    .orderBy("r.id", "desc")
+    .execute();
+  const latest = new Map<number, (typeof rows)[number]>(); // メンバー → いちばん新しい起動
+  for (const r of rows) if (!latest.has(r.member_id)) latest.set(r.member_id, r);
+  const works = await runWorks(p, [...latest.values()].map((r) => r.id), 1);
+  for (const [memberId, r] of latest) {
+    const w = works.get(r.id);
+    const t = r.ticket_id ? p.ticket(r.ticket_id) : null;
+    const model = r.model ?? p.policy(r.role as Role).model;
+    out.set(memberId, {
+      ticket: t?.number ?? null,
+      title: t?.title ?? null,
+      kind: KIND_LABEL[r.kind] ?? r.kind,
+      role: ROLE_LABEL[r.role as Role] ?? r.role,
+      model: MODELS[model as keyof typeof MODELS]?.label ?? model,
+      live: w?.live ?? null,
+      lastStep: w?.steps.at(-1)?.text ?? null,
+      startedAt: w?.startedAt ?? new Date().toISOString(),
+      lastActivityAt: w?.lastActivityAt ?? new Date().toISOString(),
+    });
+  }
+  return out;
 }
 
-export function officeView(p: Project) {
+export async function workOf(p: Project, member: MemberRow): Promise<Work | null> {
+  return (await workOfMany(p, [member])).get(member.id) ?? null;
+}
+
+export async function officeView(p: Project) {
   const f = p.currentFormation();
+  const works = await workOfMany(p, [...f.units.flatMap((u) => p.membersOfUnit(u.id)), p.fixedMember("lead"), p.fixedMember("architect")]);
   const tickets = new Map(p.tickets().map((t) => [t.id, t]));
   const isWork = (r: string): r is WorkRole => (WORK_ROLES as readonly string[]).includes(r);
 
@@ -66,15 +84,15 @@ export function officeView(p: Project) {
     if (!isWork(m.to_role)) continue;
     const t = tickets.get(m.ticket_id);
     if (!t || t.stage === "done" || t.stage === "dropped") continue;
-    const repo = ticketRepo(p, t)?.full_name;
+    const repo = (await ticketRepo(p, t))?.full_name;
     const home = m.to_member_id ? p.member(m.to_member_id).unit_id : null;
     const unit = f.units.find((u) => u.id === home && u.roles.includes(m.to_role as WorkRole)) ?? p.unitsForRole(m.to_role as WorkRole, repo)[0];
     if (!unit) continue;
     const triaged = get<{ triaged: number }>(p.db, "SELECT triaged FROM tickets WHERE id = ?", [t.id])?.triaged ?? 1;
-    const before = m.kind === "implement" ? blockers(p, t.id) : [];
-    const same = m.kind === "implement" ? areaWait(p, t.id) : [];
+    const before = m.kind === "implement" ? await blockers(p, t.id) : [];
+    const same = m.kind === "implement" ? await areaWait(p, t.id) : [];
     if (m.kind === "implement" && (!triaged || before.length || same.length)) {
-      const merging = mergeBlockers(p, t.id);
+      const merging = await mergeBlockers(p, t.id);
       const why = !triaged
         ? "交通整理待ち"
         : merging.length
@@ -103,7 +121,7 @@ export function officeView(p: Project) {
     model: u.model ? (MODELS[u.model as keyof typeof MODELS]?.label ?? u.model) : null,
     budget: { budgetUsd: u.budget_usd, spentUsd: unitSpentUsd(p, u.name), exhausted: unitExhausted(p, u) },
     members: p.membersOfUnit(u.id).map((m) => {
-      const work = workOf(p, m);
+      const work = works.get(m.id) ?? null;
       if (work?.ticket) where[work.ticket] = `unit:${u.id}`;
       return { id: m.id, name: m.name, helper: !m.is_base, joinedAt: m.joined_at, work };
     }),
@@ -113,18 +131,18 @@ export function officeView(p: Project) {
 
   const fixed = (role: Role) => {
     const m = p.fixedMember(role);
-    return { id: m.id, name: m.name, work: workOf(p, m) };
+    return { id: m.id, name: m.name, work: works.get(m.id) ?? null };
   };
   const decisions = [...tickets.values()].filter((t) => t.stage === "decision");
   for (const t of decisions) where[t.number] ??= "lead";
   const mergeQueue = suggestedMergeOrder(p);
-  const unblocks = mergeUnblocks(p);
+  const unblocks = await mergeUnblocks(p);
   for (const t of mergeQueue) where[t.number] = "merge";
   const done = [...tickets.values()].filter((t) => t.stage === "done").sort((a, b) => String(b.done_at).localeCompare(String(a.done_at)));
   for (const t of done) where[t.number] = "done";
 
   // 路線図(R16・R17): 流れ(停車の並び)が同じ種類は 1 本の路線にまとめ、島(駅)を通す。開発より前の工程は「申し送りだけ」の停車(pre)。
-  // 既定の流れと同じ路線は「既定線」。既定の流れから飛ばした工程(島のあるもの)は skipped に入れ、「(QA を通過)」と添える
+  // 既定の流れと同じ路線は「既定線」。既定の流れから飛ばした工程(島のあるもの)は skipped に入れ、「(QA を省略)」と添える
   const defaultFlow = flowFor(f.flows, null);
   const groups = new Map<string, { flow: WorkRole[]; kinds: { kind: string; label: string }[] }>();
   for (const kind of TICKET_KINDS) {

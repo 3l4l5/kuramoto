@@ -37,7 +37,7 @@ const DS: DesignSystem = {
 };
 
 describe("画面を画像で見比べる(ADR-0034)", () => {
-  it("同じ画像は違い 0、半分違えば約 50%。大きさが違えば知らせる", () => {
+  it("同じ画像は違い 0、半分違えば約 50%。大きさが違えば知らせる", async () => {
     const a = png(40, 40, [255, 255, 255]);
     expect(compareImages(a, a).ratio).toBe(0);
     expect(compareImages(a, png(40, 40, [255, 255, 255], [0, 0, 0])).ratio).toBeCloseTo(0.5, 1);
@@ -72,7 +72,7 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
       upsertRequirement(p, { name: "一覧", acceptance: "並ぶ" });
       putArtifact(p, "screen", "designsystem", "main", DS);
       putScreen(p, "list", { name: "メモ一覧", device: "phone", requirements: ["R1"], variants: [{ id: "A", html: "<h1>一覧</h1>" }], chosen: "A", agreed: true });
-      const t = createTicket(p, { title: "一覧", planRefs: { screens: ["list"] } });
+      const t = await createTicket(p, { title: "一覧", planRefs: { screens: ["list"] } });
       const render: Renderer = async (_h, w) => png(w, 20, [255, 255, 255]);
       const replies: string[] = [];
       const harness = new FakeHarness(async (req, call) => {
@@ -95,7 +95,7 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
       expect(replies[0]).toContain("お手本との違い: 50.0%");
       expect(replies[0]).toContain("違いが大きい");
       expect(replies[1]).toContain("お手本はありません");
-      const v = ticketView(p, t.id);
+      const v = await ticketView(p, t.id);
       expect(v.designCompare).toMatchObject([{ screen: "list", name: "メモ一覧", ratio: 0.5 }]);
       expect(v.designCompare[0]!.reference).toBeTruthy();
     } finally {
@@ -104,7 +104,7 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
     }
   });
 
-  it("画面デザインの段階は、デザインシステムが無いと合意できない。引き渡しでは土台のチケットを先に並べられる", () => {
+  it("画面デザインの段階は、デザインシステムが無いと合意できない。引き渡しでは土台のチケットを先に並べられる", async () => {
     const p = new Project(":memory:", new ManualClock());
     p.addRepo("acme/shop", "API");
     putScreen(p, "list", { name: "一覧", device: "phone", requirements: [], variants: [{ id: "A", html: "<p>x</p>" }], chosen: "A", agreed: true });
@@ -114,9 +114,9 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
 
     const tool = (name: string) => planningTools(p, "handoff").find((x) => x.name === name)!;
     void tool("create_ticket").handler({ title: "デザインシステムの土台", body: "トークン・部品・/_design", screens: [], design: [], design_system: true } as never);
-    void tool("create_ticket").handler({ title: "一覧の画面", body: "部品で組み立てる", screens: ["list"], design: [], after: [1] } as never);
+    await tool("create_ticket").handler({ title: "一覧の画面", body: "部品で組み立てる", screens: ["list"], design: [], after: [1] } as never);
     const [base, screen] = p.tickets();
-    expect(blockers(p, screen!.id)).toEqual([base!.number]);
+    expect(await blockers(p, screen!.id)).toEqual([base!.number]);
   });
 
   it.skipIf(process.platform !== "darwin")("手元のブラウザで、試作を実際の幅の画像にする", async () => {

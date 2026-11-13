@@ -28,24 +28,24 @@ describe("設定ファイル", () => {
     return d;
   };
 
-  it("無ければ今の SQLite", () => {
+  it("無ければ今の SQLite", async () => {
     const c = loadConfig(join(tmp(), "config.yaml"), {});
     expect(c).toEqual({ file: undefined, database: { type: "sqlite" }, databaseUrlFromEnv: false });
     expect(describeConfig(c, "/h/.kuramoto")).toBe("設定ファイルなし(既定) / DB: SQLite(/h/.kuramoto)");
   });
 
-  it("空のファイルや database の無いファイルも SQLite", () => {
+  it("空のファイルや database の無いファイルも SQLite", async () => {
     expect(load("").database).toEqual({ type: "sqlite" });
     expect(load("# コメントだけ\n").database).toEqual({ type: "sqlite" });
   });
 
-  it("sqlite", () => {
+  it("sqlite", async () => {
     const c = load("database:\n  type: sqlite\n");
     expect(c.database).toEqual({ type: "sqlite" });
     expect(c.file).toBe(PATH);
   });
 
-  it("mysql: 接続先・TLS を読み、出す 1 行にパスワードを含めない", () => {
+  it("mysql: 接続先・TLS を読み、出す 1 行にパスワードを含めない", async () => {
     const c = load("database:\n  type: mysql\n  url: mysql://kuramoto:s3cret@db.example.com:3306/kuramoto\n  tls:\n    ca: /etc/ssl/ca.pem\n");
     expect(c.database).toEqual({ type: "mysql", url: "mysql://kuramoto:s3cret@db.example.com:3306/kuramoto", tls: { ca: "/etc/ssl/ca.pem" } });
     const line = describeConfig(c);
@@ -53,38 +53,38 @@ describe("設定ファイル", () => {
     expect(line).not.toContain("s3cret");
   });
 
-  it("mysql なのに接続先が無いと起動しない(SQLite に戻さない)", () => {
+  it("mysql なのに接続先が無いと起動しない(SQLite に戻さない)", async () => {
     expect(fail("database:\n  type: mysql\n")).toContain("MySQL の接続先がありません");
   });
 
-  it("mysql の接続先の形がおかしいと起動しない", () => {
+  it("mysql の接続先の形がおかしいと起動しない", async () => {
     expect(fail("database:\n  type: mysql\n  url: postgres://h/db\n")).toContain("database.url");
     expect(fail("database:\n  type: mysql\n  url: mysql://h\n")).toContain("データベース名");
   });
 
-  it("知らない type は行を出して起動しない", () => {
+  it("知らない type は行を出して起動しない", async () => {
     const msg = fail("# 設定\ndatabase:\n  type: postgres\n");
     expect(msg).toContain("3 行目");
     expect(msg).toContain("database.type");
     expect(msg).toContain("postgres");
   });
 
-  it("知らない項目は行を出して起動しない", () => {
+  it("知らない項目は行を出して起動しない", async () => {
     const msg = fail("database:\n  type: sqlite\n  pasword: x\n");
     expect(msg).toContain("3 行目");
     expect(msg).toContain("database.pasword");
   });
 
-  it("YAML として読めないときは行を出して起動しない", () => {
+  it("YAML として読めないときは行を出して起動しない", async () => {
     const msg = fail("database:\n  type: mysql\n   url: [\n");
     expect(msg).toMatch(/\d+ 行目: YAML として読めません/);
   });
 
-  it("sqlite に url を書いたら起動しない(黙って無視しない)", () => {
+  it("sqlite に url を書いたら起動しない(黙って無視しない)", async () => {
     expect(fail("database:\n  type: sqlite\n  url: mysql://h/db\n")).toContain("type: mysql");
   });
 
-  it("KURAMOTO_DATABASE_URL があれば設定ファイルより優先", () => {
+  it("KURAMOTO_DATABASE_URL があれば設定ファイルより優先", async () => {
     const env = { KURAMOTO_DATABASE_URL: "mysql://u:pw@env-host/envdb" };
     const c = load("database:\n  type: mysql\n  url: mysql://u:pw@file-host/filedb\n", env);
     expect(c.database).toEqual({ type: "mysql", url: "mysql://u:pw@env-host/envdb" });
@@ -94,7 +94,7 @@ describe("設定ファイル", () => {
     expect(load("database:\n  type: sqlite\n", env).database.type).toBe("mysql");
   });
 
-  it("KURAMOTO_DATABASE_URL の形がおかしければ起動しない", () => {
+  it("KURAMOTO_DATABASE_URL の形がおかしければ起動しない", async () => {
     expect(fail(undefined, { KURAMOTO_DATABASE_URL: "sqlite:///x" })).toContain("KURAMOTO_DATABASE_URL");
   });
 
@@ -107,7 +107,7 @@ describe("設定ファイル", () => {
         return content;
       });
 
-    it("手順書の例のとおりに読め、MYSQL_PASSWORD だけを使う(root のパスワードは使わない)", () => {
+    it("手順書の例のとおりに読め、MYSQL_PASSWORD だけを使う(root のパスワードは使わない)", async () => {
       const seen: string[] = [];
       const c = loadWith(doc, ENV_FILE, seen);
       expect(c.database).toEqual({ type: "mysql", url: "mysql://kuramoto:kpw@127.0.0.1:3306/kuramoto" });
@@ -119,7 +119,7 @@ describe("設定ファイル", () => {
       expect(line).not.toContain("rootpw");
     });
 
-    it("MYSQL_PASSWORD の行が無ければ、root のパスワードがあっても起動しない", () => {
+    it("MYSQL_PASSWORD の行が無ければ、root のパスワードがあっても起動しない", async () => {
       const msg = fail2(doc, "MYSQL_ROOT_PASSWORD=rootpw\nMYSQL_USER=kuramoto\n");
       expect(msg).toContain("MYSQL_PASSWORD");
       expect(msg).toContain("database.passwordFile");
@@ -127,13 +127,13 @@ describe("設定ファイル", () => {
       expect(fail2(doc, "MYSQL_PASSWORD=\n")).toContain("MYSQL_PASSWORD");
     });
 
-    it("名前が似ている行・コメントは読まない。引用符・export・特殊文字は扱える", () => {
+    it("名前が似ている行・コメントは読まない。引用符・export・特殊文字は扱える", async () => {
       expect(() => loadWith(doc, "# MYSQL_PASSWORD=x\nXMYSQL_PASSWORD=x\nMYSQL_PASSWORD_OLD=x\n")).toThrow(ConfigError);
       expect(loadWith(doc, 'export MYSQL_PASSWORD="a b"\n').database).toMatchObject({ url: "mysql://kuramoto:a%20b@127.0.0.1:3306/kuramoto" });
       expect(loadWith(doc, "MYSQL_PASSWORD=p@ss:/w#rd\r\n").database).toMatchObject({ url: "mysql://kuramoto:p%40ss%3A%2Fw%23rd@127.0.0.1:3306/kuramoto" });
     });
 
-    it("% を含むパスワードは、URL から decodeURIComponent でもとに戻せる", () => {
+    it("% を含むパスワードは、URL から decodeURIComponent でもとに戻せる", async () => {
       for (const pw of ["a%41b", "x%y", "ab%41 p@:/#", "100%"]) {
         const c = loadWith(doc, `MYSQL_PASSWORD=${pw}\n`);
         if (c.database.type !== "mysql") throw new Error("mysql のはず");
@@ -142,7 +142,7 @@ describe("設定ファイル", () => {
       expect(loadWith(doc, "MYSQL_PASSWORD=ab%41 p@:/#\n").database).toMatchObject({ url: "mysql://kuramoto:ab%2541%20p%40%3A%2F%23@127.0.0.1:3306/kuramoto" });
     });
 
-    it("値の後ろのコメント(空白 + #)は docker compose と同じく値に含めない", () => {
+    it("値の後ろのコメント(空白 + #)は docker compose と同じく値に含めない", async () => {
       const pw = (content: string) => (loadWith(doc, content).database as { url: string }).url;
       expect(pw("MYSQL_PASSWORD=abc # memo\n")).toBe("mysql://kuramoto:abc@127.0.0.1:3306/kuramoto");
       expect(pw('MYSQL_PASSWORD="a #b" # memo\n')).toBe("mysql://kuramoto:a%20%23b@127.0.0.1:3306/kuramoto");
@@ -151,17 +151,17 @@ describe("設定ファイル", () => {
       expect(() => loadWith(doc, "MYSQL_PASSWORD= # memo\n")).toThrow(ConfigError);
     });
 
-    it("url にもパスワードがあるときは、どちらを使うか決められないので起動しない", () => {
+    it("url にもパスワードがあるときは、どちらを使うか決められないので起動しない", async () => {
       const both = "database:\n  type: mysql\n  url: mysql://kuramoto:x@127.0.0.1/kuramoto\n  passwordFile: /h/m.env\n";
       expect(fail2(both, ENV_FILE)).toContain("どちらか一方");
     });
 
-    it("KURAMOTO_DATABASE_URL にパスワードが無ければ passwordFile を足す", () => {
+    it("KURAMOTO_DATABASE_URL にパスワードが無ければ passwordFile を足す", async () => {
       const c = loadConfigText(doc, PATH, { KURAMOTO_DATABASE_URL: "mysql://kuramoto@envhost/envdb" }, () => ENV_FILE);
       expect(c.database).toEqual({ type: "mysql", url: "mysql://kuramoto:kpw@envhost/envdb" });
     });
 
-    it("ファイルが読めないときは、どの項目か出して起動しない", () => {
+    it("ファイルが読めないときは、どの項目か出して起動しない", async () => {
       const msg = (() => {
         try {
           loadConfigText(doc, PATH, {}, () => {
@@ -176,17 +176,17 @@ describe("設定ファイル", () => {
       expect(msg).toContain("/h/.kuramoto/mysql.env");
     });
 
-    it("sqlite に passwordFile を書いたら起動しない", () => {
+    it("sqlite に passwordFile を書いたら起動しない", async () => {
       expect(fail("database:\n  type: sqlite\n  passwordFile: /h/m.env\n")).toContain("passwordFile");
     });
 
-    it("手順書の古い仮のキー(host/port/name/user)は知らない項目として起動しない", () => {
+    it("手順書の古い仮のキー(host/port/name/user)は知らない項目として起動しない", async () => {
       for (const key of ["host", "port", "name", "user"]) {
         expect(fail(`database:\n  type: mysql\n  ${key}: x\n`)).toContain(`database.${key}`);
       }
     });
 
-    it("実ファイルの mysql.env から読む(~/ は家のディレクトリ)", () => {
+    it("実ファイルの mysql.env から読む(~/ は家のディレクトリ)", async () => {
       const dir = mkdtempSync(join(tmpdir(), "kuramoto-config-"));
       try {
         const file = join(dir, "mysql.env");
@@ -212,12 +212,12 @@ describe("設定ファイル", () => {
     }
   });
 
-  it("本人以外が読めるときは注意を 1 行", () => {
+  it("本人以外が読めるときは注意を 1 行", async () => {
     expect(permissionWarning(PATH, 0o100600)).toBeUndefined();
     expect(permissionWarning(PATH, 0o100644)).toContain("chmod 600");
   });
 
-  it("起動時: 1 行出し、0600 でなければ注意を出す", () => {
+  it("起動時: 1 行出し、0600 でなければ注意を出す", async () => {
     const path = join(tmp(), "config.yaml");
     writeFileSync(path, "database:\n  type: sqlite\n");
     chmodSync(path, 0o644);

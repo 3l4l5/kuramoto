@@ -45,7 +45,7 @@ function sqliteColumns(): Map<string, string[]> {
 }
 
 describe("MySQL の最初の版", () => {
-  it("版の番号は SQLite のプロジェクト DB の最新と同じ", () => {
+  it("版の番号は SQLite のプロジェクト DB の最新と同じ", async () => {
     expect(MYSQL_MIGRATIONS.at(-1)!.version).toBe(PROJECT_MIGRATIONS.length);
     expect(MYSQL_MIGRATIONS.map((m) => m.version)).toEqual([...MYSQL_MIGRATIONS.map((m) => m.version)].sort((a, b) => a - b));
   });
