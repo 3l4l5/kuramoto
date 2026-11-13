@@ -15,11 +15,12 @@ export type DesignFile = { key: string; name: string; device: "phone" | "desktop
 
 /** チケットに関わる画面の試作。 */
 export async function designFor(p: Project, ticket: TicketRow): Promise<DesignFile[]> {
-  const refs = JSON.parse(ticket.plan_refs || "{}") as { screens?: string[]; requirement?: string | null };
+  const refs = JSON.parse(ticket.plan_refs || "{}") as { screens?: string[]; requirement?: string | null; allScreens?: boolean };
   const req = refs.requirement ?? (await requirements(p)).find((r) => r.id === (ticket as TicketRow & { requirement_item_id?: number | null }).requirement_item_id)?.code;
   const linked = new Set(refs.screens ?? []);
   // デザインシステムの土台のチケットは、カタログに全部の画面を並べるので、全部の試作を渡す
-  const all = await isDesignSystemTicket(p, ticket);
+  // 全画面を見比べるチケット(allScreens)も、全部の試作を渡す
+  const all = refs.allScreens === true || (await isDesignSystemTicket(p, ticket));
   const out: DesignFile[] = [];
   for (const [key, s] of await screens(p)) {
     if (!all && !linked.has(key) && !(req && s.requirements.includes(req))) continue;

@@ -6,7 +6,7 @@ import { dropUnneeded } from "./patrol.js";
 import { lastCiFailure } from "./merge.js";
 import { lastTeamCi, teamCiEnabled } from "./team-ci.js";
 import type { Project, TicketRow } from "./project.js";
-import { closeAlreadyDone, createTicket, holdTicket, resumeWork, ticketBudgetUsd, ticketSpentUsd, type ResumeMessage } from "./workflow.js";
+import { closeAlreadyDone, createTicket, holdTicket, inheritFromParent, resumeWork, ticketBudgetUsd, ticketSpentUsd, type ResumeMessage } from "./workflow.js";
 
 /**
  * 詰まったチケットの手助け。担当の起動が同じように失敗し続けたら、責任者に上げる前にリーダーが原因を調べる。
@@ -104,7 +104,7 @@ ${notes.map((n) => `- ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.bo
 - チームで責任を持って解きます。チケットをやめたり、責任者に判断を頼んだりはしません。
 - 直せそうなら retry_with_advice で、担当への具体的な助言(何が原因で、どこをどう直すか・何を避けるか)を渡してやり直させます。同じ助言の繰り返しは避けます。
 - 担当が同じところで詰まり続けているなら、reassign で別のメンバーか島に渡します(新しい目で見てもらう)。
-- チケットが大きすぎる・手元で確かめられない部分がある(例: 本番の CI でしか動かない)なら、split_and_retry で残りを別チケットに切り出し、今のチケットは確かめられる範囲に絞ってやり直させます。
+- チケットが大きすぎる・手元で確かめられない部分がある(例: 本番の CI でしか動かない)なら、split_and_retry で残りを別チケットに切り出し、今のチケットは確かめられる範囲に絞ってやり直させます。切り出したチケットは、親の画面・要件のひも付けを引き継ぎます。全画面を試作と見比べるチケットなら all_screens: true にします。
 - このチケットの変更が、すでに main に入っている(別のチケットで先に入った・重複していた)なら、close_as_already_done で完了にします。git log origin/main でコミットを確かめ、受け入れ条件を満たしているかも見てから呼びます。保留にはしません。
 ${await teamCiEnabled(p) ? "- CI はチームの CI を使っています(GitHub Actions は止めてあり、merge にも使いません)。落ちたなら、上の「最後のチームの CI」の出力で原因を見立てます。GitHub の CI の失敗は理由にしません。" : `- CI が落ちているなら、上の「最後に落ちた CI」と、ci_status・ci_run(ジョブ・ステップ・GitHub の注記・ログ)・ci_settings(秘密情報の名前)で原因を見立てます。作業場所からは GitHub は見えませんが、これらの道具は Kuramoto が外で GitHub を見て答えます。責任者に「ログを貼ってほしい」「やり直してほしい」とは頼みません(ci_rerun で自分でやり直せます)。ジョブが始まってもいない(ステップが 1 つも動いていない)なら、注記に理由(請求・使用額の上限・ランナー)が書かれています。原因がコードなら retry_with_advice で直し方を、main でも落ちているなら main の CI を直すチケットに任せて待つよう伝えます。ワークフローの設定・秘密情報など責任者にしかできないことが原因なら hold にします。`}
 - 直すコードが無い・やることが無いチケット(GitHub の CI のためだけのもの、仕様が変わっていらなくなったものなど)は、hold にせず drop_ticket で理由を書いて取りやめます。
@@ -188,14 +188,14 @@ export function unstickTools(
       name: "split_and_retry",
       description: "残りを別チケットに切り出し、今のチケットは範囲を絞ってやり直させる。切り出したチケットは、リーダーの交通整理で順番と担当が決まる。",
       input: {
-        tickets: z.array(z.object({ title: z.string().min(1), body: z.string().describe("やること・受け入れ条件・なぜ切り出したか") })).min(1),
+        tickets: z.array(z.object({ title: z.string().min(1), body: z.string().describe("やること・受け入れ条件・なぜ切り出したか"), all_screens: z.boolean().optional().describe("全画面を試作と見比べるチケットなら true(全画面の試作が担当に渡る)。親の画面・要件は自動で引き継ぐ") })).min(1),
         advice: z.string().min(1).describe("今のチケットの担当への助言(どこまでをこのチケットでやるか)"),
       },
       handler: async (a) => {
         if (done.action) return "もう決めました。";
         const made: TicketRow[] = [];
         for (const t of a.tickets) {
-          made.push(await createTicket(p, { title: t.title, body: `${t.body}\n\n---\n#${ticket.number}「${ticket.title}」が大きすぎたため、リーダーが切り出しました。`, planRefs: { splitFrom: ticket.number } }));
+          made.push(await createTicket(p, { title: t.title, body: `${t.body}\n\n---\n#${ticket.number}「${ticket.title}」が大きすぎたため、リーダーが切り出しました。`, ...(await inheritFromParent(p, ticket, { splitFrom: ticket.number, allScreens: t.all_screens })) }));
         }
         await p.addNote(ticket.id, `【手助け・切り出し】#${made.map((t) => t.number).join("・#")} に切り出しました。${a.advice}`, "lead");
         await p.setSetting(`unstick_count:${ticket.id}`, String(await unstickCount(p, ticket.id) + 1));

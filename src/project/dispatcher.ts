@@ -470,7 +470,8 @@ export class Dispatcher {
       const designs = designUse ? await designFor(p, ticket) : [];
       const system = designUse ? await designSystem(p) : null;
       const systemTicket = designUse && await isDesignSystemTicket(p, ticket);
-      const withSystem = !!system && (designs.length > 0 || systemTicket);
+      // デザインシステムがあれば、画面にひも付かないチケットにも tokens.css などを置く(画面の試作が無くても、色や余白の決まりは守る)
+      const withSystem = !!system;
       const refs = new Map<string, { id: number; png: Buffer }>();
       if (designs.length && this.deps.designStore && this.deps.renderer)
         for (const d of designs) {

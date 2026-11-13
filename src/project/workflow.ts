@@ -723,6 +723,31 @@ export async function createTicket(p: Project, t: Parameters<Project["addTicket"
   });
 }
 
+/**
+ * リーダーが親チケットから切り出す・立てるチケットの、ひも付け。
+ * 親の plan_refs の画面(screens)・要件(requirement)・リポジトリ(repo)と、要件の項目(requirement_item_id)を引き継ぐ。
+ * 引き継がないと、子の開発の作業場所に画面の試作が置かれない。designSystem は引き継がない(土台のチケットは親だけ)。
+ * allScreens を true にすると、全画面を見比べるチケットとして、全画面の試作が渡る。
+ */
+export async function inheritFromParent(
+  p: Project,
+  parent: TicketRow,
+  own: { splitFrom?: number; allScreens?: boolean } = {},
+): Promise<{ planRefs: Record<string, unknown>; requirementItemId?: number }> {
+  const refs = JSON.parse(parent.plan_refs || "{}") as { screens?: string[]; requirement?: string | null; repo?: string };
+  const itemId = (await p.pdb.from("tickets").select("requirement_item_id").where("id", "=", parent.id).executeTakeFirst())?.requirement_item_id;
+  return {
+    planRefs: {
+      ...(own.splitFrom !== undefined ? { splitFrom: own.splitFrom } : {}),
+      ...(refs.screens?.length ? { screens: refs.screens } : {}),
+      ...(refs.requirement ? { requirement: refs.requirement } : {}),
+      ...(refs.repo ? { repo: refs.repo } : {}),
+      ...(own.allScreens ? { allScreens: true } : {}),
+    },
+    ...(itemId ? { requirementItemId: Number(itemId) } : {}),
+  };
+}
+
 // ---- 止まった仕事を続ける・保留する ----
 
 /** 止まったところから続ける。メッセージの宛先の工程にチケットを戻し、同じ仕事をもう一度頼む。 */
