@@ -3,7 +3,7 @@ import { isExhausted } from "./budget.js";
 import { iso } from "../clock.js";
 import { all, get, run, tx } from "../db/sqlite.js";
 import { isPreDev, nextStage, pipelineOf } from "../domain/formation.js";
-import { isTicketKind, KIND_LABEL, type TicketKind } from "../domain/flow.js";
+import { flowFor, isTicketKind, KIND_LABEL, type TicketKind } from "../domain/flow.js";
 import { WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
 import { send, type MessageKind, type MessageRow } from "./inbox.js";
 import type { Project, TicketRow } from "./project.js";
@@ -95,15 +95,23 @@ export function firstStage(p: Project, ticket: TicketRow): WorkRole {
  * 工程を通ったので次へ。工程を進むたびに、今の編成の版と、チケットの今の種類の流れから組み立て直すので、
  * 途中で編成の版や種類が変わっても、次の工程から新しい流れで進む。開発を通ったチケットは、開発より前へ戻らない。
  * preDev: 開発より前の工程として動いていた(終えたら、流れが変わっていても開発へ進む)。
+ * 今の工程が(島を外した・省略にした)今の工程の並びに無いときは、島で絞る前の流れの中でその工程の位置を探し、
+ * その後ろにある工程のうち今の並びにある最初のものへ進む(流れの順を入れ替えていても、島のある工程を飛ばさない)。
+ * 流れにも無いときだけ、今までの WORK_ROLES の順に頼る。
  */
 export function advance(p: Project, ticket: TicketRow, from: WorkRole, opts: { preDev?: boolean } = {}): void {
   const t = p.ticket(ticket.id);
   const pipeline = pipelineOf(p.currentFormation(), t.kind, { devDone: !!t.dev_done });
-  const to = pipeline.includes(from)
-    ? nextStage(pipeline, from, opts)
-    : opts.preDev && !t.dev_done && pipeline.includes("dev")
-      ? "dev"
-      : (pipeline.find((r) => WORK_ROLES.indexOf(r) > WORK_ROLES.indexOf(from)) ?? "merge");
+  // 島で絞る前の流れ。開発を通っていれば開発より後ろだけ
+  const whole = [...new Set(flowFor(p.currentFormation().flows, t.kind))];
+  const flow = t.dev_done && whole.indexOf("dev") > 0 ? whole.slice(whole.indexOf("dev")) : whole;
+  const at = flow.indexOf(from);
+  let to: WorkRole | "merge";
+  if (pipeline.includes(from)) to = nextStage(pipeline, from, opts);
+  // 開発より前の工程を終えたら開発へ(今の流れでは開発より後ろにある・流れに無いときも、開発を飛ばさない)
+  else if (opts.preDev && !t.dev_done && pipeline.includes("dev") && (at < 0 || at > flow.indexOf("dev"))) to = "dev";
+  else if (at >= 0) to = flow.slice(at + 1).find((r) => pipeline.includes(r)) ?? "merge";
+  else to = pipeline.find((r) => WORK_ROLES.indexOf(r) > WORK_ROLES.indexOf(from)) ?? "merge";
   enterStage(p, t, to);
 }
 

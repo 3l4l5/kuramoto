@@ -212,6 +212,31 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
     expect(b.p.handoffs(t2.id)).toEqual([]);
   });
 
+  it("入れ替えた順の流れで島を外しても、島のある工程を飛ばさない(流れの順で後ろの工程へ進む)", async () => {
+    // feature の流れ [dev, qa, review] で、qa を待っている間に QA の島を外して版を上げる → review に進む(merge に行かない)
+    const a = setup({ feature: ["dev", "qa", "review"] });
+    const t1 = mk(a.p);
+    let bumped = false;
+    const harness = new FakeHarness(async (req, call) => {
+      await script(req, call);
+      if (!bumped && req.tools.some((x) => x.name === "submit_pr")) {
+        bumped = true;
+        a.p.saveFormation({ pull: "down", units: [unit("開発", ["dev"]), unit("レビュー", ["review"]), unit("セキュリティ", ["sec"])] });
+      }
+    });
+    const d1 = new Dispatcher(a.p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp/ws", { prNumber: (r) => r.ticketNumber + 9 }) });
+    await d1.drain();
+    expect(trail(a.p, t1.id)).toEqual(["dev", "review"]);
+    expect(a.p.ticket(t1.id).stage).toBe("merge");
+
+    // 開発より前でも同じ: [sec, qa, dev, review] で sec の島を外す → qa(申し送り)→ 開発 → レビュー
+    const b = setup({ feature: ["sec", "qa", "dev", "review"] });
+    const t2 = mk(b.p);
+    b.p.saveFormation({ pull: "down", units: [unit("開発", ["dev"]), unit("レビュー", ["review"]), unit("QA", ["qa"])] });
+    await b.d.drain();
+    expect(trail(b.p, t2.id)).toEqual(["qa*", "dev", "review"]);
+  });
+
   it("開発より前の確認も、リーダーの交通整理を待ってから動く", () => {
     const { p } = setup({ bugfix: ["qa", "dev"] });
     const t = mk(p, "bugfix");
