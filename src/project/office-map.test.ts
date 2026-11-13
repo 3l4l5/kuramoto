@@ -9,16 +9,16 @@ import { createTicket } from "./workflow.js";
 const unit = (name: string, roles: UnitSpec["roles"]): UnitSpec => ({ name, roles, maxMembers: 2, summonAt: 2, idleSec: 300 });
 const UNITS = [unit("開発", ["dev"]), unit("レビュー", ["review"]), unit("QA", ["qa"])];
 
-function setup(flows: Parameters<Project["saveFormation"]>[0]["flows"], routes: { from: string; to: string; mode: "ask" | "none" }[] = []) {
-  const p = new Project(":memory:", new ManualClock());
-  p.addRepo("acme/shop", "API");
-  p.saveFormation({ pull: "down", units: UNITS, flows, routes });
+async function setup(flows: Parameters<Project["saveFormation"]>[0]["flows"], routes: { from: string; to: string; mode: "ask" | "none" }[] = []) {
+  const p = await Project.open(":memory:", new ManualClock());
+  await p.addRepo("acme/shop", "API");
+  await p.saveFormation({ pull: "down", units: UNITS, flows, routes });
   return p;
 }
 
 describe("オフィスの路線図(R16・R17)", () => {
   it("流れが同じ種類は 1 本の路線にまとまり、既定の流れと同じ路線は既定線、飛ばした工程は skipped に入る", async () => {
-    const p = setup({ default: ["review", "dev", "qa"], bugfix: ["qa", "dev", "review"], refactor: ["dev", "qa"] });
+    const p = await setup({ default: ["review", "dev", "qa"], bugfix: ["qa", "dev", "review"], refactor: ["dev", "qa"] });
     const v = await officeView(p);
     const id = (name: string) => v.units.find((u) => u.name === name)!.id;
     // 機能とドキュメントは既定の流れ(1 本)、バグ修正、リファクタの 3 本
@@ -36,14 +36,14 @@ describe("オフィスの路線図(R16・R17)", () => {
   });
 
   it("どの種類も流れを決めていなければ、路線は既定線 1 本にまとまる", async () => {
-    const v = await officeView(setup(undefined));
+    const v = await officeView(await setup(undefined));
     expect(v.lines).toHaveLength(1);
     expect(v.lines[0]).toMatchObject({ isDefault: true, skipped: [] });
     expect(v.lines[0]!.kinds.map((k) => k.kind)).toEqual(["feature", "bugfix", "refactor", "docs"]);
   });
 
   it("許されている連絡経路は、向きを持たない線として駅の名前(unit:ID / lead / arch)で返る", async () => {
-    const p = setup(undefined, [
+    const p = await setup(undefined, [
       { from: "開発", to: "レビュー", mode: "ask" },
       { from: "QA", to: "lead", mode: "ask" },
       { from: "開発", to: "architect", mode: "ask" },
@@ -59,7 +59,7 @@ describe("オフィスの路線図(R16・R17)", () => {
 
 describe("路線の上の札", () => {
   it("開いているチケットは、その種類と居場所(where)で返る。完了したものは返さない", async () => {
-    const p = setup({ bugfix: ["qa", "dev"] });
+    const p = await setup({ bugfix: ["qa", "dev"] });
     const t = await createTicket(p, { title: "ずれる", kind: "bugfix" });
     const v = await officeView(p);
     expect(v.ticketKinds[t.number]).toBe("bugfix");

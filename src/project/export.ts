@@ -31,7 +31,7 @@ export async function exportDesignDoc(p: Project, projectName: string, opts: { i
 
   out.push(`# ${projectName} 設計書`, "");
   out.push(`- 書き出した日時: ${p.now()}`);
-  out.push(`- リポジトリ: ${p.repos().map((r) => `${r.full_name}(${r.role})`).join("、") || "なし"}`);
+  out.push(`- リポジトリ: ${(await p.repos()).map((r) => `${r.full_name}(${r.role})`).join("、") || "なし"}`);
   out.push("", "| 段階 | 版 | 状態 |", "|---|---|---|");
   for (const s of STAGES) out.push(`| ${STAGE_LABEL[s]} | v${(await stageRow(p, s)).version} | ${await statusOf(p, s)} |`);
 
@@ -183,7 +183,7 @@ export async function exportDesignDoc(p: Project, projectName: string, opts: { i
   if (!arch && !domain && !data && !await skipped(p, "model")) out.push("(まだありません)");
 
   // ---- チケット ----
-  const tickets = p.tickets().filter((t) => (JSON.parse(t.plan_refs || "{}") as { fromPlan?: boolean }).fromPlan);
+  const tickets = (await p.tickets()).filter((t) => (JSON.parse(t.plan_refs || "{}") as { fromPlan?: boolean }).fromPlan);
   if (tickets.length) {
     h(2, "6. チケット");
     out.push("| 番号 | 内容 | 状態 |", "|---|---|---|");

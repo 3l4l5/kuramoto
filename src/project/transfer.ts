@@ -79,7 +79,7 @@ export async function collectTransfer(p: Project, projectName: string): Promise<
     kuramoto: TRANSFER_VERSION,
     exportedAt: p.now(),
     project: { name: projectName },
-    repos: p.repos().map((r) => ({ fullName: r.full_name, role: r.role })),
+    repos: (await p.repos()).map((r) => ({ fullName: r.full_name, role: r.role })),
     settings: Object.fromEntries(settings.filter((s) => KEEP_SETTING.test(s.key)).map((s) => [s.key, s.value])),
     stages: stageRows.map((s) => ({ stage: s.stage as Stage, mode: s.mode as "agree" | "delegate" | "skip", version: s.version, agreedVersion: s.agreed_version })),
     requirements: reqRows.sort((a, b) => codeNo(a.code) - codeNo(b.code) || a.id - b.id).map((r) => ({ code: r.code, name: r.name, acceptance: r.acceptance })),
@@ -100,7 +100,7 @@ export async function collectTransfer(p: Project, projectName: string): Promise<
       return key === undefined ? [] : [{ screenKey: key, variant: c.variant, x: c.x, y: c.y, body: c.body, resolved: c.resolved_in !== null }];
     }),
     messages: messageRows.map((m) => ({ stage: m.stage, who: m.who, body: m.body, at: m.at })),
-    tickets: p.tickets().map((t) => ({ title: t.title, body: t.body, stage: t.stage, kind: t.kind, devDone: !!t.dev_done, planRefs: JSON.parse(t.plan_refs || "{}") as Record<string, unknown> })),
+    tickets: (await p.tickets()).map((t) => ({ title: t.title, body: t.body, stage: t.stage, kind: t.kind, devDone: !!t.dev_done, planRefs: JSON.parse(t.plan_refs || "{}") as Record<string, unknown> })),
   };
 }
 
@@ -110,8 +110,8 @@ export async function collectTransfer(p: Project, projectName: string): Promise<
  */
 export async function restoreTransfer(p: Project, d: TransferData): Promise<void> {
   await p.pdb.transaction(async () => {
-    if ((await inScope(p.pdb, "plan_artifacts").limit(1).executeTakeFirst()) || p.tickets().length) throw new Error("空のプロジェクトにだけ戻せます");
-    for (const [k, v] of Object.entries(d.settings)) if (KEEP_SETTING.test(k)) p.setSetting(k, v);
+    if ((await inScope(p.pdb, "plan_artifacts").limit(1).executeTakeFirst()) || (await p.tickets()).length) throw new Error("空のプロジェクトにだけ戻せます");
+    for (const [k, v] of Object.entries(d.settings)) if (KEEP_SETTING.test(k)) await p.setSetting(k, v);
 
     for (const s of d.stages) await p.pdb.k.updateTable("plan_stages").set({ mode: s.mode, version: s.version, agreed_version: s.agreedVersion }).where("project_id", "in", scopeIds(p.pdb)).where("stage", "=", s.stage).execute();
     const version = (s: Stage) => d.stages.find((x) => x.stage === s)?.version ?? 1;
@@ -144,8 +144,8 @@ export async function restoreTransfer(p: Project, d: TransferData): Promise<void
       // devDone は SQLite の版 19 と同じ決まりで工程から決める(書き出しに起動の記録は無いので、開発の起動の有無は見られない)
       const base = { title: t.title, body: t.body, kind: t.kind, devDone: t.devDone ?? inferDevDone(t.stage, false), planRefs: t.planRefs };
       if (final) {
-        const row = p.addTicket(base);
-        p.setStage(row.id, t.stage as TicketStage);
+        const row = await p.addTicket(base);
+        await p.setStage(row.id, t.stage as TicketStage);
       } else {
         await createTicket(p, base);
       }
@@ -153,10 +153,10 @@ export async function restoreTransfer(p: Project, d: TransferData): Promise<void
     // 書き出したときに担当が作業中・順番待ちだった依頼は持ち越していない。
     // 始まっているのに中身が無い段階は「まだ始まっていない」に戻し、advance() で担当を起こし直す
     for (const s of STAGES) {
-      if (p.setting(`plan_started:${s}`) && !await hasContent(p, s)) await p.pdb.k.deleteFrom("settings").where("project_id", "in", scopeIds(p.pdb)).where("key", "=", `plan_started:${s}`).execute();
+      if (await p.setting(`plan_started:${s}`) && !await hasContent(p, s)) await p.pdb.k.deleteFrom("settings").where("project_id", "in", scopeIds(p.pdb)).where("key", "=", `plan_started:${s}`).execute();
     }
-    if (p.setting("plan_handoff_requested_at") && !p.setting("plan_handed_at")) await p.pdb.k.deleteFrom("settings").where("project_id", "in", scopeIds(p.pdb)).where("key", "=", "plan_handoff_requested_at").execute();
-    p.event("system", "restored", null, { exportedAt: d.exportedAt });
+    if (await p.setting("plan_handoff_requested_at") && !await p.setting("plan_handed_at")) await p.pdb.k.deleteFrom("settings").where("project_id", "in", scopeIds(p.pdb)).where("key", "=", "plan_handoff_requested_at").execute();
+    await p.event("system", "restored", null, { exportedAt: d.exportedAt });
   });
 }
 

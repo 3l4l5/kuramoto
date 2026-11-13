@@ -13,9 +13,9 @@ import { createTicket } from "./workflow.js";
 import { GitWorkspace, StaticWorkspace } from "./workspace.js";
 
 async function setup() {
-  const p = new Project(":memory:", new ManualClock());
-  p.addRepo("acme/shop", "API");
-  p.saveFormation({ pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 1, summonAt: 2, idleSec: 600 }, { name: "確認", roles: ["review", "qa"], maxMembers: 1, summonAt: 2, idleSec: 600 }] });
+  const p = await Project.open(":memory:", new ManualClock());
+  await p.addRepo("acme/shop", "API");
+  await p.saveFormation({ pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 1, summonAt: 2, idleSec: 600 }, { name: "確認", roles: ["review", "qa"], maxMembers: 1, summonAt: 2, idleSec: 600 }] });
   await upsertRequirement(p, { name: "メモの一覧", acceptance: "新しい順に並ぶ" }); // R1
   await upsertRequirement(p, { name: "設定", acceptance: "名前を変えられる" }); // R2
   await putScreen(p, "list", { name: "メモ一覧", device: "phone", requirements: ["R1"], variants: [{ id: "A", html: "<h1>A案</h1>" }, { id: "B", html: "<h1>B案: 青い見出し</h1>" }], chosen: "B", agreed: true });

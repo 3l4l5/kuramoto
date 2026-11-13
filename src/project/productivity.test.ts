@@ -11,9 +11,9 @@ const H = 3_600_000;
 describe("生産性: 流れとメンバー(ADR-0029)", () => {
   it("時間あたりの merge・入った数と片付いた数・リードタイム・どこから入ったか・仕掛かりを数える", async () => {
     const clock = new ManualClock(new Date("2026-11-12T00:00:00Z"));
-    const p = new Project(":memory:", clock);
-    p.addRepo("acme/shop", "API");
-    const lead = p.fixedMember("lead").id;
+    const p = await Project.open(":memory:", clock);
+    await p.addRepo("acme/shop", "API");
+    const lead = (await p.fixedMember("lead")).id;
     /** 開発の起動を 1 つ足す(started からの長さ ms)。 */
     const devRun = (ticketId: number, ms: number) => {
       const msg = run(p.db, "INSERT INTO messages (ticket_id, to_role, kind, status, available_at, created_at) VALUES (?, 'dev', 'implement', 'done', '', '')", [ticketId]).lastId;
@@ -31,9 +31,9 @@ describe("生産性: 流れとメンバー(ADR-0029)", () => {
     clock.advance(H);
     devRun(a.id, 30 * 60_000);
     clock.advance(H);
-    p.event("system", "ready_to_merge", a.id, {});
+    await p.event("system", "ready_to_merge", a.id, {});
     clock.advance(H);
-    p.event("team", "merged", a.id, {}); // 入ってから 3 時間・取りかかってから 2 時間・merge 待ち 1 時間
+    await p.event("team", "merged", a.id, {}); // 入ってから 3 時間・取りかかってから 2 時間・merge 待ち 1 時間
     run(p.db, "UPDATE tickets SET stage = 'done', active_ms = ? WHERE id = ?", [30 * 60_000, a.id]);
     const c = await createTicket(p, { title: "C", planRefs: { splitFrom: a.number } });
     await dropTicket(p, c.id, { by: "lead", reason: "いらなくなった" });
@@ -70,8 +70,8 @@ describe("生産性: 流れとメンバー(ADR-0029)", () => {
 
 describe("生産性: ルール違反(R15)", () => {
   it("合計に加え、チケットごとの違反の数とうち自動で直した数が出る", async () => {
-    const p = new Project(":memory:", new ManualClock(new Date("2026-11-12T00:00:00Z")));
-    p.addRepo("acme/shop", "API");
+    const p = await Project.open(":memory:", new ManualClock(new Date("2026-11-12T00:00:00Z")));
+    await p.addRepo("acme/shop", "API");
     const a = await createTicket(p, { title: "A" });
     const b = await createTicket(p, { title: "B" });
     const fix = await addDevRule(p, { template: "jira" });
@@ -93,13 +93,13 @@ describe("生産性: ルール違反(R15)", () => {
 describe("生産性: 同期の書き込みの行(project_id は TRIGGER が埋める)", () => {
   it("projectId が 0 でないプロジェクトで、p.event と createTicket が書いた直後の動きも、流れの指標に入る", async () => {
     const clock = new ManualClock(new Date("2026-11-12T00:00:00Z"));
-    const p = new Project(":memory:", clock, 7);
-    p.addRepo("acme/shop", "API");
+    const p = await Project.open(":memory:", clock, 7);
+    await p.addRepo("acme/shop", "API");
     const a = await createTicket(p, { title: "A" });
     clock.advance(H);
-    p.event("system", "ready_to_merge", a.id, {});
+    await p.event("system", "ready_to_merge", a.id, {});
     clock.advance(H);
-    p.event("team", "merged", a.id, {});
+    await p.event("team", "merged", a.id, {});
     run(p.db, "UPDATE tickets SET stage = 'done', done_at = ? WHERE id = ?", [p.now(), a.id]);
     // 同期の書き込みは project_id を書かないが、開いている間は TEMP TRIGGER がすぐ埋める(0 のまま残らない)
     expect(p.db.prepare("SELECT COUNT(*) AS n FROM events WHERE type = 'merged' AND project_id = 7").get()).toEqual({ n: 1 });

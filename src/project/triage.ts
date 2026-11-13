@@ -135,7 +135,7 @@ export async function requestTriage(p: Project): Promise<boolean> {
   if (!(await untriaged(p)).length) return false;
   const open = await p.pdb.from("messages").select("id").where("kind", "=", "triage").where("status", "in", ["pending", "claimed"]).limit(1).executeTakeFirst();
   if (open) return false;
-  send(p, { ticketId: null, toRole: "lead", kind: "triage", payload: {} });
+  await send(p, { ticketId: null, toRole: "lead", kind: "triage", payload: {} });
   return true;
 }
 
@@ -155,7 +155,7 @@ export async function triagePrompt(p: Project, targets: TicketRow[]): Promise<st
   const running = (await p.pdb.from("tickets").where("triaged", "=", 1).where("stage", "not in", ["done", "dropped"]).orderBy("number").execute()) as TicketRow[];
   const lines: string[] = [];
   for (const t of running) {
-    const owner = t.owner_member_id ? p.member(t.owner_member_id).name : "未着手";
+    const owner = t.owner_member_id ? (await p.member(t.owner_member_id)).name : "未着手";
     const after = await dependsOn(p, t.id);
     const areas = await areasOf(p, t.id);
     lines.push(`- #${t.number} ${t.title} [${t.stage}] 担当: ${owner}${after.length ? ` / 先に: #${after.join(", #")}` : ""}${areas.length ? ` / 触る場所: ${areas.join(", ")}` : ""}`);
@@ -229,7 +229,7 @@ export async function dropAsDuplicate(p: Project, number: number, sameAs: number
   if (keep.stage === "dropped") return `#${sameAs} は取りやめになっています。残す方には、開いているチケットを選んでください`;
   if (await p.pdb.from("runs").select("id").where("ticket_id", "=", t.id).where("role", "=", "dev").limit(1).executeTakeFirst()) return `#${number} はもう開発に取りかかっているので、重複として片付けられません`;
   await p.pdb.transaction(async () => {
-    p.addNote(keep.id, `【重複していた #${number} から】${t.title}\n${t.body.trim().slice(0, 1500)}`, "lead");
+    await p.addNote(keep.id, `【重複していた #${number} から】${t.title}\n${t.body.trim().slice(0, 1500)}`, "lead");
     // 片付けたチケットを待っていたものは、残す方を待つ
     await dropTicket(p, t.id, { by: "lead", reason: `#${sameAs}「${keep.title}」と重複していたため`, sameAs: keep });
   });
@@ -237,7 +237,7 @@ export async function dropAsDuplicate(p: Project, number: number, sameAs: number
 }
 
 export async function planWork(p: Project, items: { number: number; after?: number[]; areas?: string[]; assignee?: string; note?: string }[]): Promise<string> {
-  const byNumber = new Map(p.tickets().map((t) => [t.number, t]));
+  const byNumber = new Map((await p.tickets()).map((t) => [t.number, t]));
   const problems: string[] = [];
   for (const it of items) {
     if (!byNumber.has(it.number)) problems.push(`#${it.number} はありません`);
@@ -249,7 +249,7 @@ export async function planWork(p: Project, items: { number: number; after?: numb
   if (problems.length) return `直してください: ${problems.join(" / ")}`;
   // 新しい順番で循環しないか確かめる
   const edges = new Map<number, number[]>();
-  const numberOf = new Map(p.tickets().map((t) => [t.id, t.number]));
+  const numberOf = new Map((await p.tickets()).map((t) => [t.id, t.number]));
   const deps = await p.pdb.from("ticket_deps").select(["ticket_id", "depends_on"]).execute();
   for (const t of byNumber.values()) edges.set(t.number, deps.filter((d) => d.ticket_id === t.id).map((d) => numberOf.get(d.depends_on)!).sort((x, y) => x - y));
   for (const it of items) edges.set(it.number, it.after ?? []);
@@ -278,15 +278,15 @@ export async function planWork(p: Project, items: { number: number; after?: numb
       }
       let who = "手すきの人";
       if (it.assignee) {
-        const devUnits = p.currentFormation().units.filter((u) => u.roles.includes("dev" as WorkRole));
+        const devUnits = (await p.currentFormation()).units.filter((u) => u.roles.includes("dev" as WorkRole));
         const island = devUnits.find((u) => u.name === it.assignee);
-        let m = devUnits.flatMap((u) => p.membersOfUnit(u.id)).find((x) => x.name === it.assignee);
+        let m = (await Promise.all(devUnits.map((u) => p.membersOfUnit(u.id)))).flat().find((x) => x.name === it.assignee);
         if (island) {
           // 島を指定: 手すき(まだ割り当てのない人)がいればその人。いなければ、島の誰かが空いたら取る
           const runningNow = await p.pdb.from("runs").select("member_id").where("ended_at", "is", null).execute();
           const queued = await p.pdb.from("messages").select("to_member_id").where("status", "=", "pending").where("kind", "=", "implement").where("to_member_id", "is not", null).execute();
           const busy = new Set<number>([...runningNow.map((r) => r.member_id), ...queued.map((r) => r.to_member_id!)]);
-          m = p.membersOfUnit(island.id).find((x) => !busy.has(x.id));
+          m = (await p.membersOfUnit(island.id)).find((x) => !busy.has(x.id));
           if (!m) out.push(`${island.name} に手すきの人がいないので、#${it.number} は ${island.name} の誰かが空いたら取ります`);
         }
         if (m) {
@@ -294,8 +294,8 @@ export async function planWork(p: Project, items: { number: number; after?: numb
           who = m.name;
         } else if (!island) out.push(`${it.assignee} は開発の島にいません。#${it.number} は手すきの人が取ります`);
       }
-      if (it.note?.trim()) p.addNote(t.id, it.note, "lead");
-      p.event(p.fixedMember("lead").name, "ticket_planned", t.id, { after: it.after ?? [], areas: await areasOf(p, t.id), assignee: who });
+      if (it.note?.trim()) await p.addNote(t.id, it.note, "lead");
+      await p.event((await p.fixedMember("lead")).name, "ticket_planned", t.id, { after: it.after ?? [], areas: await areasOf(p, t.id), assignee: who });
     }
   });
   return [`${items.length} 件を決めました。`, ...out].join("\n");
@@ -326,19 +326,18 @@ export async function teamStatus(p: Project): Promise<string> {
   const waitingRows = await p.pdb.from("messages").select("to_role").where("status", "=", "pending").where("to_member_id", "is", null).execute();
   const waitingBy = new Map<string, number>();
   for (const w of waitingRows) waitingBy.set(w.to_role, (waitingBy.get(w.to_role) ?? 0) + 1);
-  return p
-    .currentFormation()
-    .units.map((u) => {
-      const ms = p.membersOfUnit(u.id).map((m) => {
+  const lines = await Promise.all((await p.currentFormation()).units.map(async (u) => {
+      const members = await p.membersOfUnit(u.id);
+      const ms = members.map((m) => {
         const r = running.get(m.id);
         const queue = assigned.filter((a) => a.to_member_id === m.id).map((a) => `#${a.number}`);
         const state = r ? `#${r.number ?? "?"} の${r.kind}中` : "手すき";
         return `${m.name}: ${state}${queue.length ? ` / 次に ${queue.join("・")}` : ""}`;
       });
       const waiting = u.roles.reduce((n, r) => n + (waitingBy.get(r) ?? 0), 0);
-      return `- ${u.name}(${u.roles.map((r) => ROLE_LABEL[r]).join("・")}): ${p.membersOfUnit(u.id).length}/${u.max_members} 人${u.repos.length ? ` / 受け持ち ${u.repos.join("・")}` : ""}${u.focus ? ` / 重視: ${u.focus}` : ""} / 待ち ${waiting} 件\n  ${ms.join("\n  ") || "(まだ誰もいません)"}`;
-    })
-    .join("\n");
+      return `- ${u.name}(${u.roles.map((r) => ROLE_LABEL[r]).join("・")}): ${members.length}/${u.max_members} 人${u.repos.length ? ` / 受け持ち ${u.repos.join("・")}` : ""}${u.focus ? ` / 重視: ${u.focus}` : ""} / 待ち ${waiting} 件\n  ${ms.join("\n  ") || "(まだ誰もいません)"}`;
+  }));
+  return lines.join("\n");
 }
 
 /** 交通整理の起動に失敗し続けたら、止めずに流す(手すきの人が番号順に取る)。 */

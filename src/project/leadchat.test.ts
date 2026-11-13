@@ -8,8 +8,8 @@ import { StaticWorkspace } from "./workspace.js";
 
 describe("リーダーとのチャット: 読んだところを覚える", () => {
   it("返事を書いている最中に届いたメッセージや、交通整理の報告に追い越されたメッセージも、次の起動で読む", async () => {
-    const p = new Project(":memory:", new ManualClock());
-    p.addRepo("acme/shop", "API");
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo("acme/shop", "API");
     const prompts: string[] = [];
     const harness = new FakeHarness(async (req) => {
       prompts.push(req.prompt);
@@ -47,25 +47,25 @@ describe("リーダーとのチャット: 読んだところを覚える", () =>
 describe("会話を引き継ぐ回数(ADR-0032)", () => {
   it("同じ会話を引き継ぐのは上限まで。超えたら新しく始める", async () => {
     const { canResume, noteSession } = await import("./sessions.js");
-    const p = new Project(":memory:", new ManualClock());
-    p.setSetting("session_max_resumes", "2");
-    noteSession(p, "s", undefined); // 1 回目(新しく)
-    expect(canResume(p, "s")).toBe(true);
-    noteSession(p, "s", "s"); // 2 回目(引き継ぎ)
-    expect(canResume(p, "s")).toBe(true);
-    noteSession(p, "s", "s"); // 3 回目(引き継ぎ 2 回)
-    expect(canResume(p, "s")).toBe(false);
-    noteSession(p, "t", undefined); // 新しく始めた会話は数え直す
-    expect(canResume(p, "t")).toBe(true);
-    expect(canResume(p, undefined)).toBe(false);
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.setSetting("session_max_resumes", "2");
+    await noteSession(p, "s", undefined); // 1 回目(新しく)
+    expect(await canResume(p, "s")).toBe(true);
+    await noteSession(p, "s", "s"); // 2 回目(引き継ぎ)
+    expect(await canResume(p, "s")).toBe(true);
+    await noteSession(p, "s", "s"); // 3 回目(引き継ぎ 2 回)
+    expect(await canResume(p, "s")).toBe(false);
+    await noteSession(p, "t", undefined); // 新しく始めた会話は数え直す
+    expect(await canResume(p, "t")).toBe(true);
+    expect(await canResume(p, undefined)).toBe(false);
   });
 
   it("チケットの担当も、上限を超えたら前の会話を引き継がずに始める", async () => {
     const { createTicket } = await import("./workflow.js");
     const { withResolutions } = await import("../harness/fake.js");
-    const p = new Project(":memory:", new ManualClock());
-    p.addRepo("acme/shop", "API");
-    p.setSetting("session_max_resumes", "1");
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo("acme/shop", "API");
+    await p.setSetting("session_max_resumes", "1");
     const verdicts = ["changes", "changes", "approve"];
     const harness = new FakeHarness(async (req, call) => {
       if (req.tools.some((t) => t.name === "submit_pr")) await call("submit_pr", { summary: "", responses: [...req.prompt.matchAll(/- 指摘 (\d+) \[/g)].map((m) => ({ finding_id: Number(m[1]), action: "fixed", comment: "直した" })) });
@@ -90,10 +90,10 @@ describe("チームに渡したあとのデザインの合わせ直し(ADR-0034)
     const { putScreen, putArtifact } = await import("./planning.js");
     const { designFor, isDesignSystemTicket } = await import("./design.js");
     const { blockers } = await import("./triage.js");
-    const p = new Project(":memory:", new ManualClock());
-    p.addRepo("acme/shop", "API");
-    putScreen(p, "list", { name: "メモ一覧", device: "phone", requirements: [], variants: [{ id: "A", html: "<p>一覧</p>" }], chosen: "A", agreed: true });
-    putArtifact(p, "screen", "designsystem", "main", { principles: [], tokens: [{ group: "color", name: "--c", value: "#000", use: "x" }], components: [{ name: "ボタン", use: "x", states: [], html: "<button/>" }] });
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo("acme/shop", "API");
+    await putScreen(p, "list", { name: "メモ一覧", device: "phone", requirements: [], variants: [{ id: "A", html: "<p>一覧</p>" }], chosen: "A", agreed: true });
+    await putArtifact(p, "screen", "designsystem", "main", { principles: [], tokens: [{ group: "color", name: "--c", value: "#000", use: "x" }], components: [{ name: "ボタン", use: "x", states: [], html: "<button/>" }] });
     expect(await leadChatPrompt(p, [])).toContain("- list: メモ一覧");
     expect(await leadChatPrompt(p, [])).toContain("デザインシステム: あり");
     // チームの今(島・メンバー)が、Promise のままでなく文字で入る
@@ -104,7 +104,7 @@ describe("チームに渡したあとのデザインの合わせ直し(ADR-0034)
     expect(await create.handler({ title: "x", body: "", screens: ["nope"] } as never)).toContain("企画にありません");
     await create.handler({ title: "デザインシステムの土台", body: "トークン・部品・/_design", design_system: true } as never);
     await create.handler({ title: "一覧を試作に合わせ直す", body: "部品で組み立て直す", screens: ["list"], after: [1] } as never);
-    const [base, screen] = p.tickets();
+    const [base, screen] = await p.tickets();
     expect(await isDesignSystemTicket(p, base!)).toBe(true);
     expect((await designFor(p, base!)).map((d) => d.key)).toEqual(["list"]); // 土台はカタログに全部の画面を並べる
     expect((await designFor(p, screen!)).map((d) => d.key)).toEqual(["list"]);

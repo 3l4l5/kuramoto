@@ -23,8 +23,8 @@ import { advance, createTicket, dropTicket, holdTicket, ticketSpentUsd, type Res
 /** チケットごとの「前回リーダーが見たところ」。これより後の起動・出来事だけを数える。 */
 type Seen = { run: number; event: number };
 
-function seenOf(p: Project, ticketId: number): Seen {
-  const v = p.setting(`patrol_seen:${ticketId}`);
+async function seenOf(p: Project, ticketId: number): Promise<Seen> {
+  const v = await p.setting(`patrol_seen:${ticketId}`);
   return v ? (JSON.parse(v) as Seen) : { run: 0, event: 0 };
 }
 
@@ -32,7 +32,7 @@ function seenOf(p: Project, ticketId: number): Seen {
 export async function markSeen(p: Project, ticketId: number): Promise<void> {
   const r = await maxOf(p, "runs", "id");
   const e = await maxOf(p, "events", "id");
-  p.setSetting(`patrol_seen:${ticketId}`, JSON.stringify({ run: r, event: e } satisfies Seen));
+  await p.setSetting(`patrol_seen:${ticketId}`, JSON.stringify({ run: r, event: e } satisfies Seen));
 }
 
 /** プロジェクトの行のうち、列の最大値(無ければ 0)。 */
@@ -61,18 +61,18 @@ export type LoopSignal = {
 };
 
 /** 回っていると見なす目安。設定で変えられる。 */
-function limits(p: Project) {
+async function limits(p: Project) {
   return {
-    runs: p.settingNumber("patrol_loop_runs", 12),
-    changes: p.settingNumber("patrol_loop_changes", 4),
-    merges: p.settingNumber("patrol_loop_merges", 3),
-    errors: p.settingNumber("patrol_loop_errors", 3),
+    runs: await p.settingNumber("patrol_loop_runs", 12),
+    changes: await p.settingNumber("patrol_loop_changes", 4),
+    merges: await p.settingNumber("patrol_loop_merges", 3),
+    errors: await p.settingNumber("patrol_loop_errors", 3),
   };
 }
 
 /** 開いているチケットのうち、同じところを回っていそうなもの。 */
 export async function loopSignals(p: Project): Promise<LoopSignal[]> {
-  const lim = limits(p);
+  const lim = await limits(p);
   const open = (await openTickets(p).execute()) as TicketRow[];
   // 責任者の対応待ち(保留・予算切れ)は、もう止まっているので見ない(まとめて 1 回で引く)
   const waiting = new Set(
@@ -83,7 +83,7 @@ export async function loopSignals(p: Project): Promise<LoopSignal[]> {
   const out: LoopSignal[] = [];
   for (const t of open) {
     if (waiting.has(t.id)) continue;
-    const seen = seenOf(p, t.id);
+    const seen = await seenOf(p, t.id);
     const runs = await p.pdb.from("runs").select(["error", "outcome"]).where("ticket_id", "=", t.id).where("id", ">", seen.run).orderBy("id", "desc").execute();
     const count = async (type: string) => {
       const row = await p.pdb.from("events").clearSelect().select((eb) => eb.fn.countAll<number>().as("n")).where("ticket_id", "=", t.id).where("id", ">", seen.event).where("type", "=", type).executeTakeFirst();
@@ -186,8 +186,8 @@ function cyclePath(start: number, comp: Set<number>, waits: Map<number, number[]
 async function devSeatFree(p: Project): Promise<boolean> {
   const busy = new Set<number>((await p.pdb.from("runs").select("member_id").where("ended_at", "is", null).execute()).map((r) => r.member_id));
   for (const m of (await p.pdb.from("messages").select("to_member_id").where("status", "=", "pending").where("to_member_id", "is not", null).execute()).map((r) => r.to_member_id)) if (m !== null) busy.add(m);
-  for (const u of p.currentFormation().units.filter((x) => x.roles.includes("dev" as WorkRole))) {
-    const members = p.membersOfUnit(u.id);
+  for (const u of (await p.currentFormation()).units.filter((x) => x.roles.includes("dev" as WorkRole))) {
+    const members = await p.membersOfUnit(u.id);
     if (members.length < u.max_members || members.some((m) => !busy.has(m.id))) return true;
   }
   return false;
@@ -255,7 +255,7 @@ export async function detectDeadlocks(p: Project): Promise<Deadlock[]> {
   }
 
   // 4. 席が空いているのに、取りかかれるはずの先頭が取られていない
-  const stuckMs = Math.max(1, p.settingNumber("patrol_stuck_min", 10)) * 60_000;
+  const stuckMs = Math.max(1, await p.settingNumber("patrol_stuck_min", 10)) * 60_000;
   const now = p.clock.now().getTime();
   const pending = await p.pdb.from("messages").select(["ticket_id", "to_member_id", "created_at", "available_at"]).where("kind", "=", "implement").where("status", "=", "pending").execute();
   let seatFree: boolean | undefined;
@@ -294,8 +294,8 @@ export async function detectDeadlocks(p: Project): Promise<Deadlock[]> {
 }
 
 /** 見せたデッドロックの印と、見せた時刻(まだ続いているものを、間を空けて見せ直すのに使う)。 */
-function deadlockSeen(p: Project): Record<string, string> {
-  const v = p.setting("patrol_deadlock_seen");
+async function deadlockSeen(p: Project): Promise<Record<string, string>> {
+  const v = await p.setting("patrol_deadlock_seen");
   return v ? (JSON.parse(v) as Record<string, string>) : {};
 }
 
@@ -304,8 +304,8 @@ function deadlockSeen(p: Project): Record<string, string> {
  * 見せてから設定 patrol_deadlock_recheck_min(既定 60 分、0 で見せ直さない)が過ぎても続いていれば、もう一度見せる。
  */
 export async function deadlockSignals(p: Project): Promise<Deadlock[]> {
-  const seen = deadlockSeen(p);
-  const again = p.settingNumber("patrol_deadlock_recheck_min", 60) * 60_000;
+  const seen = await deadlockSeen(p);
+  const again = await p.settingNumber("patrol_deadlock_recheck_min", 60) * 60_000;
   const now = p.clock.now().getTime();
   return (await detectDeadlocks(p)).filter((d) => {
     const at = seen[d.key];
@@ -315,7 +315,7 @@ export async function deadlockSignals(p: Project): Promise<Deadlock[]> {
 
 /** 前回の見回りのあとに入ったチケット(重複が増えていないかを見る)。交通整理がまだのものは、交通整理が先に見るので数えない。 */
 async function newTickets(p: Project): Promise<TicketRow[]> {
-  const after = p.settingNumber("patrol_last_ticket", 0);
+  const after = await p.settingNumber("patrol_last_ticket", 0);
   return (await openTickets(p).where("number", ">", after).where("triaged", "=", 1).execute()) as TicketRow[];
 }
 
@@ -331,7 +331,7 @@ async function openCount(p: Project): Promise<number> {
  * @returns done にしたチケットの数
  */
 export async function refreshMergedWaits(p: Project, gh: GitHub): Promise<number> {
-  if (patrolMinutes(p) <= 0 || githubDown(p)) return 0;
+  if (await patrolMinutes(p) <= 0 || await githubDown(p)) return 0;
   const waiting = await p.pdb.from("tickets").select("id").where("stage", "=", "merge").execute();
   if (!waiting.length) return 0;
   const waited = await p.pdb
@@ -342,9 +342,9 @@ export async function refreshMergedWaits(p: Project, gh: GitHub): Promise<number
     .execute();
   const ids = [...new Set(waited.map((d) => d.depends_on))].sort((a, b) => a - b);
   if (!ids.length) return 0;
-  const last = p.setting("patrol_pr_check_at");
-  if (last && p.clock.now().getTime() - Date.parse(last) < patrolMinutes(p) * 60_000) return 0;
-  p.setSetting("patrol_pr_check_at", iso(p.clock.now()));
+  const last = await p.setting("patrol_pr_check_at");
+  if (last && p.clock.now().getTime() - Date.parse(last) < await patrolMinutes(p) * 60_000) return 0;
+  await p.setSetting("patrol_pr_check_at", iso(p.clock.now()));
   let done = 0;
   for (const id of ids) {
     try {
@@ -359,7 +359,7 @@ export async function refreshMergedWaits(p: Project, gh: GitHub): Promise<number
         await markGithubDown(p, reason);
         break;
       }
-      p.event("system", "patrol_pr_check_failed", id, { reason: reason.slice(0, 300) });
+      await p.event("system", "patrol_pr_check_failed", id, { reason: reason.slice(0, 300) });
     }
   }
   return done;
@@ -371,22 +371,22 @@ async function patrolPending(p: Project): Promise<boolean> {
 }
 
 /** 見回りの間隔(分)。0 なら見回らない。 */
-export function patrolMinutes(p: Project): number {
-  return Math.max(0, p.settingNumber("patrol_min", 5));
+export async function patrolMinutes(p: Project): Promise<number> {
+  return Math.max(0, await p.settingNumber("patrol_min", 5));
 }
 
 /** 見回りの間隔を決める(分。0 で止める)。 */
-export function setPatrolMinutes(p: Project, min: number): void {
+export async function setPatrolMinutes(p: Project, min: number): Promise<void> {
   if (!Number.isInteger(min) || min < 0) throw new Error("見回りの間隔は 0 以上の整数(分)にしてください");
-  p.setSetting("patrol_min", String(min));
+  await p.setSetting("patrol_min", String(min));
 }
 
 /** 始業したとき。見るものがあってもなくても、必ず 1 回見回る(見回りを止めていなければ)。 */
 export async function startPatrol(p: Project): Promise<boolean> {
-  if (patrolMinutes(p) <= 0) return false;
-  p.setSetting("patrol_last_at", iso(p.clock.now()));
+  if (await patrolMinutes(p) <= 0) return false;
+  await p.setSetting("patrol_last_at", iso(p.clock.now()));
   if (await patrolPending(p)) return false;
-  send(p, { ticketId: null, toRole: "lead", kind: "patrol", payload: { start: true } });
+  await send(p, { ticketId: null, toRole: "lead", kind: "patrol", payload: { start: true } });
   return true;
 }
 
@@ -395,12 +395,12 @@ export async function startPatrol(p: Project): Promise<boolean> {
  * 何も無ければ起こさない(トークンを使わない)。
  */
 export async function requestPatrol(p: Project): Promise<boolean> {
-  const min = patrolMinutes(p);
+  const min = await patrolMinutes(p);
   if (min <= 0) return false;
-  const last = p.setting("patrol_last_at");
+  const last = await p.setting("patrol_last_at");
   // 始業を通らずに動き出した(サーバーを起動し直した)なら、ここから間隔を数え始める
   if (!last) {
-    p.setSetting("patrol_last_at", iso(p.clock.now()));
+    await p.setSetting("patrol_last_at", iso(p.clock.now()));
     return false;
   }
   if (p.clock.now().getTime() - new Date(last).getTime() < min * 60_000) return false;
@@ -408,8 +408,8 @@ export async function requestPatrol(p: Project): Promise<boolean> {
   const fresh = await newTickets(p);
   // 重複は 2 枚以上ないと起きない。回っているものが無く、新しいチケットも無ければ見回らない
   if (!(await loopSignals(p)).length && !(await deadlockSignals(p)).length && !(fresh.length && (await openCount(p)) >= 2)) return false;
-  p.setSetting("patrol_last_at", iso(p.clock.now()));
-  send(p, { ticketId: null, toRole: "lead", kind: "patrol", payload: {} });
+  await p.setSetting("patrol_last_at", iso(p.clock.now()));
+  await send(p, { ticketId: null, toRole: "lead", kind: "patrol", payload: {} });
   return true;
 }
 
@@ -420,8 +420,8 @@ export async function requestPatrol(p: Project): Promise<boolean> {
 export async function finishPatrol(p: Project, shown: LoopSignal[], deadlocks: Deadlock[] = []): Promise<void> {
   for (const s of shown) await markSeen(p, s.ticket.id);
   const max = await maxOf(p, "tickets", "number");
-  p.setSetting("patrol_last_ticket", String(max));
-  const before = deadlockSeen(p);
+  await p.setSetting("patrol_last_ticket", String(max));
+  const before = await deadlockSeen(p);
   const now = iso(p.clock.now());
   const next: Record<string, string> = {};
   for (const d of await detectDeadlocks(p)) {
@@ -429,7 +429,7 @@ export async function finishPatrol(p: Project, shown: LoopSignal[], deadlocks: D
     const at = wasShown ? now : before[d.key];
     if (at) next[d.key] = at;
   }
-  p.setSetting("patrol_deadlock_seen", JSON.stringify(next));
+  await p.setSetting("patrol_deadlock_seen", JSON.stringify(next));
 }
 
 function stageText(t: { stage: TicketRow["stage"] }): string {
@@ -462,7 +462,7 @@ export async function patrolPrompt(p: Project, signals: LoopSignal[], opts: { st
   const prs = await openPrNumbers(p, open.map((t) => t.id));
   const listLines: string[] = [];
   for (const t of open) {
-    const owner = t.owner_member_id ? p.member(t.owner_member_id).name : "未着手";
+    const owner = t.owner_member_id ? (await p.member(t.owner_member_id)).name : "未着手";
     const after = await dependsOn(p, t.id);
     const areas = await areasOf(p, t.id);
     const pr = prs.get(t.id);
@@ -476,15 +476,15 @@ export async function patrolPrompt(p: Project, signals: LoopSignal[], opts: { st
       const recent = await p.pdb.from("runs").select(["role", "outcome", "error", "summary"]).where("ticket_id", "=", t.id).orderBy("id", "desc").limit(6).execute();
       const spent = await ticketSpentUsd(p, t.id);
       const findings = (await Promise.all((["review", "sec", "qa"] as const).map(async (r) => (await mustResolve(p, t.id, r)).map((f) => `  - [${ROLE_LABEL[r]}] 指摘 ${f.id}(${f.status}): ${f.body.slice(0, 200)}`)))).flat();
-      const notes = p.notes(t.id).slice(-3);
+      const notes = (await p.notes(t.id)).slice(-3);
       loopBlocks.push(`### #${t.number} ${t.title} [${stageText(t)}]
 - 引っかかったところ: ${s.reasons.join("、")}
 - 使った額: $${spent.toFixed(2)} / 差し戻しの往復(通算): ${t.rounds} 回
 - 最近の起動(新しい順):
 ${recent.map((r) => `  - ${ROLE_LABEL[r.role as Role] ?? r.role}: ${r.outcome ?? "?"}${r.error ? ` / ${r.error.slice(0, 200)}` : ""}${r.summary ? ` / ${r.summary.slice(0, 160)}` : ""}`).join("\n") || "  (なし)"}
 ${findings.length ? `- 残っている指摘:\n${findings.join("\n")}` : "- 残っている指摘: なし"}
-${lastCiFailure(p, t.id, 1500)}
-${lastTeamCi(p, t.id, 1500)}
+${await lastCiFailure(p, t.id, 1500)}
+${await lastTeamCi(p, t.id, 1500)}
 ${notes.length ? `- 最近のメモ:\n${notes.map((n) => `  - ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.body.slice(0, 200)}`).join("\n")}` : ""}`);
   }
   const loops = loopBlocks.join("\n\n");
@@ -514,7 +514,7 @@ ${status}
   - チケットが大きすぎて終わらないなら、split で残りを別チケットに切り出し、今のチケットの範囲を絞ります。
   - 責任者にしかできないこと(秘密情報・権限・契約)が無いと進まないときだけ、hold で止めて責任者に頼みます。
   - 見た上で、順調に進んでいて手を打たなくてよいなら、何もしません(次の見回りでは、ここから先の回数だけを数えます)。
-${teamCiEnabled(p) ? "- CI はチームの CI(Kuramoto が手元で流す確認)を使っています。GitHub Actions は止めてあり、merge にも使いません。GitHub の CI の失敗を理由に手を打たず、そのためだけのチケットは drop_ticket で取りやめます。" : "- CI が絡むものは、ci_status・ci_run・ci_settings で Kuramoto に GitHub を見てもらえます(あなたの作業場所からは見えません)。ci_rerun で落ちたジョブをやり直せます。"}
+${await teamCiEnabled(p) ? "- CI はチームの CI(Kuramoto が手元で流す確認)を使っています。GitHub Actions は止めてあり、merge にも使いません。GitHub の CI の失敗を理由に手を打たず、そのためだけのチケットは drop_ticket で取りやめます。" : "- CI が絡むものは、ci_status・ci_run・ci_settings で Kuramoto に GitHub を見てもらえます(あなたの作業場所からは見えません)。ci_rerun で落ちたジョブをやり直せます。"}
 ${DEADLOCK_STEPS}
 - 動いている最中のチケット(起動中)には手を打てません。道具が断ったら、次の見回りに回します。
 - 最後のテキストは、責任者への短い報告にします(片付けた重複・取りやめたチケット・手を打ったチケットとその理由。デッドロックは、何が原因で、plan_work で何を直したか・create_ticket でどのチケットを作ったかも書く)。何もしなかったなら「見回りました。手を打つものはありませんでした」とだけ書きます。`;
@@ -564,7 +564,7 @@ export async function dropDuplicate(
     return r;
   }
   await p.pdb.transaction(async () => {
-    p.addNote(keep.id, `【重複していた #${number} から(取りかかった後に片付け)】${t.title}\n${t.body.trim().slice(0, 1500)}`, "lead");
+    await p.addNote(keep.id, `【重複していた #${number} から(取りかかった後に片付け)】${t.title}\n${t.body.trim().slice(0, 1500)}`, "lead");
     await dropTicket(p, t.id, { by: "lead", reason: `#${sameAs}「${keep.title}」と重複していたため`, sameAs: keep });
   });
   await touch(p, t.id);
@@ -614,7 +614,7 @@ export async function passAsIs(p: Project, number: number, reason: string): Prom
   const last = (await p.pdb.from("reviews").select("role").where("ticket_id", "=", t.id).where("verdict", "=", "changes").orderBy("id", "desc").limit(1).executeTakeFirst()) as { role: WorkRole } | undefined;
   if (!last) return `#${number} には差し戻しがありません。advise か split を使ってください`;
   const from = last.role;
-  const lead = p.fixedMember("lead");
+  const lead = await p.fixedMember("lead");
   await p.pdb.transaction(async () => {
     await p.pdb.update("messages", { status: "done" }).where("ticket_id", "=", t.id).where("status", "=", "pending").execute();
     await p.pdb.update("decisions", { decided_by: "lead", decided_at: p.now() }).where("ticket_id", "=", t.id).where("decided_at", "is", null).execute();
@@ -622,9 +622,9 @@ export async function passAsIs(p: Project, number: number, reason: string): Prom
       await setStatus(p, f.id, "wontfix");
       await comment(p, f.id, { memberId: lead.id, role: "lead" }, "ruled", `見回りで裁定: 直さずに通す。${reason}`);
     }
-    p.addNote(t.id, `【見回り・往復を止めました】${ROLE_LABEL[from]}の残りの指摘を直さずに通します。${reason}`, "lead");
-    p.event(lead.name, "loop_passed", t.id, { from, reason });
-    await advance(p, p.ticket(t.id), from);
+    await p.addNote(t.id, `【見回り・往復を止めました】${ROLE_LABEL[from]}の残りの指摘を直さずに通します。${reason}`, "lead");
+    await p.event(lead.name, "loop_passed", t.id, { from, reason });
+    await advance(p, await p.ticket(t.id), from);
   });
   await touch(p, t.id);
   return `#${number} の${ROLE_LABEL[from]}の残りの指摘を通し、次の工程へ進めました。`;
@@ -666,8 +666,8 @@ export function patrolTools(p: Project, ws: { closePrs?: (t: TicketRow, reason: 
       handler: async (a) => {
         const t = await byNumber(p, a.number);
         if (!t || t.stage === "done" || t.stage === "dropped") return `#${a.number} は開いていません`;
-        p.addNote(t.id, `【見回り】${a.advice}`, "lead");
-        p.event(p.fixedMember("lead").name, "loop_advised", t.id, {});
+        await p.addNote(t.id, `【見回り】${a.advice}`, "lead");
+        await p.event((await p.fixedMember("lead")).name, "loop_advised", t.id, {});
         await touch(p, t.id);
         return `#${a.number} にメモを書きました。`;
       },
@@ -694,8 +694,8 @@ export function patrolTools(p: Project, ws: { closePrs?: (t: TicketRow, reason: 
             }),
           );
         }
-        p.addNote(t.id, `【見回り・切り出し】#${made.map((m) => m.number).join("・#")} に切り出しました。このチケットでは: ${a.advice}`, "lead");
-        p.event(p.fixedMember("lead").name, "loop_split", t.id, { into: made.map((m) => m.number) });
+        await p.addNote(t.id, `【見回り・切り出し】#${made.map((m) => m.number).join("・#")} に切り出しました。このチケットでは: ${a.advice}`, "lead");
+        await p.event((await p.fixedMember("lead")).name, "loop_split", t.id, { into: made.map((m) => m.number) });
         await touch(p, t.id);
         return `#${made.map((m) => m.number).join("・#")} に切り出しました。`;
       },

@@ -14,10 +14,10 @@ import { createTicket, holdTicket, pendingOwnerDecisions } from "./workflow.js";
 const REPO = "acme/shop";
 const AUTH = "Command failed: gh pr list --repo acme/shop --head kuramoto/1\nHTTP 401: Requires authentication (https://api.github.com/graphql)";
 
-function setup(opts: { publishError?: () => string | undefined; github?: () => string | undefined; sha?: string } = {}) {
+async function setup(opts: { publishError?: () => string | undefined; github?: () => string | undefined; sha?: string } = {}) {
   const clock = new ManualClock();
-  const p = new Project(":memory:", clock);
-  p.addRepo(REPO, "API");
+  const p = await Project.open(":memory:", clock);
+  await p.addRepo(REPO, "API");
   const prompts: string[] = [];
   const harness = new FakeHarness(async (req, call) => {
     prompts.push(req.prompt);
@@ -60,7 +60,7 @@ class FakeGitHub implements GitHub {
 describe("GitHub に入れない(認証切れ)とき(ADR-0027)", () => {
   it("チケットの失敗にせず、1 回だけ知らせて待ち、入れるようになったら自動で再開する", async () => {
     let down = true;
-    const { p, d, clock, workspace } = setup({ publishError: () => (down ? AUTH : undefined), github: () => (down ? "HTTP 401: Bad credentials" : undefined) });
+    const { p, d, clock, workspace } = await setup({ publishError: () => (down ? AUTH : undefined), github: () => (down ? "HTTP 401: Bad credentials" : undefined) });
     const a = await createTicket(p, { title: "A" });
     await createTicket(p, { title: "B" });
     // 前に(この仕組みの前に)認証切れで保留になっていたチケット
@@ -69,7 +69,7 @@ describe("GitHub に入れない(認証切れ)とき(ADR-0027)", () => {
     await holdTicket(p, held.id, { reason: "gh pr list が HTTP 401 (Requires authentication) を返す", ownerAction: "gh を認証し直す", resume: { toRole: "dev", toMemberId: null, kind: "implement", payload: {} } });
 
     await d.drain({ maxRuns: 5 });
-    expect(githubDown(p)).toMatchObject({ error: expect.stringContaining("401") });
+    expect(await githubDown(p)).toMatchObject({ error: expect.stringContaining("401") });
     // 失敗に数えない・保留にしない・リーダーの手助けも頼まない
     expect(all(p.db, "SELECT 1 FROM messages WHERE (status = 'failed' AND ticket_id <> ?) OR kind = 'unstick'", [held.id])).toEqual([]);
     expect((await pendingOwnerDecisions(p)).length).toBe(1); // 前からある C の保留だけ
@@ -85,26 +85,26 @@ describe("GitHub に入れない(認証切れ)とき(ADR-0027)", () => {
     down = false;
     clock.advance(61_000);
     await d.drain();
-    expect(githubDown(p)).toBeNull();
+    expect(await githubDown(p)).toBeNull();
     expect((await leadMessages(p)).some((m) => m.body.includes("【GitHub に戻れました】"))).toBe(true);
     expect(await pendingOwnerDecisions(p)).toEqual([]);
-    expect(p.tickets().map((t) => t.stage)).toEqual(["merge", "merge", "merge"]);
+    expect((await p.tickets()).map((t) => t.stage)).toEqual(["merge", "merge", "merge"]);
     expect(workspace.published.length).toBe(3);
-    expect(p.ticket(a.id).stage).toBe("merge");
+    expect((await p.ticket(a.id)).stage).toBe("merge");
   });
 
   it("merge の見回りで認証切れに気づいたら、merge を止めて知らせる", async () => {
-    const { p, d } = setup();
+    const { p, d } = await setup();
     const t = await createTicket(p, { title: "A" });
     await d.drain();
-    expect(p.ticket(t.id).stage).toBe("merge");
+    expect((await p.ticket(t.id)).stage).toBe("merge");
     const gh = new FakeGitHub();
     gh.prStatus = async () => {
       throw new Error(AUTH);
     };
     expect(await autoMerge(p, gh)).toBe(0);
-    expect(githubDown(p)).not.toBeNull();
-    expect(p.ticket(t.id).stage).toBe("merge");
+    expect(await githubDown(p)).not.toBeNull();
+    expect((await p.ticket(t.id)).stage).toBe("merge");
   });
 });
 
@@ -120,7 +120,7 @@ describe("CI が落ちたとき(ADR-0027)", () => {
   });
 
   it("まず落ちたジョブを 1 回やり直す。それでも落ちたら、ログを持ち主に渡す。同じコミットのまま出し直したら受け付けない", async () => {
-    const { p, d, prompts } = setup({ sha: "sha-same" });
+    const { p, d, prompts } = await setup({ sha: "sha-same" });
     const t = await createTicket(p, { title: "A" });
     await d.drain();
     const gh = new FakeGitHub();
@@ -128,11 +128,11 @@ describe("CI が落ちたとき(ADR-0027)", () => {
 
     expect(await ownerMerge(p, gh, t.id)).toMatchObject({ result: "blocked", reason: expect.stringContaining("1 回やり直して") });
     expect(gh.reruns).toEqual([77]);
-    expect(p.ticket(t.id).stage).toBe("merge");
+    expect((await p.ticket(t.id)).stage).toBe("merge");
 
     expect(await ownerMerge(p, gh, t.id)).toMatchObject({ result: "blocked", reason: expect.stringContaining("持ち主に直してもらいます") });
     expect(gh.reruns).toEqual([77]); // やり直しは同じコミットで 1 回だけ
-    expect(p.ticket(t.id).stage).toBe("dev");
+    expect((await p.ticket(t.id)).stage).toBe("dev");
 
     // 何も変えずに出し直す担当。受け付けず、続けばリーダーに手助けを頼む
     await d.dispatchOnce();
@@ -142,11 +142,11 @@ describe("CI が落ちたとき(ADR-0027)", () => {
     expect(fix).toContain("GitHub(Actions のログ・PR の Checks)は見えません");
     expect(fix.match(/Expected 200/g)!.length).toBe(1); // 同じ実行のログは 1 回だけ
     expect(get<{ last_error: string }>(p.db, "SELECT last_error FROM messages WHERE kind = 'fix' ORDER BY id DESC LIMIT 1")!.last_error).toContain("何も変わっていません");
-    expect(p.ticket(t.id).stage).toBe("dev");
+    expect((await p.ticket(t.id)).stage).toBe("dev");
   });
 
   it("main でも同じ確認が落ちていたら、持ち主に戻さず、main の CI を直すチケットを 1 枚だけ作って待つ", async () => {
-    const { p, d } = setup();
+    const { p, d } = await setup();
     const a = await createTicket(p, { title: "A" });
     const b = await createTicket(p, { title: "B" });
     await d.drain();
@@ -155,16 +155,16 @@ describe("CI が落ちたとき(ADR-0027)", () => {
 
     expect(await ownerMerge(p, gh, a.id)).toMatchObject({ result: "blocked", reason: expect.stringContaining("main でも同じ CI(test)") });
     expect(await ownerMerge(p, gh, b.id)).toMatchObject({ result: "blocked" });
-    expect(p.ticket(a.id).stage).toBe("merge");
-    expect(p.ticket(b.id).stage).toBe("merge");
+    expect((await p.ticket(a.id)).stage).toBe("merge");
+    expect((await p.ticket(b.id)).stage).toBe("merge");
     expect(gh.reruns).toEqual([]);
-    const fixers = p.tickets().filter((t) => t.title.startsWith("main の CI を直す"));
+    const fixers = (await p.tickets()).filter((t) => t.title.startsWith("main の CI を直す"));
     expect(fixers.map((t) => t.title)).toEqual(["main の CI を直す(test)"]);
     expect(fixers[0]!.body).toContain("secret DB_URL is not set");
   });
 
   it("ジョブが始まってもいない(請求・上限など)なら、持ち主にも main の CI を直すチケットにも回さず、1 回だけ知らせて待ち、動き出したら再開する", async () => {
-    const { p, d, clock } = setup();
+    const { p, d, clock } = await setup();
     const a = await createTicket(p, { title: "A" });
     const b = await createTicket(p, { title: "B" });
     await d.drain();
@@ -178,8 +178,8 @@ describe("CI が落ちたとき(ADR-0027)", () => {
     });
     expect(await ownerMerge(p, gh, a.id)).toMatchObject({ result: "blocked", reason: expect.stringContaining("Spending limit") });
     expect(await ownerMerge(p, gh, b.id)).toMatchObject({ result: "blocked" });
-    expect([p.ticket(a.id).stage, p.ticket(b.id).stage]).toEqual(["merge", "merge"]);
-    expect(p.tickets().some((t) => t.title.includes("CI を直す"))).toBe(false);
+    expect([(await p.ticket(a.id)).stage, (await p.ticket(b.id)).stage]).toEqual(["merge", "merge"]);
+    expect((await p.tickets()).some((t) => t.title.includes("CI を直す"))).toBe(false);
     expect((await leadMessages(p)).filter((m) => m.body.includes("CI が動いていません")).length).toBe(1);
     expect((await leadMessages(p)).at(-1)!.body).toContain("spending limit");
     expect(gh.reruns).toEqual([]);
@@ -194,13 +194,13 @@ describe("CI が落ちたとき(ADR-0027)", () => {
     expect(await ownerMerge(p, gh, a.id)).toEqual({ result: "merged" });
     expect((await leadMessages(p)).at(-1)!.body).toContain("CI が動き出しました");
     const { ciBlocked } = await import("./outage.js");
-    expect(ciBlocked(p)).toEqual([]);
+    expect(await ciBlocked(p)).toEqual([]);
   });
 });
 
 describe("CI を調べる道具(ADR-0027)", () => {
   it("開発とリーダーは、Kuramoto に GitHub の CI を見てもらえる。やり直しはリーダーだけ", async () => {
-    const { p, d } = setup();
+    const { p, d } = await setup();
     const t = await createTicket(p, { title: "A" });
     await d.drain();
     const gh = new FakeGitHub();
@@ -209,14 +209,14 @@ describe("CI を調べる道具(ADR-0027)", () => {
     gh.runLog = async () => "";
     gh.ciSettings = async () => ({ secrets: ["SCREENSHOT_PASSWORD"], variables: [] });
     const { ciTools } = await import("./ci-tools.js");
-    const dev = ciTools(p, gh, { ticket: p.ticket(t.id) });
+    const dev = await ciTools(p, gh, { ticket: await p.ticket(t.id) });
     expect(dev.map((x) => x.name)).toEqual(["ci_status", "ci_run", "ci_settings"]);
     const call = (tools: typeof dev, name: string, args: Record<string, unknown>) => tools.find((x) => x.name === name)!.handler(args as never);
     expect(await call(dev, "ci_status", {})).toContain("落ちたステップ: Run tests");
     expect(await call(dev, "ci_run", { run_id: 9 })).toContain("始まっていない");
     expect(await call(dev, "ci_settings", {})).toContain("SCREENSHOT_PASSWORD");
 
-    const lead = ciTools(p, gh, { rerun: true });
+    const lead = await ciTools(p, gh, { rerun: true });
     for (let i = 0; i < 3; i++) expect(await call(lead, "ci_rerun", { run_id: 9, number: t.number })).toContain("やり直しました");
     expect(await call(lead, "ci_rerun", { run_id: 9, number: t.number })).toContain("3 回");
     expect(gh.reruns).toEqual([9, 9, 9]);

@@ -22,18 +22,18 @@ export function isGithubAuthError(error: string): boolean {
 export type Outage = { since: string; error: string; checkedAt: string };
 
 /** GitHub に入れない状態か。入れないなら、いつから・どんなエラーか。 */
-export function githubDown(p: Project): Outage | null {
-  const v = p.setting("github_down");
+export async function githubDown(p: Project): Promise<Outage | null> {
+  const v = await p.setting("github_down");
   return v ? (JSON.parse(v) as Outage) : null;
 }
 
 /** GitHub に入れないことが分かった。初めてなら責任者に 1 回だけ知らせる。 */
 export async function markGithubDown(p: Project, error: string): Promise<void> {
   const now = iso(p.clock.now());
-  const cur = githubDown(p);
+  const cur = await githubDown(p);
   if (cur) return;
-  p.setSetting("github_down", JSON.stringify({ since: now, error: error.slice(0, 500), checkedAt: now } satisfies Outage));
-  p.event("system", "github_down", null, { error: error.slice(0, 500) });
+  await p.setSetting("github_down", JSON.stringify({ since: now, error: error.slice(0, 500), checkedAt: now } satisfies Outage));
+  await p.event("system", "github_down", null, { error: error.slice(0, 500) });
   await leadReply(
     p,
     `【GitHub に入れません】Kuramoto が GitHub に入れなくなりました(gh か git の認証が切れているか、無効になっています)。チケットの問題ではないので、チームは GitHub を使う仕事を止めて待ちます。\nこの PC のターミナルで \`gh auth login\` をし直してください(\`gh auth status\` で確かめられます)。入れるようになったら、Kuramoto が気づいて自動で再開します。\nエラー: ${error.slice(0, 300)}`,
@@ -41,26 +41,26 @@ export async function markGithubDown(p: Project, error: string): Promise<void> {
 }
 
 /** 確かめた時刻を残す(次に確かめるまでの間を空ける)。 */
-export function githubCheckDue(p: Project): boolean {
-  const cur = githubDown(p);
+export async function githubCheckDue(p: Project): Promise<boolean> {
+  const cur = await githubDown(p);
   if (!cur) return false;
-  const every = p.settingNumber("github_probe_sec", 60) * 1000;
+  const every = await p.settingNumber("github_probe_sec", 60) * 1000;
   return p.clock.now().getTime() - new Date(cur.checkedAt).getTime() >= every;
 }
 
-export function githubStillDown(p: Project, error: string): void {
-  const cur = githubDown(p);
+export async function githubStillDown(p: Project, error: string): Promise<void> {
+  const cur = await githubDown(p);
   if (!cur) return;
-  p.setSetting("github_down", JSON.stringify({ ...cur, error: error.slice(0, 500), checkedAt: iso(p.clock.now()) }));
+  await p.setSetting("github_down", JSON.stringify({ ...cur, error: error.slice(0, 500), checkedAt: iso(p.clock.now()) }));
 }
 
 /** また GitHub に入れるようになった。知らせて、認証切れで保留にしていたチケットを再開する。 */
 export async function markGithubUp(p: Project): Promise<number> {
-  const cur = githubDown(p);
-  p.setSetting("github_down", "");
+  const cur = await githubDown(p);
+  await p.setSetting("github_down", "");
   const resumed = await resumeAuthHolds(p);
   if (cur) {
-    p.event("system", "github_up", null, { since: cur.since, resumed });
+    await p.event("system", "github_up", null, { since: cur.since, resumed });
     await leadReply(p, `【GitHub に戻れました】また GitHub に入れるようになったので、止めていた仕事を再開します。${resumed ? `認証切れで保留になっていたチケット ${resumed} 枚も再開しました。` : ""}`);
   }
   return resumed;
@@ -91,13 +91,13 @@ const BILLING = /spending limit|payments? (have|has) failed|billing|payment meth
  * コードの外の原因なので、チケットで直せない。リポジトリごとに 1 回だけ責任者に知らせ、PR は merge 待ちのまま待つ。
  * 開発・確認の仕事は止めない(merge だけが待つ)。
  */
-export function ciBlocked(p: Project, repo?: string): CiBlock[] {
-  const all = JSON.parse(p.setting("ci_blocked") || "[]") as CiBlock[];
+export async function ciBlocked(p: Project, repo?: string): Promise<CiBlock[]> {
+  const all = JSON.parse(await p.setting("ci_blocked") || "[]") as CiBlock[];
   return repo ? all.filter((b) => b.repo === repo) : all;
 }
 
-function saveBlocks(p: Project, blocks: CiBlock[]): void {
-  p.setSetting("ci_blocked", JSON.stringify(blocks));
+async function saveBlocks(p: Project, blocks: CiBlock[]): Promise<void> {
+  await p.setSetting("ci_blocked", JSON.stringify(blocks));
 }
 
 /** 責任者にしてほしいこと。注記から請求・上限が原因と分かれば、どこを見ればよいかまで書く。 */
@@ -108,16 +108,16 @@ export function ciBlockAction(notes: string[]): string {
 }
 
 export async function markCiBlocked(p: Project, repo: string, notes: string[], runIds: number[]): Promise<boolean> {
-  const blocks = ciBlocked(p);
+  const blocks = await ciBlocked(p);
   const cur = blocks.find((b) => b.repo === repo);
   if (cur) {
     cur.runIds = [...new Set([...cur.runIds, ...runIds])].slice(-5);
-    saveBlocks(p, blocks);
+    await saveBlocks(p, blocks);
     return false;
   }
   const now = iso(p.clock.now());
-  saveBlocks(p, [...blocks, { repo, since: now, notes: notes.slice(0, 5), probedAt: now, runIds }]);
-  p.event("system", "ci_blocked", null, { repo, notes: notes.slice(0, 5) });
+  await saveBlocks(p, [...blocks, { repo, since: now, notes: notes.slice(0, 5), probedAt: now, runIds }]);
+  await p.event("system", "ci_blocked", null, { repo, notes: notes.slice(0, 5) });
   await leadReply(
     p,
     `【${repo} の CI が動いていません】CI のジョブが始まってもいません(ステップが 1 つも動かず、ログもありません)。コードではなく GitHub 側の原因なので、チームでは直せません。開発と確認は続け、merge だけ止めて待ちます。\n${notes.length ? `GitHub の注記: ${notes.slice(0, 3).join(" / ")}\n` : ""}${ciBlockAction(notes)}`,
@@ -126,23 +126,23 @@ export async function markCiBlocked(p: Project, repo: string, notes: string[], r
 }
 
 /** 止まっている CI を、確かめにやり直す頃か(設定 ci_probe_min、既定 15 分ごと)。やり直す実行を返し、時刻を進める。 */
-export function ciProbeDue(p: Project, repo: string): number[] {
-  const blocks = ciBlocked(p);
+export async function ciProbeDue(p: Project, repo: string): Promise<number[]> {
+  const blocks = await ciBlocked(p);
   const cur = blocks.find((b) => b.repo === repo);
   if (!cur) return [];
-  if (p.clock.now().getTime() - new Date(cur.probedAt).getTime() < p.settingNumber("ci_probe_min", 15) * 60_000) return [];
+  if (p.clock.now().getTime() - new Date(cur.probedAt).getTime() < await p.settingNumber("ci_probe_min", 15) * 60_000) return [];
   cur.probedAt = iso(p.clock.now());
-  saveBlocks(p, blocks);
+  await saveBlocks(p, blocks);
   return cur.runIds.slice(-2);
 }
 
 /** CI がまた動き出した(ジョブが始まった・通った)。知らせる。 */
 export async function markCiRunning(p: Project, repo: string): Promise<void> {
-  const blocks = ciBlocked(p);
+  const blocks = await ciBlocked(p);
   const cur = blocks.find((b) => b.repo === repo);
   if (!cur) return;
-  saveBlocks(p, blocks.filter((b) => b.repo !== repo));
-  p.event("system", "ci_running", null, { repo, since: cur.since });
+  await saveBlocks(p, blocks.filter((b) => b.repo !== repo));
+  await p.event("system", "ci_running", null, { repo, since: cur.since });
   await leadReply(p, `【${repo} の CI が動き出しました】CI のジョブがまた始まるようになったので、merge を再開します。`);
 }
 
@@ -160,7 +160,7 @@ export async function dropGithubCiTickets(p: Project): Promise<TicketRow[]> {
     .execute()) as TicketRow[];
   for (const t of open)
     await dropTicket(p, t.id, { by: "lead", reason: "チームの CI を使うようになったので、GitHub Actions の CI を直す必要がなくなりました(Actions は止めてあり、merge はチームの CI で決めます)" });
-  if (p.setting("ci_blocked") && p.setting("ci_blocked") !== "[]") p.setSetting("ci_blocked", "[]");
+  if (await p.setting("ci_blocked") && await p.setting("ci_blocked") !== "[]") await p.setSetting("ci_blocked", "[]");
   if (open.length) await leadReply(p, `【チームの CI】GitHub Actions の CI を直すためのチケット #${open.map((t) => t.number).join("・#")} は、チームの CI を使うようになっていらなくなったので取りやめました。`);
   return open;
 }

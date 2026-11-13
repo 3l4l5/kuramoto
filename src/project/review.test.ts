@@ -11,12 +11,12 @@ import { createTicket } from "./workflow.js";
 
 const REPO = "acme/shop";
 
-function setup(step: ConstructorParameters<typeof FakeHarness>[0]) {
-  const p = new Project(":memory:", new ManualClock());
-  p.addRepo(REPO, "API");
+async function setup(step: ConstructorParameters<typeof FakeHarness>[0]) {
+  const p = await Project.open(":memory:", new ManualClock());
+  await p.addRepo(REPO, "API");
   // レビューは 2 人(最初に見た人が再レビューも見るかを確かめる)。往復の上限は高くしておく
-  p.saveFormation({ pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 1, summonAt: 6, idleSec: 600 }, { name: "レビュー", roles: ["review", "sec"], maxMembers: 2, summonAt: 1, idleSec: 600 }] });
-  { const r = p.policy("review"); p.savePolicy("review", { model: r.model, effort: r.effort, focus: r.focus, options: { ...JSON.parse(r.options), escalateAfterRounds: 9 } }); }
+  await p.saveFormation({ pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 1, summonAt: 6, idleSec: 600 }, { name: "レビュー", roles: ["review", "sec"], maxMembers: 2, summonAt: 1, idleSec: 600 }] });
+  { const r = await p.policy("review"); await p.savePolicy("review", { model: r.model, effort: r.effort, focus: r.focus, options: { ...JSON.parse(r.options), escalateAfterRounds: 9 } }); }
   const harness = new FakeHarness(step);
   const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp") });
   return { p, d, harness };
@@ -25,7 +25,7 @@ function setup(step: ConstructorParameters<typeof FakeHarness>[0]) {
 describe("レビューの往復(実際の PR レビューのモデル)", () => {
   it("必須と提案を分け、開発は必須に返事をし、同じレビュアーが前回の指摘だけを確かめて承認する。提案だけなら差し戻さない", async () => {
     const reviewers: string[] = [];
-    const { p, d, harness } = setup(async (req, call) => {
+    const { p, d, harness } = await setup(async (req, call) => {
       const names = req.tools.map((t) => t.name);
       if (names.includes("submit_pr")) {
         const ids = mustFindingIds(req.prompt);
@@ -55,7 +55,7 @@ describe("レビューの往復(実際の PR レビューのモデル)", () => {
     });
     const t = await createTicket(p, { title: "CSV" });
     await d.drain();
-    expect(p.ticket(t.id).stage).toBe("merge");
+    expect((await p.ticket(t.id)).stage).toBe("merge");
     expect(reviewers).toEqual(["first", "re"]);
     // 同じレビュアーが再レビューした
     const reviewRuns = all<{ member_id: number }>(p.db, "SELECT r.member_id FROM reviews rv JOIN runs r ON r.id = rv.run_id WHERE rv.role = 'review' ORDER BY rv.id");
@@ -74,7 +74,7 @@ describe("レビューの往復(実際の PR レビューのモデル)", () => {
 
   it("開発が理由を添えて「直さない」と返し、レビュアーが納得すれば通る。納得しなければリーダーが裁定する", async () => {
     let insist = false;
-    const { p, d } = setup(async (req, call) => {
+    const { p, d } = await setup(async (req, call) => {
       const names = req.tools.map((t) => t.name);
       if (names.includes("submit_pr")) {
         const ids = mustFindingIds(req.prompt);
@@ -93,7 +93,7 @@ describe("レビューの往復(実際の PR レビューのモデル)", () => {
     // 1) レビュアーが納得する
     const a = await createTicket(p, { title: "A" });
     await d.drain();
-    expect(p.ticket(a.id).stage).toBe("merge");
+    expect((await p.ticket(a.id)).stage).toBe("merge");
     expect((await threads(p, a.id))[0]).toMatchObject({ status: "wontfix", comments: [{ action: "raised" }, { action: "wontfix" }, { action: "accepted" }] });
 
     // 2) レビュアーが納得しない → リーダーが「開発の言い分を通す」と裁定 → 次の工程へ
@@ -102,12 +102,12 @@ describe("レビューの往復(実際の PR レビューのモデル)", () => {
     await d.drain();
     expect(get(p.db, "SELECT decided_by, choice FROM decisions WHERE ticket_id = ?", [b.id])).toEqual({ decided_by: "lead", choice: 1 });
     expect((await threads(p, b.id))[0]!.comments.map((c) => c.action)).toEqual(["raised", "wontfix", "reopened", "ruled"]);
-    expect(p.ticket(b.id).stage).toBe("merge");
+    expect((await p.ticket(b.id)).stage).toBe("merge");
   });
 
   it("後の工程(セキュリティ)で差し戻されたら、直したあとはセキュリティに戻る(レビューの承認は生きる)", async () => {
     const seen: string[] = [];
-    const { p, d } = setup(async (req, call) => {
+    const { p, d } = await setup(async (req, call) => {
       const names = req.tools.map((t) => t.name);
       if (names.includes("submit_pr")) {
         seen.push("dev");
@@ -123,7 +123,7 @@ describe("レビューの往復(実際の PR レビューのモデル)", () => {
     const t = await createTicket(p, { title: "検索" });
     await d.drain();
     expect(seen).toEqual(["dev", "review", "sec", "dev", "sec"]);
-    expect(p.ticket(t.id).stage).toBe("merge");
+    expect((await p.ticket(t.id)).stage).toBe("merge");
   });
 });
 
@@ -132,7 +132,7 @@ describe("何を止めるか(受け入れ条件・セキュリティ・この差
     const { upsertRequirement } = await import("./planning.js");
     const replies: string[] = [];
     let reviewPrompt = "";
-    const { p, d } = setup(async (req, call) => {
+    const { p, d } = await setup(async (req, call) => {
       const names = req.tools.map((t) => t.name);
       if (names.includes("submit_pr")) {
         await call("submit_pr", { summary: "", responses: mustFindingIds(req.prompt).map((id) => ({ finding_id: id, action: "fixed", comment: "直した" })) });
@@ -175,15 +175,15 @@ describe("何を止めるか(受け入れ条件・セキュリティ・この差
     // 開いているチケットを見せて、重ならないか確かめさせる
     expect(reviewPrompt).toContain(`#${search.number} 検索`);
     // PR は止まらずに merge 待ちへ。すでにあるチケットに当たるものは、そのチケットのメモになる
-    expect(p.ticket(t.id).stage).toBe("merge");
-    expect(p.notes(search.id).at(-1)!.body).toContain("検索の結果を並べる");
+    expect((await p.ticket(t.id)).stage).toBe("merge");
+    expect((await p.notes(search.id)).at(-1)!.body).toContain("検索の結果を並べる");
     // 範囲外の指摘は、merge するまでは別チケットにしない。merge したら、交通整理待ちの新しいチケットになる(1 回だけ)
-    expect(p.tickets().find((x) => x.title === "ゴミ箱の画面を作る")).toBeUndefined();
+    expect((await p.tickets()).find((x) => x.title === "ゴミ箱の画面を作る")).toBeUndefined();
     const { ownerMerge } = await import("./merge.js");
     const gh = { prStatus: async () => ({ state: "OPEN" as const, mergeable: "MERGEABLE" as const, ci: "success" as const }), merge: async () => {}, comment: async () => "" };
     expect(await ownerMerge(p, gh, t.id)).toEqual({ result: "merged" });
-    expect(p.tickets().filter((x) => x.title === "ゴミ箱の画面を作る")).toHaveLength(1);
-    const followup = p.tickets().find((x) => x.title === "ゴミ箱の画面を作る")!;
+    expect((await p.tickets()).filter((x) => x.title === "ゴミ箱の画面を作る")).toHaveLength(1);
+    const followup = (await p.tickets()).find((x) => x.title === "ゴミ箱の画面を作る")!;
     expect(followup.body).toContain(`#${t.number}「一覧の外枠」のレビューで見つかった`);
     expect(get(p.db, "SELECT triaged FROM tickets WHERE id = ?", [followup.id])).toEqual({ triaged: 0 });
   });

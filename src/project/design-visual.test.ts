@@ -47,7 +47,7 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
   it("お手本の画像は、同じ試作なら描き直さない", async () => {
     const dir = mkdtempSync(join(tmpdir(), "kuramoto-ref-"));
     try {
-      const p = new Project(":memory:", new ManualClock());
+      const p = await Project.open(":memory:", new ManualClock());
       let renders = 0;
       const render: Renderer = async (_h, w) => (renders++, png(w, 10, [255, 255, 255]));
       const store = new FileDesignStore(dir);
@@ -66,9 +66,9 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
     const ws = mkdtempSync(join(tmpdir(), "kuramoto-ws-"));
     const storeDir = mkdtempSync(join(tmpdir(), "kuramoto-store-"));
     try {
-      const p = new Project(":memory:", new ManualClock());
-      p.addRepo("acme/shop", "API");
-      p.saveFormation({ pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 1, summonAt: 2, idleSec: 600 }, { name: "確認", roles: ["qa"], maxMembers: 1, summonAt: 2, idleSec: 600 }] });
+      const p = await Project.open(":memory:", new ManualClock());
+      await p.addRepo("acme/shop", "API");
+      await p.saveFormation({ pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 1, summonAt: 2, idleSec: 600 }, { name: "確認", roles: ["qa"], maxMembers: 1, summonAt: 2, idleSec: 600 }] });
       await upsertRequirement(p, { name: "一覧", acceptance: "並ぶ" });
       await putArtifact(p, "screen", "designsystem", "main", DS);
       await putScreen(p, "list", { name: "メモ一覧", device: "phone", requirements: ["R1"], variants: [{ id: "A", html: "<h1>一覧</h1>" }], chosen: "A", agreed: true });
@@ -105,17 +105,17 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
   });
 
   it("画面デザインの段階は、デザインシステムが無いと合意できない。引き渡しでは土台のチケットを先に並べられる", async () => {
-    const p = new Project(":memory:", new ManualClock());
-    p.addRepo("acme/shop", "API");
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo("acme/shop", "API");
     await putScreen(p, "list", { name: "一覧", device: "phone", requirements: [], variants: [{ id: "A", html: "<p>x</p>" }], chosen: "A", agreed: true });
     expect(await agreeBlocker(p, "screen")).toBe("デザインシステムがまだありません");
     await putArtifact(p, "screen", "designsystem", "main", DS);
     expect(await agreeBlocker(p, "screen")).toBeNull();
 
-    const tool = (name: string) => planningTools(p, "handoff").find((x) => x.name === name)!;
-    void tool("create_ticket").handler({ title: "デザインシステムの土台", body: "トークン・部品・/_design", screens: [], design: [], design_system: true } as never);
-    await tool("create_ticket").handler({ title: "一覧の画面", body: "部品で組み立てる", screens: ["list"], design: [], after: [1] } as never);
-    const [base, screen] = p.tickets();
+    const tool = async (name: string) => (await planningTools(p, "handoff")).find((x) => x.name === name)!;
+    void (await tool("create_ticket")).handler({ title: "デザインシステムの土台", body: "トークン・部品・/_design", screens: [], design: [], design_system: true } as never);
+    await (await tool("create_ticket")).handler({ title: "一覧の画面", body: "部品で組み立てる", screens: ["list"], design: [], after: [1] } as never);
+    const [base, screen] = await p.tickets();
     expect(await blockers(p, screen!.id)).toEqual([base!.number]);
   });
 

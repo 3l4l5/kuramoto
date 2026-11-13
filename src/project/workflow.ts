@@ -17,16 +17,16 @@ import { openViolations, markListed, reviewFindingsFor } from "./dev-rules.js";
  * ノンストップで進めるか(ADR-0022)。設定 nonstop が "0" でなければ、戻せる判断はチームで決め、責任者には報告だけする。
  * 責任者に上げて止まるのは、戻せない操作と、責任者にしかできないこと(保留)だけ。
  */
-export function nonstop(p: Project): boolean {
-  return p.setting("nonstop") !== "0";
+export async function nonstop(p: Project): Promise<boolean> {
+  return await p.setting("nonstop") !== "0";
 }
 
 /**
  * 確認(レビュー・セキュリティ・QA)のやり直しで、前の会話を引き継ぐか。設定 resume_checks が "0" なら毎回新しく始める。既定は引き継ぐ。
  * 引き継ぐと前回の見立てを覚えているが、過去の会話を毎回読み直すぶんトークンを使う。
  */
-export function resumeChecks(p: Project): boolean {
-  return p.setting("resume_checks") !== "0";
+export async function resumeChecks(p: Project): Promise<boolean> {
+  return await p.setting("resume_checks") !== "0";
 }
 
 /** 止まった仕事を、止まったところから続けるためのメッセージ(宛先・種類・中身)。 */
@@ -69,28 +69,28 @@ const REVIEW_KINDS: Record<string, WorkRole> = { review: "review", sec: "sec", q
 
 /** 工程に入れる。その工程のメッセージを出すか、merge 待ちに置く。 */
 export async function enterStage(p: Project, ticket: TicketRow, stage: WorkRole | "merge", extra: { toMemberId?: number | null; payload?: Record<string, unknown> } = {}): Promise<void> {
-  p.setStage(ticket.id, stage);
+  await p.setStage(ticket.id, stage);
   if (stage === "merge") {
     // 確認がすべて済んだコミットを覚えておく。この後に戻ってきても、承認のあとの変更だけを確かめればよい
-    const sha = p.setting(`pr_sha:${ticket.id}`);
-    if (sha) p.setSetting(`approved_sha:${ticket.id}`, sha);
-    p.setSetting(`recheck:${ticket.id}`, "");
-    p.event("system", "ready_to_merge", ticket.id, { number: ticket.number });
+    const sha = await p.setting(`pr_sha:${ticket.id}`);
+    if (sha) await p.setSetting(`approved_sha:${ticket.id}`, sha);
+    await p.setSetting(`recheck:${ticket.id}`, "");
+    await p.event("system", "ready_to_merge", ticket.id, { number: ticket.number });
     return;
   }
   const kind: MessageKind = stage === "dev" ? (ticket.owner_member_id ? "fix" : "implement") : stage;
   // 開発より前の工程(開発を通る前で、今の流れで開発より前にある)は、受信箱は review/sec/qa のまま preDev を付ける。
   // コードを見ずにチケットの中身を読んで申し送りを残すだけで、差し戻しは無い
-  const now = p.ticket(ticket.id);
-  const preDev = stage !== "dev" && !now.dev_done && isPreDev(pipelineOf(p.currentFormation(), now.kind), stage);
+  const now = await p.ticket(ticket.id);
+  const preDev = stage !== "dev" && !now.dev_done && isPreDev(pipelineOf(await p.currentFormation(), now.kind), stage);
   // 再レビューは、前にこのチケットを見た同じレビュアーに頼む(実際の PR と同じく、文脈を持っている人が見る)
   const toMemberId = extra.toMemberId !== undefined ? extra.toMemberId : stage === "dev" ? ticket.owner_member_id : await lastReviewer(p, ticket.id, stage);
-  send(p, { ticketId: ticket.id, toRole: stage, kind, toMemberId, payload: { ...(extra.payload ?? {}), ...(preDev ? { preDev: true } : {}) } });
+  await send(p, { ticketId: ticket.id, toRole: stage, kind, toMemberId, payload: { ...(extra.payload ?? {}), ...(preDev ? { preDev: true } : {}) } });
 }
 
 /** チケットが最初に入る工程。種類の流れの先頭(開発より前の工程があればそれ。島が無い・省略の工程は飛ばす)。 */
-export function firstStage(p: Project, ticket: TicketRow): WorkRole {
-  return pipelineOf(p.currentFormation(), ticket.kind, { devDone: !!ticket.dev_done })[0] ?? "dev";
+export async function firstStage(p: Project, ticket: TicketRow): Promise<WorkRole> {
+  return pipelineOf(await p.currentFormation(), ticket.kind, { devDone: !!ticket.dev_done })[0] ?? "dev";
 }
 
 /**
@@ -102,10 +102,10 @@ export function firstStage(p: Project, ticket: TicketRow): WorkRole {
  * 流れにも無いときだけ、今までの WORK_ROLES の順に頼る。
  */
 export async function advance(p: Project, ticket: TicketRow, from: WorkRole, opts: { preDev?: boolean } = {}): Promise<void> {
-  const t = p.ticket(ticket.id);
-  const pipeline = pipelineOf(p.currentFormation(), t.kind, { devDone: !!t.dev_done });
+  const t = await p.ticket(ticket.id);
+  const pipeline = pipelineOf(await p.currentFormation(), t.kind, { devDone: !!t.dev_done });
   // 島で絞る前の流れ。開発を通っていれば開発より後ろだけ
-  const whole = [...new Set(flowFor(p.currentFormation().flows, t.kind))];
+  const whole = [...new Set(flowFor((await p.currentFormation()).flows, t.kind))];
   const flow = t.dev_done && whole.indexOf("dev") > 0 ? whole.slice(whole.indexOf("dev")) : whole;
   const at = flow.indexOf(from);
   let to: WorkRole | "merge";
@@ -120,11 +120,11 @@ export async function advance(p: Project, ticket: TicketRow, from: WorkRole, opt
 /** 責任者がチケットの種類を変える。変えたことをやりとりに残し、次の工程から新しい種類の流れで進む(今いる工程はそのまま)。 */
 export async function setTicketKind(p: Project, ticketId: number, kind: unknown, by = "owner"): Promise<TicketRow> {
   if (!isTicketKind(kind)) throw new Error(`知らないチケットの種類です: ${String(kind)}`);
-  const t = p.ticket(ticketId);
+  const t = await p.ticket(ticketId);
   if (t.kind === kind) return t;
   await p.pdb.update("tickets", { kind }).where("id", "=", ticketId).execute();
-  p.event(by, "kind_changed", ticketId, { from: t.kind, to: kind, fromLabel: KIND_LABEL[t.kind] ?? t.kind, toLabel: KIND_LABEL[kind] });
-  return p.ticket(ticketId);
+  await p.event(by, "kind_changed", ticketId, { from: t.kind, to: kind, fromLabel: KIND_LABEL[t.kind] ?? t.kind, toLabel: KIND_LABEL[kind] });
+  return await p.ticket(ticketId);
 }
 
 /**
@@ -134,7 +134,7 @@ export async function setTicketKind(p: Project, ticketId: number, kind: unknown,
 export async function applyReport(p: Project, ctx: { msg: MessageRow; runId: number; memberId: number }, report: RunReport): Promise<string | undefined> {
   const { msg } = ctx;
   if (msg.ticket_id === null) return undefined;
-  const ticket = p.ticket(msg.ticket_id);
+  const ticket = await p.ticket(msg.ticket_id);
 
   return p.pdb.transaction(async () => {
     switch (msg.kind) {
@@ -162,7 +162,7 @@ export async function applyReport(p: Project, ctx: { msg: MessageRow; runId: num
 /** 開発より前の確認(R17)の報告。申し送りを残して次の工程へ。差し戻しは無く、往復(rounds)にも数えない。 */
 async function applyHandoff(p: Project, ticket: TicketRow, role: WorkRole, report: RunReport): Promise<string | undefined> {
   if (!report.handoff) return "leave_handoff が呼ばれませんでした。チケットの中身を読んで、申し送りを残してください";
-  p.addHandoff(ticket.id, role, report.handoff.body);
+  await p.addHandoff(ticket.id, role, report.handoff.body);
   await advance(p, ticket, role, { preDev: true });
   return undefined;
 }
@@ -170,14 +170,14 @@ async function applyHandoff(p: Project, ticket: TicketRow, role: WorkRole, repor
 async function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunReport, payload: { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string; rules?: unknown } = {}): Promise<string | undefined> {
   if (ticket.owner_member_id === null) {
     await p.pdb.update("tickets", { owner_member_id: memberId }).where("id", "=", ticket.id).execute();
-    ticket = p.ticket(ticket.id);
+    ticket = await p.ticket(ticket.id);
   }
   if (report.question) {
     await raiseToLead(p, ticket, report.question);
     return undefined;
   }
   if (report.alreadyDone) {
-    await closeAlreadyDone(p, ticket, { ...report.alreadyDone, by: p.member(memberId).name });
+    await closeAlreadyDone(p, ticket, { ...report.alreadyDone, by: (await p.member(memberId)).name });
     return undefined;
   }
   if (!report.pr) return "submit_pr が呼ばれませんでした";
@@ -186,14 +186,14 @@ async function applyDev(p: Project, ticket: TicketRow, memberId: number, report:
     return `CI が落ちたコミット(${payload.sha.slice(0, 7)})から何も変わっていません。渡したログから原因を直すか、git merge origin/main で main を取り込んでから出し直してください`;
   if (payload.rules && payload.sha && report.pr.sha === payload.sha)
     return `開発ルールに反したコミット(${payload.sha.slice(0, 7)})から何も変わっていません。ルールを守るように直してから出し直してください`;
-  const repo = p.repos().find((r) => r.full_name === report.pr!.repo);
+  const repo = (await p.repos()).find((r) => r.full_name === report.pr!.repo);
   if (!repo) return `登録されていないリポジトリです: ${report.pr.repo}`;
   await dialect.upsert(p.pdb.insert("pull_requests", { ticket_id: ticket.id, repo_id: repo.id, number: report.pr.number, head: report.pr.head }), ["ticket_id", "repo_id"], ["number", "head"]).execute();
   // 開発を通った。これより前の工程には戻らない
   await p.pdb.update("tickets", { dev_done: 1 }).where("id", "=", ticket.id).execute();
-  ticket = p.ticket(ticket.id);
-  p.event(p.member(memberId).name, "pr_submitted", ticket.id, { number: report.pr.number, repo: report.pr.repo });
-  if (report.pr.sha) p.setSetting(`pr_sha:${ticket.id}`, report.pr.sha);
+  ticket = await p.ticket(ticket.id);
+  await p.event((await p.member(memberId)).name, "pr_submitted", ticket.id, { number: report.pr.number, repo: report.pr.repo });
+  if (report.pr.sha) await p.setSetting(`pr_sha:${ticket.id}`, report.pr.sha);
   // 指摘への返事をスレッドに残す
   for (const r of report.responses ?? []) {
     await comment(p, r.findingId, { memberId, role: "dev" }, r.action, r.comment);
@@ -202,7 +202,7 @@ async function applyDev(p: Project, ticket: TicketRow, memberId: number, report:
   // 「直すまで進めない」開発ルール(R15)に反したまま。PR は出したが、次の工程には進めず、持ち主に戻す
   const blocked = await openViolations(p, ticket.id, "blocked");
   if (blocked.length) {
-    p.event("system", "rule_blocked", ticket.id, { rules: blocked.map((v) => v.name) });
+    await p.event("system", "rule_blocked", ticket.id, { rules: blocked.map((v) => v.name) });
     await enterStage(p, ticket, "dev", {
       payload: { rules: blocked.map((v) => ({ name: v.name, body: v.body, detail: v.detail })), ...(report.pr.sha ? { sha: report.pr.sha } : {}), ...(payload.from ? { from: payload.from } : {}) },
     });
@@ -211,7 +211,7 @@ async function applyDev(p: Project, ticket: TicketRow, memberId: number, report:
   // チームの CI が落ちた(ADR-0028)。レビューに回さず、出力を付けてその場で持ち主に戻す
   if (report.teamCi && !report.teamCi.ok) {
     const r = report.teamCi;
-    p.event("team_ci", "sent_back", ticket.id, { sha: r.sha });
+    await p.event("team_ci", "sent_back", ticket.id, { sha: r.sha });
     if (r.conflict) await enterStage(p, ticket, "dev", { payload: { conflict: true, cause: r.conflict } });
     else await enterStage(p, ticket, "dev", { payload: { ci: true, team: true, ...(report.pr.sha ? { sha: report.pr.sha } : {}), ...(payload.from ? { from: payload.from } : {}), findings: teamCiFindings(r) } });
     return undefined;
@@ -235,20 +235,20 @@ async function applyDev(p: Project, ticket: TicketRow, memberId: number, report:
       return undefined;
     }
   }
-  const pipeline = pipelineOf(p.currentFormation(), ticket.kind, { devDone: true });
+  const pipeline = pipelineOf(await p.currentFormation(), ticket.kind, { devDone: true });
   // 確認がすべて済んだあとに(衝突・CI の失敗などで)戻ってきた。確認を最初からやり直さない
-  const approved = p.setting(`approved_sha:${ticket.id}`);
+  const approved = await p.setting(`approved_sha:${ticket.id}`);
   if (approved && !payload.from) {
     // main を取り込んだだけ(自分の変更が無い)なら、そのまま merge 待ちへ
     if (report.pr.ownCommitsSinceApproved === 0) {
-      p.event("system", "recheck_skipped", ticket.id, { reason: "main の取り込みだけ" });
+      await p.event("system", "recheck_skipped", ticket.id, { reason: "main の取り込みだけ" });
       await enterStage(p, ticket, "merge");
       return undefined;
     }
     // 自分で足した変更があれば、最初の確認の工程が、承認のあとの変更だけを軽く確かめる
     const first = pipeline.find((r) => r !== "dev");
     if (first) {
-      p.setSetting(`recheck:${ticket.id}`, approved);
+      await p.setSetting(`recheck:${ticket.id}`, approved);
       await enterStage(p, ticket, first);
       return undefined;
     }
@@ -267,9 +267,9 @@ async function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId:
   const { resolutions } = report.review;
   // 「レビューで指摘」の開発ルール(R15)の違反は、最初の確認の工程が、まだ指摘にしていないものを指摘に足す
   // (開発より前の工程は差分を見ないので、最初の確認は開発より後ろの工程から数える)
-  const first = pipelineOf(p.currentFormation(), ticket.kind, { devDone: true }).find((r) => r !== "dev");
+  const first = pipelineOf(await p.currentFormation(), ticket.kind, { devDone: true }).find((r) => r !== "dev");
   const ruleFindings = role === first ? await reviewFindingsFor(p, ticket.id) : [];
-  for (const f of ruleFindings) markListed(p, f.violationId);
+  for (const f of ruleFindings) await markListed(p, f.violationId);
   const findings: Finding[] = [...report.review.findings, ...ruleFindings.map(({ violationId: _, ...f }) => f)];
   const reviewer = (await p.pdb.from("runs").select("member_id").where("id", "=", runId).executeTakeFirstOrThrow()).member_id;
   const who = { memberId: reviewer, role };
@@ -296,16 +296,16 @@ async function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId:
   await createFollowups(p, ticket, role, report.review.followups ?? []);
 
   if (verdict === "approve") {
-    p.event(role, "approved", ticket.id, { round });
+    await p.event(role, "approved", ticket.id, { round });
     // 承認のあとの変更だけを確かめる軽い確認なら、ほかの工程はやり直さずに merge 待ちへ
-    if (p.setting(`recheck:${ticket.id}`)) await enterStage(p, ticket, "merge");
+    if (await p.setting(`recheck:${ticket.id}`)) await enterStage(p, ticket, "merge");
     else await advance(p, ticket, role);
     return undefined;
   }
 
   await p.pdb.update("tickets", { rounds: sql`rounds + 1` }).where("id", "=", ticket.id).execute();
-  ticket = p.ticket(ticket.id);
-  p.event(role, "changes_requested", ticket.id, { round: ticket.rounds, findings: findings.length, reopened: resolutions.filter((r) => r.result === "reopen").length });
+  ticket = await p.ticket(ticket.id);
+  await p.event(role, "changes_requested", ticket.id, { round: ticket.rounds, findings: findings.length, reopened: resolutions.filter((r) => r.result === "reopen").length });
 
   // 意見が割れた(開発は直さないと言い、レビュアーはまだと言う)。リーダーが裁定する
   if (disputes.length) {
@@ -335,7 +335,7 @@ async function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId:
     return undefined;
   }
 
-  const limit = Math.max(1, Number(p.policyOption("review", "escalateAfterRounds", 2)));
+  const limit = Math.max(1, Number(await p.policyOption("review", "escalateAfterRounds", 2)));
   if (ticket.rounds % limit === 0) {
     await raiseToLead(p, ticket, {
       context: `チケット #${ticket.number}「${ticket.title}」のレビュー`,
@@ -367,27 +367,27 @@ const ROLE_TEXT: Record<string, string> = { review: "レビュー", sec: "セキ
  */
 async function createFollowups(p: Project, from: TicketRow, role: WorkRole, followups: Followup[]): Promise<void> {
   const key = `pending_followups:${from.id}`;
-  const pending = JSON.parse(p.setting(key) || "[]") as (Followup & { role: string })[];
+  const pending = JSON.parse(await p.setting(key) || "[]") as (Followup & { role: string })[];
   for (const f of followups) {
     const title = f.title.trim();
     if (!title) continue;
     const existing = f.existing ? ((await p.pdb.from("tickets").where("number", "=", f.existing).where("stage", "not in", ["done", "dropped"]).executeTakeFirst()) as TicketRow | undefined) : undefined;
     if (existing && existing.id !== from.id) {
-      p.addNote(existing.id, `【#${from.number} の${ROLE_TEXT[role] ?? role}から】${title}\n${f.body.trim()}`, "lead");
-      p.event(role, "followup_noted", existing.id, { number: existing.number, from: from.number, title });
+      await p.addNote(existing.id, `【#${from.number} の${ROLE_TEXT[role] ?? role}から】${title}\n${f.body.trim()}`, "lead");
+      await p.event(role, "followup_noted", existing.id, { number: existing.number, from: from.number, title });
       continue;
     }
     if (pending.some((x) => x.title === title)) continue;
     pending.push({ title, body: f.body, role });
   }
-  p.setSetting(key, JSON.stringify(pending));
+  await p.setSetting(key, JSON.stringify(pending));
 }
 
 /** merge されたチケットの、控えておいた followups を別チケットにする。同じタイトルのチケットが既にあれば作らない。 */
 export async function flushFollowups(p: Project, from: TicketRow): Promise<void> {
   const key = `pending_followups:${from.id}`;
-  const pending = JSON.parse(p.setting(key) || "[]") as (Followup & { role: string })[];
-  p.setSetting(key, "[]");
+  const pending = JSON.parse(await p.setting(key) || "[]") as (Followup & { role: string })[];
+  await p.setSetting(key, "[]");
   for (const f of pending) {
     const title = f.title;
     const role = f.role;
@@ -398,7 +398,7 @@ export async function flushFollowups(p: Project, from: TicketRow): Promise<void>
       body: `${f.body.trim()}\n\n---\n#${from.number}「${from.title}」の${ROLE_TEXT[role] ?? role}で見つかった、チケットの範囲外のこと。`,
       ...(refs.repo ? { planRefs: { repo: refs.repo, followupOf: from.number } } : { planRefs: { followupOf: from.number } }),
     });
-    p.event(role, "followup_created", t.id, { number: t.number, from: from.number, title });
+    await p.event(role, "followup_created", t.id, { number: t.number, from: from.number, title });
   }
 }
 
@@ -446,7 +446,7 @@ export function fingerprint(f: Pick<Finding, "category" | "path" | "body">): str
 
 async function insertDecision(p: Project, ticket: TicketRow, q: Question, opts: { escalated: boolean; options?: DecisionOption[]; noDeadline?: boolean }): Promise<number> {
   const options: DecisionOption[] = opts.options ?? q.options.map((label) => ({ label }));
-  const deadline = opts.escalated && !opts.noDeadline ? iso(new Date(p.clock.now().getTime() + p.settingNumber("decision_timeout_sec", 3600) * 1000)) : null;
+  const deadline = opts.escalated && !opts.noDeadline ? iso(new Date(p.clock.now().getTime() + await p.settingNumber("decision_timeout_sec", 3600) * 1000)) : null;
   return dialect.insertedId(
     p.pdb.insert("decisions", {
       ticket_id: ticket.id,
@@ -464,9 +464,9 @@ async function insertDecision(p: Project, ticket: TicketRow, q: Question, opts: 
 
 async function raiseToLead(p: Project, ticket: TicketRow, q: Question, options: DecisionOption[] = q.options.map((label) => ({ label }))): Promise<void> {
   const id = await insertDecision(p, ticket, q, { escalated: false, options });
-  p.setStage(ticket.id, "decision");
-  p.event("system", "decision_raised", ticket.id, { decision_id: id });
-  send(p, { ticketId: ticket.id, toRole: "lead", kind: "decide", payload: { decision_id: id } });
+  await p.setStage(ticket.id, "decision");
+  await p.event("system", "decision_raised", ticket.id, { decision_id: id });
+  await send(p, { ticketId: ticket.id, toRole: "lead", kind: "decide", payload: { decision_id: id } });
 }
 
 /**
@@ -474,10 +474,10 @@ async function raiseToLead(p: Project, ticket: TicketRow, q: Question, options: 
  * noDeadline なら期限を付けない(期限切れで勝手に推奨を選ばない。保留に使う)。
  */
 export async function raiseToOwner(p: Project, ticketId: number, q: Omit<Question, "options">, options: DecisionOption[], opts: { noDeadline?: boolean } = {}): Promise<number> {
-  const ticket = p.ticket(ticketId);
+  const ticket = await p.ticket(ticketId);
   const id = await insertDecision(p, ticket, { ...q, options: options.map((o) => o.label) }, { escalated: true, options, ...opts });
-  p.setStage(ticket.id, "decision");
-  p.event("system", "escalated", ticket.id, { decision_id: id });
+  await p.setStage(ticket.id, "decision");
+  await p.event("system", "escalated", ticket.id, { decision_id: id });
   return id;
 }
 
@@ -492,9 +492,9 @@ async function applyLead(p: Project, ticket: TicketRow, payload: { decision_id: 
       return undefined;
     }
     const { choice, reason, note } = report.leadDecision;
-    if (note?.trim()) p.addNote(ticket.id, note.trim(), "lead");
+    if (note?.trim()) await p.addNote(ticket.id, note.trim(), "lead");
     await resolve(p, d, choice, "lead");
-    p.event("lead", "decided_by_recommendation", ticket.id, { decision_id: d.id, choice, reason });
+    await p.event("lead", "decided_by_recommendation", ticket.id, { decision_id: d.id, choice, reason });
     // 止めずに進め、責任者には何をどう決めたかを報告する(違えばあとから指示できる)
     await p.pdb
       .insert("lead_messages", {
@@ -513,10 +513,10 @@ async function applyLead(p: Project, ticket: TicketRow, payload: { decision_id: 
 }
 
 async function escalate(p: Project, d: DecisionRow, reason: string): Promise<void> {
-  const deadline = iso(new Date(p.clock.now().getTime() + p.settingNumber("decision_timeout_sec", 3600) * 1000));
+  const deadline = iso(new Date(p.clock.now().getTime() + await p.settingNumber("decision_timeout_sec", 3600) * 1000));
   // リーダーが責任者に上げた理由・聞きたいことは、判断のカードに出す
   await p.pdb.update("decisions", { escalated: 1, deadline_at: deadline, lead_note: reason.trim() || null }).where("id", "=", d.id).execute();
-  p.event("lead", "escalated", d.ticket_id, { decision_id: d.id, reason });
+  await p.event("lead", "escalated", d.ticket_id, { decision_id: d.id, reason });
 }
 
 export async function decision(p: Project, id: number): Promise<DecisionRow> {
@@ -536,7 +536,7 @@ export async function answerDecision(p: Project, id: number, choice: number, not
     if (d.decided_at) throw new Error("この判断はもう決まっています");
     if (!d.escalated) throw new Error("この判断はまだリーダーが見ています");
     if (choice < 0 || choice >= (JSON.parse(d.options) as unknown[]).length) throw new Error("選択肢の範囲外です");
-    if (note?.trim()) p.addNote(d.ticket_id, note.trim(), "owner");
+    if (note?.trim()) await p.addNote(d.ticket_id, note.trim(), "owner");
     await resolve(p, d, choice, "owner");
   });
 }
@@ -571,10 +571,10 @@ export async function expireDecisions(p: Project): Promise<number> {
 async function resolve(p: Project, d: DecisionRow, choice: number, by: "owner" | "lead" | "timeout"): Promise<void> {
   await p.pdb.update("decisions", { decided_by: by, choice, decided_at: p.now() }).where("id", "=", d.id).execute();
   const option = (JSON.parse(d.options) as DecisionOption[])[choice]!;
-  const ticket = p.ticket(d.ticket_id);
-  p.event(by, "decided", ticket.id, { decision_id: d.id, choice, label: option.label });
+  const ticket = await p.ticket(d.ticket_id);
+  await p.event(by, "decided", ticket.id, { decision_id: d.id, choice, label: option.label });
   if (option.action === "drop") {
-    p.setStage(ticket.id, "dropped");
+    await p.setStage(ticket.id, "dropped");
     await p.pdb.update("tickets", { dropped_by: by === "lead" ? "lead" : "owner", dropped_reason: `判断「${d.question.split("\n").pop()}」で「${option.label}」を選んだため`, dropped_at: p.now() }).where("id", "=", ticket.id).execute();
     return;
   }
@@ -600,13 +600,13 @@ async function resolve(p: Project, d: DecisionRow, choice: number, by: "owner" |
   if (option.action === "continue" && (await ticketExhausted(p, ticket.id))) {
     // 既定の額(無制限なら、このチケットの額)をもう 1 枚分足す
     const key = `ticket_budget_extra_usd:${ticket.id}`;
-    const step = defaultTicketBudgetUsd(p) ?? ticketBaseBudgetUsd(p, ticket.id) ?? 5;
-    p.setSetting(key, String(p.settingNumber(key, 0) + step));
+    const step = await defaultTicketBudgetUsd(p) ?? await ticketBaseBudgetUsd(p, ticket.id) ?? 5;
+    await p.setSetting(key, String(await p.settingNumber(key, 0) + step));
   }
   if (option.action === "unlimited") {
-    p.setSetting(`ticket_budget_usd:${ticket.id}`, "unlimited");
+    await p.setSetting(`ticket_budget_usd:${ticket.id}`, "unlimited");
     await p.pdb.deleteFrom("settings").where("key", "=", `ticket_budget_extra_usd:${ticket.id}`).execute();
-    p.event(by, "budget_set", ticket.id, { usd: null, own: true });
+    await p.event(by, "budget_set", ticket.id, { usd: null, own: true });
   }
   if (option.action === "hold") {
     const from = option.from ?? "review";
@@ -619,12 +619,12 @@ async function resolve(p: Project, d: DecisionRow, choice: number, by: "owner" |
   }
   // 止まったところから続ける(保留を解いた・予算を足した)
   if (option.resume && (option.action === "continue" || option.action === "unlimited" || option.action === "resume")) {
-    resumeWork(p, ticket, option.resume);
+    await resumeWork(p, ticket, option.resume);
     return;
   }
   // 答えを持ち主に返し、続きから直してもらう(ADR-0005)。
-  p.setStage(ticket.id, "dev");
-  send(p, {
+  await p.setStage(ticket.id, "dev");
+  await send(p, {
     ticketId: ticket.id,
     toRole: "dev",
     toMemberId: ticket.owner_member_id,
@@ -642,9 +642,9 @@ export async function pendingOwnerDecisions(p: Project): Promise<DecisionRow[]> 
  * チケット 1 枚の予算。チケットごとに決めた額(無ければプロジェクトの既定)に、「予算を足して続ける」で足した分を加える。
  * null は無制限。
  */
-export function ticketBudgetUsd(p: Project, ticketId: number): number | null {
-  const base = ticketBaseBudgetUsd(p, ticketId);
-  return base === null ? null : base + p.settingNumber(`ticket_budget_extra_usd:${ticketId}`, 0);
+export async function ticketBudgetUsd(p: Project, ticketId: number): Promise<number | null> {
+  const base = await ticketBaseBudgetUsd(p, ticketId);
+  return base === null ? null : base + await p.settingNumber(`ticket_budget_extra_usd:${ticketId}`, 0);
 }
 
 /** 予算の設定値を読む。"unlimited"・空は無制限(null)。 */
@@ -656,28 +656,28 @@ function budgetValue(v: string | undefined, fallback: number | null): number | n
 }
 
 /** チケット 1 枚の予算の既定。null は無制限。 */
-export function defaultTicketBudgetUsd(p: Project): number | null {
-  return budgetValue(p.setting("ticket_budget_usd"), 5);
+export async function defaultTicketBudgetUsd(p: Project): Promise<number | null> {
+  return budgetValue(await p.setting("ticket_budget_usd"), 5);
 }
 
-export function setDefaultTicketBudget(p: Project, usd: number | null): void {
+export async function setDefaultTicketBudget(p: Project, usd: number | null): Promise<void> {
   if (usd !== null && !(Number.isFinite(usd) && usd > 0)) throw new Error("チケット 1 枚の予算は 0 より大きい金額か、無制限にしてください");
-  p.setSetting("ticket_budget_usd", usd === null ? "unlimited" : String(usd));
+  await p.setSetting("ticket_budget_usd", usd === null ? "unlimited" : String(usd));
 }
 
 /** チケットの予算を使い切っているか(残りが少なすぎて起動しても進まないときも含む)。 */
 export async function ticketExhausted(p: Project, ticketId: number): Promise<boolean> {
-  return isExhausted(ticketBudgetUsd(p, ticketId), await ticketSpentUsd(p, ticketId));
+  return isExhausted(await ticketBudgetUsd(p, ticketId), await ticketSpentUsd(p, ticketId));
 }
 
-function ticketBaseBudgetUsd(p: Project, ticketId: number): number | null {
-  const own = p.setting(`ticket_budget_usd:${ticketId}`);
-  return own === undefined ? defaultTicketBudgetUsd(p) : budgetValue(own, defaultTicketBudgetUsd(p));
+async function ticketBaseBudgetUsd(p: Project, ticketId: number): Promise<number | null> {
+  const own = await p.setting(`ticket_budget_usd:${ticketId}`);
+  return own === undefined ? await defaultTicketBudgetUsd(p) : budgetValue(own, await defaultTicketBudgetUsd(p));
 }
 
 /** チケットごとに予算を決めているか。 */
-export function hasOwnBudget(p: Project, ticketId: number): boolean {
-  return p.setting(`ticket_budget_usd:${ticketId}`) !== undefined;
+export async function hasOwnBudget(p: Project, ticketId: number): Promise<boolean> {
+  return await p.setting(`ticket_budget_usd:${ticketId}`) !== undefined;
 }
 
 /**
@@ -686,13 +686,13 @@ export function hasOwnBudget(p: Project, ticketId: number): boolean {
  */
 export async function setTicketBudget(p: Project, ticketId: number, usd: number | null | "unlimited"): Promise<void> {
   if (usd !== null && usd !== "unlimited" && !(Number.isFinite(usd) && usd > 0)) throw new Error("予算は 0 より大きい金額にしてください");
-  const ticket = p.ticket(ticketId);
+  const ticket = await p.ticket(ticketId);
   if (!ticket) throw new Error(`チケット ${ticketId} はありません`);
   await p.pdb.transaction(async () => {
     if (usd === null) await p.pdb.deleteFrom("settings").where("key", "=", `ticket_budget_usd:${ticketId}`).execute();
-    else p.setSetting(`ticket_budget_usd:${ticketId}`, String(usd));
+    else await p.setSetting(`ticket_budget_usd:${ticketId}`, String(usd));
     await p.pdb.deleteFrom("settings").where("key", "=", `ticket_budget_extra_usd:${ticketId}`).execute();
-    p.event("owner", "budget_set", ticketId, { usd: ticketBudgetUsd(p, ticketId), own: usd !== null });
+    await p.event("owner", "budget_set", ticketId, { usd: await ticketBudgetUsd(p, ticketId), own: usd !== null });
   });
   if (await ticketExhausted(p, ticketId)) return;
   const open = (await p.pdb.from("decisions").where("ticket_id", "=", ticketId).where("decided_at", "is", null).execute()) as DecisionRow[];
@@ -715,23 +715,23 @@ export async function ticketSpentUsd(p: Project, ticketId: number): Promise<numb
 /** チケットを作り、開発の受信箱に入れる。 */
 export async function createTicket(p: Project, t: Parameters<Project["addTicket"]>[0]): Promise<TicketRow> {
   return p.pdb.transaction(async () => {
-    const ticket = p.addTicket(t);
+    const ticket = await p.addTicket(t);
     // リーダーの交通整理を待つ(交通整理をしない設定なら、そのまま取られる)
     await p.pdb.update("tickets", { triaged: 0 }).where("id", "=", ticket.id).execute();
     // 種類の流れの先頭から始める(開発より前の工程があれば、そこから)
-    await enterStage(p, ticket, firstStage(p, ticket));
-    return p.ticket(ticket.id);
+    await enterStage(p, ticket, await firstStage(p, ticket));
+    return await p.ticket(ticket.id);
   });
 }
 
 // ---- 止まった仕事を続ける・保留する ----
 
 /** 止まったところから続ける。メッセージの宛先の工程にチケットを戻し、同じ仕事をもう一度頼む。 */
-export function resumeWork(p: Project, ticket: TicketRow, m: ResumeMessage): void {
+export async function resumeWork(p: Project, ticket: TicketRow, m: ResumeMessage): Promise<void> {
   const stage = (WORK_ROLES as readonly string[]).includes(m.toRole) ? (m.toRole as WorkRole) : "dev";
-  p.setStage(ticket.id, stage);
-  send(p, { ticketId: ticket.id, toRole: m.toRole, toMemberId: m.toMemberId, kind: m.kind, payload: m.payload });
-  p.event("system", "resumed", ticket.id, { kind: m.kind, role: m.toRole });
+  await p.setStage(ticket.id, stage);
+  await send(p, { ticketId: ticket.id, toRole: m.toRole, toMemberId: m.toMemberId, kind: m.kind, payload: m.payload });
+  await p.event("system", "resumed", ticket.id, { kind: m.kind, role: m.toRole });
 }
 
 /**
@@ -747,11 +747,11 @@ export async function closeAlreadyDone(p: Project, ticket: TicketRow, a: { commi
   await p.pdb.transaction(async () => {
     await p.pdb.update("decisions", { decided_by: "lead", decided_at: p.now() }).where("ticket_id", "=", ticket.id).where("decided_at", "is", null).execute();
     await p.pdb.update("messages", { status: "done" }).where("ticket_id", "=", ticket.id).where("status", "=", "pending").execute();
-    p.setStage(ticket.id, "merge"); // 完了の時刻を入れる
-    p.setStage(ticket.id, "done");
-    p.addNote(ticket.id, `【すでに main に入っていました】${a.reason}(コミット ${a.commit})`, "lead");
+    await p.setStage(ticket.id, "merge"); // 完了の時刻を入れる
+    await p.setStage(ticket.id, "done");
+    await p.addNote(ticket.id, `【すでに main に入っていました】${a.reason}(コミット ${a.commit})`, "lead");
     await flushFollowups(p, ticket);
-    p.event(a.by, "already_done", ticket.id, { commit: a.commit, reason: a.reason });
+    await p.event(a.by, "already_done", ticket.id, { commit: a.commit, reason: a.reason });
   });
 }
 
@@ -761,8 +761,8 @@ export async function closeAlreadyDone(p: Project, ticket: TicketRow, a: { commi
  * 開いている PR を閉じるのは呼ぶ側(外の操作なので)。起動中でないことも呼ぶ側で確かめる。
  */
 export async function dropTicket(p: Project, ticketId: number, d: { by: "lead" | "owner"; reason: string; sameAs?: TicketRow }): Promise<void> {
-  const ticket = p.ticket(ticketId);
-  const actor = d.by === "lead" ? p.fixedMember("lead").name : "owner";
+  const ticket = await p.ticket(ticketId);
+  const actor = d.by === "lead" ? (await p.fixedMember("lead")).name : "owner";
   await p.pdb.transaction(async () => {
     await p.pdb.update("messages", { status: "done" }).where("ticket_id", "=", ticketId).where("status", "=", "pending").execute();
     await p.pdb.update("decisions", { decided_by: d.by, decided_at: p.now() }).where("ticket_id", "=", ticketId).where("decided_at", "is", null).execute();
@@ -775,9 +775,9 @@ export async function dropTicket(p: Project, ticketId: number, d: { by: "lead" |
     }
     await p.pdb.deleteFrom("ticket_deps").where((eb) => eb.or([eb("depends_on", "=", ticketId), eb("ticket_id", "=", ticketId)])).execute();
     await p.pdb.update("tickets", { triaged: 1, dropped_by: d.by, dropped_reason: d.reason, dropped_at: p.now() }).where("id", "=", ticketId).execute();
-    p.setStage(ticketId, "dropped");
-    p.addNote(ticketId, `【取りやめ】${d.reason}`, d.by);
-    p.event(actor, d.sameAs ? "duplicate_dropped" : "ticket_dropped", ticketId, { number: ticket.number, reason: d.reason, ...(d.sameAs ? { sameAs: d.sameAs.number } : {}) });
+    await p.setStage(ticketId, "dropped");
+    await p.addNote(ticketId, `【取りやめ】${d.reason}`, d.by);
+    await p.event(actor, d.sameAs ? "duplicate_dropped" : "ticket_dropped", ticketId, { number: ticket.number, reason: d.reason, ...(d.sameAs ? { sameAs: d.sameAs.number } : {}) });
   });
 }
 
@@ -790,7 +790,7 @@ export async function droppedInfo(p: Project, ticketId: number): Promise<{ by: "
 }
 
 export async function holdTicket(p: Project, ticketId: number, h: { reason: string; ownerAction: string; resume: ResumeMessage }): Promise<number> {
-  const ticket = p.ticket(ticketId);
+  const ticket = await p.ticket(ticketId);
   const open = await p.pdb.from("decisions").select("id").where("ticket_id", "=", ticketId).where("decided_at", "is", null).where("options", "like", '%"resume"%').executeTakeFirst();
   if (open) return open.id;
   const id = await raiseToOwner(
@@ -807,7 +807,7 @@ export async function holdTicket(p: Project, ticketId: number, h: { reason: stri
     [{ label: "対応したので再開する", action: "resume", resume: h.resume }],
     { noDeadline: true },
   );
-  p.event("system", "held", ticketId, { reason: h.reason });
+  await p.event("system", "held", ticketId, { reason: h.reason });
   return id;
 }
 
@@ -816,17 +816,17 @@ export async function holdTicket(p: Project, ticketId: number, h: { reason: stri
  * 持ち主はセッションを続きから再開するので、前にしたことを覚えている。取りやめの間に溜まった判断は閉じる。
  */
 export async function reopenTicket(p: Project, ticketId: number, by: "owner" | "lead" = "owner"): Promise<void> {
-  const ticket = p.ticket(ticketId);
+  const ticket = await p.ticket(ticketId);
   if (!ticket) throw new Error(`チケット ${ticketId} はありません`);
   if (ticket.stage !== "dropped") throw new Error("取りやめになっていないチケットです");
   await p.pdb.transaction(async () => {
     await p.pdb.update("decisions", { decided_by: by, decided_at: p.now() }).where("ticket_id", "=", ticketId).where("decided_at", "is", null).execute();
     // 取りやめの前のメッセージが残っていても、取り出したときに捨てられているので、新しく頼み直す
     await p.pdb.update("messages", { status: "done" }).where("ticket_id", "=", ticketId).where("status", "in", ["pending", "claimed"]).execute();
-    p.setStage(ticketId, "dev");
+    await p.setStage(ticketId, "dev");
     await p.pdb.update("tickets", { dropped_by: null, dropped_reason: null, dropped_at: null }).where("id", "=", ticketId).execute();
     if (ticket.owner_member_id) {
-      send(p, {
+      await send(p, {
         ticketId,
         toRole: "dev",
         toMemberId: ticket.owner_member_id,
@@ -837,8 +837,8 @@ export async function reopenTicket(p: Project, ticketId: number, by: "owner" | "
         },
       });
     } else {
-      send(p, { ticketId, toRole: "dev", kind: "implement" });
+      await send(p, { ticketId, toRole: "dev", kind: "implement" });
     }
-    p.event(by, "reopened", ticketId, { number: ticket.number });
+    await p.event(by, "reopened", ticketId, { number: ticket.number });
   });
 }

@@ -46,8 +46,8 @@ export async function workOfMany(p: Project, members: MemberRow[]): Promise<Map<
   const works = await runWorks(p, [...latest.values()].map((r) => r.id), 1);
   for (const [memberId, r] of latest) {
     const w = works.get(r.id);
-    const t = r.ticket_id ? p.ticket(r.ticket_id) : null;
-    const model = r.model ?? p.policy(r.role as Role).model;
+    const t = r.ticket_id ? await p.ticket(r.ticket_id) : null;
+    const model = r.model ?? (await p.policy(r.role as Role)).model;
     out.set(memberId, {
       ticket: t?.number ?? null,
       title: t?.title ?? null,
@@ -68,9 +68,10 @@ export async function workOf(p: Project, member: MemberRow): Promise<Work | null
 }
 
 export async function officeView(p: Project) {
-  const f = p.currentFormation();
-  const works = await workOfMany(p, [...f.units.flatMap((u) => p.membersOfUnit(u.id)), p.fixedMember("lead"), p.fixedMember("architect")]);
-  const tickets = new Map(p.tickets().map((t) => [t.id, t]));
+  const f = await p.currentFormation();
+  const unitMembers = new Map(await Promise.all(f.units.map(async (u) => [u.id, await p.membersOfUnit(u.id)] as const)));
+  const works = await workOfMany(p, [...f.units.flatMap((u) => unitMembers.get(u.id) ?? []), await p.fixedMember("lead"), await p.fixedMember("architect")]);
+  const tickets = new Map((await p.tickets()).map((t) => [t.id, t]));
   const isWork = (r: string): r is WorkRole => (WORK_ROLES as readonly string[]).includes(r);
 
   // 待ちの書類: 取り出されていないチケットの仕事を、受け持つ島に積む(持ち主宛ては持ち主の島に)。
@@ -91,8 +92,8 @@ export async function officeView(p: Project) {
     const t = tickets.get(m.ticket_id);
     if (!t || t.stage === "done" || t.stage === "dropped") continue;
     const repo = (await ticketRepo(p, t))?.full_name;
-    const home = m.to_member_id ? p.member(m.to_member_id).unit_id : null;
-    const unit = f.units.find((u) => u.id === home && u.roles.includes(m.to_role as WorkRole)) ?? p.unitsForRole(m.to_role as WorkRole, repo)[0];
+    const home = m.to_member_id ? (await p.member(m.to_member_id)).unit_id : null;
+    const unit = f.units.find((u) => u.id === home && u.roles.includes(m.to_role as WorkRole)) ?? (await p.unitsForRole(m.to_role as WorkRole, repo))[0];
     if (!unit) continue;
     const triaged = triagedOf.get(t.id) ?? 1;
     const before = m.kind === "implement" ? await blockers(p, t.id) : [];
@@ -127,7 +128,7 @@ export async function officeView(p: Project) {
     repos: u.repos,
     model: u.model ? (MODELS[u.model as keyof typeof MODELS]?.label ?? u.model) : null,
     budget: { budgetUsd: u.budget_usd, spentUsd: spentBy.get(u.name) ?? 0, exhausted: isExhausted(u.budget_usd, spentBy.get(u.name) ?? 0) },
-    members: p.membersOfUnit(u.id).map((m) => {
+    members: (unitMembers.get(u.id) ?? []).map((m) => {
       const work = works.get(m.id) ?? null;
       if (work?.ticket) where[work.ticket] = `unit:${u.id}`;
       return { id: m.id, name: m.name, helper: !m.is_base, joinedAt: m.joined_at, work };
@@ -136,8 +137,8 @@ export async function officeView(p: Project) {
     queued: queued.get(u.id) ?? [],
   }));
 
-  const fixed = (role: Role) => {
-    const m = p.fixedMember(role);
+  const fixed = async (role: Role) => {
+    const m = await p.fixedMember(role);
     return { id: m.id, name: m.name, work: works.get(m.id) ?? null };
   };
   const decisions = [...tickets.values()].filter((t) => t.stage === "decision");
@@ -191,11 +192,11 @@ export async function officeView(p: Project) {
     ticketKinds,
     asks,
     units,
-    lead: { ...fixed("lead"), decisions: decisions.map((t) => t.number) },
-    architect: fixed("architect"),
+    lead: { ...await fixed("lead"), decisions: decisions.map((t) => t.number) },
+    architect: await fixed("architect"),
     mergeQueue: mergeQueue.map((t: TicketRow) => ({ id: t.id, number: t.number, title: t.title, unblocks: unblocks.get(t.id) ?? null })),
     done: { count: done.length, recent: done.slice(0, 12).map((t) => t.number) },
-    autoMerge: autoMergeEnabled(p),
+    autoMerge: await autoMergeEnabled(p),
     where,
   };
 }

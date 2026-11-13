@@ -7,28 +7,28 @@ import type { Project } from "./project.js";
  * - 設定 plan_web_domains(改行・カンマ区切り)があれば、ページを読むのはそのドメイン(とその下)だけにする。検索はできる
  * ページの中身は資料として扱い、書かれた指示には従わない(指示に書く)。
  */
-export function planWebEnabled(p: Project): boolean {
-  return p.setting("plan_web") !== "0";
+export async function planWebEnabled(p: Project): Promise<boolean> {
+  return await p.setting("plan_web") !== "0";
 }
 
-export function planWebDomains(p: Project): string[] {
-  return (p.setting("plan_web_domains") ?? "")
+export async function planWebDomains(p: Project): Promise<string[]> {
+  return (await p.setting("plan_web_domains") ?? "")
     .split(/[\s,]+/)
     .map((d) => d.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "").toLowerCase())
     .filter(Boolean);
 }
 
 /** 企画の担当に足す道具(SDK の許可の書き方)。 */
-export function planWebTools(p: Project): string[] {
-  if (!planWebEnabled(p)) return [];
-  const domains = planWebDomains(p);
+export async function planWebTools(p: Project): Promise<string[]> {
+  if (!await planWebEnabled(p)) return [];
+  const domains = await planWebDomains(p);
   return ["WebSearch", ...(domains.length ? domains.map((d) => `WebFetch(domain:${d})`) : ["WebFetch"])];
 }
 
 /** 担当への指示に足す節。 */
-export function planWebNote(p: Project): string {
-  if (!planWebEnabled(p)) return "";
-  const domains = planWebDomains(p);
+export async function planWebNote(p: Project): Promise<string> {
+  if (!await planWebEnabled(p)) return "";
+  const domains = await planWebDomains(p);
   return `
 
 ## 外のサイトを見る

@@ -94,7 +94,7 @@ export async function runWorks(p: Project, runIds: number[], steps = 8): Promise
   for (const r of open) {
     out.set(r.id, {
       runId: r.id,
-      member: p.member(r.member_id).name,
+      member: (await p.member(r.member_id)).name,
       startedAt: r.started_at,
       lastActivityAt: r.last_activity_at ?? r.started_at,
       live: r.live,

@@ -213,14 +213,14 @@ describe("MySQL の方言の文の形", () => {
 });
 
 describe("KURAMOTO_DATABASE_URL は閉じ込めの中へ渡さない", () => {
-  it("シェルに渡さない環境変数に入り、SDK に渡す環境変数にも入らない", () => {
+  it("シェルに渡さない環境変数に入り、SDK に渡す環境変数にも入らない", async () => {
     process.env[DATABASE_URL_ENV] = "mysql://u:secret@h/db";
     try {
       const o = confineOptions("/w", { readable: [], writable: [], hidden: [], allowedDomains: [], hiddenEnv: ["GH_TOKEN"], allowLocalSockets: false, env: {} });
       expect(o.env[DATABASE_URL_ENV]).toBeUndefined();
       expect(o.env.PATH).toBe(process.env.PATH);
       const p = { setting: () => undefined, settingNumber: () => 0 } as never;
-      const conf = confinementFor(p, { gitDir: "/g", path: "/w" } as never, "dev");
+      const conf = await confinementFor(p, { gitDir: "/g", path: "/w" } as never, "dev");
       expect(conf.hiddenEnv).toContain(DATABASE_URL_ENV);
     } finally {
       delete process.env[DATABASE_URL_ENV];

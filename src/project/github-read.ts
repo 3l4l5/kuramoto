@@ -105,7 +105,7 @@ export function githubReadTools(p: Project, gh: GitHubReader | undefined): Kuram
       return pr ? { repo: pr.full_name, pr: pr.number, ticket: t } : `#${t.number} にはまだ PR がありません`;
     }
     if (a.pr === undefined) return "ticket(チケット番号)か pr(PR 番号)のどちらかを指定してください";
-    const repos = p.repos().map((r) => r.full_name);
+    const repos = (await p.repos()).map((r) => r.full_name);
     const repo = a.repo ?? repos[0];
     if (!repo || !repos.includes(repo)) return `リポジトリ ${a.repo ?? "(なし)"} は登録されていません。使えるのは ${repos.join("・") || "(なし)"}`;
     const row = await p.pdb.k

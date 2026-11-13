@@ -16,9 +16,9 @@ import { GitWorkspace, StaticWorkspace } from "./workspace.js";
 /** 作業場所への閉じ込め(ADR-0020)。 */
 describe("作業場所への閉じ込め", () => {
   it("どの起動も閉じ込める。git の本体を書けるのは開発だけ。Kuramoto のデータと認証情報は読ませない", async () => {
-    const p = new Project(":memory:", new ManualClock());
-    p.addRepo("acme/shop", "API");
-    p.setSetting("sandbox_allowed_domains", "pkg.example.com, cdn.example.com");
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo("acme/shop", "API");
+    await p.setSetting("sandbox_allowed_domains", "pkg.example.com, cdn.example.com");
     const harness = new FakeHarness(async (req, call) => {
       if (req.tools.some((t) => t.name === "submit_pr")) await call("submit_pr", { summary: "足した", responses: fixedAll(req.prompt) });
       else await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] }));
@@ -58,8 +58,8 @@ describe("作業場所への閉じ込め", () => {
   });
 
   it("コミットし忘れていたら submit_pr を受けず、理由を返す。直して呼び直せば受ける", async () => {
-    const p = new Project(":memory:", new ManualClock());
-    p.addRepo("acme/shop", "API");
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo("acme/shop", "API");
     let dirty = true;
     const replies: string[] = [];
     const harness = new FakeHarness(async (req, call) => {
@@ -97,10 +97,10 @@ describe("作業場所への閉じ込め", () => {
 
   it("設定 sandbox_strict_sockets でソケットを閉じられる。sandbox_allow_write で書ける場所を足せる", async () => {
     const { confinementFor } = await import("./confine.js");
-    const p = new Project(":memory:", new ManualClock());
-    p.setSetting("sandbox_strict_sockets", "1");
-    p.setSetting("sandbox_allow_write", "/opt/cache, relative/ignored");
-    const c = confinementFor(p, { path: "/w", base: "main", gitDir: "/g" }, "qa");
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.setSetting("sandbox_strict_sockets", "1");
+    await p.setSetting("sandbox_allow_write", "/opt/cache, relative/ignored");
+    const c = await confinementFor(p, { path: "/w", base: "main", gitDir: "/g" }, "qa");
     expect(c.allowLocalSockets).toBe(false);
     expect(c.writable).toContain("/opt/cache");
     expect(c.writable).not.toContain("relative/ignored");

@@ -87,22 +87,22 @@ function inside(path: string, base: string): boolean {
 }
 
 /** プロジェクトの設定 sandbox_allowed_domains(改行・カンマ区切り)で足したドメイン。 */
-export function extraAllowedDomains(p: Project): string[] {
-  return (p.setting("sandbox_allowed_domains") ?? "")
+export async function extraAllowedDomains(p: Project): Promise<string[]> {
+  return (await p.setting("sandbox_allowed_domains") ?? "")
     .split(/[\s,]+/)
     .map((d) => d.trim())
     .filter(Boolean);
 }
 
 /** プロジェクトの設定 sandbox_allow_write(改行・カンマ区切りの絶対パス)で足した、書いてよい場所。 */
-export function extraWritable(p: Project): string[] {
-  return (p.setting("sandbox_allow_write") ?? "")
+export async function extraWritable(p: Project): Promise<string[]> {
+  return (await p.setting("sandbox_allow_write") ?? "")
     .split(/[\n,]+/)
     .map((d) => d.trim())
     .filter((d) => d.startsWith("/"));
 }
 
-export function confinementFor(p: Project, ws: PreparedWorkspace, role: Role): Confinement {
+export async function confinementFor(p: Project, ws: PreparedWorkspace, role: Role): Promise<Confinement> {
   const real = (path: string) => (existsSync(path) ? realpathSync(path) : path);
   const home = homedir();
   const tools = WRITABLE_IN_HOME.map((x) => join(home, x));
@@ -113,12 +113,12 @@ export function confinementFor(p: Project, ws: PreparedWorkspace, role: Role): C
   return {
     readable,
     // git の本体に書けるのは開発だけ。ツールの置き場所は、テストを動かすどの役割でも書ける
-    writable: [...(role === "dev" ? [ws.gitDir] : []), ...tools, ...extraWritable(p)],
+    writable: [...(role === "dev" ? [ws.gitDir] : []), ...tools, ...await extraWritable(p)],
     hidden,
-    allowedDomains: [...new Set([...DEFAULT_ALLOWED_DOMAINS, ...extraAllowedDomains(p)])],
+    allowedDomains: [...new Set([...DEFAULT_ALLOWED_DOMAINS, ...await extraAllowedDomains(p)])],
     hiddenEnv: HIDDEN_ENV,
     // 設定 sandbox_strict_sockets を 1 にすると、ソケットを閉じる(ブラウザでの確かめ・e2e は動かなくなる)
-    allowLocalSockets: p.setting("sandbox_strict_sockets") !== "1",
+    allowLocalSockets: await p.setting("sandbox_strict_sockets") !== "1",
     // mise は知らない場所の設定ファイルを信用しないので、作業場所の設定を信用させる(node などの版を選べるように)
     env: { MISE_TRUSTED_CONFIG_PATHS: ws.path, MISE_YES: "1" },
   };

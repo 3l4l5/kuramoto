@@ -35,13 +35,13 @@ export interface CommandRunner {
   run(command: string, cwd: string, conf: Confinement, timeoutMs: number): Promise<{ code: number | null; output: string }>;
 }
 
-export function teamCiEnabled(p: Project): boolean {
-  return p.setting("ci_mode") === "team";
+export async function teamCiEnabled(p: Project): Promise<boolean> {
+  return await p.setting("ci_mode") === "team";
 }
 
 /** プロジェクトの設定で決めたコマンド(リポジトリごと。1 行に 1 つ)。空なら null。 */
-export function configuredCommands(p: Project, repo: string): string[] | null {
-  const v = (p.setting(`team_ci_commands:${repo}`) ?? "")
+export async function configuredCommands(p: Project, repo: string): Promise<string[] | null> {
+  const v = (await p.setting(`team_ci_commands:${repo}`) ?? "")
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith("#"));
@@ -83,12 +83,12 @@ export async function runTeamCi(p: Project, ws: Workspace, runner: CommandRunner
   if (prep.conflict) {
     result = { ok: false, ...base, results: [], conflict: prep.conflict };
   } else {
-    const commands = configuredCommands(p, repo) ?? detectCommands(prep.path);
+    const commands = await configuredCommands(p, repo) ?? detectCommands(prep.path);
     if (!commands.length) {
       result = { ok: false, ...base, results: [], noCommands: true };
     } else {
-      const conf = confinementFor(p, { path: prep.path, base: prep.base, gitDir: prep.gitDir }, "qa");
-      const timeoutMs = p.settingNumber("team_ci_timeout_min", 20) * 60_000;
+      const conf = await confinementFor(p, { path: prep.path, base: prep.base, gitDir: prep.gitDir }, "qa");
+      const timeoutMs = await p.settingNumber("team_ci_timeout_min", 20) * 60_000;
       const results: CheckResult[] = [];
       for (const command of commands) {
         const started = Date.now();
@@ -99,9 +99,9 @@ export async function runTeamCi(p: Project, ws: Workspace, runner: CommandRunner
       result = { ok: results.every((r) => r.ok), ...base, results };
     }
   }
-  p.setSetting(`team_ci:${ticket.id}`, JSON.stringify(result));
-  if (result.ok) p.setSetting(`team_ci_pass:${ticket.id}`, JSON.stringify({ sha: result.sha, baseSha: result.baseSha }));
-  p.event("team_ci", result.ok ? "team_ci_passed" : "team_ci_failed", ticket.id, {
+  await p.setSetting(`team_ci:${ticket.id}`, JSON.stringify(result));
+  if (result.ok) await p.setSetting(`team_ci_pass:${ticket.id}`, JSON.stringify({ sha: result.sha, baseSha: result.baseSha }));
+  await p.event("team_ci", result.ok ? "team_ci_passed" : "team_ci_failed", ticket.id, {
     sha: result.sha,
     baseSha: result.baseSha,
     ...(result.conflict ? { conflict: true } : {}),
@@ -112,8 +112,8 @@ export async function runTeamCi(p: Project, ws: Workspace, runner: CommandRunner
 }
 
 /** そのコミットと main の組で、もう通っているか(merge の直前に流し直すかを決める)。 */
-export function passedAt(p: Project, ticketId: number): { sha: string; baseSha: string } | null {
-  const v = p.setting(`team_ci_pass:${ticketId}`);
+export async function passedAt(p: Project, ticketId: number): Promise<{ sha: string; baseSha: string } | null> {
+  const v = await p.setting(`team_ci_pass:${ticketId}`);
   return v ? (JSON.parse(v) as { sha: string; baseSha: string }) : null;
 }
 
@@ -129,8 +129,8 @@ export function teamCiFindings(r: TeamCiResult): { severity: string; body: strin
 }
 
 /** 最後のチームの CI の結果(リーダーに見せる)。無ければ空。 */
-export function lastTeamCi(p: Project, ticketId: number, maxChars = 3000): string {
-  const v = p.setting(`team_ci:${ticketId}`);
+export async function lastTeamCi(p: Project, ticketId: number, maxChars = 3000): Promise<string> {
+  const v = await p.setting(`team_ci:${ticketId}`);
   if (!v) return "";
   const r = JSON.parse(v) as TeamCiResult;
   const head = `## 最後のチームの CI(${r.ok ? "通った" : r.conflict ? "main と衝突" : "落ちた"}。コミット ${r.sha.slice(0, 7)} を main ${r.baseSha.slice(0, 7)} と合わせて流した)\n${r.results.map((x) => `- ${x.ok ? "○" : "×"} ${x.command}(${Math.round(x.ms / 1000)} 秒)`).join("\n")}`;

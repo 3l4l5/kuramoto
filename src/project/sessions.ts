@@ -7,22 +7,22 @@ import type { Project } from "./project.js";
  * 同じ会話を引き継ぐのは session_max_resumes 回(既定 3)までにし、超えたら新しく始める。
  * 新しく始めても、要るもの(チケットの本文・メモ・指摘・企画の中身・最近の会話)は指示に入れて渡す。
  */
-export function maxResumes(p: Project): number {
-  return Math.max(0, p.settingNumber("session_max_resumes", 3));
+export async function maxResumes(p: Project): Promise<number> {
+  return Math.max(0, await p.settingNumber("session_max_resumes", 3));
 }
 
 /** その会話で、これまでに起こした回数(最初の起動を 1 とする)。 */
-function uses(p: Project, sessionId: string): number {
-  return p.settingNumber(`session_uses:${sessionId}`, 1);
+async function uses(p: Project, sessionId: string): Promise<number> {
+  return await p.settingNumber(`session_uses:${sessionId}`, 1);
 }
 
 /** この会話を引き継いでよいか。 */
-export function canResume(p: Project, sessionId: string | null | undefined): sessionId is string {
-  return !!sessionId && uses(p, sessionId) <= maxResumes(p);
+export async function canResume(p: Project, sessionId: string | null | undefined): Promise<boolean> {
+  return !!sessionId && await uses(p, sessionId) <= await maxResumes(p);
 }
 
 /** 起動が終わった。新しい会話なら 1 回目、引き継いだなら回数を足して覚える。 */
-export function noteSession(p: Project, sessionId: string | undefined, resumedFrom: string | undefined): void {
+export async function noteSession(p: Project, sessionId: string | undefined, resumedFrom: string | undefined): Promise<void> {
   if (!sessionId) return;
-  p.setSetting(`session_uses:${sessionId}`, String(resumedFrom ? uses(p, resumedFrom) + 1 : 1));
+  await p.setSetting(`session_uses:${sessionId}`, String(resumedFrom ? await uses(p, resumedFrom) + 1 : 1));
 }

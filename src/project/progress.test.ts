@@ -11,9 +11,9 @@ import { StaticWorkspace } from "./workspace.js";
 describe("途中経過", () => {
   it("起動の途中で、作業中の人・経過・最後の動き・手順が見え、終わると消える", async () => {
     const clock = new ManualClock();
-    const p = new Project(":memory:", clock);
-    p.addRepo("acme/shop", "API");
-    let seen: ReturnType<typeof planningWork> = {};
+    const p = await Project.open(":memory:", clock);
+    await p.addRepo("acme/shop", "API");
+    let seen: Awaited<ReturnType<typeof planningWork>> = {};
     const harness = new FakeHarness(async (req) => {
       req.onProgress!({ type: "step", kind: "status", text: "起動しました" });
       req.onProgress!({ type: "step", kind: "tool", text: "README.md を読んでいます" });

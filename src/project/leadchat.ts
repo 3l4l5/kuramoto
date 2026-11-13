@@ -30,7 +30,7 @@ export async function sayToLead(p: Project, body: string): Promise<void> {
     await p.pdb.insert("lead_messages", { who: "owner", body: text, at: p.now() }).execute();
     // まだ取り出されていない依頼があれば、そこにまとめる(何通書いても、リーダーは 1 回で読む。読んでから書くので tx の中で)
     const pending = await inScope(p.pdb, "messages").where("kind", "=", "chat").where("status", "=", "pending").executeTakeFirst();
-    if (!pending) send(p, { ticketId: null, toRole: "lead", kind: "chat", payload: {} });
+    if (!pending) await send(p, { ticketId: null, toRole: "lead", kind: "chat", payload: {} });
   });
 }
 
@@ -42,7 +42,7 @@ export async function leadChatView(p: Project) {
   const run_id = open?.id ?? null;
   const w = run_id ? await runWork(p, run_id) : null;
   return {
-    lead: p.fixedMember("lead").name,
+    lead: (await p.fixedMember("lead")).name,
     messages: await leadMessages(p),
     work: w ? { state: "running" as const, ...w } : r ? { state: "queued" as const } : null,
   };
@@ -54,7 +54,7 @@ export async function leadChatView(p: Project) {
  */
 export async function unreadOwnerMessages(p: Project): Promise<LeadMessage[]> {
   const msgs = await leadMessages(p);
-  const read = p.setting("lead_chat_read");
+  const read = await p.setting("lead_chat_read");
   if (read !== undefined) return msgs.filter((m) => m.who === "owner" && m.id > Number(read));
   // まだ覚えていない(この仕組みの前のデータ)なら、前のやり方で数える
   const lastLead = msgs.map((m) => m.who).lastIndexOf("lead");
@@ -71,21 +71,21 @@ async function planScreens(p: Project): Promise<string> {
 /** 返事をするメッセージより前の、最近のやりとり(責任者とリーダーの会話。報告は短く)。 */
 async function recentChat(p: Project, unread: LeadMessage[]): Promise<string> {
   const first = unread[0]?.id ?? Infinity;
-  const n = p.settingNumber("lead_chat_history", 12);
-  const lead = p.fixedMember("lead").name;
+  const n = await p.settingNumber("lead_chat_history", 12);
+  const lead = (await p.fixedMember("lead")).name;
   const rows = (await leadMessages(p)).filter((m) => m.id < first && m.who !== "system").slice(-n);
   return rows.map((m) => `- ${m.who === "owner" ? "責任者" : lead}: ${m.body.length > 400 ? `${m.body.slice(0, 400)}…` : m.body}`).join("\n") || "(なし)";
 }
 
 /** ここまで読んだ(返事を書き終えた)。 */
-export function markOwnerMessagesRead(p: Project, upTo: number): void {
-  if (upTo > Number(p.setting("lead_chat_read") ?? 0)) p.setSetting("lead_chat_read", String(upTo));
+export async function markOwnerMessagesRead(p: Project, upTo: number): Promise<void> {
+  if (upTo > Number(await p.setting("lead_chat_read") ?? 0)) await p.setSetting("lead_chat_read", String(upTo));
 }
 
 /** リーダーへの指示。今のチケットの状況と、まだ返事をしていない責任者のメッセージを渡す。 */
 export async function leadChatPrompt(p: Project, unread?: LeadMessage[]): Promise<string> {
   unread ??= await unreadOwnerMessages(p);
-  const tickets = p.tickets().filter((t) => t.stage !== "dropped");
+  const tickets = (await p.tickets()).filter((t) => t.stage !== "dropped");
   const board = tickets.map((t) => `- #${t.number} ${t.title} [${t.stage}]${t.rounds ? ` 往復 ${t.rounds}` : ""}`).join("\n") || "(チケットはまだありません)";
   const decisions = (await pendingOwnerDecisions(p)).map((d) => `- ${d.question.split("\n").pop()}`).join("\n") || "(なし)";
   return `責任者からチャットが届きました。
@@ -154,7 +154,7 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
           planRefs: { ...(a.screens?.length ? { screens: a.screens } : {}), ...(a.requirement ? { requirement: a.requirement } : {}), ...(a.design_system ? { designSystem: true } : {}) },
         });
         for (const n of a.after ?? []) {
-          const dep = p.tickets().find((x) => x.number === n);
+          const dep = (await p.tickets()).find((x) => x.number === n);
           if (dep) await addDependency(p, t.id, dep.id);
         }
         return `#${t.number} を作りました。`;
@@ -164,16 +164,16 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
       name: "answer_question",
       description: "リーダーに回ってきたメンバーの質問(リーダー宛て・経路が無かったもの)に答える。答えはチケットのやりとりに残り、次にそのチケットの仕事をする担当の指示に入る。",
       input: { question_id: z.number().int().describe("質問の番号(「答えを待っている質問」の番号)"), answer: z.string().describe("質問への答え。短く、具体的に") },
-      handler: (a) => answerLeadQuestion(p, p.fixedMember("lead"), a.question_id, a.answer),
+      handler: async (a) => answerLeadQuestion(p, await p.fixedMember("lead"), a.question_id, a.answer),
     }),
     defineTool({
       name: "add_ticket_note",
       description: "既にあるチケットに、責任者からの指示をメモとして書き足す。次に仕事を始める担当が読む。",
       input: { number: z.number().int(), body: z.string() },
-      handler: (a) => {
-        const t = p.tickets().find((x) => x.number === a.number);
+      handler: async (a) => {
+        const t = (await p.tickets()).find((x) => x.number === a.number);
         if (!t) return `#${a.number} はありません`;
-        p.addNote(t.id, a.body, "lead");
+        await p.addNote(t.id, a.body, "lead");
         return `#${a.number} に書き足しました。`;
       },
     }),

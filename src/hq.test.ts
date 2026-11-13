@@ -20,7 +20,7 @@ describe("本部", () => {
     expect(rec.data_dir).toBe(join(home, "acme", "shop-api"));
 
     const p = await hq.openProject(rec.id);
-    expect(p.repos().map((r) => r.full_name)).toEqual(["acme/shop-api", "acme/shop-web"]);
+    expect((await p.repos()).map((r) => r.full_name)).toEqual(["acme/shop-api", "acme/shop-web"]);
     await createTicket(p, { title: "x" });
     p.close();
 
@@ -66,7 +66,7 @@ describe("本部のスコープ(ワークスペース)", () => {
     const rec = await hq.createProject("a", [{ fullName: "acme/a", role: "API" }]);
     const p = await hq.openProject(rec.id);
     await hq.updateProject(p, rec.id, { name: "a", repos: [{ fullName: "acme/a", role: "API" }, { fullName: "acme/b", role: "フロント" }] });
-    expect(p.repos().map((r) => r.full_name)).toEqual(["acme/a", "acme/b"]);
+    expect((await p.repos()).map((r) => r.full_name)).toEqual(["acme/a", "acme/b"]);
     expect(hq.db.prepare("SELECT COUNT(*) AS n FROM repos").get()).toEqual({ n: 0 });
     p.close();
     hq.close();
@@ -94,7 +94,7 @@ describe("プロジェクトの編集", () => {
     });
     expect(after.name).toBe("お試し 2");
     expect(after.data_dir).toBe(rec.data_dir); // 置き場所は変えない
-    expect(p.repos().map((r) => [r.full_name, r.role])).toEqual([
+    expect((await p.repos()).map((r) => [r.full_name, r.role])).toEqual([
       ["acme/web", "API"],
       ["acme/new", "インフラ"],
     ]);
@@ -102,10 +102,10 @@ describe("プロジェクトの編集", () => {
 
     // PR のあるリポジトリは外さない(何も変えずに止める)
     const t = await createTicket(p, { title: "x" });
-    run(p.db, "INSERT INTO pull_requests (ticket_id, repo_id, number, head) VALUES (?, ?, 1, 'b')", [t.id, p.repos()[1]!.id]);
+    run(p.db, "INSERT INTO pull_requests (ticket_id, repo_id, number, head) VALUES (?, ?, 1, 'b')", [t.id, (await p.repos())[1]!.id]);
     await expect(hq.updateProject(p, rec.id, { name: "変える", repos: [{ fullName: "acme/web", role: "API" }] })).rejects.toThrow(/acme\/new には PR や作業の記録があるので外せません/);
     expect((await hq.project(rec.id)).name).toBe("お試し 2");
-    expect(p.repos()).toHaveLength(2);
+    expect(await p.repos()).toHaveLength(2);
     await expect(hq.updateProject(p, rec.id, { name: "x", repos: [{ fullName: "bad", role: "API" }] })).rejects.toThrow(/owner\/repo/);
     p.close();
     hq.close();

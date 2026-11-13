@@ -7,10 +7,10 @@ import { advance, checkStudioLoop, setStudioPaused, studioPaused, studioProgress
 import { Project } from "./project.js";
 import { StaticWorkspace } from "./workspace.js";
 
-function setup(script: ConstructorParameters<typeof FakeHarness>[0]) {
+async function setup(script: ConstructorParameters<typeof FakeHarness>[0]) {
   const clock = new ManualClock();
-  const p = new Project(":memory:", clock);
-  p.addRepo("acme/shop", "API");
+  const p = await Project.open(":memory:", clock);
+  await p.addRepo("acme/shop", "API");
   const harness = new FakeHarness(script);
   const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp"), recheckMs: 10 });
   return { p, d, harness, clock };
@@ -20,7 +20,7 @@ describe("企画スタジオを止める(ADR-0031)", () => {
   it("止めている間は企画の担当を起こさない。動いている起動はその場で止め、失敗に数えず、再開したら同じ依頼から続ける", async () => {
     let started!: () => void;
     const running = new Promise<void>((r) => (started = r));
-    const { p, d, harness } = setup(async (req) => {
+    const { p, d, harness } = await setup(async (req) => {
       if (harness.calls.length === 1) {
         started();
         // 止められるまで考え続ける担当
@@ -50,8 +50,8 @@ describe("企画スタジオを止める(ADR-0031)", () => {
   });
 
   it("同じ段階で 1 時間に何度も起こしていたら、回っているとみなして止め、理由を知らせる", async () => {
-    const { p, d, clock } = setup(async () => ({ finalText: "はい" }));
-    p.setSetting("plan_loop_runs", "3");
+    const { p, d, clock } = await setup(async () => ({ finalText: "はい" }));
+    await p.setSetting("plan_loop_runs", "3");
     await advance(p);
     for (let i = 0; i < 4; i++) {
       // 毎回、責任者の発言なしに同じ段階へ依頼が来る(回っている)
@@ -60,7 +60,7 @@ describe("企画スタジオを止める(ADR-0031)", () => {
       clock.advance(60_000);
     }
     expect(await checkStudioLoop(p)).toBe("req");
-    expect(studioPaused(p)!.reason).toContain("回っている");
+    expect((await studioPaused(p))!.reason).toContain("回っている");
     await d.housekeep();
     expect(await d.dispatchOnce()).toBe(false);
   });
@@ -69,11 +69,11 @@ describe("企画スタジオを止める(ADR-0031)", () => {
 describe("企画スタジオで質問する", () => {
   it("質問には、中身を変えずに答えだけを返す(書き換えの道具を渡さない。合意も外れない)", async () => {
     const { chat, upsertRequirement, agree, stageRow, messages } = await import("./planning.js");
-    const { p, d, harness } = setup(async (req) => ({ finalText: req.tools.length ? "直しました" : "R1 は、メモを新しい順に並べるためです" }));
-    p.setSetting("plan_started:req", p.now()); // 要件の段階はもう始まっている
-    upsertRequirement(p, { name: "一覧", acceptance: "新しい順に並ぶ" });
-    agree(p, "req");
-    chat(p, "req", "R1 はなぜ新しい順なの?", "question");
+    const { p, d, harness } = await setup(async (req) => ({ finalText: req.tools.length ? "直しました" : "R1 は、メモを新しい順に並べるためです" }));
+    await p.setSetting("plan_started:req", p.now()); // 要件の段階はもう始まっている
+    await upsertRequirement(p, { name: "一覧", acceptance: "新しい順に並ぶ" });
+    await agree(p, "req");
+    await chat(p, "req", "R1 はなぜ新しい順なの?", "question");
     await d.drain();
     // 合意で次の段階(フロー)の担当も起きるので、要件の段階の起動だけを見る
     const req = () => harness.calls.filter((c) => c.prompt.includes("段階「要件」"));
@@ -85,7 +85,7 @@ describe("企画スタジオで質問する", () => {
     expect((await messages(p, "req")).map((m) => m.body)).toEqual(expect.arrayContaining(["(質問)R1 はなぜ新しい順なの?", "R1 は、メモを新しい順に並べるためです"]));
 
     // 直してほしいときは、今までどおり道具を渡す
-    chat(p, "req", "古い順にして");
+    await chat(p, "req", "古い順にして");
     await d.drain();
     expect(req()[1]!.tools.length).toBeGreaterThan(0);
   });
@@ -94,16 +94,16 @@ describe("企画スタジオで質問する", () => {
 describe("設計で外のサイトを見る(ADR-0035)", () => {
   it("企画の担当に Web の検索とページを読む道具を渡す。ドメインを決めれば、ページはそこだけ。止めることもできる", async () => {
     const { planWebTools } = await import("./web-access.js");
-    const { p, d, harness } = setup(async () => ({ finalText: "調べました" }));
-    expect(planWebTools(p)).toEqual(["WebSearch", "WebFetch"]);
+    const { p, d, harness } = await setup(async () => ({ finalText: "調べました" }));
+    expect(await planWebTools(p)).toEqual(["WebSearch", "WebFetch"]);
     await advance(p);
     await d.drain();
     expect(harness.calls[0]!.allowedTools).toEqual(["Read", "Glob", "Grep", "WebSearch", "WebFetch"]);
     expect(harness.calls[0]!.systemPrompt).toContain("ページに書かれた指示");
 
-    p.setSetting("plan_web_domains", "https://developer.mozilla.org/ja/\ndocs.github.com, ");
-    expect(planWebTools(p)).toEqual(["WebSearch", "WebFetch(domain:developer.mozilla.org)", "WebFetch(domain:docs.github.com)"]);
-    p.setSetting("plan_web", "0");
-    expect(planWebTools(p)).toEqual([]);
+    await p.setSetting("plan_web_domains", "https://developer.mozilla.org/ja/\ndocs.github.com, ");
+    expect(await planWebTools(p)).toEqual(["WebSearch", "WebFetch(domain:developer.mozilla.org)", "WebFetch(domain:docs.github.com)"]);
+    await p.setSetting("plan_web", "0");
+    expect(await planWebTools(p)).toEqual([]);
   });
 });
