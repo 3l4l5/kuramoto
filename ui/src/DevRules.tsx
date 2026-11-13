@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, post, type DevRulesView } from "./api";
 import { useAct } from "./hooks";
@@ -44,7 +44,17 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
   const { data } = useDevRules(id);
   const act = useAct();
   const [selected, setSelected] = useState<number | null>(null);
+  // スマホでは「一覧 → 押すと編集」の 2 画面に分ける(パソコンでは左に一覧・右に編集を並べるので、この値は見た目に効かない)
+  const [phoneView, setPhoneView] = useState<"list" | "edit">(draft ? "edit" : "list");
   const [confirming, setConfirming] = useState(false);
+  // スマホ: 「ひな形から足す」は下からシートで選ぶ
+  const [sheet, setSheet] = useState(false);
+  useEffect(() => {
+    if (!sheet) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSheet(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sheet]);
   /** 保存していない下書きがあるまま移ろうとしたときの行き先(確かめるまで下書きは捨てない)。"add" は空のルールを足すフォーム */
   const [leaving, setLeaving] = useState<number | "add" | null>(null);
   if (!data) return null;
@@ -59,17 +69,29 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
     setConfirming(false);
     setLeaving(null);
     setSelected(id);
+    setPhoneView(id === null ? "list" : "edit");
   };
   const openAdd = () => {
     setConfirming(false);
     setLeaving(null);
     setDraft(adding ? draft : EMPTY);
+    setPhoneView("edit");
   };
   /** 一覧や「足す」で別へ移る。直している途中なら、捨ててよいか確かめてから(足すフォームの途中から「足す」を押しても、そのまま残す) */
   const go = (to: number | "add") => {
-    if (to === "add") return adding ? undefined : unsaved ? setLeaving("add") : openAdd();
+    // 足している途中なら、足すフォームへ戻るだけ(スマホで一覧へ戻ったあとも、下書きのフォームを開き直せる)
+    // 確かめ(捨てて移る / このまま直す)は編集の画面にあるので、スマホでは編集の画面へ移して見えるようにする
+    if (to === "add") {
+      if (adding) return setPhoneView("edit");
+      if (unsaved) {
+        setLeaving("add");
+        return setPhoneView("edit");
+      }
+      return openAdd();
+    }
     if (!unsaved) return select(to);
     setLeaving(to === current?.id ? null : to);
+    setPhoneView("edit");
   };
   const proceed = () => (leaving === "add" ? openAdd() : select(leaving));
   const write = (path: string, body: unknown, message: (r: DevRulesView) => string, then?: (r: DevRulesView) => void) =>
@@ -100,7 +122,7 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
     );
 
   return (
-    <div className="rules" role="tabpanel" aria-label="開発ルール">
+    <div className="rules" role="tabpanel" aria-label="開発ルール" data-phone-view={phoneView}>
       <div className="rules__side">
         <div>
           <SectionHeading>
@@ -140,7 +162,7 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
             + 空のルールを足す
           </Button>
         </div>
-        <div>
+        <div className="rules__tplsec">
           <SectionHeading>ひな形から足す</SectionHeading>
           <div className="rules__tpl">
             {data.templates.map((t) => (
@@ -152,7 +174,45 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
           </div>
         </div>
       </div>
+      {/* スマホ: 一覧の下に固定の帯。ひな形は下からシートで選ぶ(パソコンでは出さない) */}
+      <div className="rules__phonefoot">
+        <Button onClick={() => setSheet(true)}>ひな形から足す</Button>
+        <Button variant="primary" onClick={() => go("add")}>
+          + ルールを足す
+        </Button>
+      </div>
+      {sheet && (
+        <div className="rules__sheetwrap">
+          <div className="rules__scrim" onClick={() => setSheet(false)} aria-hidden="true" />
+          <div className="rules__sheet" role="dialog" aria-label="ひな形から足す">
+            <div className="rules__sheethead">
+              <b>ひな形から足す</b>
+              <Button variant="text" size="sm" aria-label="ひな形のシートを閉じる" onClick={() => setSheet(false)}>
+                ×
+              </Button>
+            </div>
+            <div className="rules__tpl">
+              {data.templates.map((t) => (
+                <Button
+                  key={t.key}
+                  disabled={t.added}
+                  onClick={() => {
+                    setSheet(false);
+                    void addTemplate(t.key, t.name);
+                  }}
+                >
+                  {t.added ? "✓ " : "+ "}
+                  {t.name}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="rules__form">
+        <Button className="rules__back" variant="text" size="sm" onClick={() => setPhoneView("list")}>
+          ← ルールの一覧
+        </Button>
         {leaving !== null && (
           <div className="rules__confirm" role="alert">
             <span className="rules__hint">保存していない変更があります。捨てて移ると、直した内容は戻りません。</span>
@@ -197,6 +257,7 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
             onClick={() => {
               setLeaving(null);
               setDraft(null);
+              setPhoneView("list");
             }}
           >
             やめる
