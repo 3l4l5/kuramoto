@@ -156,11 +156,47 @@ export function recordAnswer(p: Project, q: QuestionRow, by: MemberRow, answer: 
   p.event(by.name, "question_answered", q.ticket_id, { questionId: q.id });
 }
 
+/** リーダーに回ってきて、まだ答えが無い質問(リーダー宛て・経路が無かったもの・島が無くなったもの)。 */
+export function leadPendingQuestions(p: Project): QuestionRow[] {
+  return all<QuestionRow>(p.db, "SELECT * FROM ticket_questions WHERE routed_to_lead = 1 AND answer IS NULL ORDER BY id");
+}
+
+/**
+ * リーダーの答えを、リーダーに回ってきた質問に結び付けて残す。
+ * @returns リーダーに返す道具の返事
+ */
+export function answerLeadQuestion(p: Project, lead: MemberRow, questionId: number, answer: string): string {
+  const text = answer.trim();
+  if (!text) return "答えが空です。答えを書いて呼び直してください。";
+  const q = get<QuestionRow>(p.db, "SELECT * FROM ticket_questions WHERE id = ?", [questionId]);
+  if (!q || !q.routed_to_lead) return `質問 ${questionId} は、リーダーに回ってきた質問にありません。`;
+  if (q.answer !== null) return `質問 ${questionId} には、もう答えが残っています。`;
+  tx(p.db, () => recordAnswer(p, q, lead, text));
+  return `質問 ${questionId} の答えを、チケットのやりとりに残しました。次にそのチケットの仕事をする担当の指示に入ります。`;
+}
+
+/** リーダーへの指示に載せる、答えを待っている質問(番号つき)。 */
+export function leadPendingBlock(p: Project): string {
+  const qs = leadPendingQuestions(p);
+  if (!qs.length) return "(なし)";
+  return qs
+    .map((q) => {
+      const t = p.ticket(q.ticket_id);
+      const from = q.from_member_id ? p.member(q.from_member_id).name : "メンバー";
+      const to = q.to_target === LEAD_TARGET ? "リーダー" : `「${q.to_target}」(経路が無い)`;
+      return `- 質問 ${q.id}(#${t.number}「${t.title}」、${from} から ${to} へ): ${q.body}`;
+    })
+    .join("\n");
+}
+
 /** 次にそのチケットの仕事をする担当の指示に載せる、答えが返ってきた質問。 */
 export function answeredBlock(p: Project, ticketId: number): string {
   const qs = questionsOf(p, ticketId).filter((q) => q.answer !== null);
   if (!qs.length) return "";
-  const label = (q: QuestionRow) => (q.answered_by_member_id ? `${p.member(q.answered_by_member_id).name}(${q.to_target})` : q.to_target);
+  const label = (q: QuestionRow) => {
+    const who = q.routed_to_lead ? "リーダー" : q.to_target;
+    return q.answered_by_member_id ? `${p.member(q.answered_by_member_id).name}(${who})` : who;
+  };
   return `\n\n### ほかの島への質問と答え\n${qs.map((q) => `- 質問: ${q.body}\n  ${label(q)} の答え: ${q.answer}`).join("\n")}`;
 }
 

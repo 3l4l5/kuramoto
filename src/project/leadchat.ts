@@ -7,6 +7,7 @@ import { runWork } from "./progress.js";
 import { teamStatus, triageTools } from "./triage.js";
 import type { Project, TicketRow } from "./project.js";
 import { dropTicketTool } from "./patrol.js";
+import { answerLeadQuestion, leadPendingBlock } from "./questions.js";
 import { pendingOwnerDecisions, createTicket } from "./workflow.js";
 import { designSystem, requirements, screens } from "./planning.js";
 
@@ -96,6 +97,9 @@ ${await teamStatus(p)}
 ## 責任者の答えを待っている判断
 ${decisions}
 
+## メンバーからの質問で、リーダーの答えを待っているもの(経路が無くて回ってきたものを含む)
+${leadPendingBlock(p)}
+
 ## 企画の画面(画面を作る・直すチケットは、create_ticket の screens にこの key を書く)
 ${planScreens(p)}
 
@@ -105,7 +109,7 @@ ${recentChat(p, unread)}
 ## 責任者のメッセージ(まだ返事をしていないもの)
 ${unread.map((m) => `- ${m.body}`).join("\n")}
 
-状況を答える・相談に乗るときは、上の状況をもとに短く答えてください。作業を頼まれたら create_ticket でチケットを作り、既にあるチケットへの指示は add_ticket_note で担当に伝えてください。順番や担当を変えてと言われたら plan_work で決め直してください(assignee にはメンバーか島の名前を書けます)。最後のテキストがそのまま責任者への返事になります。`;
+状況を答える・相談に乗るときは、上の状況をもとに短く答えてください。作業を頼まれたら create_ticket でチケットを作り、既にあるチケットへの指示は add_ticket_note で担当に伝えてください。順番や担当を変えてと言われたら plan_work で決め直してください(assignee にはメンバーか島の名前を書けます)。メンバーからの質問に答えられるときは answer_question に質問の番号と答えを書いてください(答えはチケットのやりとりに残り、次にそのチケットの仕事をする担当の指示に入ります)。最後のテキストがそのまま責任者への返事になります。`;
 }
 
 export const LEAD_CHAT_SYSTEM = `あなたは Kuramoto の開発チームのリーダーです。責任者(人間)とチャットで話します。
@@ -113,6 +117,7 @@ export const LEAD_CHAT_SYSTEM = `あなたは Kuramoto の開発チームのリ�
 - 作業を頼まれたら create_ticket でチケットにします。既にあるチケットへの指示は add_ticket_note で担当に伝えます。
 - いらなくなったチケット(責任者にいらないと言われた・仕様が変わった・ほかで済んだ)は drop_ticket で理由を書いて取りやめます。
 - あなたはチームの交通整理役です。誰がどのチケットをやるかを plan_work で割り当てます。島には最大人数ぶんのメンバーがずっといます。島の最大人数を変えるのは責任者の権限です。
+- メンバーからの質問(「答えを待っている質問」)は、答えられるものを answer_question で答えます。分からないものは、責任者に聞くか、そのまま残します。
 - merge はしません。merge は責任者が押します。`;
 
 export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason: string) => Promise<void> } = {}): KuramotoTool[] {
@@ -151,6 +156,12 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
         }
         return `#${t.number} を作りました。`;
       },
+    }),
+    defineTool({
+      name: "answer_question",
+      description: "リーダーに回ってきたメンバーの質問(リーダー宛て・経路が無かったもの)に答える。答えはチケットのやりとりに残り、次にそのチケットの仕事をする担当の指示に入る。",
+      input: { question_id: z.number().int().describe("質問の番号(「答えを待っている質問」の番号)"), answer: z.string().describe("質問への答え。短く、具体的に") },
+      handler: (a) => answerLeadQuestion(p, p.fixedMember("lead"), a.question_id, a.answer),
     }),
     defineTool({
       name: "add_ticket_note",
