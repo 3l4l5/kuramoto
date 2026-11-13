@@ -127,6 +127,9 @@ test("幅 390px: 全画面が横にはみ出さず、引き出しも全画面で
   await menu(page, "生産性");
   await expect(page.getByRole("heading", { name: /生産性/ }).first()).toBeVisible();
   await fits(page, "productivity");
+  // 中身の無い枠(記録が無いのに残った図の枠)を出さない(#81)
+  const emptyPanels = await page.locator(".prod .panel").evaluateAll((els) => els.filter((e) => !(e.textContent ?? "").trim() && !e.querySelector("svg, table, img")).length);
+  expect(emptyPanels, "生産性に中身の無い枠が出ている").toBe(0);
   await menu(page, "設定");
   await expect(page.getByRole("heading", { name: /設定/ }).first()).toBeVisible();
   await fits(page, "settings");
