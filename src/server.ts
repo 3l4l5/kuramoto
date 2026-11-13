@@ -13,7 +13,6 @@ import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import type { Harness } from "./harness/types.js";
 import { GhCli, type GitHub } from "./github/github.js";
 import { ConfigError, loadStartupConfig } from "./config.js";
-import { startDatabaseOrExit } from "./db/startup.js";
 import { currentWorkspaceId, Hq, kuramotoHome, workDirFor, type ProjectRecord } from "./hq.js";
 import { Dispatcher } from "./project/dispatcher.js";
 import { recoverStale } from "./project/inbox.js";
@@ -251,6 +250,7 @@ export class KuramotoServer {
       try {
         if (await autoMerge(p, this.github, { teamCi })) this.poke(id);
       } catch (e) {
+        this.deps.dbHealth?.reportFailure(e); // 接続のエラーなら、次の ping を待たずに「切れた」にする
         p.event("system", "dispatcher_error", null, { error: e instanceof Error ? e.message : String(e) });
       } finally {
         merging = false;
@@ -277,6 +277,7 @@ export class KuramotoServer {
         // 島の最大人数まで並列に動かす(編成を変えたら次に見直すときから効く)
         await dispatcher.drain({ concurrency: () => dispatcher.capacity() });
       } catch (e) {
+        this.deps.dbHealth?.reportFailure(e); // 接続のエラーなら、次の ping を待たずに「切れた」にする
         p.event("system", "dispatcher_error", null, { error: e instanceof Error ? e.message : String(e) });
       } finally {
         r.busy = false;
@@ -913,21 +914,19 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 
 // 直接起動したとき
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  let config;
   try {
-    config = loadStartupConfig();
+    loadStartupConfig();
   } catch (e) {
     if (!(e instanceof ConfigError)) throw e;
     console.error(e.message);
     process.exit(1);
   }
-  // MySQL のときは、繋いで版を最新にする。届かなければ理由を出して起動しない
-  const database = await startDatabaseOrExit(config, console.log);
+
   const port = Number(process.env.KURAMOTO_PORT ?? 4300);
   const open = process.env.KURAMOTO_PUBLIC === "1";
   const token = open ? publicToken() : undefined;
   // 入口で今のワークスペースを決め、本部へ渡す
-  const app = new KuramotoServer({ hq: new Hq(undefined, undefined, currentWorkspaceId()), ...(token ? { publicToken: token } : {}), ...(database.health ? { dbHealth: database.health } : {}) });
+  const app = new KuramotoServer({ hq: new Hq(undefined, undefined, currentWorkspaceId()), ...(token ? { publicToken: token } : {}) });
   await app.resume();
   const server = createServer((req, res) => void app.handle(req, res));
   server.listen(port, open ? "0.0.0.0" : "127.0.0.1", () => {
@@ -939,7 +938,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   });
   const shutdown = () => {
     app.close();
-    void database.close().finally(() => server.close(() => process.exit(0)));
+    server.close(() => process.exit(0));
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);

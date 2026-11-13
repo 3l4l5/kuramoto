@@ -7,6 +7,7 @@ import { ProjectDb } from "./conn.js";
 import { mysqlDialect } from "./dialect/mysql.js";
 import { connectMysql, type MysqlHandle } from "./mysql.js";
 import { DbHealth, isConnectionError } from "./mysql-health.js";
+import { MYSQL_MIGRATIONS } from "./mysql-schema.js";
 import { connectTest, MYSQL_TEST_URL, resetDatabase } from "./mysql-test-support.js";
 
 /**
@@ -20,6 +21,8 @@ afterAll(async () => {
 });
 
 const config = { url: MYSQL_TEST_URL };
+/** マイグレーションの最後の版(版を足してもこの試験を直さずに済むように) */
+const LATEST = MYSQL_MIGRATIONS.at(-1)!.version;
 let handle: MysqlHandle;
 let pdb: ProjectDb;
 let scope: InboxScope;
@@ -39,7 +42,7 @@ describe.skipIf(!admin)("MySQL のアダプタ(mysql-test の実機)", () => {
     const started = await connectMysql(config);
     handle = started.handle;
     expect(started.firstConnection).toBe(true);
-    expect(started.version).toBe(21);
+    expect(started.version).toBe(LATEST);
     projectId = await mysqlDialect.insertedId(handle.kysely.insertInto("projects").values({ name: "p", data_dir: "/d", status: "planning", created_at: "2026-11-12", workspace_id: 1 }));
     pdb = new ProjectDb(handle.kysely, projectId);
     scope = { pdb, projectId, now: () => iso(clock.now()), clock, currentFormation: () => ({ pull: "down" }) as never, settingNumber: (_k: string, d: number) => d } as unknown as InboxScope;
@@ -51,7 +54,7 @@ describe.skipIf(!admin)("MySQL のアダプタ(mysql-test の実機)", () => {
   it("2 回目の接続は初めてではない(版も変わらない)", async () => {
     const again = await connectMysql(config);
     expect(again.firstConnection).toBe(false);
-    expect(again.version).toBe(21);
+    expect(again.version).toBe(LATEST);
     await again.handle.close();
   });
 

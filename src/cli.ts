@@ -1,7 +1,6 @@
 import { parseArgs } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadStartupConfig } from "./config.js";
-import { startDatabaseOrExit } from "./db/startup.js";
 import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import { GhCli } from "./github/github.js";
 import { currentWorkspaceId, Hq, workDirFor } from "./hq.js";
@@ -30,8 +29,7 @@ async function main(argv: string[]): Promise<void> {
   });
   const [cmd, sub, ...rest] = positionals;
   // 設定は stderr に出す(一覧などの出力に混ぜない)
-  const config = loadStartupConfig((line) => console.error(line));
-  const database = await startDatabaseOrExit(config);
+  loadStartupConfig((line) => console.error(line));
   // 入口で今のワークスペースを決め、本部へ渡す。プロジェクトの id がそのワークスペースの中にあるかは、hq.project() / hq.openProject() が確かめる
   const hq = new Hq(undefined, undefined, currentWorkspaceId());
   try {
@@ -114,7 +112,6 @@ async function main(argv: string[]): Promise<void> {
     }
   } finally {
     hq.close();
-    await database.close();
   }
 }
 

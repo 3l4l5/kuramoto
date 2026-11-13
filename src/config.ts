@@ -234,5 +234,11 @@ export function loadStartupConfig(
     const warn = permissionWarning(c.file, statSync(c.file).mode);
     if (warn) log(warn);
   }
+  if (c.database.type === "mysql") {
+    // 本部・プロジェクトの読み書きの本体は、まだ SQLite の同期の書き方で MySQL に移っていない(ADR-0041)。
+    // MySQL を選んだのに SQLite に書き続けることになるので、SQLite に黙って戻さず、起動しない。
+    // 本体が移ったら(ADR-0039 の 2/2 のあと)、この止めを外して startDatabase(db/startup.ts)を入口から呼ぶ。
+    throw new ConfigError("MySQL への切り替えは、まだ使えません(本部とプロジェクトの読み書きが MySQL に移っていません)。database.type を sqlite にするか、設定を外してください");
+  }
   return c;
 }
