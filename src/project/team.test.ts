@@ -580,16 +580,16 @@ describe("予算(全体・島)", () => {
     const { setProjectBudget, budgetView } = await import("./budget.js");
     const { p, d, harness } = setup();
     await createTicket(p, { title: "一覧" });
-    setProjectBudget(p, 0.5);
+    await setProjectBudget(p, 0.5);
     await d.dispatchOnce();
     expect(harness.calls[0]!.maxBudgetUsd).toBeCloseTo(0.5);
     // 使った額を足して、残りを 0.1 未満にする
     const { run } = await import("../db/sqlite.js");
     run(p.db, "UPDATE runs SET cost_usd = 0.45");
     expect(await d.dispatchOnce()).toBe(false);
-    expect(budgetView(p).project.exhausted).toBe(true);
+    expect((await budgetView(p)).project.exhausted).toBe(true);
     expect(all(p.db, "SELECT type FROM events WHERE type = 'project_budget_reached'")).toHaveLength(1);
-    setProjectBudget(p, null);
+    await setProjectBudget(p, null);
     expect(await d.dispatchOnce()).toBe(true);
   });
 
@@ -611,7 +611,7 @@ describe("予算(全体・島)", () => {
     const am = p.membersOfUnit(a.id)[0]!;
     const msgId = run(p.db, "INSERT INTO messages (ticket_id, to_role, kind, available_at, created_at, status) VALUES (NULL, 'dev', 'implement', '', '', 'done')").lastId;
     run(p.db, "INSERT INTO runs (message_id, member_id, role, policy_id, formation_id, started_at, ended_at, cost_usd, unit_name) VALUES (?, ?, 'dev', 1, ?, '', '', 0.95, '開発A')", [msgId, am.id, p.currentFormation().id]);
-    expect(budgetView(p).units.find((u) => u.name === "開発A")!.exhausted).toBe(true);
+    expect((await budgetView(p)).units.find((u) => u.name === "開発A")!.exhausted).toBe(true);
 
     await d.dispatchOnce();
     const b = p.currentFormation().units.find((u) => u.name === "開発B")!;

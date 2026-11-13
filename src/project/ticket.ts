@@ -120,7 +120,7 @@ export async function ticketView(p: Project, ticketId: number) {
       role: ROLE_LABEL[rv.role as Role] ?? rv.role,
       round: rv.round,
       verdict: VERDICT[rv.verdict] ?? rv.verdict,
-      findings: threads(p, ticketId, { reviewId: rv.id }),
+      findings: await threads(p, ticketId, { reviewId: rv.id }),
     });
   }
   for (const d of decisionRows) {

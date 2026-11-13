@@ -139,7 +139,7 @@ export async function adoptPull(p: Project, a: { repo: string; number: number; t
     // 引き継いだ PR は開発が済んでいる(開発より前の工程には戻らない)ので、交通整理も済み。addTicket の行はまだ project_id が 0 かもしれない
     await p.pdb.k.updateTable("tickets").set({ triaged: 1, dev_done: 1 }).where("project_id", "in", scopeIds(p.pdb)).where("id", "=", t.id).execute();
     const first = pipelineOf(p.currentFormation(), p.ticket(t.id).kind, { devDone: true }).find((r) => r !== "dev");
-    enterStage(p, p.ticket(t.id), first ?? "merge");
+    await enterStage(p, p.ticket(t.id), first ?? "merge");
     p.setSetting("onboard_adopted_pulls", JSON.stringify([...new Set([...adoptedPulls(p), `${a.repo}#${a.number}`])]));
     p.event(p.fixedMember("lead").name, "pr_adopted", t.id, { pr: pr.number, repo: a.repo });
     return p.ticket(t.id);

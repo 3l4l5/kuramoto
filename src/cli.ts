@@ -100,7 +100,7 @@ async function main(argv: string[]): Promise<void> {
         const p = await hq.openProject(Number(sub));
         const t = p.tickets().find((x) => x.number === Number(rest[0]));
         if (!t) {
-          console.log(`merge 待ち(この順がおすすめ): ${suggestedMergeOrder(p).map((x) => `#${x.number}`).join(" → ") || "なし"}`);
+          console.log(`merge 待ち(この順がおすすめ): ${(await suggestedMergeOrder(p)).map((x) => `#${x.number}`).join(" → ") || "なし"}`);
         } else {
           console.log(JSON.stringify(await ownerMerge(p, new GhCli(), t.id)));
         }

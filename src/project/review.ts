@@ -1,4 +1,3 @@
-import { all, get, run } from "../db/sqlite.js";
 import { ROLE_LABEL, type Role } from "../domain/roles.js";
 import type { Project } from "./project.js";
 
@@ -37,51 +36,75 @@ const ACTION_LABEL: Record<string, string> = {
   ruled: "裁定",
 };
 
-export function threads(p: Project, ticketId: number, opts: { role?: string; reviewId?: number } = {}): Thread[] {
-  const rows = all<Omit<Thread, "blocking" | "comments"> & { blocking: number }>(
-    p.db,
-    `SELECT f.id, r.role, r.round, f.category, f.severity, f.blocking, f.path, f.line, f.body, f.status
-     FROM findings f JOIN reviews r ON r.id = f.review_id
-     WHERE r.ticket_id = ? ${opts.role ? "AND r.role = ?" : ""} ${opts.reviewId ? "AND r.id = ?" : ""} ORDER BY f.id`,
-    [ticketId, ...(opts.role ? [opts.role] : []), ...(opts.reviewId ? [opts.reviewId] : [])],
-  );
-  return rows.map((f) => ({
-    ...f,
-    blocking: !!f.blocking,
-    comments: all<{ member_id: number | null; role: string; action: string; body: string; at: string }>(
-      p.db,
-      "SELECT member_id, role, action, body, at FROM finding_comments WHERE finding_id = ? ORDER BY id",
-      [f.id],
-    ).map((c) => ({ who: c.member_id ? p.member(c.member_id).name : c.role === "lead" ? p.fixedMember("lead").name : "責任者", role: c.role, action: c.action, body: c.body, at: c.at })),
-  }));
+export async function threads(p: Project, ticketId: number, opts: { role?: string; reviewId?: number } = {}): Promise<Thread[]> {
+  let q = p.pdb.k
+    .selectFrom("findings as f")
+    .innerJoin("reviews as r", "r.id", "f.review_id")
+    .select(["f.id", "r.role", "r.round", "f.category", "f.severity", "f.blocking", "f.path", "f.line", "f.body", "f.status"])
+    .where("f.project_id", "=", p.projectId)
+    .where("r.project_id", "=", p.projectId)
+    .where("r.ticket_id", "=", ticketId);
+  if (opts.role) q = q.where("r.role", "=", opts.role);
+  if (opts.reviewId) q = q.where("r.id", "=", opts.reviewId);
+  const rows = await q.orderBy("f.id").execute();
+  if (rows.length === 0) return [];
+  // 指摘ごとのやりとりは、1 文でまとめて取る
+  const cs = await p.pdb
+    .from("finding_comments")
+    .select(["finding_id", "member_id", "role", "action", "body", "at"])
+    .where(
+      "finding_id",
+      "in",
+      rows.map((f) => f.id),
+    )
+    .orderBy("id")
+    .execute();
+  const byFinding = new Map<number, ThreadComment[]>();
+  for (const c of cs) {
+    const list = byFinding.get(c.finding_id) ?? [];
+    list.push({ who: c.member_id ? p.member(c.member_id).name : c.role === "lead" ? p.fixedMember("lead").name : "責任者", role: c.role, action: c.action, body: c.body, at: c.at });
+    byFinding.set(c.finding_id, list);
+  }
+  return rows.map((f) => ({ ...f, blocking: !!f.blocking, comments: byFinding.get(f.id) ?? [] }));
 }
 
 /** 開発が返事をしなければならない指摘(必須で、未対応か再オープン・再発したもの)。 */
-export function mustAnswer(p: Project, ticketId: number): Thread[] {
-  return threads(p, ticketId).filter((t) => t.blocking && (t.status === "open" || t.status === "recurred"));
+export async function mustAnswer(p: Project, ticketId: number): Promise<Thread[]> {
+  return (await threads(p, ticketId)).filter((t) => t.blocking && (t.status === "open" || t.status === "recurred"));
 }
 
 /** 開発が見てもよい提案(nit)。返事は任意。 */
-export function openNits(p: Project, ticketId: number): Thread[] {
-  return threads(p, ticketId).filter((t) => !t.blocking && t.status === "open");
+export async function openNits(p: Project, ticketId: number): Promise<Thread[]> {
+  return (await threads(p, ticketId)).filter((t) => !t.blocking && t.status === "open");
 }
 
 /** 再レビューでレビュアーが答えなければならない、その役割の前回までの必須の指摘。 */
-export function mustResolve(p: Project, ticketId: number, role: string): Thread[] {
-  return threads(p, ticketId, { role }).filter((t) => t.blocking && ["open", "recurred", "addressed", "disputed"].includes(t.status));
+export async function mustResolve(p: Project, ticketId: number, role: string): Promise<Thread[]> {
+  return (await threads(p, ticketId, { role })).filter((t) => t.blocking && ["open", "recurred", "addressed", "disputed"].includes(t.status));
 }
 
-export function comment(p: Project, findingId: number, who: { memberId: number | null; role: string }, action: string, body = ""): void {
-  run(p.db, "INSERT INTO finding_comments (finding_id, member_id, role, action, body, at) VALUES (?, ?, ?, ?, ?, ?)", [findingId, who.memberId, who.role, action, body, p.now()]);
+export async function comment(p: Project, findingId: number, who: { memberId: number | null; role: string }, action: string, body = ""): Promise<void> {
+  await p.pdb.insert("finding_comments", { finding_id: findingId, member_id: who.memberId, role: who.role, action, body, at: p.now() }).execute();
 }
 
-export function setStatus(p: Project, findingId: number, status: string): void {
-  run(p.db, "UPDATE findings SET status = ? WHERE id = ?", [status, findingId]);
+export async function setStatus(p: Project, findingId: number, status: string): Promise<void> {
+  await p.pdb.update("findings", { status }).where("id", "=", findingId).execute();
 }
 
 /** そのチケットをその役割で最後にレビューした人(再レビューは同じ人に頼む)。 */
-export function lastReviewer(p: Project, ticketId: number, role: string): number | null {
-  return get<{ member_id: number }>(p.db, "SELECT r.member_id FROM reviews rv JOIN runs r ON r.id = rv.run_id WHERE rv.ticket_id = ? AND rv.role = ? ORDER BY rv.id DESC LIMIT 1", [ticketId, role])?.member_id ?? null;
+export async function lastReviewer(p: Project, ticketId: number, role: string): Promise<number | null> {
+  const row = await p.pdb.k
+    .selectFrom("reviews as rv")
+    .innerJoin("runs as r", "r.id", "rv.run_id")
+    .select("r.member_id")
+    .where("rv.project_id", "=", p.projectId)
+    .where("r.project_id", "=", p.projectId)
+    .where("rv.ticket_id", "=", ticketId)
+    .where("rv.role", "=", role)
+    .orderBy("rv.id", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  return row?.member_id ?? null;
 }
 
 /** 担当への指示に入れる、スレッドの書き方。 */

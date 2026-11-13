@@ -28,7 +28,7 @@ async function setup() {
   return p;
 }
 
-const call = (p: Project, name: string, args: Record<string, unknown>) => planningTools(p, "handoff").find((t) => t.name === name)!.handler(args as never);
+const call = async (p: Project, name: string, args: Record<string, unknown>) => (await planningTools(p, "handoff")).find((t) => t.name === name)!.handler(args as never);
 
 describe("既存のリポジトリの続きから(ADR-0030)", () => {
   it("GitHub の途中の仕事を取ってきて、担当にはリポジトリを読んで現状を起こすよう頼む。画面の試作は既定で省く", async () => {
