@@ -92,4 +92,19 @@ describe("既存の画面をトークンにそろえる", () => {
     expect(style).toMatch(/\.gate\.hand \{[^}]*background: var\(--action\)/);
     expect(style).toMatch(/\.ask \.acts button\.primary \{ background: var\(--action\)/);
   });
+
+  it("押せない主ボタンは、デザインシステムの「押せない」(地 --bg・字 --muted・枠 --line)にそろう", () => {
+    expect(style).toMatch(/\.gate\.hand:disabled \{[^}]*background: var\(--bg\)[^}]*border-color: var\(--line\)[^}]*color: var\(--muted\)/);
+  });
+
+  it("ツリーの状態の色: 待ち = 灰、止まっている = 赤(試作 tree)。「N 件がこれを待っています」は本文色", () => {
+    expect(style).toMatch(/\.tr-wait \.tr-state \{ color: var\(--muted\)/);
+    expect(style).toMatch(/\.tr-idle \.tr-state \{ color: var\(--muted\)/);
+    expect(style).toMatch(/\.tr-blocked \.tr-state \{ color: var\(--danger-ink\)/);
+    expect(style).toMatch(/\.tr-node \.tr-blocks \{[^}]*color: var\(--ink\)/);
+  });
+
+  it("ボードのカードの往復は、黄の札(Chip warn)で種類の札の横に出す(試作 board)", () => {
+    expect(read("Project.tsx")).toMatch(/<Chip tone="warn">往復 \{t\.rounds\}<\/Chip>/);
+  });
 });

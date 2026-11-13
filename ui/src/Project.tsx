@@ -446,11 +446,12 @@ function Board({ d }: { d: ProjectView }) {
                         #{t.number}
                         {t.jiraKey ? ` · ${t.jiraKey}` : ""}
                       </span>
-                      <span>{t.conflict ? <span className="cf">衝突</span> : t.rounds ? `往復 ${t.rounds}` : ""}</span>
+                      <span>{t.conflict ? <span className="cf">衝突</span> : ""}</span>
                     </span>
                     <TicketLink id={t.id}>{t.title}</TicketLink>
                     <span className="chips">
                       <KindChip kind={t.kind} label={t.kindLabel} />
+                      {t.rounds > 0 && !t.conflict && <Chip tone="warn">往復 {t.rounds}</Chip>}
                       {t.ruleBlocked.length > 0 && <Chip tone="danger">ルール違反で止まっている</Chip>}
                     </span>
                     {t.ruleBlocked.length > 0 && (
