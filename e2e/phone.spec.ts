@@ -17,18 +17,26 @@ async function createProject(page: Page, name: string, repo: string) {
   await expect(page.getByText(`${name} · 企画スタジオ`)).toBeVisible();
 }
 
-/** ページ全体が画面の幅に収まる(横にスクロールしない)。はみ出した要素の名前をメッセージに出す。 */
+/**
+ * ページ全体が画面の幅に収まる(横にスクロールしない)。はみ出した要素の名前をメッセージに出す。
+ * 引き出し・シートは position: fixed で自分の中でスクロールするので、ページの幅には出ない。開いているものは、それぞれの中身の幅も確かめる。
+ */
 async function fits(page: Page, name: string) {
   const over = await page.evaluate(() => {
     const w = document.documentElement.clientWidth;
     const bad: string[] = [];
     for (const el of document.body.querySelectorAll<HTMLElement>("*")) {
       const r = el.getBoundingClientRect();
-      if (r.width > 0 && r.right > w + 1 && !el.closest(".tablewrap, .flowwrap, .board-wrap, .ds-seg, .ds-drawer__tabs")) bad.push(`${el.tagName.toLowerCase()}.${String(el.className).slice(0, 30)}`);
+      if (r.width > 0 && r.right > w + 1 && !el.closest(".tablewrap, .board-wrap, .ds-seg, .ds-drawer__tabs")) bad.push(`${el.tagName.toLowerCase()}.${String(el.className).slice(0, 30)}`);
     }
-    return { scroll: document.documentElement.scrollWidth, w, bad: [...new Set(bad)].slice(0, 6) };
+    const inner: string[] = [];
+    for (const el of document.querySelectorAll<HTMLElement>("aside.drawer, .of-drawer, .of-drawer-body, .rules__sheet")) {
+      if (el.scrollWidth > el.clientWidth) inner.push(`${el.tagName.toLowerCase()}.${String(el.className).slice(0, 30)}(${el.scrollWidth}>${el.clientWidth})`);
+    }
+    return { scroll: document.documentElement.scrollWidth, w, bad: [...new Set(bad)].slice(0, 6), inner };
   });
   expect.soft(over.scroll, `${name}: ページが横にはみ出している(${over.bad.join(" / ")})`).toBeLessThanOrEqual(over.w);
+  expect.soft(over.inner, `${name}: 引き出し・シートの中が横にはみ出している`).toEqual([]);
   if (process.env.E2E_SHOTS) {
     mkdirSync(process.env.E2E_SHOTS, { recursive: true });
     await page.screenshot({ path: join(process.env.E2E_SHOTS, `${name}.png`), fullPage: true });
@@ -74,6 +82,23 @@ test("幅 390px: 全画面が横にはみ出さず、引き出しも全画面で
   const policy = page.getByRole("complementary", { name: "チームの方針" });
   await policy.getByRole("tab", { name: "開発ルール" }).click();
   await fits(page, "dev-rules");
+  // ひな形は、一覧の下の固定の帯から、下からのシートで選ぶ
+  await policy.getByRole("button", { name: "ひな形から足す" }).click();
+  const tpl = page.getByRole("dialog", { name: "ひな形から足す" });
+  await expect(tpl).toBeVisible();
+  await fits(page, "dev-rules-templates");
+  await tpl.getByRole("button", { name: "ひな形のシートを閉じる" }).click();
+  // 空のルールを足している途中で一覧へ戻っても、「+ ルールを足す」で、その下書きのフォームに戻れる
+  await policy.getByRole("button", { name: "+ ルールを足す" }).click();
+  await policy.getByLabel("名前").fill("途中のルール");
+  await fits(page, "dev-rules-edit");
+  await policy.getByRole("button", { name: "← ルールの一覧" }).click();
+  await expect(policy.getByLabel("名前")).toBeHidden();
+  await policy.getByRole("button", { name: "+ ルールを足す" }).click();
+  await expect(policy.getByLabel("名前")).toHaveValue("途中のルール");
+  // 「やめる」で一覧へ戻る
+  await policy.getByRole("button", { name: "やめる" }).click();
+  await expect(policy.getByLabel("名前")).toBeHidden();
   await policy.getByRole("button", { name: "閉じる" }).click();
 
   // ボード・ツリー

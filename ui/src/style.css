@@ -1038,12 +1038,25 @@ body { background: var(--surface); }
 
 /* スマホ(幅 390px): 開発ルールは「一覧 → 押すと編集」の 2 画面。保存ボタンは下に固定 */
 .rules .rules__back { display: none; align-self: flex-start; }
+.rules__phonefoot, .rules__sheetwrap { display: none; }
 @media (max-width: 700px) {
   .rules { min-height: 0; }
   .rules__side { width: 100%; border-right: 0; }
   .rules__form { flex: 1 0 100%; min-width: 0; }
   .rules[data-phone-view="list"] .rules__form, .rules[data-phone-view="edit"] .rules__side { display: none; }
   .rules .rules__back { display: inline-flex; }
+  .rules__add, .rules__tplsec { display: none; }
+  /* 一覧の下に固定の帯(ひな形から足す / + ルールを足す)。ひな形は下からシートで選ぶ */
+  .rules[data-phone-view="list"] .rules__phonefoot { display: flex; flex: 1 0 100%; gap: var(--sp-2); position: sticky; bottom: 0; z-index: 1; padding: var(--sp-3) var(--sp-4); background: var(--surface); border-top: 1px solid var(--line); }
+  .rules__phonefoot .ds-btn { flex: 1; }
+  .rules__sheetwrap { display: block; position: fixed; inset: 0; z-index: 60; }
+  .rules__scrim { position: absolute; inset: 0; background: var(--ink); opacity: .4; }
+  .rules__sheet { position: absolute; left: 0; right: 0; bottom: 0; max-height: 70vh; overflow: auto; padding: var(--sp-2) var(--sp-4) var(--sp-5); border-radius: var(--r-lg) var(--r-lg) 0 0; background: var(--surface); box-shadow: var(--shadow); display: flex; flex-direction: column; gap: var(--sp-3); }
+  .rules__sheethead { display: flex; align-items: center; justify-content: space-between; font-size: var(--fs-lg); }
+  .rules__sheet .rules__tpl { flex-direction: column; }
+  .rules__sheet .rules__tpl .ds-btn { width: 100%; justify-content: flex-start; }
+  /* 保存していない変更の帯は編集の画面だけに出す(一覧には出さない) */
+  .rules[data-phone-view="list"] .rules__foot { display: none; }
   .rules__foot { position: sticky; bottom: 0; background: var(--surface); flex-wrap: wrap; z-index: 1; }
   .rules__foot .rules__note { flex-basis: 100%; }
   .rules .ds-list__item { flex-wrap: wrap; }
@@ -1074,4 +1087,9 @@ body { background: var(--surface); }
   .tree ul ul { margin-left: 8px; padding-left: 10px; }
   .tree ul ul > li::before { left: -10px; width: 8px; }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* スマホでは、始業 / 終業は表示だけ(切り替えはパソコンで行う) */
+@media (max-width: 700px) {
+  .workswitch .ds-switch { display: none; }
 }
