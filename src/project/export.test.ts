@@ -5,7 +5,7 @@ import { addOpenItem, answerOpenItem, putArtifact, putScreen, setMode, upsertReq
 import { Project } from "./project.js";
 
 describe("設計書のエクスポート", () => {
-  it("要件・フロー・画面・インフラ・アーキテクチャ・ドメイン・データを 1 つの Markdown にまとめ、図は Mermaid で書く", () => {
+  it("要件・フロー・画面・インフラ・アーキテクチャ・ドメイン・データを 1 つの Markdown にまとめ、図は Mermaid で書く", async () => {
     const p = new Project(":memory:", new ManualClock());
     p.addRepo("acme/shop", "API");
     putArtifact(p, "req", "brief", "main", { purpose: "予約を 1 分で", users: ["会員"], outOfScope: ["決済"] });
@@ -48,7 +48,7 @@ describe("設計書のエクスポート", () => {
     });
     putArtifact(p, "model", "data", "main", { tables: [{ name: "reservations", change: "new", columns: ["id", "slot_id"], note: "", reversible: false }] });
 
-    const md = exportDesignDoc(p, "予約サイト");
+    const md = await exportDesignDoc(p, "予約サイト");
     expect(md).toContain("# 予約サイト 設計書");
     expect(md).toContain("| 要件 | v1 | 下書き |");
     expect(md).toContain("| インフラ | v1 | 省略 |");

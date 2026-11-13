@@ -369,7 +369,7 @@ export class KuramotoServer {
       // 書き出した設計書から、新しいプロジェクトとして復元する
       const data = extractTransfer(String(body.markdown ?? ""));
       const rec = await this.hq.createProject(data.project.name, data.repos);
-      restoreTransfer(await this.open(rec.id), data);
+      await restoreTransfer(await this.open(rec.id), data);
       await this.hq.setStatus(rec.id, handedOff(this.project(rec.id)) ? "starting" : "planning");
       advance(this.project(rec.id));
       await this.loop(rec.id);
@@ -760,7 +760,7 @@ export class KuramotoServer {
       images.set(key, file);
       files.push({ name: file, data: ref.png });
     }
-    files.unshift({ name: "design.md", data: exportDesignDoc(p, name, { images }) });
+    files.unshift({ name: "design.md", data: await exportDesignDoc(p, name, { images }) });
     const body = zip(files);
     res.writeHead(200, {
       "content-type": "application/zip",
@@ -773,7 +773,7 @@ export class KuramotoServer {
   private async sendExport(id: number, res: ServerResponse): Promise<void> {
     const p = await this.open(id);
     const name = this.record(id).name;
-    const md = exportDesignDoc(p, name);
+    const md = await exportDesignDoc(p, name);
     const file = `${name}-設計書.md`;
     res.writeHead(200, {
       "content-type": "text/markdown; charset=utf-8",

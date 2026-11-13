@@ -1,5 +1,6 @@
 import { parseFlows } from "../domain/flow.js";
 import { parseRoutes } from "../domain/route.js";
+import { inScope, scopeIds } from "../db/count.js";
 import type { Project } from "./project.js";
 
 /** 版が上がったとき、何を変えたか。routes: 連絡経路 / flows: 流れ / units: 島(取り方・島の設定)。 */
@@ -20,9 +21,9 @@ export type FormationMark = {
  * 何も変わっていない保存(同じ内容で保存し直した)は印にしない。
  */
 export async function formationMarks(p: Project): Promise<FormationMark[]> {
-  const versions = await p.pdb.from("formations").orderBy("version").execute();
+  const versions = await inScope(p.pdb, "formations").orderBy("version").execute();
   // 島は、版ごとに引かず 1 文でまとめて取る
-  const units = versions.length ? await p.pdb.from("units").where("formation_id", "in", versions.map((f) => f.id)).orderBy("id").execute() : [];
+  const units = versions.length ? await inScope(p.pdb, "units").where("formation_id", "in", versions.map((f) => f.id)).orderBy("id").execute() : [];
   const snapshot = (f: (typeof versions)[number]) => ({
     routes: JSON.stringify(parseRoutes(f.routes)),
     flows: JSON.stringify(sortKeys(parseFlows(f.flows))),

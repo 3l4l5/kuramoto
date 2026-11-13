@@ -1,6 +1,6 @@
 import { formationMarks } from "./formation-marks.js";
 import type { Selectable } from "kysely";
-import { countFrom, countOf } from "../db/count.js";
+import { countFrom, countOf, inScope, scopeIds } from "../db/count.js";
 import type { DecisionsTable, RunsTable, TicketsTable } from "../db/tables.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
 import { violationTotals } from "./dev-rules.js";
@@ -39,15 +39,15 @@ const earliest = (rows: { ticket_id: number | null; at: string }[]) => {
 export async function productivity(p: Project) {
   // 読むものは表ごとに 1 文でまとめて取り、数えるのは JS でやる(記録から毎回計算する)
   const [runsAll, ticketsAll, prsAll, conflictsAll, decisionsAll, violationsAll, planItems, messagesAll, policiesAll] = await Promise.all([
-    p.pdb.from("runs").execute(),
-    p.pdb.from("tickets").orderBy("number", "desc").execute(),
-    p.pdb.from("pull_requests").execute(),
-    p.pdb.from("conflicts").execute(),
-    p.pdb.from("decisions").where("escalated", "=", 1).execute(),
-    p.pdb.from("rule_violations").execute(),
-    p.pdb.from("plan_open_items").execute(),
-    p.pdb.from("messages").execute(),
-    p.pdb.from("policies").execute(),
+    inScope(p.pdb, "runs").execute(),
+    inScope(p.pdb, "tickets").orderBy("number", "desc").execute(),
+    inScope(p.pdb, "pull_requests").execute(),
+    inScope(p.pdb, "conflicts").execute(),
+    inScope(p.pdb, "decisions").where("escalated", "=", 1).execute(),
+    inScope(p.pdb, "rule_violations").execute(),
+    inScope(p.pdb, "plan_open_items").execute(),
+    inScope(p.pdb, "messages").execute(),
+    inScope(p.pdb, "policies").execute(),
   ]);
   const doneRuns = runsAll.filter((r) => r.ended_at !== null);
   const asks = planItems.filter((o) => o.decided_by === "owner" || (o.answer === null && o.withdrawn === null));
@@ -94,7 +94,7 @@ export async function productivity(p: Project) {
     row.costUsd += r.cost_usd ?? 0;
     if (r.outcome === "error") row.rework += 1;
   }
-  const evs = await p.pdb.from("events").where("type", "in", ["changes_requested", "conflict", "escalated", "merged", "ready_to_merge", "pr_submitted"]).execute();
+  const evs = await inScope(p.pdb, "events").where("type", "in", ["changes_requested", "conflict", "escalated", "merged", "ready_to_merge", "pr_submitted"]).execute();
   for (const e of evs) {
     if (e.type === "pr_submitted") continue;
     const row = day(e.at);
@@ -402,10 +402,10 @@ async function members(p: Project, runs: RunRow[]) {
   const now = p.clock.now().getTime();
   const dayAgo = now - 24 * HOUR;
   const [memberRows, unitRows, ownedTickets, mergedEvents] = await Promise.all([
-    p.pdb.from("members").orderBy("id").execute(),
-    p.pdb.from("units").execute(),
-    p.pdb.from("tickets").where("owner_member_id", "is not", null).execute(),
-    p.pdb.from("events").where("type", "=", "merged").execute(),
+    inScope(p.pdb, "members").orderBy("id").execute(),
+    inScope(p.pdb, "units").execute(),
+    inScope(p.pdb, "tickets").where("owner_member_id", "is not", null).execute(),
+    inScope(p.pdb, "events").where("type", "=", "merged").execute(),
   ]);
   const unitName = new Map(unitRows.map((u) => [u.id, u.name]));
   const rows = memberRows.map((m) => ({ id: m.id, name: m.name, unit: m.unit_id === null ? null : (unitName.get(m.unit_id) ?? null), left_at: m.left_at }));
