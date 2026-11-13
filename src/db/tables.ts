@@ -117,7 +117,7 @@ export interface DevRulesTable {
 }
 
 export interface DevRuleVersionsTable {
-  version: Generated<number>;
+  version: number;
   rules: string;
   created_at: string;
   project_id: Generated<number>;

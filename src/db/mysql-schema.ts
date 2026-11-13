@@ -13,6 +13,7 @@
  *  - one_run_per_ticket(開発中の起動はチケットに 1 つ)は、部分索引が無いので生成列 active_ticket_id の UNIQUE にする。
  *  - project_id は全部の表にあり、projects(id) への外部キーを張る。既定値は無い(SQLite の 0 は「どのプロジェクトでもない」印だった)。
  *    1 つの database に複数のプロジェクトが入るので、UNIQUE・主キーは project_id 込みだけにする(tickets の number など)。
+ *    SQLite は版 22 でこの形に揃う(版 21 は前の UNIQUE を残していた)。
  *  - 本部 DB と同じ database に入れるので、repos は 1 つにまとめる(本部の列 = プロジェクトの列)。
  *  - 最初の行は workspaces の id=1「既定」だけ。plan_stages・requirements の最初の行などは、プロジェクトを作るときに入れる。
  */
@@ -219,4 +220,7 @@ export const MYSQL_HQ_TABLES = ["workspaces", "projects", "policy_templates", "l
 export const MYSQL_MIGRATIONS: MysqlMigration[] = [
   // 21: ② までの形を丸ごと(本部の版 2 + プロジェクトの版 21 = R15〜R17・メンバーとの会話・project_id まで)。
   { version: 21, statements: FIRST },
+  // 22: SQLite の版 22(前の版の UNIQUE を project_id 込みだけにする)に当たる。最初の版が最初から project_id 込みだけなので、流すものは無い。
+  // 版の番号を SQLite と揃えるための印(ADR-0040)。
+  { version: 22, statements: [] },
 ];

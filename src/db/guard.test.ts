@@ -53,9 +53,9 @@ describe("2 つのプロジェクトを同じ database に置いても混ざら�
 
   it("insert / from / update / deleteFrom は、自分のプロジェクトの行だけを書く・見る", async () => {
     const { a, b } = twoProjects();
-    // SQLite の版 21 は、前の版の UNIQUE(key・number など)を残している。同じ database に置くなら、その列の値は重ならないようにする
-    await a.insert("settings", { key: "ka", value: "a" }).execute();
-    await b.insert("settings", { key: "kb", value: "b" }).execute();
+    // 版 22 で UNIQUE は project_id 込みだけになったので、別のプロジェクトなら同じ key(・number など)が入る
+    await a.insert("settings", { key: "k", value: "a" }).execute();
+    await b.insert("settings", { key: "k", value: "b" }).execute();
     expect((await a.from("settings").execute()).map((r) => r.value)).toEqual(["a"]);
     expect((await b.from("settings").execute()).map((r) => r.value)).toEqual(["b"]);
 

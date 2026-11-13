@@ -8,7 +8,8 @@ import { all, get, openDb } from "./sqlite.js";
 
 /** 版 21(project_id)・本部の版 2(workspace_id)のマイグレーションの試験 */
 
-const V21 = PROJECT_MIGRATIONS.length;
+const V21 = 21;
+const V21_MIGRATIONS = PROJECT_MIGRATIONS.slice(0, V21);
 const BEFORE = PROJECT_MIGRATIONS.slice(0, V21 - 1);
 const HQ_BEFORE = HQ_MIGRATIONS.slice(0, HQ_MIGRATIONS.length - 1);
 
@@ -66,7 +67,7 @@ INSERT INTO member_messages (id, member_id, who, body, at) VALUES (1, 1, 'w', 'b
 describe("版 21: プロジェクトの全部の表の project_id", () => {
   it("既存の DB を開くと流れ、全部の表の今ある行に、渡したプロジェクトの id が入る", async () => {
     const path = v20Db();
-    const db = openDb(path, PROJECT_MIGRATIONS, { projectId: 7 });
+    const db = openDb(path, V21_MIGRATIONS, { projectId: 7 });
     expect(version(db)).toBe(V21);
     for (const t of PROJECT_ID_TABLES) {
       const rows = all<{ project_id: number }>(db, `SELECT project_id FROM ${t}`);
@@ -79,13 +80,13 @@ describe("版 21: プロジェクトの全部の表の project_id", () => {
   });
 
   it("プロジェクトの id を渡さなければ 0 のまま", async () => {
-    const db = openDb(v20Db(), PROJECT_MIGRATIONS);
+    const db = openDb(v20Db(), V21_MIGRATIONS);
     expect(all(db, "SELECT project_id FROM tickets")).toEqual([{ project_id: 0 }]);
     db.close();
   });
 
   it("新しい DB でも流れる。全部の表(PROJECT_ID_TABLES と一致)に project_id が NOT NULL DEFAULT 0 である", async () => {
-    const db = openDb(":memory:", PROJECT_MIGRATIONS, { projectId: 3 });
+    const db = openDb(":memory:", V21_MIGRATIONS, { projectId: 3 });
     expect(tableNames(db)).toEqual([...PROJECT_ID_TABLES].sort());
     for (const t of tableNames(db)) {
       expect(columns(db, t).find((c) => c.name === "project_id"), t).toMatchObject({ notnull: 1, dflt_value: "0" });
@@ -99,7 +100,7 @@ describe("版 21: プロジェクトの全部の表の project_id", () => {
     const oldSchema = schema(old);
     const oldCols = new Map(tableNames(old).map((t) => [t, columns(old, t).map((c) => c.name)]));
     old.close();
-    const db = openDb(path, PROJECT_MIGRATIONS, { projectId: 1 });
+    const db = openDb(path, V21_MIGRATIONS, { projectId: 1 });
     const now = new Map(schema(db).map((s) => [s.name, s]));
     for (const s of oldSchema) {
       if (s.type === "table") {
@@ -110,12 +111,12 @@ describe("版 21: プロジェクトの全部の表の project_id", () => {
         expect(now.get(s.name)?.sql, `${s.type} ${s.name}`).toBe(s.sql);
       }
     }
-    expect(PROJECT_MIGRATIONS[V21 - 1]).toBeTypeOf("function");
+    expect(V21_MIGRATIONS[V21 - 1]).toBeTypeOf("function");
     db.close();
   });
 
   it("索引は project_id が先頭で、project_id 込みの UNIQUE が tickets・formations・policies・settings・plan_stages・requirements・repos に張られる", async () => {
-    const db = openDb(":memory:", PROJECT_MIGRATIONS);
+    const db = openDb(":memory:", V21_MIGRATIONS);
     const before = new Set(schema(openDb(":memory:", BEFORE)).map((s) => s.name));
     const added = all<{ name: string; tbl_name: string }>(db, "SELECT name, tbl_name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'").filter((i) => !before.has(i.name));
     expect(added.length).toBeGreaterThan(0);
@@ -139,7 +140,7 @@ describe("版 21: プロジェクトの全部の表の project_id", () => {
   });
 
   it("project_id 込みの UNIQUE が効く(同じプロジェクトの同じ番号は入らない)", async () => {
-    const db = openDb(":memory:", PROJECT_MIGRATIONS);
+    const db = openDb(":memory:", V21_MIGRATIONS);
     const add = (n: number, p: number) => db.prepare("INSERT INTO tickets (number, title, stage, created_at, project_id) VALUES (?, 't', 'dev', '', ?)").run(n, p);
     add(1, 1);
     expect(() => add(1, 1)).toThrow(/UNIQUE constraint failed/);
@@ -149,7 +150,7 @@ describe("版 21: プロジェクトの全部の表の project_id", () => {
 
   it("前の版のコードで新しい DB が開ける(マイグレーションは流れず、project_id を書かない INSERT・SELECT * が動く)", async () => {
     const path = v20Db();
-    openDb(path, PROJECT_MIGRATIONS, { projectId: 5 }).close();
+    openDb(path, V21_MIGRATIONS, { projectId: 5 }).close();
     const db = openDb(path, BEFORE);
     expect(version(db)).toBe(V21);
     db.exec(`
@@ -162,7 +163,7 @@ INSERT INTO formations (version, pull, created_at) VALUES (2, 'start', '');
     // 前の版のコードが入れた行は DEFAULT 0
     expect(all(db, "SELECT id, project_id FROM tickets ORDER BY id")).toEqual([{ id: 1, project_id: 5 }, { id: 2, project_id: 0 }]);
     expect(get(db, "SELECT * FROM settings WHERE key = 'k2'")).toMatchObject({ value: "v2", project_id: 0 });
-    // 前の UNIQUE も残っている
+    // 前の UNIQUE も残っている(版 21 のとき。外すのは版 22)
     expect(() => db.exec("INSERT INTO tickets (number, title, stage, created_at) VALUES (2, 't', 'dev', '')")).toThrow(/UNIQUE constraint failed/);
     db.close();
   });
@@ -179,7 +180,7 @@ INSERT INTO formations (version, pull, created_at) VALUES (2, 'start', '');
     old.close();
     hq.db.prepare("INSERT INTO projects (id, name, data_dir, status, created_at) VALUES (9, 'old', ?, 'running', '')").run(dir);
     const p = await hq.openProject(9);
-    expect(version(p.db)).toBe(V21);
+    expect(version(p.db)).toBe(PROJECT_MIGRATIONS.length);
     expect(all(p.db, "SELECT number, project_id FROM tickets")).toEqual([{ number: 1, project_id: 9 }]);
     p.close();
     hq.close();
