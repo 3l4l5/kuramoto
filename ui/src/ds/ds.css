@@ -69,6 +69,8 @@ a.ds-btn { text-decoration: none; }
 .ds-chip--danger { background: var(--danger-soft); color: var(--danger-ink); }
 .ds-chip--ok { background: var(--ok-soft); color: var(--ok); }
 .ds-chip--review { background: var(--review-soft); color: var(--review-ink); }
+.ds-chip--lead { background: var(--lead-soft); color: var(--lead); }
+.ds-chip--design { background: var(--design-soft); color: var(--design); }
 .ds-chip--neutral { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
 .ds-chip--version { background: var(--bg); color: var(--muted); border: 1px solid var(--line); font-family: var(--f-mono); font-size: var(--fs-xs); font-weight: var(--fw-regular); }
 

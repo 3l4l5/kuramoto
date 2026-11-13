@@ -94,6 +94,29 @@ describe("ローカルサーバー", () => {
     expect((await call("POST", `${base}/tickets/${t.id}/kind`, { kind: "chore" })).status).toBe(400);
   });
 
+  it("ボードの API は、チケットの種類と、種類ごとの流れ(開発より前の工程の印つき)を返す。生産性の表にも種類が入る(R17)", async () => {
+    const { call } = await boot();
+    const { json: created } = await call("POST", "/api/projects", { name: "ボード", repos: [{ fullName: "acme/shop", role: "API" }] });
+    const base = `/api/projects/${created.id}`;
+    await call("POST", `${base}/formation`, { pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300 }, { name: "QA", roles: ["qa"], maxMembers: 2, summonAt: 2, idleSec: 300 }], flows: { bugfix: ["qa", "dev"] } });
+    const bug = (await call("POST", `${base}/tickets`, { title: "落ちる", kind: "bugfix" })).json;
+    const feat = (await call("POST", `${base}/tickets`, { title: "足す" })).json;
+    const view = (await call("GET", base)).json;
+    expect(view.stages.map((s: { key: string }) => s.key)).toEqual(["dev", "qa"]);
+    expect(view.kinds.find((k: { key: string }) => k.key === "bugfix")).toMatchObject({
+      label: "バグ修正",
+      stages: [{ key: "qa", label: "QA", preDev: true }, { key: "dev", label: "開発", preDev: false }],
+    });
+    expect(view.roleLabels.qa).toBe("QA");
+    expect(view.kinds.find((k: { key: string }) => k.key === "bugfix").omitted).toEqual([]);
+    expect(view.kinds.find((k: { key: string }) => k.key === "feature").stages.every((s: { preDev: boolean }) => !s.preDev)).toBe(true);
+    const row = (id: number) => view.tickets.find((t: { id: number }) => t.id === id);
+    expect(row(bug.id)).toMatchObject({ kind: "bugfix", kindLabel: "バグ修正", stage: "qa", preDev: true });
+    expect(row(feat.id)).toMatchObject({ kind: "feature", kindLabel: "機能", preDev: false });
+    const prod = (await call("GET", `${base}/productivity`)).json;
+    expect(prod.tickets.find((t: { id: number }) => t.id === bug.id)).toMatchObject({ kind: "bugfix" });
+  });
+
   it("メンバーの今していること・話す欄の API。話しかけると、終業中でも返事が来る", async () => {
     const { call, app } = await boot();
     const { json: created } = await call("POST", "/api/projects", { name: "会話", repos: [{ fullName: "acme/shop", role: "API" }] });

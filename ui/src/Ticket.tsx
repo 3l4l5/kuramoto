@@ -5,7 +5,8 @@ import { droppedText, hhmm, usd, waitText } from "./format";
 import { BudgetInput, budgetOk } from "./BudgetInput";
 import { duration, useAct } from "./hooks";
 import { Btn } from "./ui";
-import { Chip, Input, Textarea, type ChipTone } from "./ds";
+import { Chip, Input, Segmented, Textarea, type ChipTone } from "./ds";
+import { KINDS, KindChip, PRE_DEV_LABEL } from "./kind";
 
 /**
  * チケットの詳細(モーダル)。中身・ひも付く要件と画面・PR・金額と、
@@ -69,6 +70,7 @@ function TicketDialog({ projectId, ticketId, close }: { projectId: number; ticke
             <Chip tone={data.stage === "done" ? "ok" : data.stage === "decision" ? "warn" : "default"}>
               {STAGE[data.stage] ?? data.stage}
             </Chip>
+            <KindChip kind={data.kind} label={data.kindLabel} />
             {data.ruleBlocked.length > 0 && <Chip tone="danger">ルール違反で止まっている: {data.ruleBlocked.join("・")}</Chip>}
             {data.stage === "dropped" && <Reopen projectId={projectId} id={data.id} />}
             <Btn kind="text" size="sm" style={{ marginLeft: "auto" }} onClick={() => ref.current?.close()}>
@@ -165,6 +167,10 @@ function Details({ projectId, t }: { projectId: number; t: TicketView }) {
         </>
       )}
       <dl>
+        <dt>種類</dt>
+        <dd>
+          <KindSelect projectId={projectId} t={t} />
+        </dd>
         {t.requirement && (
           <>
             <dt>要件</dt>
@@ -218,6 +224,38 @@ function Details({ projectId, t }: { projectId: number; t: TicketView }) {
         </dd>
       </dl>
     </section>
+  );
+}
+
+/** チケットの種類。責任者が変えられる。変えると、次の工程から変えた先の流れで進む。 */
+function KindSelect({ projectId, t }: { projectId: number; t: TicketView }) {
+  const act = useAct();
+  // 変えた直後は、画面にとどまる説明を出す(トーストは消えるため)
+  const [changed, setChanged] = useState<{ from: string; to: string } | null>(null);
+  const change = async (kind: string) => {
+    const from = t.kindLabel;
+    const to = KINDS.find((k) => k.key === kind)?.label ?? kind;
+    const r = await act(() => post(`/projects/${projectId}/tickets/${t.id}/kind`, { kind }), `種類を「${to}」に変えました。次の工程から、その種類の流れで進みます`);
+    if (r) setChanged({ from, to });
+  };
+  return (
+    <div className="kindsel">
+      <Segmented label="チケットの種類" value={t.kind} onChange={(k) => void change(k)} options={KINDS.map((k) => ({ value: k.key as string, label: k.label }))} />
+      <div className="kindflow" aria-label={`${t.kindLabel}の流れ`}>
+        {t.kindLabel}の流れ:{" "}
+        {[...t.flow.map((f) => ({ key: f.key, text: f.preDev ? `${f.label} ${PRE_DEV_LABEL}` : f.label })), { key: "merge", text: "merge 待ち" }].map((f, i) => (
+          <span key={f.key}>
+            {i > 0 && " → "}
+            <Chip tone={f.key === "merge" ? "ok" : "neutral"}>{f.text}</Chip>
+          </span>
+        ))}
+      </div>
+      {changed && (
+        <div className="kindchanged" role="note">
+          {changed.from} → {changed.to}に変えました。次の工程から{changed.to}の流れで進みます。
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -409,6 +447,42 @@ function item(x: TicketView["timeline"][number]): ReactNode {
           </b>
           {x.detail && <p className="said">{x.detail}</p>}
           <span className="meta">{x.resolvedAt ? `${hhmm(x.resolvedAt)} に直りました` : "まだ直っていません"}</span>
+        </>
+      );
+    case "handoff":
+      return (
+        <>
+          <b>
+            {x.role}の申し送り(開発の前) <Chip tone="neutral">差し戻し無し・往復に数えない</Chip>
+          </b>
+          <p className="said">{x.body}</p>
+        </>
+      );
+    case "kind_change":
+      return (
+        <>
+          <b>
+            {x.who}が種類を「{x.from}」から「{x.to}」に変えました
+          </b>
+          <span className="meta">次の工程から、{x.to}の流れで進みます</span>
+        </>
+      );
+    case "question":
+      return (
+        <>
+          <b>
+            {x.from}が{x.to}に質問しました
+            {x.noRoute && <Chip tone="warn">連絡経路が無いのでリーダーに回した</Chip>}
+          </b>
+          <p className="said">{x.body}</p>
+          {x.answer ? (
+            <span className="meta">
+              → {x.answeredBy ?? x.to}の答え: {x.answer}
+              {x.answeredAt ? `(${hhmm(x.answeredAt)})` : ""}
+            </span>
+          ) : (
+            <span className="meta">→ まだ答えを待っています</span>
+          )}
         </>
       );
     case "decision":

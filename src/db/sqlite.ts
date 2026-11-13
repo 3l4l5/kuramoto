@@ -1,21 +1,21 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { migrate, type Migration } from "./migrate.js";
+import { migrate, type Migration, type MigrationContext } from "./migrate.js";
 
 export type Db = DatabaseSync;
 export type Params = Record<string, SQLInputValue> | SQLInputValue[];
 
-export type { Migration } from "./migrate.js";
+export type { Migration, MigrationContext } from "./migrate.js";
 export { tx } from "./tx.js";
 
-export function openDb(path: string, migrations: Migration[]): Db {
+export function openDb(path: string, migrations: Migration[], ctx: MigrationContext = {}): Db {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("PRAGMA busy_timeout = 5000");
-  migrate(db, migrations);
+  migrate(db, migrations, ctx);
   return db;
 }
 

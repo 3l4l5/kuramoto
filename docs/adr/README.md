@@ -40,3 +40,5 @@ Kuramoto の設計で下した判断を 1 件ずつ残します。状態は「�
 | [0034](0034-design-system-and-visual-compare.md) | デザインシステムを企画の成果物にし、画面を画像で見比べる | 提案 |
 | [0035](0035-studio-web-access.md) | 企画スタジオの担当が、外のサイトを検索して読めるようにする | 提案 |
 | [0036](0036-kysely-foundation.md) | DB の口を Kysely にする土台(ドライバ・表の型・方言の助け・マイグレーションの実行器) | 提案 |
+| [0037](0037-workspace-and-project-scope.md) | ワークスペースと project_id のスコープを足す | 提案 |
+| [0038](0038-mysql-first-migration.md) | MySQL の最初の版と schema_version | 提案 |

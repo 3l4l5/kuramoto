@@ -1,5 +1,6 @@
 import type { ProjectView } from "./api";
 import { TicketLink } from "./Ticket";
+import { KindChip, PRE_DEV_LABEL } from "./kind";
 
 /**
  * ツリー: どのチケットが、どのチケットを待って止まっているかを木で見せる。
@@ -39,7 +40,9 @@ export function TicketTree({ d }: { d: ProjectView }) {
   const alone = open.filter((t) => !(parents.get(t.number) ?? []).length && !(children.get(t.number) ?? []).length);
   const stuck = open.filter((t) => (parents.get(t.number) ?? []).length).length;
 
-  const state = (t: T): { text: string; tone: "work" | "you" | "wait" | "idle" } => {
+  const state = (t: T): { text: string; tone: "work" | "you" | "wait" | "idle" | "blocked" } => {
+    // 開発ルールの「直すまで進めない」で止まっている(R15)
+    if (t.ruleBlocked.length > 0) return { text: "ルール違反で止まっている", tone: "blocked" };
     if (t.worker) return { text: `${t.worker.name} が${t.worker.role}中`, tone: "work" };
     if (t.triaging) return { text: "リーダーが交通整理中", tone: "wait" };
     if (t.stage === "decision") return ownerDecision.has(t.id) ? { text: "あなたの判断待ち", tone: "you" } : { text: "リーダーの判断待ち", tone: "wait" };
@@ -60,8 +63,11 @@ export function TicketTree({ d }: { d: ProjectView }) {
           {why && <span className="tr-why">{why}</span>}
           <span className="tr-num">#{t.number}</span>
           <TicketLink id={t.id}>{t.title}</TicketLink>
+          <KindChip kind={t.kind} label={t.kindLabel} />
           <span className="tr-stage">{STAGE[t.stage] ?? t.stage}</span>
+          {t.preDev && <span className="tr-pre">{PRE_DEV_LABEL}</span>}
           <span className="tr-state">{s.text}</span>
+          {t.ruleBlocked.length > 0 && <span className="tr-viol">「{t.ruleBlocked.join("」「")}」を直すまで進めません</span>}
           {others.length > 0 && <span className="tr-also">ほかに #{others.join("・#")} も待っています</span>}
           {blocked > 0 && <span className="tr-blocks">{blocked} 件がこれを待っています</span>}
         </div>
@@ -105,6 +111,10 @@ export function TicketTree({ d }: { d: ProjectView }) {
           <p className="hint">ありません</p>
         )}
       </section>
+      <p className="tr-legend" aria-label="凡例">
+        <span>●機能 ▲バグ修正 ■リファクタ ◆ドキュメント</span>
+        <span>点線の工程 = 開発より前({PRE_DEV_LABEL}・差し戻し無し)</span>
+      </p>
     </div>
   );
 }

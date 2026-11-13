@@ -13,20 +13,23 @@ import { tx } from "./tx.js";
 export type Migration = string | MigrationFn;
 /** 流す 1 文。スキーマビルダ・DML のビルダ・sql`...` のどれでもよい。 */
 export type Statement = Compilable | RawBuilder<unknown>;
-export type MigrationFn = (db: Kysely<any>) => Statement | Statement[];
+export type MigrationFn = (db: Kysely<any>, ctx: MigrationContext) => Statement | Statement[];
+/** 実行器が関数の版に渡す情報。projectId は、そのファイルがプロジェクトの DB のときだけ入る(project_id を埋めるのに使う)。 */
+export type MigrationContext = { projectId?: number };
 
 /**
  * 版(PRAGMA user_version)より後のマイグレーションを順に流す。1 件ごとに 1 つのトランザクションで、版の更新まで含める。
+ * ctx は関数の版にそのまま渡す。
  * Kysely の Migrator は使わない(版の置き場所を user_version のまま、同期で動かすため)。
  */
-export function migrate(db: DatabaseSync, migrations: Migration[]): void {
+export function migrate(db: DatabaseSync, migrations: Migration[], ctx: MigrationContext = {}): void {
   const current = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
   const kysely = migrations.slice(current).some((m) => typeof m === "function") ? createKysely<any>(db) : undefined;
   for (let v = current; v < migrations.length; v++) {
     const m = migrations[v]!;
     tx(db, () => {
       if (typeof m === "string") db.exec(m);
-      else for (const q of [m(kysely!)].flat()) runStatement(db, kysely!, q);
+      else for (const q of [m(kysely!, ctx)].flat()) runStatement(db, kysely!, q);
       db.exec(`PRAGMA user_version = ${v + 1}`);
     });
   }

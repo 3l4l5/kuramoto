@@ -78,11 +78,11 @@ describe("版 19: R15〜R17 とメンバーとの会話", () => {
     expect(col("rule_violations", "resolved_at")).toMatchObject({ notnull: 0 });
     expect(col("ticket_notes", "kind")).toMatchObject({ dflt_value: "'note'", notnull: 1 });
     expect(col("runs", "about_ticket_id")).toMatchObject({ notnull: 0 });
-    expect(cols("ticket_questions").map((c) => c.name)).toEqual([
+    expect(cols("ticket_questions").map((c) => c.name).filter((n) => n !== "project_id")).toEqual([
       "id", "ticket_id", "from_member_id", "to_target", "body", "routed_to_lead", "answer", "answered_by_member_id", "asked_at", "answered_at",
     ]);
     expect(col("ticket_questions", "routed_to_lead")).toMatchObject({ dflt_value: "0", notnull: 1 });
-    expect(cols("member_messages").map((c) => c.name)).toEqual(["id", "member_id", "ticket_id", "who", "body", "at"]);
+    expect(cols("member_messages").map((c) => c.name).filter((n) => n !== "project_id")).toEqual(["id", "member_id", "ticket_id", "who", "body", "at"]);
 
     const fks = (t: string) => all<{ from: string; table: string }>(db, `PRAGMA foreign_key_list(${t})`).map((f) => `${f.from}->${f.table}`);
     expect(fks("rule_violations")).toContain("run_id->runs");

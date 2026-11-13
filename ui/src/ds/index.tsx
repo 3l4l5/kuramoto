@@ -120,7 +120,7 @@ export function Switch({ checked, onChange, children, disabled, label, title }: 
 }
 
 // ---- チップ ----
-export type ChipTone = "default" | "warn" | "danger" | "ok" | "review" | "neutral" | "version";
+export type ChipTone = "default" | "warn" | "danger" | "ok" | "review" | "lead" | "design" | "neutral" | "version";
 export function Chip({ tone = "default", children, className, title }: { tone?: ChipTone; children: ReactNode; className?: string; title?: string }) {
   return <span title={title} className={cx("ds-chip", tone !== "default" && `ds-chip--${tone}`, className)}>{children}</span>;
 }

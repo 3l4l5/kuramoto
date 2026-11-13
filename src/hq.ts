@@ -80,7 +80,7 @@ export class Hq {
   }
 
   openProject(id: number): Project {
-    return new Project(join(this.project(id).data_dir, "project.sqlite"), this.clock);
+    return new Project(join(this.project(id).data_dir, "project.sqlite"), this.clock, id);
   }
 
   /**
