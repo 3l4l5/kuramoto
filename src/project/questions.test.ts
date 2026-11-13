@@ -9,7 +9,7 @@ import { leadMessages } from "./leadchat.js";
 import { formationMarks } from "./formation-marks.js";
 import { productivity } from "./productivity.js";
 import { Project } from "./project.js";
-import { askQuestion, questionsOf } from "./questions.js";
+import { askQuestion, leadPendingQuestions, questionsOf } from "./questions.js";
 import { saveFormationInput, teamView } from "./team.js";
 import { ticketView } from "./ticket.js";
 import { createTicket, ticketSpentUsd } from "./workflow.js";
@@ -165,6 +165,60 @@ describe("島への質問・相談(R16)", () => {
     expect(item).toMatchObject({ type: "question", to: "QA", routedToLead: true, noRoute: true, answer: null });
     // 質問は ticket_questions に残る
     expect(questionsOf(p, ticket.id)).toHaveLength(1);
+  });
+
+  it("リーダーに回った質問(経路なし・リーダー宛て)にリーダーが answer_question で答えると、やりとりに残り、「答えを待っています」が消えて、次の担当の指示に載る", async () => {
+    const clock = new ManualClock();
+    const p = new Project(":memory:", clock);
+    p.addRepo("acme/shop", "API");
+    p.saveFormation({ pull: "down", units: UNITS, routes: ROUTES });
+    let leadPrompt = "";
+    let leadTools: string[] = [];
+    const harness = new FakeHarness(async (req, call) => {
+      clock.advance(60_000);
+      if (req.tools.some((t) => t.name === "answer_question")) {
+        leadPrompt = req.prompt;
+        leadTools = req.tools.map((t) => t.name);
+        const [noRoute, toLead] = questionsOf(p, p.tickets()[0]!.id);
+        expect(await call("answer_question", { question_id: noRoute!.id, answer: "QA の観点は、受け入れ条件のとおり" })).toContain("やりとりに残しました");
+        // 答えた質問をもう一度・リーダーに回っていない質問・空の答え・無い質問は受けない
+        expect(await call("answer_question", { question_id: noRoute!.id, answer: "二度目" })).toContain("もう答えが残っています");
+        expect(await call("answer_question", { question_id: 9999, answer: "x" })).toContain("リーダーに回ってきた質問にありません");
+        expect(await call("answer_question", { question_id: toLead!.id, answer: "  " })).toContain("答えが空");
+        return;
+      }
+      if (req.tools.some((t) => t.name === "submit_pr")) await call("submit_pr", { summary: "実装した", responses: fixedAll(req.prompt) });
+      else if (req.tools.some((t) => t.name === "submit_review")) await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] }));
+    });
+    const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp") });
+    const { ticket, owner } = await worked(p, d);
+    askQuestion(p, owner, p.ticket(ticket.id), "QA", "受け入れの観点は?");
+    askQuestion(p, owner, p.ticket(ticket.id), "リーダー", "優先度を教えて");
+    // 答えを待っている間は、やりとりでは答え無し
+    expect((await ticketView(p, ticket.id)).timeline.filter((x) => x.type === "question")).toMatchObject([{ answer: null }, { answer: null }]);
+
+    await d.drain();
+
+    // リーダーの指示に、答えを待っている質問が番号つきで載り、道具が渡る
+    expect(leadTools).toContain("answer_question");
+    const [noRoute, toLead] = questionsOf(p, ticket.id);
+    expect(leadPrompt).toContain(`質問 ${noRoute!.id}`);
+    expect(leadPrompt).toContain(`質問 ${toLead!.id}`);
+    // 答えた質問だけ、リーダーの答えが残る。答えていない方は待ちのまま
+    const lead = p.fixedMember("lead");
+    expect(noRoute).toMatchObject({ answer: "QA の観点は、受け入れ条件のとおり", answered_by_member_id: lead.id, routed_to_lead: 1 });
+    expect(toLead).toMatchObject({ answer: null, answered_by_member_id: null });
+    expect(leadPendingQuestions(p).map((q) => q.id)).toEqual([toLead!.id]);
+    const items = (await ticketView(p, ticket.id)).timeline.filter((x) => x.type === "question");
+    expect(items[0]).toMatchObject({ noRoute: true, answer: "QA の観点は、受け入れ条件のとおり", answeredBy: lead.name });
+    expect(items[1]).toMatchObject({ answer: null });
+    // 答えは次にそのチケットの仕事をする担当の指示に載る(答えのない質問は載らない)
+    const { promptFor } = await import("./prompts.js");
+    const msg = { id: 0, ticket_id: ticket.id, to_role: "dev", to_member_id: owner.id, kind: "fix", payload: "{}", status: "pending", available_at: "", attempts: 0, created_at: "", claimed_at: null, last_error: null } as const;
+    const prompt = await promptFor(p, msg, p.ticket(ticket.id), {});
+    expect(prompt).toContain("QA の観点は、受け入れ条件のとおり");
+    expect(prompt).toContain(`${lead.name}(リーダー) の答え`);
+    expect(prompt).not.toContain("優先度を教えて");
   });
 
   it("リーダーへの質問は経路が無くてもリーダーに届く(「経路が無い」とは残さない)。自分の島や空の質問は受けない", async () => {
