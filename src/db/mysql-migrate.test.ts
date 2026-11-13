@@ -1,8 +1,9 @@
 import { DatabaseSync } from "node:sqlite";
-import { createConnection, type Connection } from "mysql2/promise";
+import type { Connection } from "mysql2/promise";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { migrateMysql, mysqlVersion } from "./mysql-migrate.js";
 import { MYSQL_MIGRATIONS, type MysqlMigration } from "./mysql-schema.js";
+import { connectTest, resetDatabase } from "./mysql-test-support.js";
 import { HQ_MIGRATIONS, PROJECT_MIGRATIONS } from "./schema.js";
 import { all, openDb } from "./sqlite.js";
 
@@ -10,28 +11,12 @@ import { all, openDb } from "./sqlite.js";
  * 空の MySQL(compose.yaml の mysql-test。127.0.0.1:3307)に流す試験。
  * 接続先は KURAMOTO_MYSQL_TEST_URL で変えられる。繋がらないときは飛ばす(docker compose up -d mysql-test で立てる)。
  */
-const URL_ = process.env.KURAMOTO_MYSQL_TEST_URL ?? "mysql://kuramoto_test:kuramoto-test@127.0.0.1:3307/kuramoto_test";
-
-async function connect(): Promise<Connection | undefined> {
-  try {
-    return await createConnection({ uri: URL_, connectTimeout: 2000 });
-  } catch {
-    return undefined;
-  }
-}
-
-const conn = await connect();
+const conn = await connectTest();
 afterAll(async () => {
   await conn?.end();
 });
 
-/** database の中を空にする(外部キーを外してから全部の表を消す) */
-async function reset(c: Connection): Promise<void> {
-  const [rows] = await c.query<any[]>("SELECT table_name AS n FROM information_schema.tables WHERE table_schema = DATABASE()");
-  await c.query("SET FOREIGN_KEY_CHECKS = 0");
-  for (const r of rows) await c.query(`DROP TABLE IF EXISTS \`${r.n}\``);
-  await c.query("SET FOREIGN_KEY_CHECKS = 1");
-}
+const reset = resetDatabase;
 
 const tableNames = async (c: Connection) =>
   (await c.query<any[]>("SELECT table_name AS n FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name"))[0].map((r) => r.n as string);

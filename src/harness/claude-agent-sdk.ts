@@ -1,5 +1,6 @@
 import { createSdkMcpServer, query, tool, type SDKMessage, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { basename } from "node:path";
+import { DATABASE_URL_ENV } from "../db/env.js";
 import type { Confinement, Harness, HarnessRequest, HarnessResult, ProgressEvent } from "./types.js";
 import { EMPTY_USAGE } from "./types.js";
 
@@ -92,7 +93,7 @@ export class ClaudeAgentSdkHarness implements Harness {
  */
 export function confineOptions(cwd: string, c: Confinement) {
   return {
-    env: { ...process.env, ...c.env },
+    env: withoutHidden({ ...process.env, ...c.env }),
     settings: {
       ...BASE_SETTINGS,
       permissions: { blockReadsOutsideWorkingDirectories: true, blockWritesOutsideWorkingDirectories: true },
@@ -205,4 +206,10 @@ function errorText(e: unknown): string {
 
 function isBudgetError(text: string): boolean {
   return /maximum budget/i.test(text);
+}
+
+/** 接続先(KURAMOTO_DATABASE_URL)は、パスワードを含みうるので、閉じ込めの中の環境変数に入れない。 */
+function withoutHidden(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const { [DATABASE_URL_ENV]: _omit, ...rest } = env;
+  return rest;
 }

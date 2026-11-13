@@ -157,6 +157,24 @@ describe("設計書からの復元", () => {
     expect(r.tickets().map((t) => [t.kind, t.dev_done])).toEqual([["feature", 0], ["feature", 0], ["feature", 0]]);
   });
 
+  it("devDone の無い古い書き出しは、SQLite の版 19 と同じ決まりで工程から決める(review 以降・done は 1、dev・dropped は 0)", async () => {
+    const hq = newHq();
+    const rec = await hq.createProject("古い", [{ fullName: "acme/old", role: "API" }]);
+    const p = await hq.openProject(rec.id);
+    await createTicket(p, { title: "t" });
+    const data = extractTransfer(exportDesignDoc(p, "古い"));
+    const stages = ["dev", "review", "sec", "qa", "decision", "merge", "done", "dropped"];
+    const old = { ...data, tickets: stages.map((stage) => ({ title: stage, body: "", stage, planRefs: {} })) };
+    const r = await hq.openProject((await hq.createProject("古い", data.repos)).id);
+    await restoreTransfer(r, transferSchema.parse(old));
+    expect(r.tickets().map((t) => [t.title, t.dev_done])).toEqual(stages.map((s) => [s, ["dev", "dropped"].includes(s) ? 0 : 1]));
+    // 新しい書き出し(devDone あり)は、書き出しのとおりにする(工程から決め直さない)
+    const explicit = { ...data, tickets: [{ title: "x", body: "", stage: "review", devDone: false, planRefs: {} }] };
+    const q = await hq.openProject((await hq.createProject("古い", data.repos)).id);
+    await restoreTransfer(q, transferSchema.parse(explicit));
+    expect(q.tickets().map((t) => t.dev_done)).toEqual([0]);
+  });
+
   it("Kuramoto が書き出したものでない・壊れている・空でないプロジェクトには戻さない", async () => {
     expect(() => extractTransfer("# ただの Markdown")).toThrow(/Kuramoto が書き出した設計書ではありません/);
     expect(() => extractTransfer("<!-- kuramoto-export v1\n!!!!\n-->")).toThrow(/壊れています/);

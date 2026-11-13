@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { isMap, LineCounter, parseDocument, type Document } from "yaml";
 import { z } from "zod";
+import { DATABASE_URL_ENV } from "./db/env.js";
 import { kuramotoHome } from "./hq.js";
 
 /**
@@ -29,7 +30,7 @@ export class ConfigError extends Error {
   }
 }
 
-export const DATABASE_URL_ENV = "KURAMOTO_DATABASE_URL";
+export { DATABASE_URL_ENV };
 /** passwordFile(mysql.env)から読むのはこの 1 行だけ。MYSQL_ROOT_PASSWORD など他の行は読まない */
 export const PASSWORD_KEY = "MYSQL_PASSWORD";
 
@@ -234,8 +235,10 @@ export function loadStartupConfig(
     if (warn) log(warn);
   }
   if (c.database.type === "mysql") {
-    // MySQL への接続はまだ作っていない。SQLite に黙って戻さず、起動しない
-    throw new ConfigError("MySQL への接続はまだ使えません。database.type を sqlite にするか、設定を外してください");
+    // 本部・プロジェクトの読み書きの本体は、まだ SQLite の同期の書き方で MySQL に移っていない(ADR-0041)。
+    // MySQL を選んだのに SQLite に書き続けることになるので、SQLite に黙って戻さず、起動しない。
+    // 本体が移ったら(ADR-0039 の 2/2 のあと)、この止めを外して startDatabase(db/startup.ts)を入口から呼ぶ。
+    throw new ConfigError("MySQL への切り替えは、まだ使えません(本部とプロジェクトの読み書きが MySQL に移っていません)。database.type を sqlite にするか、設定を外してください");
   }
   return c;
 }
