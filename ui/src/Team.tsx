@@ -7,7 +7,7 @@ import { EFFORTS, MODELS, ROLE_LABEL, WORK_ROLES, type WorkRole } from "../../sr
 import { Btn } from "./ui";
 import { LeadChat } from "./LeadChat";
 import { FormationDrawer } from "./Formation";
-import { Checkbox, Input, Select, Textarea } from "./ds";
+import { Button, Checkbox, Input, Select, Textarea } from "./ds";
 import { BudgetInput } from "./BudgetInput";
 import { Drawer as DsDrawer } from "./ds";
 import { DevRulesTab, draftDirty, useDevRules, type RuleDraft } from "./DevRules";
@@ -21,10 +21,46 @@ export const DRAWER_LABEL: Record<Drawer, string> = { formation: "編成", polic
 
 export const useTeam = (id: number) => useQuery({ queryKey: ["team", id], queryFn: () => api<TeamView>("GET", `/projects/${id}/team`) });
 
-export function TeamDrawer({ id, drawer, close }: { id: number; drawer: Drawer; close: () => void }) {
+/**
+ * 開いている引き出しと、開発ルールの下書き。下書きは引き出しの外(App)で持ち、閉じる・別の引き出しへ移るときに
+ * 保存していない変更があれば、捨ててよいか確かめてから移る(一覧の選び直し・「足す」と同じ)。
+ */
+export type RuleGuard = {
+  draft: RuleDraft | null;
+  setDraft: (d: RuleDraft | null) => void;
+  /** 保存していない下書きがあるまま移ろうとして、確かめている最中 */
+  confirming: boolean;
+  /** 下書きを捨てて、行こうとしていた先へ移る */
+  discard: () => void;
+  /** 移るのをやめて、直し続ける */
+  stay: () => void;
+};
+
+export function useDrawerState(resetKey: string): { drawer: Drawer | null; moveTo: (to: Drawer | null) => void; guard: RuleGuard } {
+  const [drawer, setDrawer] = useState<Drawer | null>(null);
+  const [draft, setDraft] = useState<RuleDraft | null>(null);
+  const [pending, setPending] = useState<{ to: Drawer | null } | null>(null);
+  useEffect(() => {
+    setDrawer(null);
+    setDraft(null);
+    setPending(null);
+  }, [resetKey]);
+  const open = (to: Drawer | null) => {
+    setPending(null);
+    if (to !== "policy") setDraft(null);
+    setDrawer(to);
+  };
+  const moveTo = (to: Drawer | null) => {
+    if (drawer === "policy" && to !== "policy" && draft && draftDirty(draft)) setPending({ to });
+    else open(to);
+  };
+  return { drawer, moveTo, guard: { draft, setDraft, confirming: pending !== null, discard: () => open(pending ? pending.to : drawer), stay: () => setPending(null) } };
+}
+
+export function TeamDrawer({ id, drawer, close, guard }: { id: number; drawer: Drawer; close: () => void; guard: RuleGuard }) {
   const { data } = useTeam(id);
   if (drawer === "formation") return data ? <FormationDrawer id={id} t={data} close={close} /> : null;
-  if (drawer === "policy") return <PolicyDrawer id={id} team={data} close={close} />;
+  if (drawer === "policy") return <PolicyDrawer id={id} team={data} close={close} guard={guard} />;
   return (
     <aside className="drawer" aria-label={DRAWER_LABEL[drawer]}>
       <header>
@@ -41,9 +77,9 @@ export function TeamDrawer({ id, drawer, close }: { id: number; drawer: Drawer; 
 type PolicyTab = "models" | "rules";
 
 /** チームの方針: 役割ごとのモデル(R11)と開発ルール(R15)の 2 つのタブ。 */
-function PolicyDrawer({ id, team, close }: { id: number; team: TeamView | undefined; close: () => void }) {
+function PolicyDrawer({ id, team, close, guard }: { id: number; team: TeamView | undefined; close: () => void; guard: RuleGuard }) {
   const [tab, setTab] = useState<PolicyTab>("models");
-  const [draft, setDraft] = useState<RuleDraft | null>(null);
+  const { draft, setDraft } = guard;
   const rules = useDevRules(id);
   return (
     <DsDrawer
@@ -59,6 +95,24 @@ function PolicyDrawer({ id, team, close }: { id: number; team: TeamView | undefi
       activeTab={tab}
       onTabChange={setTab}
     >
+      {guard.confirming && (
+        <div className="rules__confirm" role="alert">
+          <span className="rules__hint">開発ルールに保存していない変更があります。捨てて閉じる・移ると、直した内容は戻りません。</span>
+          <Button size="sm" onClick={guard.discard}>
+            捨てて移る
+          </Button>
+          <Button
+            size="sm"
+            variant="text"
+            onClick={() => {
+              guard.stay();
+              setTab("rules");
+            }}
+          >
+            このまま直す
+          </Button>
+        </div>
+      )}
       {tab === "rules" ? (
         <DevRulesTab id={id} draft={draft} setDraft={setDraft} />
       ) : (

@@ -5,7 +5,7 @@ import { areaWaitText, droppedText, hhmm, kfmt, pct, stalledText, timeLeft, unbl
 import { duration, go, useAct, useNow, useProject } from "./hooks";
 import { Chip, Segmented } from "./ds";
 import { KINDS, KindChip, PRE_DEV_LABEL } from "./kind";
-import { TeamDrawer, type Drawer } from "./Team";
+import { TeamDrawer, type Drawer, type RuleGuard } from "./Team";
 import { OfficeFloor } from "./Office";
 import { TicketLink, TicketProvider } from "./Ticket";
 import { Btn } from "./ui";
@@ -22,7 +22,7 @@ type Pr = Ticket["pr"];
 const QUIET_WARN_SEC = 90;
 
 /** オフィス(docs/design.md 6.3)。俯瞰の絵はまだ無く、ボードで見せる。 */
-export function ProjectPage({ id, drawer, closeDrawer }: { id: number; drawer: Drawer | null; closeDrawer: () => void }) {
+export function ProjectPage({ id, drawer, closeDrawer, guard }: { id: number; drawer: Drawer | null; closeDrawer: () => void; guard: RuleGuard }) {
   const { data } = useProject(id);
   if (!data) return <section className="pview" aria-label="プロジェクト" />;
   return (
@@ -31,7 +31,7 @@ export function ProjectPage({ id, drawer, closeDrawer }: { id: number; drawer: D
         <div className="main">
           <Office id={id} data={data} />
         </div>
-        {drawer && <TeamDrawer id={id} drawer={drawer} close={closeDrawer} />}
+        {drawer && <TeamDrawer id={id} drawer={drawer} close={closeDrawer} guard={guard} />}
       </div>
     </TicketProvider>
   );
