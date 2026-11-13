@@ -50,11 +50,13 @@ function allowedRequest(raw: string): boolean {
  * local のときは、ページの通信をこの機械の中(と data:・blob:)だけにする。担当が書いた HTML や、担当が動かしたアプリは、
  * サンドボックスの外のサーバのブラウザで動くので、外へ送らせない。
  * - 要求(http・https)は page.route で、WebSocket は routeWebSocket で、外の宛先を止める
- * - ブラウザ自体にも、届かないプロキシを指定する(ループバックだけがプロキシを通らず届く)。止め漏れがあっても外へは出ない
+ * - ブラウザ自体にも、届かないプロキシを指定する。Playwright は proxy を指定すると、ループバックもプロキシに通す(<-loopback>)ので、
+ *   許す名前(localhost・127.0.0.1・[::1])は bypass で明示してプロキシを通さず届ける。止め漏れがあっても外へは出ない
+ * - WebRTC の UDP はプロキシを通らないことがあるので、プロキシを通らない UDP は使わせない
  */
 async function shoot(width: number, open: (page: Page) => Promise<void>, local = false): Promise<Buffer> {
   const { chromium } = await import("@playwright/test");
-  const options = local ? { proxy: { server: "http://127.0.0.1:9" } } : {};
+  const options = local ? { proxy: { server: "http://127.0.0.1:9", bypass: "localhost,127.0.0.1,[::1]" }, args: ["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"] } : {};
   const browser = await chromium.launch({ channel: "chrome", ...options }).catch(() => chromium.launch(options));
   try {
     const context = await browser.newContext({ viewport: { width, height: width === DEVICE_WIDTH.phone ? DEVICE_HEIGHT.phone : DEVICE_HEIGHT.desktop }, deviceScaleFactor: 1 });
