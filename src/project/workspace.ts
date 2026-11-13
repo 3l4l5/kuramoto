@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import type { Role } from "../domain/roles.js";
@@ -73,6 +73,11 @@ export interface Workspace {
    * 1 つ消せなくても止まらず、消せたものと消せなかったもの(理由つき)を返す。
    */
   removeTicketWorktrees?(repo: string, ticketNumber: number): Promise<{ removed: string[]; failed: { path: string; error: string }[] }>;
+  /**
+   * プロジェクトを消すとき、そのプロジェクトの作業場所を丸ごと消す: すべての worktree(git worktree remove)と、Kuramoto が clone したリポジトリの作業ディレクトリ。
+   * GitHub 上のものには触れない。1 つ消せなくても止まらず、消せたものと消せなかったもの(理由つき)を返す。
+   */
+  removeProjectFiles?(repos: string[]): Promise<{ removed: string[]; failed: { path: string; error: string }[] }>;
   /** 画面の試作を作業場所に置く(ADR-0033)。git には入れない(info/exclude に足す)。 */
   writeDesign?(path: string, gitDir: string, files: { file: string; data: string | Buffer }[]): Promise<void>;
 }
@@ -255,6 +260,51 @@ export class GitWorkspace implements Workspace {
     return { removed, failed };
   }
 
+  async removeProjectFiles(repos: string[]): Promise<{ removed: string[]; failed: { path: string; error: string }[] }> {
+    const removed: string[] = [];
+    const failed: { path: string; error: string }[] = [];
+    const work = resolve(this.workDir);
+    // 作業場所の置き場所の外は、何があっても消さない(置き場所が空・ルートなら何もしない)
+    const inside = (path: string) => work !== sep && work !== "" && resolve(path).startsWith(work + sep);
+    const wtDir = join(work, "worktrees");
+    const dropPath = (path: string) => {
+      if (!inside(path) || !existsSync(path)) return;
+      try {
+        rmSync(path, { recursive: true, force: true });
+        removed.push(path);
+      } catch (e) {
+        failed.push({ path, error: errorText(e) });
+      }
+    };
+    // clone ごとに、git が覚えている worktree を外す(clone 自体を消す前に。ディスクに残ったものは次の rmSync が消す)
+    for (const repo of new Set(repos)) {
+      const clone = this.clonePath(repo);
+      if (!existsSync(clone)) continue;
+      const listed = await git(clone, "worktree", "list", "--porcelain").catch((e: unknown) => {
+        failed.push({ path: clone, error: errorText(e) });
+        return "";
+      });
+      for (const line of listed.split("\n")) {
+        if (!line.startsWith("worktree ")) continue;
+        const path = line.slice("worktree ".length).trim();
+        // 元の clone 自身(1 行目)は外せない。worktrees の下のものだけ
+        if (resolve(path) === resolve(clone) || !inside(path)) continue;
+        await git(clone, "worktree", "remove", "--force", path).catch(() => undefined);
+      }
+    }
+    dropPath(wtDir);
+    for (const repo of new Set(repos)) dropPath(this.clonePath(repo));
+    // 空になった repos/ と作業場所の置き場所も片付ける(中身が残っていれば消さない)
+    for (const dir of [join(work, "repos"), work]) {
+      try {
+        if (existsSync(dir) && readdirSync(dir).length === 0) rmdirSync(dir);
+      } catch {
+        // 空でも消せなかっただけなら、残してよい
+      }
+    }
+    return { removed, failed };
+  }
+
   async writeDesign(path: string, gitDir: string, files: { file: string; data: string | Buffer }[]): Promise<void> {
     for (const f of files) {
       const to = join(path, f.file);
@@ -350,6 +400,12 @@ export class StaticWorkspace implements Workspace {
   readonly closed: { repo: string; number: number; comment: string }[] = [];
   /** テスト用: 片付けを頼まれたチケット。removeError があれば、消せなかったことにする。 */
   readonly cleaned: { repo: string; ticketNumber: number }[] = [];
+  /** removeProjectFiles に渡されたリポジトリの一覧(呼ばれた順) */
+  readonly removedProjects: string[][] = [];
+  async removeProjectFiles(repos: string[]): Promise<{ removed: string[]; failed: { path: string; error: string }[] }> {
+    this.removedProjects.push(repos);
+    return { removed: [], failed: [] };
+  }
   async removeTicketWorktrees(repo: string, ticketNumber: number): Promise<{ removed: string[]; failed: { path: string; error: string }[] }> {
     this.cleaned.push({ repo, ticketNumber });
     const error = this.opts.removeError?.();

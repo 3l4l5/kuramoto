@@ -5,7 +5,7 @@ export type { DevRulesView, HqView, LeadChatView, MemberChatView, MemberNow, Mem
 let build: string | null = null;
 
 /** ローカルサーバーの API を呼ぶ。書き込みには独自のヘッダーを付ける(他のサイトからの書き込みを防ぐ)。 */
-export async function api<T = unknown>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+export async function api<T = unknown>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method,
     headers: method === "GET" ? {} : { "content-type": "application/json", "x-kuramoto": "1" },
@@ -23,4 +23,5 @@ export async function api<T = unknown>(method: "GET" | "POST", path: string, bod
   return json;
 }
 
+export const del = <T = unknown>(path: string) => api<T>("DELETE", path);
 export const post = <T = unknown>(path: string, body?: unknown) => api<T>("POST", path, body ?? {});

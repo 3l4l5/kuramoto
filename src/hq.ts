@@ -5,6 +5,7 @@ import { iso, systemClock, type Clock } from "./clock.js";
 import { openDb, type Db } from "./db/sqlite.js";
 import { HqDb } from "./db/conn.js";
 import { dialect } from "./db/dialect/index.js";
+import { deleteProjectRows } from "./db/delete-project.js";
 import { HQ_MIGRATIONS } from "./db/schema.js";
 import { Project } from "./project/project.js";
 import { pendingOwnerDecisions } from "./project/workflow.js";
@@ -126,6 +127,20 @@ export class Hq {
     await this.hqdb.update("projects", { name }).where("id", "=", id).execute();
     await p.event("owner", "project_updated", null, { name, repos: input.repos.map((r) => r.fullName) });
     return this.project(id);
+  }
+
+  /**
+   * プロジェクトを消す: プロジェクトの DB の行(project_id が id のもの。別のプロジェクトの行は触らない)と、本部の記録(repos・projects)。
+   * 先に p を開いて渡す。ファイルと GitHub には触れない(それは呼ぶ側)。
+   */
+  async deleteProject(p: Project, id: number): Promise<void> {
+    await this.project(id); // ワークスペースの外のプロジェクトは消さない
+    await deleteProjectRows(p.pdb);
+    await this.hqdb.transaction(async () => {
+      // 本部の repos は project_id で結ぶ(workspace_id は持たない)。projects の行より先に消す
+      await (this.hqdb.k as import("kysely").Kysely<any>).deleteFrom("repos").where("project_id", "=", id).execute();
+      await this.hqdb.deleteFrom("projects").where("id", "=", id).execute();
+    });
   }
 
   async setStatus(id: number, status: ProjectRecord["status"]): Promise<void> {
