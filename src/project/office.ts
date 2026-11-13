@@ -142,7 +142,7 @@ export async function officeView(p: Project) {
   for (const t of done) where[t.number] = "done";
 
   // 路線図(R16・R17): 流れ(停車の並び)が同じ種類は 1 本の路線にまとめ、島(駅)を通す。開発より前の工程は「申し送りだけ」の停車(pre)。
-  // 既定の流れと同じ路線は「既定線」。既定の流れから飛ばした工程(島のあるもの)は skipped に入れ、「(QA を通過)」と添える
+  // 既定の流れと同じ路線は「既定線」。既定の流れから飛ばした工程(島のあるもの)は skipped に入れ、「(QA を省略)」と添える
   const defaultFlow = flowFor(f.flows, null);
   const groups = new Map<string, { flow: WorkRole[]; kinds: { kind: string; label: string }[] }>();
   for (const kind of TICKET_KINDS) {
