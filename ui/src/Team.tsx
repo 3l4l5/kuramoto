@@ -9,7 +9,7 @@ import { LeadChat } from "./LeadChat";
 import { Checkbox, Input, Select, Textarea } from "./ds";
 import { BudgetInput } from "./BudgetInput";
 import { Drawer as DsDrawer } from "./ds";
-import { DevRulesTab, draftDirty, type RuleDraft } from "./DevRules";
+import { DevRulesTab, draftDirty, useDevRules, type RuleDraft } from "./DevRules";
 
 /**
  * チームの編成と方針(docs/design.md 6.3 の引き出し、ADR-0007・0010)。変えるたびに版を残す。
@@ -42,11 +42,13 @@ type PolicyTab = "models" | "rules";
 function PolicyDrawer({ id, team, close }: { id: number; team: TeamView | undefined; close: () => void }) {
   const [tab, setTab] = useState<PolicyTab>("models");
   const [draft, setDraft] = useState<RuleDraft | null>(null);
+  const rules = useDevRules(id);
   return (
     <DsDrawer
       className="drawer drawer--wide"
       label={DRAWER_LABEL.policy}
       title={DRAWER_LABEL.policy}
+      version={tab === "rules" && rules.data ? `v${rules.data.version}` : undefined}
       onClose={close}
       tabs={[
         { key: "models" as const, label: "役割ごとのモデル" },
