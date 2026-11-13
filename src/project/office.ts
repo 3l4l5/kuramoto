@@ -1,4 +1,4 @@
-import { all, get } from "../db/sqlite.js";
+import { inScope, scopeIds } from "../db/count.js";
 import { MODELS, ROLE_LABEL, WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
 import { flowFor, KIND_LABEL as TICKET_KIND_LABEL, TICKET_KINDS } from "../domain/flow.js";
 import { routesAmong } from "../domain/route.js";
@@ -77,10 +77,16 @@ export async function officeView(p: Project) {
   // 先に終わらせるチケットを待っているもの・交通整理がまだのものは、すぐには取れないので「順番待ち」に分ける
   const waiting = new Map<number, number[]>();
   const queued = new Map<number, { number: number; why: string }[]>();
-  for (const m of all<{ ticket_id: number; to_role: string; to_member_id: number | null; kind: string }>(
-    p.db,
-    "SELECT ticket_id, to_role, to_member_id, kind FROM messages WHERE status = 'pending' AND ticket_id IS NOT NULL ORDER BY id",
-  )) {
+  const triagedOf = new Map((await inScope(p.pdb, "tickets").execute()).map((t) => [t.id, t.triaged]));
+  const pending = await p.pdb.k
+    .selectFrom("messages")
+    .select(["ticket_id", "to_role", "to_member_id", "kind"])
+    .where("project_id", "in", scopeIds(p.pdb))
+    .where("status", "=", "pending")
+    .where("ticket_id", "is not", null)
+    .orderBy("id")
+    .execute();
+  for (const m of pending as { ticket_id: number; to_role: string; to_member_id: number | null; kind: string }[]) {
     if (!isWork(m.to_role)) continue;
     const t = tickets.get(m.ticket_id);
     if (!t || t.stage === "done" || t.stage === "dropped") continue;
@@ -88,7 +94,7 @@ export async function officeView(p: Project) {
     const home = m.to_member_id ? p.member(m.to_member_id).unit_id : null;
     const unit = f.units.find((u) => u.id === home && u.roles.includes(m.to_role as WorkRole)) ?? p.unitsForRole(m.to_role as WorkRole, repo)[0];
     if (!unit) continue;
-    const triaged = get<{ triaged: number }>(p.db, "SELECT triaged FROM tickets WHERE id = ?", [t.id])?.triaged ?? 1;
+    const triaged = triagedOf.get(t.id) ?? 1;
     const before = m.kind === "implement" ? await blockers(p, t.id) : [];
     const same = m.kind === "implement" ? await areaWait(p, t.id) : [];
     if (m.kind === "implement" && (!triaged || before.length || same.length)) {
@@ -167,10 +173,13 @@ export async function officeView(p: Project) {
   const routes = routesAmong(f.routes, [...ends.keys()])
     .filter((r) => r.mode === "ask")
     .map((r) => ({ a: ends.get(r.from)!, b: ends.get(r.to)! }));
-  const asks = all<{ unit_id: number | null; to_target: string }>(
-    p.db,
-    "SELECT m.unit_id, q.to_target FROM ticket_questions q JOIN members m ON m.id = q.from_member_id WHERE q.answered_at IS NULL AND q.routed_to_lead = 0 AND m.unit_id IS NOT NULL",
-  ).flatMap((q) => (ends.has(q.to_target) ? [{ a: `unit:${q.unit_id}`, b: ends.get(q.to_target)! }] : []));
+  const openAsks = await inScope(p.pdb, "ticket_questions").where("answered_at", "is", null).where("routed_to_lead", "=", 0).where("from_member_id", "is not", null).execute();
+  const askers = openAsks.length ? await inScope(p.pdb, "members").where("id", "in", [...new Set(openAsks.map((q) => q.from_member_id as number))]).execute() : [];
+  const unitOf = new Map(askers.map((m) => [m.id, m.unit_id]));
+  const asks = openAsks.flatMap((q) => {
+    const unitId = unitOf.get(q.from_member_id as number);
+    return unitId != null && ends.has(q.to_target) ? [{ a: `unit:${unitId}`, b: ends.get(q.to_target)! }] : [];
+  });
 
   // 路線の上に置く札: 開いているチケットの種類(where の居場所と合わせて、その種類の路線の、いまの駅に置く)
   const ticketKinds: Record<number, string> = {};
@@ -191,4 +200,4 @@ export async function officeView(p: Project) {
   };
 }
 
-export type OfficeView = ReturnType<typeof officeView>;
+export type OfficeView = Awaited<ReturnType<typeof officeView>>;

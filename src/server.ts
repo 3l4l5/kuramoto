@@ -413,7 +413,7 @@ export class KuramotoServer {
       await this.open(rec.id);
       // 既存のリポジトリの続きから: GitHub の途中の仕事(開いている PR・Issue)を取ってきてから、担当に現状を読ませる(ADR-0030)
       if (body.mode === "existing") {
-        markExisting(await this.open(rec.id), typeof body.issueLabel === "string" ? body.issueLabel : "kuramoto");
+        await markExisting(await this.open(rec.id), typeof body.issueLabel === "string" ? body.issueLabel : "kuramoto");
         await fetchGithubSnapshot(this.project(rec.id), this.github);
       }
       // リポジトリを登録したら、企画スタジオの企画担当が要件を聞き始める(既存なら現状を読み始める)
@@ -623,7 +623,7 @@ export class KuramotoServer {
     for (const rec of recs) await this.open(rec.id);
     const projects = await Promise.all(recs.map(async (rec) => {
       const p = this.project(rec.id);
-      const m = metrics(p);
+      const m = await metrics(p);
       const stages = STAGES.map((s) => ({ key: s, done: stageDone(p, s) }));
       return {
         id: rec.id,
@@ -756,7 +756,7 @@ export class KuramotoServer {
       // CI のジョブが始まらない(請求・上限など)リポジトリ。merge だけ止まっている
       ciBlocked: ciBlocked(p).map((b) => ({ ...b, action: ciBlockAction(b.notes) })),
       events: p.events(30),
-      metrics: metrics(p),
+      metrics: await metrics(p),
       spentUsd: get<{ s: number | null }>(p.db, "SELECT SUM(cost_usd) AS s FROM runs")?.s ?? 0,
     };
   }
@@ -764,7 +764,7 @@ export class KuramotoServer {
   /** 要件と技術的な設計を Markdown でダウンロードさせる。 */
   /** 画面の画像(お手本・実装・違い)を返す(ADR-0034)。 */
   private async sendDesignImage(id: number, imageId: number, res: ServerResponse): Promise<void> {
-    const row = imageRow(await this.open(id), imageId);
+    const row = await imageRow(await this.open(id), imageId);
     const data = row ? await this.designStoreFor(id).get(row.store_key) : null;
     if (!data) return send(res, 404, { error: "画像がありません" });
     res.writeHead(200, { "content-type": "image/png", "cache-control": "private, max-age=86400" });
@@ -796,7 +796,7 @@ export class KuramotoServer {
       images.set(key, file);
       files.push({ name: file, data: ref.png });
     }
-    files.unshift({ name: "design.md", data: exportDesignDoc(p, name, { images }) });
+    files.unshift({ name: "design.md", data: await exportDesignDoc(p, name, { images }) });
     const body = zip(files);
     res.writeHead(200, {
       "content-type": "application/zip",
@@ -809,7 +809,7 @@ export class KuramotoServer {
   private async sendExport(id: number, res: ServerResponse): Promise<void> {
     const p = await this.open(id);
     const name = this.record(id).name;
-    const md = exportDesignDoc(p, name);
+    const md = await exportDesignDoc(p, name);
     const file = `${name}-設計書.md`;
     res.writeHead(200, {
       "content-type": "text/markdown; charset=utf-8",
@@ -836,9 +836,9 @@ export class KuramotoServer {
 export type HqView = Awaited<ReturnType<KuramotoServer["hqView"]>>;
 export type ProjectView = Awaited<ReturnType<KuramotoServer["projectView"]>>;
 export type StudioView = Awaited<ReturnType<KuramotoServer["studioViewOf"]>>;
-export type TeamView = ReturnType<typeof teamView>;
+export type TeamView = Awaited<ReturnType<typeof teamView>>;
 export type DevRulesView = ReturnType<typeof devRulesView>;
-export type ProductivityView = ReturnType<typeof productivity>;
+export type ProductivityView = Awaited<ReturnType<typeof productivity>>;
 export type OfficeView = Awaited<ReturnType<typeof officeView>> & { running: boolean };
 export type { MemberView, UnitView };
 export type TicketView = Awaited<ReturnType<typeof ticketView>>;

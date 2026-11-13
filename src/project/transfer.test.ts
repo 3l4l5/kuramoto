@@ -86,7 +86,7 @@ describe("設計書からの復元", () => {
     upsertRequirement(p, { name: "探す", acceptance: "並ぶ" });
     agree(p, "req"); // フローの担当が起こされる(まだ描いていない)
     expect(p.setting("plan_started:flow")).toBeTruthy();
-    const data = extractTransfer(exportDesignDoc(p, "途中"));
+    const data = extractTransfer(await exportDesignDoc(p, "途中"));
 
     const q = await hq.openProject((await hq.createProject("途中", data.repos)).id);
     await restoreTransfer(q, data);
@@ -100,7 +100,7 @@ describe("設計書からの復元", () => {
   it("書き出した設計書を読み込むと、企画の中身がそのまま戻る(このマシンだけのセッションは持ち越さない)", async () => {
     const hq = newHq();
     const { p } = await fullProject(hq);
-    const md = exportDesignDoc(p, "予約サイト");
+    const md = await exportDesignDoc(p, "予約サイト");
     // 人が読む本文はそのまま、末尾に復元用のデータが HTML コメントで入る
     expect(md).toContain("# 予約サイト 設計書");
     expect(md).toMatch(/<!-- kuramoto-export v1\n[A-Za-z0-9+/=\n]+-->/);
@@ -115,8 +115,8 @@ describe("設計書からの復元", () => {
     await restoreTransfer(q, data);
 
     // 書き出した中身が同じ(書き出した時刻・会話の「復元しました」・チケットの番号以外)
-    const strip = (t: ReturnType<typeof collectTransfer>) => ({ ...t, exportedAt: "", messages: t.messages.filter((m) => !m.body.includes("復元しました")) });
-    expect(strip(collectTransfer(q, "予約サイト"))).toEqual(strip(collectTransfer(p, "予約サイト")));
+    const strip = (t: Awaited<ReturnType<typeof collectTransfer>>) => ({ ...t, exportedAt: "", messages: t.messages.filter((m) => !m.body.includes("復元しました")) });
+    expect(strip(await collectTransfer(q, "予約サイト"))).toEqual(strip(await collectTransfer(p, "予約サイト")));
 
     // 画面に出す状態も同じ
     const view = async (x: typeof p) => {
@@ -142,7 +142,7 @@ describe("設計書からの復元", () => {
     const doc = await createTicket(p, { title: "書く", kind: "docs" });
     await createTicket(p, { title: "機能", kind: "feature" });
     run(p.db, "UPDATE tickets SET dev_done = 1 WHERE id = ?", [doc.id]);
-    const data = extractTransfer(exportDesignDoc(p, "種類"));
+    const data = extractTransfer(await exportDesignDoc(p, "種類"));
     expect(data.tickets.map((t) => [t.kind, t.devDone])).toEqual([["bugfix", false], ["docs", true], ["feature", false]]);
 
     const q = await hq.openProject((await hq.createProject("種類", data.repos)).id);
@@ -162,7 +162,7 @@ describe("設計書からの復元", () => {
     const rec = await hq.createProject("古い", [{ fullName: "acme/old", role: "API" }]);
     const p = await hq.openProject(rec.id);
     await createTicket(p, { title: "t" });
-    const data = extractTransfer(exportDesignDoc(p, "古い"));
+    const data = extractTransfer(await exportDesignDoc(p, "古い"));
     const stages = ["dev", "review", "sec", "qa", "decision", "merge", "done", "dropped"];
     const old = { ...data, tickets: stages.map((stage) => ({ title: stage, body: "", stage, planRefs: {} })) };
     const r = await hq.openProject((await hq.createProject("古い", data.repos)).id);
@@ -183,6 +183,6 @@ describe("設計書からの復元", () => {
 
     const hq = newHq();
     const { p } = await fullProject(hq);
-    await expect(restoreTransfer(p, extractTransfer(exportDesignDoc(p, "予約サイト")))).rejects.toThrow(/空のプロジェクト/);
+    await expect(restoreTransfer(p, extractTransfer(await exportDesignDoc(p, "予約サイト")))).rejects.toThrow(/空のプロジェクト/);
   });
 });

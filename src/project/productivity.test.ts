@@ -38,7 +38,7 @@ describe("生産性: 流れとメンバー(ADR-0029)", () => {
     const c = await createTicket(p, { title: "C", planRefs: { splitFrom: a.number } });
     await dropTicket(p, c.id, { by: "lead", reason: "いらなくなった" });
 
-    const f = productivity(p).flow;
+    const f = (await productivity(p)).flow;
     expect(f.throughput).toMatchObject({ mergedLast24h: 1, createdLast24h: 3, closedLast24h: 2, netLast24h: 1 });
     expect(f.throughput.activeHours).toBe(1);
     expect(f.throughput.mergedPerActiveHour).toBe(1);
@@ -62,7 +62,7 @@ describe("生産性: 流れとメンバー(ADR-0029)", () => {
     expect(last).toMatchObject({ merged: 1, created: 1, closed: 2, open: 1 });
     expect(f.hourly.reduce((s, x) => s + x.created, 0)).toBe(3);
 
-    const m = productivity(p).members;
+    const m = (await productivity(p)).members;
     expect(m.list).toMatchObject([{ runs: 1, costUsd: 0.5, merged: 0 }]);
     expect(m.roles).toMatchObject([{ role: "dev", runs: 1, median: 30 * 60_000, errorRate: 0 }]);
   });
@@ -82,10 +82,33 @@ describe("生産性: ルール違反(R15)", () => {
     add(fix.id, a.id, "autofixed");
     add(block.id, a.id, "blocked");
 
-    const v = productivity(p);
+    const v = (await productivity(p));
     expect(v.totals.ruleViolations).toEqual({ total: 3, autofixed: 2 });
     const row = (id: number) => v.tickets.find((t) => t.id === id)!;
     expect(row(a.id)).toMatchObject({ violations: 3, autofixed: 2, reviewed: 0, blocked: 1 });
     expect(row(b.id)).toMatchObject({ violations: 0, autofixed: 0 });
+  });
+});
+
+describe("生産性: 同期の書き込みの行(project_id は TRIGGER が埋める)", () => {
+  it("projectId が 0 でないプロジェクトで、p.event と createTicket が書いた直後の動きも、流れの指標に入る", async () => {
+    const clock = new ManualClock(new Date("2026-11-12T00:00:00Z"));
+    const p = new Project(":memory:", clock, 7);
+    p.addRepo("acme/shop", "API");
+    const a = await createTicket(p, { title: "A" });
+    clock.advance(H);
+    p.event("system", "ready_to_merge", a.id, {});
+    clock.advance(H);
+    p.event("team", "merged", a.id, {});
+    run(p.db, "UPDATE tickets SET stage = 'done', done_at = ? WHERE id = ?", [p.now(), a.id]);
+    // 同期の書き込みは project_id を書かないが、開いている間は TEMP TRIGGER がすぐ埋める(0 のまま残らない)
+    expect(p.db.prepare("SELECT COUNT(*) AS n FROM events WHERE type = 'merged' AND project_id = 7").get()).toEqual({ n: 1 });
+
+    const v = await productivity(p);
+    expect(v.flow.mergedTotal).toBe(1);
+    expect(v.flow.throughput.mergedLast24h).toBe(1);
+    expect(v.flow.times.leadMs.n).toBe(1);
+    expect(v.flow.times.mergeWaitMs.n).toBe(1);
+    expect(v.totals.completed).toBe(1);
   });
 });

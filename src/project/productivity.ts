@@ -1,8 +1,14 @@
 import { formationMarks } from "./formation-marks.js";
-import { all, get } from "../db/sqlite.js";
+import { sql, type Selectable } from "kysely";
+import { countFrom, countOf, inScope, scopeIds } from "../db/count.js";
+import type { DecisionsTable, RunsTable, TicketsTable } from "../db/tables.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
 import { violationTotals } from "./dev-rules.js";
 import type { Project } from "./project.js";
+
+type RunRow = Selectable<RunsTable>;
+type TicketRow = Selectable<TicketsTable>;
+type DecisionRow = Selectable<DecisionsTable>;
 
 /**
  * 開発生産性の指標(docs/design.md 8 章)。集計のための表は作らず、記録(runs・events・decisions など)から毎回数える。
@@ -12,36 +18,67 @@ import type { Project } from "./project.js";
 
 export type DayRow = { day: string; tokens: number; costUsd: number; prs: number; merged: number; rework: number; help: number; completed: number };
 
-export function productivity(p: Project) {
-  const one = (sql: string, params: unknown[] = []) => get<{ n: number | null }>(p.db, sql, params as never)?.n ?? 0;
+const tok = (r: { input_tokens: number | null; output_tokens: number | null; cache_read_tokens: number | null }) => (r.input_tokens ?? 0) + (r.output_tokens ?? 0) + (r.cache_read_tokens ?? 0);
+const sum = (xs: (number | null)[]) => xs.reduce<number>((s, x) => s + (x ?? 0), 0);
+const dayOf = (iso: string) => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+/** ticket_id ごとの、いちばん早い時刻(ms)。 */
+const earliest = (rows: { ticket_id: number | null; at: string }[]) => {
+  const m = new Map<number, number>();
+  for (const r of rows) {
+    if (r.ticket_id === null) continue;
+    const t = Date.parse(r.at);
+    const cur = m.get(r.ticket_id);
+    if (cur === undefined || t < cur) m.set(r.ticket_id, t);
+  }
+  return m;
+};
+
+export async function productivity(p: Project) {
+  // 読むものは表ごとに 1 文でまとめて取り、数えるのは JS でやる(記録から毎回計算する)
+  const [runsAll, ticketsAll, prsAll, conflictsAll, decisionsAll, violationsAll, planItems, messagesAll, policiesAll] = await Promise.all([
+    inScope(p.pdb, "runs").execute(),
+    inScope(p.pdb, "tickets").orderBy("number", "desc").execute(),
+    inScope(p.pdb, "pull_requests").execute(),
+    inScope(p.pdb, "conflicts").execute(),
+    inScope(p.pdb, "decisions").where("escalated", "=", 1).execute(),
+    inScope(p.pdb, "rule_violations").execute(),
+    inScope(p.pdb, "plan_open_items").execute(),
+    // 件数がいちばん増える表。使うのは kind と、企画の段階を持つ plan の payload だけ
+    p.pdb.k
+      .selectFrom("messages")
+      .select(["id", "kind", sql<string>`CASE WHEN kind = 'plan' THEN payload ELSE '' END`.as("payload")])
+      .where("project_id", "in", scopeIds(p.pdb))
+      .execute(),
+    inScope(p.pdb, "policies").execute(),
+  ]);
+  const doneRuns = runsAll.filter((r) => r.ended_at !== null);
+  const asks = planItems.filter((o) => o.decided_by === "owner" || (o.answer === null && o.withdrawn === null));
 
   // ---- 合計 ----
-  const usage = get<{ tokens: number | null; input: number | null; output: number | null; cache: number | null; cost: number | null; runs: number }>(
-    p.db,
-    `SELECT SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0) + COALESCE(cache_read_tokens,0)) AS tokens,
-            SUM(input_tokens) AS input, SUM(output_tokens) AS output, SUM(cache_read_tokens) AS cache,
-            SUM(cost_usd) AS cost, COUNT(*) AS runs FROM runs WHERE ended_at IS NOT NULL`,
-  );
-  const planningCost = one("SELECT SUM(cost_usd) AS n FROM runs WHERE ticket_id IS NULL");
-  const completed = one("SELECT COUNT(*) AS n FROM tickets WHERE done_at IS NOT NULL");
-  const changes = one("SELECT COUNT(*) AS n FROM reviews WHERE verdict = 'changes'");
-  const conflicts = one("SELECT COUNT(*) AS n FROM conflicts");
-  const retries = one("SELECT COUNT(*) AS n FROM runs WHERE outcome = 'error'");
-  const decisions = one("SELECT COUNT(*) AS n FROM decisions WHERE escalated = 1");
-  const planAsks = one("SELECT COUNT(*) AS n FROM plan_open_items WHERE decided_by = 'owner' OR (answer IS NULL AND withdrawn IS NULL)");
+  const completed = ticketsAll.filter((t) => t.done_at !== null).length;
+  const [changes, merged] = await Promise.all([countOf(countFrom(p.pdb, "reviews").where("verdict", "=", "changes")), countOf(countFrom(p.pdb, "merges").where("result", "=", "merged"))]);
+  const conflicts = conflictsAll.length;
+  const retries = runsAll.filter((r) => r.outcome === "error").length;
+  const decisions = decisionsAll.length;
+  const planAsks = asks.length;
+  const totalCost = sum(doneRuns.map((r) => r.cost_usd));
+  const totalTokens = sum(doneRuns.map(tok));
   const totals = {
-    tokens: usage?.tokens ?? 0,
-    inputTokens: usage?.input ?? 0,
-    outputTokens: usage?.output ?? 0,
-    cacheReadTokens: usage?.cache ?? 0,
-    costUsd: usage?.cost ?? 0,
-    planningCostUsd: planningCost,
-    runs: usage?.runs ?? 0,
-    prs: one("SELECT COUNT(*) AS n FROM pull_requests"),
-    merged: one("SELECT COUNT(*) AS n FROM merges WHERE result = 'merged'"),
+    tokens: totalTokens,
+    inputTokens: sum(doneRuns.map((r) => r.input_tokens)),
+    outputTokens: sum(doneRuns.map((r) => r.output_tokens)),
+    cacheReadTokens: sum(doneRuns.map((r) => r.cache_read_tokens)),
+    costUsd: totalCost,
+    planningCostUsd: sum(runsAll.filter((r) => r.ticket_id === null).map((r) => r.cost_usd)),
+    runs: doneRuns.length,
+    prs: prsAll.length,
+    merged,
     completed,
-    costPerCompletedUsd: completed ? (usage?.cost ?? 0) / completed : null,
-    tokensPerCompleted: completed ? (usage?.tokens ?? 0) / completed : null,
+    costPerCompletedUsd: completed ? totalCost / completed : null,
+    tokensPerCompleted: completed ? totalTokens / completed : null,
     rework: { total: changes + conflicts + retries, changes, conflicts, retries },
     help: { total: decisions + planAsks, decisions, planAsks },
     // 開発ルールに反した件数と、うち持ち主が自動で直した件数(R15)
@@ -51,47 +88,45 @@ export function productivity(p: Project) {
   // ---- 日ごと(サーバーの時刻の日付で区切る) ----
   const days = new Map<string, DayRow>();
   const day = (iso: string) => {
-    const d = new Date(iso);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const key = dayOf(iso);
     let row = days.get(key);
     if (!row) days.set(key, (row = { day: key, tokens: 0, costUsd: 0, prs: 0, merged: 0, rework: 0, help: 0, completed: 0 }));
     return row;
   };
-  for (const r of all<{ started_at: string; tokens: number; cost: number | null; outcome: string | null }>(
-    p.db,
-    "SELECT started_at, COALESCE(input_tokens,0) + COALESCE(output_tokens,0) + COALESCE(cache_read_tokens,0) AS tokens, cost_usd AS cost, outcome FROM runs WHERE ended_at IS NOT NULL",
-  )) {
+  for (const r of doneRuns) {
     const row = day(r.started_at);
-    row.tokens += r.tokens;
-    row.costUsd += r.cost ?? 0;
+    row.tokens += tok(r);
+    row.costUsd += r.cost_usd ?? 0;
     if (r.outcome === "error") row.rework += 1;
   }
-  // PR は最初に出したときだけ数える(直して出し直した分は手戻りの方で数える)
-  for (const e of all<{ at: string; type: string }>(
-    p.db,
-    `SELECT at, type FROM events WHERE type IN ('changes_requested','conflict','escalated','merged','ready_to_merge')
-     UNION ALL SELECT MIN(at) AS at, 'pr_first' AS type FROM events WHERE type = 'pr_submitted' AND ticket_id IS NOT NULL GROUP BY ticket_id`,
-  )) {
+  const evs = await inScope(p.pdb, "events").where("type", "in", ["changes_requested", "conflict", "escalated", "merged", "ready_to_merge", "pr_submitted"]).execute();
+  for (const e of evs) {
+    if (e.type === "pr_submitted") continue;
     const row = day(e.at);
-    if (e.type === "pr_first") row.prs += 1;
-    else if (e.type === "merged") row.merged += 1;
+    if (e.type === "merged") row.merged += 1;
     else if (e.type === "changes_requested" || e.type === "conflict") row.rework += 1;
     else if (e.type === "escalated") row.help += 1;
     else if (e.type === "ready_to_merge") row.completed += 1;
   }
-  for (const o of all<{ created_at: string }>(p.db, "SELECT created_at FROM plan_open_items WHERE created_at <> '' AND (decided_by = 'owner' OR (answer IS NULL AND withdrawn IS NULL))")) {
-    day(o.created_at).help += 1;
-  }
+  // PR を最初に出した日(チケットごとに 1 回)
+  const firstPr = new Map<number, string>();
+  for (const e of evs) if (e.type === "pr_submitted" && e.ticket_id !== null && (firstPr.get(e.ticket_id) ?? "~") > e.at) firstPr.set(e.ticket_id, e.at);
+  for (const at of firstPr.values()) day(at).prs += 1;
+  for (const o of asks) if (o.created_at !== "") day(o.created_at).help += 1;
   const daily = [...days.values()].sort((a, b) => a.day.localeCompare(b.day));
 
-  // ---- 役割ごと ----
-  const byRole = all<{ role: Role; tokens: number; cost: number | null; runs: number }>(
-    p.db,
-    `SELECT role, SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0) + COALESCE(cache_read_tokens,0)) AS tokens, SUM(cost_usd) AS cost, COUNT(*) AS runs
-     FROM runs WHERE ended_at IS NOT NULL GROUP BY role ORDER BY cost DESC, tokens DESC, role`,
-  ).map((r) => ({ role: r.role, label: ROLE_LABEL[r.role] ?? r.role, tokens: r.tokens, costUsd: r.cost ?? 0, runs: r.runs }));
+  const byRoleMap = new Map<string, { role: Role; tokens: number; cost: number; runs: number }>();
+  for (const r of doneRuns) {
+    const g = byRoleMap.get(r.role) ?? { role: r.role as Role, tokens: 0, cost: 0, runs: 0 };
+    g.tokens += tok(r);
+    g.cost += r.cost_usd ?? 0;
+    g.runs += 1;
+    byRoleMap.set(r.role, g);
+  }
+  const byRole = [...byRoleMap.values()]
+    .sort((a, b) => b.cost - a.cost || b.tokens - a.tokens || a.role.localeCompare(b.role))
+    .map((r) => ({ role: r.role, label: ROLE_LABEL[r.role] ?? r.role, tokens: r.tokens, costUsd: r.cost, runs: r.runs }));
 
-  // ---- 金額の内訳: 何の仕事に・どのモデルに ----
   const PURPOSE: Record<string, string> = {
     implement: "実装",
     fix: "直し(差し戻し・衝突)",
@@ -118,44 +153,72 @@ export function productivity(p: Project) {
     }
     return [...m.values()].sort((a, b) => b.costUsd - a.costUsd || b.tokens - a.tokens || a.key.localeCompare(b.key));
   };
-  const TOKENS = "COALESCE(r.input_tokens,0) + COALESCE(r.output_tokens,0) + COALESCE(r.cache_read_tokens,0)";
+  const msgOf = new Map(messagesAll.map((m) => [m.id, m]));
+  const polOf = new Map(policiesAll.map((x) => [x.id, x.model]));
+  const stageOf = (payload: string) => (JSON.parse(payload || "{}") as { stage?: string }).stage;
   const byPurpose = group(
-    all<{ key: string; tokens: number; cost: number | null; runs: number }>(
-      p.db,
-      `SELECT CASE WHEN m.kind = 'plan' THEN 'plan:' || json_extract(m.payload, '$.stage') ELSE m.kind END AS key,
-         SUM(${TOKENS}) AS tokens, SUM(r.cost_usd) AS cost, COUNT(*) AS runs
-       FROM runs r JOIN messages m ON m.id = r.message_id WHERE r.ended_at IS NOT NULL GROUP BY key`,
-    ),
+    doneRuns.flatMap((r) => {
+      const m = msgOf.get(r.message_id);
+      return m ? [{ key: m.kind === "plan" ? `plan:${stageOf(m.payload)}` : m.kind, tokens: tok(r), cost: r.cost_usd, runs: 1 }] : [];
+    }),
     (k) => PURPOSE[k] ?? k,
   );
   const byModel = group(
-    all<{ key: string; tokens: number; cost: number | null; runs: number }>(
-      p.db,
-      `SELECT COALESCE(r.model, pol.model) AS key, SUM(${TOKENS}) AS tokens, SUM(r.cost_usd) AS cost, COUNT(*) AS runs
-       FROM runs r JOIN policies pol ON pol.id = r.policy_id WHERE r.ended_at IS NOT NULL GROUP BY key`,
-    ),
+    doneRuns.flatMap((r) => {
+      const model = r.model ?? polOf.get(r.policy_id);
+      return model ? [{ key: model, tokens: tok(r), cost: r.cost_usd, runs: 1 }] : [];
+    }),
     (k) => MODELS[k as keyof typeof MODELS]?.label ?? k,
   );
 
-  // ---- チケットごと ----
-  const tickets = all<{ id: number; number: number; title: string; kind: string; stage: string; rounds: number; tokens: number | null; cost: number | null; runs: number; prs: number; conflicts: number; help: number; retries: number; violations: number; autofixed: number; reviewed: number; blocked: number }>(
-    p.db,
-    `SELECT t.id, t.number, t.title, t.kind, t.stage, t.rounds,
-       (SELECT SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0) + COALESCE(cache_read_tokens,0)) FROM runs r WHERE COALESCE(r.ticket_id, r.about_ticket_id) = t.id) AS tokens,
-       (SELECT SUM(cost_usd) FROM runs r WHERE COALESCE(r.ticket_id, r.about_ticket_id) = t.id) AS cost,
-       (SELECT COUNT(*) FROM runs r WHERE r.ticket_id = t.id AND r.ended_at IS NOT NULL) AS runs,
-       (SELECT COUNT(*) FROM pull_requests pr WHERE pr.ticket_id = t.id) AS prs,
-       (SELECT COUNT(*) FROM conflicts c JOIN pull_requests pr ON pr.id = c.pr_id WHERE pr.ticket_id = t.id) AS conflicts,
-       (SELECT COUNT(*) FROM decisions d WHERE d.ticket_id = t.id AND d.escalated = 1) AS help,
-       (SELECT COUNT(*) FROM runs r WHERE r.ticket_id = t.id AND r.outcome = 'error') AS retries,
-       (SELECT COUNT(*) FROM rule_violations v WHERE v.ticket_id = t.id) AS violations,
-       (SELECT COUNT(*) FROM rule_violations v WHERE v.ticket_id = t.id AND v.handled = 'autofixed') AS autofixed,
-       (SELECT COUNT(*) FROM rule_violations v WHERE v.ticket_id = t.id AND v.handled = 'review') AS reviewed,
-       (SELECT COUNT(*) FROM rule_violations v WHERE v.ticket_id = t.id AND v.handled = 'blocked') AS blocked
-     FROM tickets t ORDER BY t.number DESC`,
-  ).map((t) => ({ ...t, tokens: t.tokens ?? 0, costUsd: t.cost ?? 0 }));
+  const by = <T extends { ticket_id: number | null }>(rows: T[]) => {
+    const m = new Map<number, T[]>();
+    for (const r of rows) if (r.ticket_id !== null) m.set(r.ticket_id, [...(m.get(r.ticket_id) ?? []), r]);
+    return m;
+  };
+  const runsBy = by(runsAll);
+  const aboutBy = new Map<number, RunRow[]>();
+  for (const r of runsAll) {
+    const id = r.ticket_id ?? r.about_ticket_id;
+    if (id !== null) aboutBy.set(id, [...(aboutBy.get(id) ?? []), r]);
+  }
+  const prsBy = by(prsAll);
+  const prTicket = new Map(prsAll.map((x) => [x.id, x.ticket_id]));
+  const conflictsBy = new Map<number, number>();
+  for (const c of conflictsAll) {
+    const t = prTicket.get(c.pr_id);
+    if (t != null) conflictsBy.set(t, (conflictsBy.get(t) ?? 0) + 1);
+  }
+  const decisionsBy = by(decisionsAll);
+  const violationsBy = by(violationsAll);
+  const tickets = ticketsAll.map((t) => {
+    const about = aboutBy.get(t.id) ?? [];
+    const mine = runsBy.get(t.id) ?? [];
+    const vs = violationsBy.get(t.id) ?? [];
+    const cost = about.length ? sum(about.map((r) => r.cost_usd)) : null;
+    return {
+      id: t.id,
+      number: t.number,
+      title: t.title,
+      kind: t.kind,
+      stage: t.stage,
+      rounds: t.rounds,
+      tokens: sum(about.map(tok)),
+      cost,
+      runs: mine.filter((r) => r.ended_at !== null).length,
+      prs: (prsBy.get(t.id) ?? []).length,
+      conflicts: conflictsBy.get(t.id) ?? 0,
+      help: (decisionsBy.get(t.id) ?? []).length,
+      retries: mine.filter((r) => r.outcome === "error").length,
+      violations: vs.length,
+      autofixed: vs.filter((v) => v.handled === "autofixed").length,
+      reviewed: vs.filter((v) => v.handled === "review").length,
+      blocked: vs.filter((v) => v.handled === "blocked").length,
+      costUsd: cost ?? 0,
+    };
+  });
 
-  return { totals, daily, byRole, byPurpose, byModel, tickets, flow: flow(p), members: members(p) };
+  return { totals, daily, byRole, byPurpose, byModel, tickets, flow: await flow(p, { runsAll, ticketsAll, decisionsAll }), members: await members(p, runsAll) };
 }
 
 const HOUR = 3_600_000;
@@ -180,23 +243,21 @@ const SOURCE: Record<string, string> = {
  * 流れの指標(ADR-0029)。速さ(時間あたりの merge・リードタイム)・入ってくる数と片付く数・仕掛かり・待ち。
  * 時間ごとの推移は、直近 48 時間を 1 時間ずつ区切る。
  */
-function flow(p: Project) {
+async function flow(p: Project, d: { runsAll: RunRow[]; ticketsAll: TicketRow[]; decisionsAll: DecisionRow[] }) {
   const now = p.clock.now().getTime();
-  const tickets = all<{ id: number; number: number; title: string; stage: string; created_at: string; requirement_item_id: number | null; plan_refs: string; active_ms: number; dropped_at: string | null }>(
-    p.db,
-    "SELECT id, number, title, stage, created_at, requirement_item_id, plan_refs, active_ms, dropped_at FROM tickets",
-  );
-  const firstAt = (type: string) =>
-    new Map(all<{ ticket_id: number; at: string }>(p.db, "SELECT ticket_id, MIN(at) AS at FROM events WHERE type = ? AND ticket_id IS NOT NULL GROUP BY ticket_id", [type]).map((r) => [r.ticket_id, Date.parse(r.at)]));
+  const tickets = [...d.ticketsAll].sort((a, b) => a.id - b.id);
+  const evs = await inScope(p.pdb, "events")
+    .where("type", "in", ["merged", "already_done", "ticket_dropped", "duplicate_dropped", "ready_to_merge", "changes_requested", "conflict", "sent_back", "merge_blocked", "escalated"])
+    .execute();
+  const firstAt = (...types: string[]) => earliest(evs.filter((e) => types.includes(e.type)));
   const merged = firstAt("merged");
   const alreadyDone = firstAt("already_done");
-  const dropEvent = new Map(
-    all<{ ticket_id: number; at: string }>(p.db, "SELECT ticket_id, MIN(at) AS at FROM events WHERE type IN ('ticket_dropped','duplicate_dropped') AND ticket_id IS NOT NULL GROUP BY ticket_id").map((r) => [r.ticket_id, Date.parse(r.at)]),
-  );
-  const firstDev = new Map(all<{ ticket_id: number; at: string }>(p.db, "SELECT ticket_id, MIN(started_at) AS at FROM runs WHERE role = 'dev' AND ticket_id IS NOT NULL GROUP BY ticket_id").map((r) => [r.ticket_id, Date.parse(r.at)]));
+  const dropEvent = firstAt("ticket_dropped", "duplicate_dropped");
+  const firstDev = earliest(d.runsAll.filter((r) => r.role === "dev").map((r) => ({ ticket_id: r.ticket_id, at: r.started_at })));
   const firstReady = firstAt("ready_to_merge");
-  const changed = new Set(all<{ ticket_id: number }>(p.db, "SELECT DISTINCT ticket_id FROM events WHERE type IN ('changes_requested','conflict') AND ticket_id IS NOT NULL").map((r) => r.ticket_id));
-  const sentBack = new Set(all<{ ticket_id: number }>(p.db, "SELECT DISTINCT ticket_id FROM events WHERE type IN ('sent_back','merge_blocked') AND ticket_id IS NOT NULL").map((r) => r.ticket_id));
+  const idsOf = (...types: string[]) => new Set(evs.filter((e) => e.ticket_id !== null && types.includes(e.type)).map((e) => e.ticket_id as number));
+  const changed = idsOf("changes_requested", "conflict");
+  const sentBack = idsOf("sent_back", "merge_blocked");
 
   const sourceOf = (t: (typeof tickets)[number]): keyof typeof SOURCE => {
     const refs = JSON.parse(t.plan_refs || "{}") as { followupOf?: number; splitFrom?: number; baseCi?: string };
@@ -238,7 +299,7 @@ function flow(p: Project) {
       if (Date.parse(t.created_at) < at && (cl === null || cl >= at)) hourly[i]!.open++;
     }
   }
-  for (const r of all<{ started_at: string; cost: number | null }>(p.db, "SELECT started_at, cost_usd AS cost FROM runs WHERE started_at >= ?", [new Date(start).toISOString()])) {
+  for (const r of d.runsAll.filter((x) => x.started_at >= new Date(start).toISOString()).map((x) => ({ started_at: x.started_at, cost: x.cost_usd }))) {
     const i = slot(Date.parse(r.started_at));
     if (i < 0) continue;
     hourly[i]!.runs++;
@@ -256,16 +317,17 @@ function flow(p: Project) {
   }).length;
   // チームが動いていた時間(起動があった 1 時間の枠の数)。止めていた時間を割り算に入れない
   const activeHours = new Set(
-    all<{ started_at: string; ended_at: string | null }>(p.db, "SELECT started_at, ended_at FROM runs WHERE COALESCE(ended_at, started_at) >= ?", [new Date(dayAgo).toISOString()]).flatMap((r) => {
-      const from = Math.max(dayAgo, Date.parse(r.started_at));
-      const to = r.ended_at ? Date.parse(r.ended_at) : now;
-      const hs: number[] = [];
-      for (let h = Math.floor(from / HOUR); h <= Math.floor(to / HOUR); h++) hs.push(h);
-      return hs;
-    }),
+    d.runsAll
+      .filter((r) => (r.ended_at ?? r.started_at) >= new Date(dayAgo).toISOString())
+      .flatMap((r) => {
+        const from = Math.max(dayAgo, Date.parse(r.started_at));
+        const to = r.ended_at ? Date.parse(r.ended_at) : now;
+        const hs: number[] = [];
+        for (let h = Math.floor(from / HOUR); h <= Math.floor(to / HOUR); h++) hs.push(h);
+        return hs;
+      }),
   ).size;
 
-  // ---- かかった時間(merge したチケット) ----
   const done = tickets.filter((t) => merged.has(t.id));
   const lead = done.map((t) => merged.get(t.id)! - Date.parse(t.created_at));
   const cycle = done.filter((t) => firstDev.has(t.id)).map((t) => merged.get(t.id)! - firstDev.get(t.id)!);
@@ -302,11 +364,13 @@ function flow(p: Project) {
     .sort((a, b) => b.total - a.total);
 
   // ---- 責任者を待った時間 ----
-  const waits = all<{ raised: string | null; decided_at: string | null }>(
-    p.db,
-    `SELECT (SELECT MIN(e.at) FROM events e WHERE e.ticket_id = d.ticket_id AND e.type = 'escalated' AND json_extract(e.data, '$.decision_id') = d.id) AS raised, d.decided_at
-     FROM decisions d WHERE d.escalated = 1`,
-  ).filter((w) => w.raised);
+  const escalated = evs.filter((e) => e.type === "escalated" && e.ticket_id !== null);
+  const waits = d.decisionsAll
+    .map((dc) => ({
+      raised: escalated.filter((e) => e.ticket_id === dc.ticket_id && (JSON.parse(e.data || "{}") as { decision_id?: number }).decision_id === dc.id).map((e) => e.at).sort()[0] ?? null,
+      decided_at: dc.decided_at,
+    }))
+    .filter((w) => w.raised);
   const waitMs = waits.map((w) => (w.decided_at ? Date.parse(w.decided_at) : now) - Date.parse(w.raised!));
 
   return {
@@ -332,20 +396,26 @@ function flow(p: Project) {
     sources,
     hourly,
     /** 編成の版が上がった印(効率のグラフの縦線)。何を変えたか(連絡経路 / 流れ / 島)つき */
-    formationMarks: formationMarks(p),
+    formationMarks: await formationMarks(p),
     ownerWait: { count: waits.length, pending: waits.filter((w) => !w.decided_at).length, totalMs: waitMs.reduce((s, x) => s + x, 0), ...spread(waitMs) },
   };
 }
 
 /** メンバーごと: 起動・動いていた時間・稼働率(直近 24 時間、チームが動いていた時間に対して)・金額・merge まで持っていったチケット。 */
-function members(p: Project) {
+async function members(p: Project, runs: RunRow[]) {
   const now = p.clock.now().getTime();
   const dayAgo = now - 24 * HOUR;
-  const rows = all<{ id: number; name: string; unit: string | null; left_at: string | null }>(p.db, "SELECT m.id, m.name, u.name AS unit, m.left_at FROM members m LEFT JOIN units u ON u.id = m.unit_id ORDER BY m.id");
-  const runs = all<{ member_id: number; role: string; started_at: string; ended_at: string | null; cost: number | null; outcome: string | null }>(
-    p.db,
-    "SELECT member_id, role, started_at, ended_at, cost_usd AS cost, outcome FROM runs",
-  );
+  const [memberRows, unitRows, ownedTickets, mergedEvents] = await Promise.all([
+    inScope(p.pdb, "members").orderBy("id").execute(),
+    inScope(p.pdb, "units").execute(),
+    inScope(p.pdb, "tickets").where("owner_member_id", "is not", null).execute(),
+    inScope(p.pdb, "events").where("type", "=", "merged").execute(),
+  ]);
+  const unitName = new Map(unitRows.map((u) => [u.id, u.name]));
+  const rows = memberRows.map((m) => ({ id: m.id, name: m.name, unit: m.unit_id === null ? null : (unitName.get(m.unit_id) ?? null), left_at: m.left_at }));
+  const mergedTickets = new Set(mergedEvents.map((e) => e.ticket_id));
+  const mergedBy = new Map<number, number>();
+  for (const t of ownedTickets) if (mergedTickets.has(t.id)) mergedBy.set(t.owner_member_id!, (mergedBy.get(t.owner_member_id!) ?? 0) + 1);
   const span = (r: (typeof runs)[number], from = 0) => Math.max(0, (r.ended_at ? Date.parse(r.ended_at) : now) - Math.max(from, Date.parse(r.started_at)));
   const activeMs =
     new Set(
@@ -357,9 +427,6 @@ function members(p: Project) {
           return hs;
         }),
     ).size * HOUR;
-  const mergedBy = new Map(
-    all<{ owner: number; n: number }>(p.db, "SELECT t.owner_member_id AS owner, COUNT(*) AS n FROM tickets t WHERE t.owner_member_id IS NOT NULL AND EXISTS (SELECT 1 FROM events e WHERE e.ticket_id = t.id AND e.type = 'merged') GROUP BY t.owner_member_id").map((r) => [r.owner, r.n]),
-  );
   const list = rows
     .map((m) => {
       const mine = runs.filter((r) => r.member_id === m.id);
@@ -375,7 +442,7 @@ function members(p: Project) {
         runs: mine.length,
         busyMs: mine.reduce((s, r) => s + span(r), 0),
         utilization: activeMs ? Math.min(1, busy24 / activeMs) : null,
-        costUsd: mine.reduce((s, r) => s + (r.cost ?? 0), 0),
+        costUsd: mine.reduce((s, r) => s + (r.cost_usd ?? 0), 0),
         errors: mine.filter((r) => r.outcome === "error").length,
         merged: mergedBy.get(m.id) ?? 0,
       };
@@ -391,7 +458,7 @@ function members(p: Project) {
   return { list, roles: roles.sort((a, b) => b.runs - a.runs) };
 }
 
-export type Productivity = ReturnType<typeof productivity>;
+export type Productivity = Awaited<ReturnType<typeof productivity>>;
 
 /** 日(ローカルの日付)ごとのフロー効率。merge した日に集める。 */
 export function efficiencyDaily(rows: { at: number; active: number; lead: number }[]): { day: string; value: number }[] {

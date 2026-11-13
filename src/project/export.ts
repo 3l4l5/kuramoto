@@ -24,7 +24,7 @@ import {
  * 企画スタジオで決めた要件と技術的な設計を、1 つの Markdown にまとめる。
  * 図は Mermaid で書くので、GitHub などではそのまま図として表示される(ADR-0014 の docs/ に置ける形)。
  */
-export function exportDesignDoc(p: Project, projectName: string, opts: { images?: Map<string, string> } = {}): string {
+export async function exportDesignDoc(p: Project, projectName: string, opts: { images?: Map<string, string> } = {}): Promise<string> {
   const out: string[] = [];
   const h = (level: number, text: string) => out.push("", `${"#".repeat(level)} ${text}`, "");
   const list = (xs: string[]) => xs.forEach((x) => out.push(`- ${x}`));
@@ -189,7 +189,7 @@ export function exportDesignDoc(p: Project, projectName: string, opts: { images?
     out.push("| 番号 | 内容 | 状態 |", "|---|---|---|");
     for (const t of tickets) out.push(`| #${t.number} | ${cell(t.title)} | ${t.stage} |`);
   }
-  return out.join("\n") + "\n" + embedTransfer(collectTransfer(p, projectName));
+  return out.join("\n") + "\n" + embedTransfer(await collectTransfer(p, projectName));
 }
 
 const GROUP: Record<string, string> = { color: "色", font: "文字", space: "余白", radius: "角丸", shadow: "影", other: "その他" };

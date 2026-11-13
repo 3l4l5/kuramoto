@@ -1,7 +1,7 @@
 import { openViolations, violationsOf } from "./dev-rules.js";
 import { latestComparisons } from "./design-visual.js";
 import { screens } from "./planning.js";
-import { all, get } from "../db/sqlite.js";
+import { inScope } from "../db/count.js";
 import { KIND_LABEL as TICKET_KIND_LABEL } from "../domain/flow.js";
 import { isPreDev, pipelineOf } from "../domain/formation.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
@@ -50,35 +50,46 @@ export type TimelineItem =
 export async function ticketView(p: Project, ticketId: number) {
   const t = p.ticket(ticketId);
   const refs = JSON.parse(t.plan_refs || "{}") as { requirement?: string; screens?: string[]; design?: string[]; repo?: string };
-  const requirement = get<{ code: string; name: string; acceptance: string }>(
-    p.db,
-    "SELECT ri.code, ri.name, ri.acceptance FROM requirement_items ri JOIN tickets t ON t.requirement_item_id = ri.id WHERE t.id = ?",
-    [ticketId],
-  );
-  const prs = all<{ number: number; full_name: string; ci: string | null; mergeable: string | null }>(
-    p.db,
-    "SELECT pr.number, r.full_name, pr.ci, pr.mergeable FROM pull_requests pr JOIN repos r ON r.id = pr.repo_id WHERE pr.ticket_id = ?",
-    [ticketId],
-  );
+  // 読むものは表ごとに 1 文で取り、結び付けは JS でやる(IN でまとめる)
+  const [row, prRows, runRows, evs, reviewRows, decisionRows, aboutRuns] = await Promise.all([
+    inScope(p.pdb, "tickets").where("id", "=", ticketId).executeTakeFirst(),
+    inScope(p.pdb, "pull_requests").where("ticket_id", "=", ticketId).execute(),
+    inScope(p.pdb, "runs").where("ticket_id", "=", ticketId).orderBy("id").execute(),
+    inScope(p.pdb, "events").where("ticket_id", "=", ticketId).orderBy("id").execute(),
+    inScope(p.pdb, "reviews").where("ticket_id", "=", ticketId).orderBy("id").execute(),
+    inScope(p.pdb, "decisions").where("ticket_id", "=", ticketId).orderBy("id").execute(),
+    inScope(p.pdb, "runs").where("ticket_id", "is", null).where("about_ticket_id", "=", ticketId).execute(),
+  ]);
+  const prIds = prRows.map((r) => r.id);
+  const [requirementRow, repoRows, messageRows, policyRows, conflictRows, mergeRows] = await Promise.all([
+    row?.requirement_item_id == null ? undefined : inScope(p.pdb, "requirement_items").where("id", "=", row.requirement_item_id).executeTakeFirst(),
+    prRows.length ? inScope(p.pdb, "repos").execute() : [],
+    runRows.length ? inScope(p.pdb, "messages").where("id", "in", runRows.map((r) => r.message_id)).execute() : [],
+    runRows.length ? inScope(p.pdb, "policies").where("id", "in", runRows.map((r) => r.policy_id)).execute() : [],
+    prIds.length ? inScope(p.pdb, "conflicts").where("pr_id", "in", prIds).orderBy("id").execute() : [],
+    prIds.length ? inScope(p.pdb, "merges").where("pr_id", "in", prIds).orderBy("id").execute() : [],
+  ]);
+  const requirement = requirementRow ? { code: requirementRow.code, name: requirementRow.name, acceptance: requirementRow.acceptance } : undefined;
+  const repoName = new Map(repoRows.map((r) => [r.id, r.full_name]));
+  const prs = prRows.map((pr) => ({ number: pr.number, full_name: repoName.get(pr.repo_id) ?? "", ci: pr.ci, mergeable: pr.mergeable }));
+  const causeIds = conflictRows.map((c) => c.cause_pr_id).filter((x): x is number => x !== null);
+  const causePrs = causeIds.length ? await inScope(p.pdb, "pull_requests").where("id", "in", causeIds).execute() : [];
+  const causeRepos = causePrs.length ? await inScope(p.pdb, "repos").execute() : [];
+  const tok = (r: { input_tokens: number | null; output_tokens: number | null; cache_read_tokens: number | null }) => (r.input_tokens ?? 0) + (r.output_tokens ?? 0) + (r.cache_read_tokens ?? 0);
   const name = (memberId: number) => p.member(memberId).name;
   const items: TimelineItem[] = [{ type: "created", at: t.created_at, title: t.title }];
   // メモは、同じ時刻の起動より先に並べる(メモを書いた直後に担当が起こされることがあるため)
   for (const n of p.notes(ticketId)) items.push({ type: "note", at: n.at, who: n.who === "lead" ? p.fixedMember("lead").name + "(リーダー)" : "あなた", body: n.body });
 
   for (const h of p.handoffs(ticketId)) items.push({ type: "handoff", at: h.at, role: ROLE_LABEL[h.role] ?? h.role, body: h.body });
-  for (const e of all<{ at: string; actor: string; data: string }>(p.db, "SELECT at, actor, data FROM events WHERE ticket_id = ? AND type = 'kind_changed' ORDER BY id", [ticketId])) {
+  for (const e of evs.filter((e) => e.type === "kind_changed")) {
     const d = JSON.parse(e.data) as { from: string; to: string };
     items.push({ type: "kind_change", at: e.at, who: e.actor === "owner" ? "あなた" : e.actor, from: TICKET_KIND_LABEL[d.from as keyof typeof TICKET_KIND_LABEL] ?? d.from, to: TICKET_KIND_LABEL[d.to as keyof typeof TICKET_KIND_LABEL] ?? d.to });
   }
 
-  for (const r of all<{ id: number; member_id: number; role: string; kind: string; model: string | null; policy_model: string; cost: number | null; tokens: number; started_at: string; ended_at: string | null; outcome: string | null; summary: string | null; error: string | null }>(
-    p.db,
-    `SELECT r.id, r.member_id, r.role, m.kind, r.model, pol.model AS policy_model, r.cost_usd AS cost,
-       COALESCE(r.input_tokens,0) + COALESCE(r.output_tokens,0) + COALESCE(r.cache_read_tokens,0) AS tokens,
-       r.started_at, r.ended_at, r.outcome, r.summary, r.error
-     FROM runs r JOIN messages m ON m.id = r.message_id JOIN policies pol ON pol.id = r.policy_id WHERE r.ticket_id = ? ORDER BY r.id`,
-    [ticketId],
-  )) {
+  const kindOf = new Map(messageRows.map((m) => [m.id, m.kind]));
+  const policyModel = new Map(policyRows.map((x) => [x.id, x.model]));
+  for (const r of runRows.map((x) => ({ ...x, kind: kindOf.get(x.message_id) ?? "", policy_model: policyModel.get(x.policy_id) ?? "", cost: x.cost_usd, tokens: tok(x) })).filter((x) => kindOf.has(x.message_id) && policyModel.has(x.policy_id))) {
     const model = r.model ?? r.policy_model;
     items.push({
       type: "run",
@@ -96,15 +107,12 @@ export async function ticketView(p: Project, ticketId: number) {
       error: r.error,
     });
   }
-  for (const e of all<{ at: string; actor: string; data: string }>(p.db, "SELECT at, actor, data FROM events WHERE ticket_id = ? AND type = 'pr_submitted' ORDER BY id", [ticketId])) {
+  for (const e of evs.filter((e) => e.type === "pr_submitted")) {
     const d = JSON.parse(e.data) as { number: number; repo: string };
     items.push({ type: "pr", at: e.at, who: e.actor, number: d.number, repo: d.repo });
   }
-  for (const rv of all<{ id: number; role: string; round: number; verdict: string; created_at: string; member_id: number }>(
-    p.db,
-    "SELECT rv.id, rv.role, rv.round, rv.verdict, rv.created_at, r.member_id FROM reviews rv JOIN runs r ON r.id = rv.run_id WHERE rv.ticket_id = ? ORDER BY rv.id",
-    [ticketId],
-  )) {
+  const runMember = new Map(runRows.map((r) => [r.id, r.member_id]));
+  for (const rv of reviewRows.filter((x) => runMember.has(x.run_id)).map((x) => ({ ...x, member_id: runMember.get(x.run_id)! }))) {
     items.push({
       type: "review",
       at: rv.created_at,
@@ -115,12 +123,8 @@ export async function ticketView(p: Project, ticketId: number) {
       findings: await threads(p, ticketId, { reviewId: rv.id }),
     });
   }
-  for (const d of all<{ id: number; question: string; options: string; recommended: number; why: string; escalated: number; choice: number | null; decided_by: string | null; decided_at: string | null }>(
-    p.db,
-    "SELECT * FROM decisions WHERE ticket_id = ? ORDER BY id",
-    [ticketId],
-  )) {
-    const raised = get<{ at: string }>(p.db, "SELECT at FROM events WHERE ticket_id = ? AND type IN ('decision_raised','escalated') AND json_extract(data, '$.decision_id') = ? ORDER BY id LIMIT 1", [ticketId, d.id]);
+  for (const d of decisionRows) {
+    const raised = evs.find((e) => (e.type === "decision_raised" || e.type === "escalated") && (JSON.parse(e.data || "{}") as { decision_id?: number }).decision_id === d.id);
     const options = (JSON.parse(d.options) as DecisionOption[]).map((o) => o.label);
     items.push({
       type: "decision",
@@ -135,15 +139,11 @@ export async function ticketView(p: Project, ticketId: number) {
       decidedAt: d.decided_at,
     });
   }
-  for (const c of all<{ detected_at: string; cause: string | null; resolution: string | null }>(
-    p.db,
-    `SELECT c.detected_at, cr.full_name || '#' || cp.number AS cause, c.resolution FROM conflicts c JOIN pull_requests pr ON pr.id = c.pr_id
-     LEFT JOIN pull_requests cp ON cp.id = c.cause_pr_id LEFT JOIN repos cr ON cr.id = cp.repo_id WHERE pr.ticket_id = ? ORDER BY c.id`,
-    [ticketId],
-  )) {
+  const causePr = new Map(causePrs.map((x) => [x.id, `${causeRepos.find((r) => r.id === x.repo_id)?.full_name ?? ""}#${x.number}`]));
+  for (const c of conflictRows.map((x) => ({ detected_at: x.detected_at, cause: x.cause_pr_id === null ? null : (causePr.get(x.cause_pr_id) ?? null), resolution: x.resolution }))) {
     items.push({ type: "conflict", at: c.detected_at, cause: c.cause, resolution: c.resolution });
   }
-  for (const m of all<{ created_at: string; result: string }>(p.db, "SELECT m.created_at, m.result FROM merges m JOIN pull_requests pr ON pr.id = m.pr_id WHERE pr.ticket_id = ? ORDER BY m.id", [ticketId])) {
+  for (const m of mergeRows) {
     items.push({ type: "merge", at: m.created_at, result: m.result });
   }
 
@@ -168,11 +168,8 @@ export async function ticketView(p: Project, ticketId: number) {
 
   // 同じ時刻なら、記録した順(配列の順)を保つ
   const timeline = items.map((x, i) => [x, i] as const).sort((a, b) => a[0].at.localeCompare(b[0].at) || a[1] - b[1]).map(([x]) => x);
-  const cost = get<{ cost: number | null; tokens: number | null }>(
-    p.db,
-    "SELECT SUM(cost_usd) AS cost, SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0) + COALESCE(cache_read_tokens,0)) AS tokens FROM runs WHERE COALESCE(ticket_id, about_ticket_id) = ?",
-    [ticketId],
-  );
+  const costRuns = [...runRows, ...aboutRuns];
+  const cost = { cost: costRuns.length ? costRuns.reduce((x, r) => x + (r.cost_usd ?? 0), 0) : null, tokens: costRuns.length ? costRuns.reduce((x, r) => x + tok(r), 0) : null };
   return {
     id: t.id,
     number: t.number,
@@ -180,7 +177,7 @@ export async function ticketView(p: Project, ticketId: number) {
     waitFor: await blockers(p, t.id),
     waitMerge: await mergeBlockers(p, t.id),
     unblocks: (await mergeUnblocks(p)).get(t.id) ?? null,
-    triaged: !!get<{ triaged: number }>(p.db, "SELECT triaged FROM tickets WHERE id = ?", [t.id])?.triaged,
+    triaged: !!row?.triaged,
     jiraKey: t.jira_key,
     title: t.title,
     body: t.body,
@@ -207,7 +204,7 @@ export async function ticketView(p: Project, ticketId: number) {
     // 「直すまで進めない」ルールに反して止まっているか(ボードの赤い札)
     ruleBlocked: openViolations(p, t.id, "blocked").map((v) => v.name),
     // 画面ごとの最新の見比べ(お手本・実装・違いの画像と、違いの割合。ADR-0034)
-    designCompare: latestComparisons(p, t.id).map((c) => ({ ...c, name: screens(p).get(c.screen)?.name ?? c.screen })),
+    designCompare: (await latestComparisons(p, t.id)).map((c) => ({ ...c, name: screens(p).get(c.screen)?.name ?? c.screen })),
     timeline,
   };
 }

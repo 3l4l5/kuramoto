@@ -48,7 +48,7 @@ describe("設計書のエクスポート", () => {
     });
     putArtifact(p, "model", "data", "main", { tables: [{ name: "reservations", change: "new", columns: ["id", "slot_id"], note: "", reversible: false }] });
 
-    const md = exportDesignDoc(p, "予約サイト");
+    const md = await exportDesignDoc(p, "予約サイト");
     expect(md).toContain("# 予約サイト 設計書");
     expect(md).toContain("| 要件 | v1 | 下書き |");
     expect(md).toContain("| インフラ | v1 | 省略 |");

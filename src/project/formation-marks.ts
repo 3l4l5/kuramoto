@@ -1,6 +1,6 @@
-import { all } from "../db/sqlite.js";
 import { parseFlows } from "../domain/flow.js";
 import { parseRoutes } from "../domain/route.js";
+import { inScope, scopeIds } from "../db/count.js";
 import type { Project } from "./project.js";
 
 /** 版が上がったとき、何を変えたか。routes: 連絡経路 / flows: 流れ / units: 島(取り方・島の設定)。 */
@@ -20,12 +20,19 @@ export type FormationMark = {
  * 集計の表は作らず、版ごとに保存してある島・流れ・経路の差から毎回拾う。最初の版は「変えた」ものではないので印にしない。
  * 何も変わっていない保存(同じ内容で保存し直した)は印にしない。
  */
-export function formationMarks(p: Project): FormationMark[] {
-  const versions = all<{ id: number; version: number; pull: string; flows: string; routes: string; created_at: string }>(p.db, "SELECT id, version, pull, flows, routes, created_at FROM formations ORDER BY version");
+export async function formationMarks(p: Project): Promise<FormationMark[]> {
+  const versions = await inScope(p.pdb, "formations").orderBy("version").execute();
+  // 島は、版ごとに引かず 1 文でまとめて取る
+  const units = versions.length ? await inScope(p.pdb, "units").where("formation_id", "in", versions.map((f) => f.id)).orderBy("id").execute() : [];
   const snapshot = (f: (typeof versions)[number]) => ({
     routes: JSON.stringify(parseRoutes(f.routes)),
     flows: JSON.stringify(sortKeys(parseFlows(f.flows))),
-    units: JSON.stringify([f.pull, ...all<Record<string, unknown>>(p.db, "SELECT name, roles, max_members, summon_at, idle_sec, repos, model, effort, focus, budget_usd FROM units WHERE formation_id = ? ORDER BY id", [f.id])]),
+    units: JSON.stringify([
+      f.pull,
+      ...units
+        .filter((u) => u.formation_id === f.id)
+        .map((u) => ({ name: u.name, roles: u.roles, max_members: u.max_members, summon_at: u.summon_at, idle_sec: u.idle_sec, repos: u.repos, model: u.model, effort: u.effort, focus: u.focus, budget_usd: u.budget_usd })),
+    ]),
   });
   const marks: FormationMark[] = [];
   for (let i = 1; i < versions.length; i++) {

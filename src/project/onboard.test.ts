@@ -23,7 +23,7 @@ const gh = {
 async function setup() {
   const p = new Project(":memory:", new ManualClock());
   p.addRepo(REPO, "API");
-  markExisting(p, "kuramoto");
+  await markExisting(p, "kuramoto");
   await fetchGithubSnapshot(p, gh);
   return p;
 }

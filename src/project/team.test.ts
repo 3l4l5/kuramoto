@@ -54,7 +54,7 @@ describe("チームの編成と方針", () => {
     expect(() => savePolicyInput(p, "owner", { model: "claude-opus-5-5", effort: "high", focus: "" })).toThrow(/変えられません/);
     expect(() => saveFormationInput(p, { pull: "down", units: [{ name: "島", roles: ["review"], maxMembers: 3, summonAt: 2, idleSec: 300 }] })).toThrow(/開発の役割は必須/);
     expect(() => saveFormationInput(p, { pull: "down", units: [{ name: "", roles: ["dev"], maxMembers: 3, summonAt: 2, idleSec: 300 }] })).toThrow(/島の名前/);
-    expect(teamView(p).formation.current).toBe(1);
+    expect((await teamView(p)).formation.current).toBe(1);
   });
 
 });
@@ -78,7 +78,7 @@ describe("開発生産性の指標", () => {
     await d.drain();
     answerOpenItem(p, addOpenItem(p, "req", { question: "q", options: ["a", "b"], recommended: 0, why: "", reversible: true }), "a");
 
-    const m = productivity(p);
+    const m = (await productivity(p));
     // 実装 → 差し戻し → 直し → 通る の 4 回
     expect(m.totals).toMatchObject({ runs: 4, tokens: 640, costUsd: 2, prs: 1, completed: 1, costPerCompletedUsd: 2 });
     expect(m.totals.rework).toEqual({ total: 1, changes: 1, conflicts: 0, retries: 0 });
@@ -200,7 +200,7 @@ describe("島を増やし、同じ役割を複数の島に持たせる(ADR-0019)
     const b = await createTicket(p, { title: "b" });
     await d.drain({ concurrency: 2 });
     expect(new Set([devUnitOf(p, a.id), devUnitOf(p, b.id)])).toEqual(new Set(["開発 A", "開発 B"]));
-    expect(teamView(p).formation.versions.at(-1)!.units.map((u) => u.name)).toEqual(["開発 A", "開発 B", "レビュー"]);
+    expect((await teamView(p)).formation.versions.at(-1)!.units.map((u) => u.name)).toEqual(["開発 A", "開発 B", "レビュー"]);
   });
 });
 
@@ -225,7 +225,7 @@ describe("島ごとのモデル", () => {
       { role: "dev", model: "claude-haiku-5-5", effort: "low" },
       { role: "review", model: "claude-opus-5-5", effort: "high" },
     ]);
-    expect(productivity(p).byModel.map((m) => m.label).sort()).toEqual(["Haiku 5.5", "Opus 5.5"]);
+    expect((await productivity(p)).byModel.map((m) => m.label).sort()).toEqual(["Haiku 5.5", "Opus 5.5"]);
     expect(() => saveFormationInput(p, { pull: "down", units: [{ name: "x", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300, model: "gpt-5" }] })).toThrow(/知らないモデル/);
   });
 });

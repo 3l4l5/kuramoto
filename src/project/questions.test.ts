@@ -61,7 +61,7 @@ describe("連絡経路の保存(R16)", () => {
     expect(p.currentFormation().flows).toEqual({ default: ["dev", "review"] });
     // 向きは持たない。「連絡しない」は持たず、端は名前の順にそろう
     expect(p.currentFormation().routes).toEqual([{ from: "レビュー", to: "開発", mode: "ask" }]);
-    expect(teamView(p).formation.versions.slice(-2).map((v) => [v.version, v.routes.length])).toEqual([[v1.version, 0], [v2.version, 1]]);
+    expect((await teamView(p)).formation.versions.slice(-2).map((v) => [v.version, v.routes.length])).toEqual([[v1.version, 0], [v2.version, 1]]);
   });
 
   it("経路を渡さない保存は、前の版の経路を引き継ぐ。無くなった島の経路は外す", async () => {
@@ -96,14 +96,14 @@ describe("連絡経路の保存(R16)", () => {
     p.saveFormation({ pull: "down", units: UNITS, routes: ROUTES }); // b+2: 何も変わらない保存は印にしない
     p.saveFormation({ pull: "down", units: UNITS, flows: { default: ["dev", "qa"] } }); // b+3: 流れ(経路は引き継ぎ)
     p.saveFormation({ pull: "down", units: [unit("開発", ["dev"], 3), ...UNITS.slice(1)], flows: { default: ["dev", "qa"] }, routes: [] }); // b+4: 島と経路
-    const marks = formationMarks(p).filter((m) => m.version > b);
+    const marks = (await formationMarks(p)).filter((m) => m.version > b);
     expect(marks.map((m) => [m.version - b, m.changed])).toEqual([
       [1, ["routes"]],
       [3, ["flows"]],
       [4, ["routes", "units"]],
     ]);
     expect(marks[0]).toMatchObject({ day: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
-    expect(productivity(p).flow.formationMarks.filter((m) => m.version > b).map((m) => m.version - b)).toEqual([1, 3, 4]);
+    expect((await productivity(p)).flow.formationMarks.filter((m) => m.version > b).map((m) => m.version - b)).toEqual([1, 3, 4]);
   });
 });
 

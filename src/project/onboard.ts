@@ -1,5 +1,5 @@
 import { iso } from "../clock.js";
-import { get, run, tx } from "../db/sqlite.js";
+import { inScope, scopeIds } from "../db/count.js";
 import { pipelineOf } from "../domain/formation.js";
 import type { GitHub } from "../github/github.js";
 import type { Project, TicketRow } from "./project.js";
@@ -33,10 +33,10 @@ export function snapshotOf(p: Project): GithubSnapshot | null {
 }
 
 /** 既存のリポジトリの続きから始める準備。画面の試作は既にある画面と重なるので、既定では省く(あとで戻せる)。 */
-export function markExisting(p: Project, label: string): void {
+export async function markExisting(p: Project, label: string): Promise<void> {
   p.setSetting("origin", "existing");
   p.setSetting("issue_label", label.trim() || "*");
-  run(p.db, "UPDATE plan_stages SET mode = 'skip' WHERE stage = 'screen'");
+  await p.pdb.k.updateTable("plan_stages").set({ mode: "skip" }).where("project_id", "in", scopeIds(p.pdb)).where("stage", "=", "screen").execute();
 }
 
 /** 開いている PR と Issue を GitHub から取ってきて控える。取れなかったリポジトリは理由を残し、続ける。 */
@@ -127,7 +127,7 @@ export async function adoptPull(p: Project, a: { repo: string; number: number; t
   if (!pr) return `PR #${a.number}(${a.repo})は、取ってきた開いている PR の中にありません`;
   const repo = p.repos().find((r) => r.full_name === a.repo);
   if (!repo) return `登録されていないリポジトリです: ${a.repo}`;
-  if (get(p.db, "SELECT 1 AS x FROM pull_requests WHERE repo_id = ? AND number = ?", [repo.id, a.number])) return `PR #${a.number} はもう引き継いでいます`;
+  if (await inScope(p.pdb, "pull_requests").where("repo_id", "=", repo.id).where("number", "=", a.number).executeTakeFirst()) return `PR #${a.number} はもう引き継いでいます`;
   return p.pdb.transaction(async () => {
     const t = p.addTicket({
       title: a.title?.trim() || pr.title,
@@ -135,10 +135,9 @@ export async function adoptPull(p: Project, a: { repo: string; number: number; t
       ...(a.requirementItemId ? { requirementItemId: a.requirementItemId } : {}),
       planRefs: { fromPlan: true, repo: a.repo, adoptedPr: pr.number },
     });
-    run(p.db, "INSERT INTO pull_requests (project_id, ticket_id, repo_id, number, head) VALUES (?, ?, ?, ?, ?)", [p.projectId, t.id, repo.id, pr.number, pr.head]);
-    run(p.db, "UPDATE tickets SET triaged = 1 WHERE id = ?", [t.id]);
-    // 引き継いだ PR は開発が済んでいる。開発より前の工程には戻らない
-    run(p.db, "UPDATE tickets SET dev_done = 1 WHERE id = ?", [t.id]);
+    await p.pdb.insert("pull_requests", { ticket_id: t.id, repo_id: repo.id, number: pr.number, head: pr.head }).execute();
+    // 引き継いだ PR は開発が済んでいる(開発より前の工程には戻らない)ので、交通整理も済み。addTicket の行はまだ project_id が 0 かもしれない
+    await p.pdb.k.updateTable("tickets").set({ triaged: 1, dev_done: 1 }).where("project_id", "in", scopeIds(p.pdb)).where("id", "=", t.id).execute();
     const first = pipelineOf(p.currentFormation(), p.ticket(t.id).kind, { devDone: true }).find((r) => r !== "dev");
     await enterStage(p, p.ticket(t.id), first ?? "merge");
     p.setSetting("onboard_adopted_pulls", JSON.stringify([...new Set([...adoptedPulls(p), `${a.repo}#${a.number}`])]));

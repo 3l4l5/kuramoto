@@ -26,3 +26,10 @@ ADR-0039(1/2)の続き。残りの src/project・server を async + Kysely に�
   - 変えないもの: `sessions(member_id, ticket_id, repo_id)`・`pull_requests(ticket_id, repo_id)`・`ticket_deps`・`ticket_areas` の主キー・`one_run_per_ticket(ticket_id)` は id だけでできていて、id は全プロジェクトで重ならないので project_id は要らない(MySQL も同じ)。
   - SQLite は表の UNIQUE・主キーを外せないので、対象の表を作り直す(行・id・列の並びは同じ。外部キーの検査はトランザクションの最後まで遅らせる)。
   - `ON CONFLICT(key)` のような、前の UNIQUE の列だけを指す書き方は通らなくなる。`Project.setSetting` は `ON CONFLICT(project_id, key)` に替えた。ほかのクエリは、A〜C の async 化で ProjectDb を通るときに project_id を書く。
+
+## C(#44)の途中経過
+
+- 移した: metrics・productivity・formation-marks・transfer(と export の async 化)・design・planning-agent・design-visual・ticket(ticketView)・office・people・team・onboard。
+- **読むときの project_id は「自分の id と 0」(`src/db/count.ts` の `inScope` / `countFrom`)**。Project 本体・workflow・planning などの同期の INSERT は project_id を書かず、開き直すまで 0 のまま。`= 自分の id` だけで読むと、開いている間の画面から、その間に入った行(チケット・出来事・設定など)が欠ける。同期の書き込みが無くなったら(D)、`= 自分の id` に戻す。
+- dev_rule_versions は、版の番号をプロジェクトごとの MAX で決め、project_id を書いて残すようにした(同期のまま。#41 の QA)。
+- **まだ移していない(C の残り)**: planning・questions・leadchat・member-chat・dev-rules・prompts。これらを呼ぶのが、まだ同期の workflow(applyReview・applyDevReport など。A の対象)と outage(B の対象)で、async にすると await が、それらの同期の関数の呼び出しの連鎖(enterStage・advance など)へ広がる。後続のチケット「DB の非同期化 C2」で移す。着手できるのは、workflow(A: #42)・outage(B: #43)・server.ts の本体(#45)が async に移った後。C2 の受け入れ条件は、この 6 本を NOT_MIGRATED から外すこと、dev-rules の「読んでから書く」を tx か 1 文にすること、画面の取得を IN (…) でまとめること、npm test と npm run e2e が通ること。

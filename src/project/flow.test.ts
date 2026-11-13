@@ -77,7 +77,7 @@ describe("仕事の流れ", () => {
     const runs = all<{ policy_id: number; formation_id: number }>(p.db, "SELECT policy_id, formation_id FROM runs");
     expect(runs).toHaveLength(2);
     expect(runs.every((r) => r.policy_id > 0 && r.formation_id > 0)).toBe(true);
-    expect(metrics(p).completed).toBe(1);
+    expect((await metrics(p)).completed).toBe(1);
   });
 
   it("確認のやり直しで前の会話を引き継がない設定なら、確認役は新しく始める(開発の直しは引き継ぐ)", async () => {
