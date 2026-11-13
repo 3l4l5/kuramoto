@@ -23,11 +23,18 @@ export async function releaseWorktrees(p: Project, workspace: Workspace | undefi
       await log(p, ticket, { repo, failed: [{ path: "", error: errorText(e) }] });
     }
   }
+  // 片付けた印。releaseFinishedWorktrees が同じチケットを何度も拾わないようにする(消せなかったときも、出来事に残したので印は付ける)
+  await p.setSetting(releasedKey(ticket.id), "1").catch((e: unknown) => console.error(`#${ticket.number} の片付けの印を付けられませんでした: ${errorText(e)}`));
 }
+
+const RELEASED_PREFIX = "worktrees_released:";
+const releasedKey = (ticketId: number) => `${RELEASED_PREFIX}${ticketId}`;
 
 /**
  * merge を通らずに終わったチケット(すでに main に入っていた=closeAlreadyDone・取りやめ=dropTicket)の作業場所を片付ける。
- * done / dropped で、まだ worktree_path が残っているチケットを探して releaseWorktrees にかける(片付けると worktree_path が外れるので、一度きり)。
+ * done / dropped で、起動したことがあり(=作業場所を作った)、まだ片付けていないチケットを releaseWorktrees にかける。
+ * 「片付けた」の印は settings の worktrees_released:<チケット id>(releaseWorktrees が付ける)。sessions.worktree_path は
+ * 本番のどこからも書かれないので、目印にはしない。
  * 終わらせる道がいくつもある(開発・リーダーの手助け・見回り・交通整理・CI の取りやめ)ので、道ごとではなくここでまとめて拾う。
  * 起動中のチケットには触らない(リーダーの手助けは、このチケットの番号の作業場所の中で動いているため)。取りやめを戻して
  * 工程が変わっていたら片付けない。消すのは作業場所だけで、ブランチ(push 済み)は残るので、戻したときは取り出し直せる。
@@ -36,19 +43,19 @@ export async function releaseWorktrees(p: Project, workspace: Workspace | undefi
 export async function releaseFinishedWorktrees(p: Project, workspace: Workspace | undefined): Promise<number> {
   const rows = await p.pdb.k
     .selectFrom("tickets as t")
-    .innerJoin("sessions as s", "s.ticket_id", "t.id")
     .select("t.id")
-    .distinct()
     .where("t.project_id", "=", p.projectId)
-    .where("s.project_id", "=", p.projectId)
     .where("t.stage", "in", ["done", "dropped"])
-    .where("s.worktree_path", "is not", null)
+    .where(sql<SqlBool>`EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id = t.id AND r.project_id = ${p.projectId})`)
     .where(sql<SqlBool>`NOT EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id = t.id AND r.ended_at IS NULL AND r.project_id = ${p.projectId})`)
     .execute();
   if (!rows.length) return 0;
+  const released = new Set((await p.pdb.from("settings").select("key").where("key", "like", `${RELEASED_PREFIX}%`).execute()).map((r) => r.key));
+  const todo = rows.filter((r) => !released.has(releasedKey(r.id)));
+  if (!todo.length) return 0;
   const repos = (await p.repos()).map((r) => r.full_name);
   let n = 0;
-  for (const { id } of rows) {
+  for (const { id } of todo) {
     const ticket = await p.ticket(id);
     if (ticket.stage !== "done" && ticket.stage !== "dropped") continue;
     await releaseWorktrees(p, workspace, ticket, repos);

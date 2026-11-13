@@ -114,39 +114,37 @@ describe("merge した(done になった)チケットの作業場所の片付け
   });
 });
 
-/** 開発中(dev)で、セッションに worktree_path が残っているチケット。 */
-async function devWithWorktree() {
+/** 開発中(dev)で、起動した(=作業場所を作った)ことがあるチケット。sessions.worktree_path は本番のコードでは書かれないので、使わない。 */
+async function devWithRun() {
   const p = await Project.open(":memory:", new ManualClock());
   await p.addRepo(REPO, "API");
   const t = await createTicket(p, { title: "やっている" });
   run(p.db, "UPDATE tickets SET stage = 'dev', triaged = 1 WHERE id = ?", [t.id]);
-  const repoId = (await p.repos())[0]!.id;
   const memberId = (await p.fixedMember("lead")).id;
-  run(p.db, "INSERT INTO sessions (member_id, ticket_id, repo_id, harness, harness_session_id, worktree_path, branch, created_at, last_used_at) VALUES (?, ?, ?, 'h', 's', '/w/1-dev', 'kuramoto/1', '', '')", [memberId, t.id, repoId]);
+  const msg = run(p.db, "INSERT INTO messages (ticket_id, to_role, kind, status, available_at, created_at) VALUES (?, 'dev', 'implement', 'done', '', '')", [t.id]).lastId;
+  run(p.db, "INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at, ended_at, outcome) VALUES (?, ?, ?, 'dev', 1, 1, '', '', 'ok')", [msg, t.id, memberId]);
   return { p, t, memberId };
 }
 
 describe("merge を通らずに終わったチケット(すでに main に入っていた・取りやめ)の作業場所の片付け", () => {
-  it("すでに main に入っていて完了にしたチケットの作業場所を消し、worktree_path も外す", async () => {
-    const { p, t } = await devWithWorktree();
+  it("すでに main に入っていて完了にしたチケットの作業場所を消す", async () => {
+    const { p, t } = await devWithRun();
     const ws = new StaticWorkspace("/tmp/ws");
     await closeAlreadyDone(p, t, { commit: "abc1234", reason: "先に入っていた", by: "lead" });
     expect(await releaseFinishedWorktrees(p, ws)).toBe(1);
     expect(ws.cleaned).toEqual([{ repo: REPO, ticketNumber: t.number }]);
-    expect(sessionPaths(p)).toEqual([null]);
   });
 
   it("取りやめたチケットの作業場所も消す", async () => {
-    const { p, t } = await devWithWorktree();
+    const { p, t } = await devWithRun();
     const ws = new StaticWorkspace("/tmp/ws");
     await dropTicket(p, t.id, { by: "lead", reason: "いらなくなった" });
     expect(await releaseFinishedWorktrees(p, ws)).toBe(1);
     expect(ws.cleaned).toEqual([{ repo: REPO, ticketNumber: t.number }]);
-    expect(sessionPaths(p)).toEqual([null]);
   });
 
-  it("片付けは一度きり(worktree_path が外れているので、次からは何もしない)", async () => {
-    const { p, t } = await devWithWorktree();
+  it("片付けは一度きり(印が付くので、次からは何もしない)", async () => {
+    const { p, t } = await devWithRun();
     const ws = new StaticWorkspace("/tmp/ws");
     await dropTicket(p, t.id, { by: "lead", reason: "いらなくなった" });
     await releaseFinishedWorktrees(p, ws);
@@ -155,15 +153,24 @@ describe("merge を通らずに終わったチケット(すでに main に入っ
   });
 
   it("まだ終わっていないチケットには触らない", async () => {
-    const { p } = await devWithWorktree();
+    const { p } = await devWithRun();
     const ws = new StaticWorkspace("/tmp/ws");
     expect(await releaseFinishedWorktrees(p, ws)).toBe(0);
     expect(ws.cleaned).toEqual([]);
-    expect(sessionPaths(p)).toEqual(["/w/1-dev"]);
+  });
+
+  it("一度も起動していない(作業場所を作っていない)チケットは対象にしない", async () => {
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo(REPO, "API");
+    const t = await createTicket(p, { title: "取りかかる前" });
+    const ws = new StaticWorkspace("/tmp/ws");
+    await dropTicket(p, t.id, { by: "lead", reason: "いらなくなった" });
+    expect(await releaseFinishedWorktrees(p, ws)).toBe(0);
+    expect(ws.cleaned).toEqual([]);
   });
 
   it("起動中のチケットには触らない(リーダーの手助けは、このチケットの番号の作業場所で動いている)", async () => {
-    const { p, t, memberId } = await devWithWorktree();
+    const { p, t, memberId } = await devWithRun();
     const ws = new StaticWorkspace("/tmp/ws");
     await closeAlreadyDone(p, t, { commit: "abc1234", reason: "先に入っていた", by: "lead" });
     const msg = run(p.db, "INSERT INTO messages (ticket_id, to_role, kind, status, available_at, created_at) VALUES (?, 'lead', 'unstick', 'claimed', '', '')", [t.id]).lastId;
@@ -176,8 +183,16 @@ describe("merge を通らずに終わったチケット(すでに main に入っ
     expect(ws.cleaned).toEqual([{ repo: REPO, ticketNumber: t.number }]);
   });
 
+  it("merge で done になって片付け済みのチケットは、もう一度は消さない", async () => {
+    const { p, t } = await mergeWaiting();
+    const ws = new StaticWorkspace("/tmp/ws");
+    await ownerMerge(p, github("OPEN"), t.id, "owner", { workspace: ws });
+    expect(await releaseFinishedWorktrees(p, ws)).toBe(0);
+    expect(ws.cleaned).toHaveLength(1);
+  });
+
   it("取りやめを戻したチケットは、片付けたあとも続きから進められる(ブランチは残る)", async () => {
-    const { p, t } = await devWithWorktree();
+    const { p, t } = await devWithRun();
     const ws = new StaticWorkspace("/tmp/ws");
     await dropTicket(p, t.id, { by: "lead", reason: "いらなくなった" });
     await releaseFinishedWorktrees(p, ws);
@@ -187,12 +202,11 @@ describe("merge を通らずに終わったチケット(すでに main に入っ
   });
 
   it("消すのに失敗しても止まらず、失敗は events に残る", async () => {
-    const { p, t } = await devWithWorktree();
+    const { p, t } = await devWithRun();
     const ws = new StaticWorkspace("/tmp/ws", { removeError: () => "ロック中" });
     await dropTicket(p, t.id, { by: "lead", reason: "いらなくなった" });
     expect(await releaseFinishedWorktrees(p, ws)).toBe(1);
     expect(failures(p)[0]!.data).toContain("ロック中");
-    expect(sessionPaths(p)).toEqual([null]);
   });
 });
 

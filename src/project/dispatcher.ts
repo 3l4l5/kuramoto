@@ -119,12 +119,17 @@ export class Dispatcher {
   async dispatchOnce(): Promise<boolean> {
     await this.checkGithub();
     await this.refreshMergedWaits();
-    await releaseFinishedWorktrees(this.p, this.deps.workspace);
     await this.p.pdb.transaction(async () => await this.housekeep());
+    await this.releaseFinished();
     const job = await this.next();
     if (!job) return false;
     await this.execute(job);
     return true;
+  }
+
+  /** merge を通らずに終わった(すでに main に入っていた・取りやめ)チケットの作業場所を片付ける。DB のトランザクションの外で呼ぶ。片付けの失敗で仕事を止めない。 */
+  async releaseFinished(): Promise<void> {
+    await releaseFinishedWorktrees(this.p, this.deps.workspace).catch((e: unknown) => console.error(`作業場所の片付けに失敗しました: ${e instanceof Error ? e.message : String(e)}`));
   }
 
   /** 見回り中なら、待たれている merge 待ちの PR を GitHub から取り直す(外で merge 済みなら done にして、待ちを解く)。DB のトランザクションの外で呼ぶ。 */
@@ -191,6 +196,7 @@ export class Dispatcher {
         await this.checkGithub();
         await this.refreshMergedWaits();
         await this.p.pdb.transaction(async () => await this.housekeep());
+        await this.releaseFinished();
       }
       while (dbUp() && started < maxRuns && inflight.size < (await limit())) {
         const job = await this.next();
