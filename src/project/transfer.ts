@@ -70,7 +70,7 @@ export async function collectTransfer(p: Project, projectName: string): Promise<
   }
   const artifacts: TransferData["artifacts"] = [];
   for (const k of keys) {
-    const body = artifact<unknown>(p, k.stage, k.kind, k.key);
+    const body = await artifact<unknown>(p, k.stage, k.kind, k.key);
     if (body !== null) artifacts.push({ stage: k.stage, kind: k.kind, key: k.key, body });
   }
   const keyOf = new Map(artifactRows.map((a) => [a.id, a.key]));
@@ -153,7 +153,7 @@ export async function restoreTransfer(p: Project, d: TransferData): Promise<void
     // 書き出したときに担当が作業中・順番待ちだった依頼は持ち越していない。
     // 始まっているのに中身が無い段階は「まだ始まっていない」に戻し、advance() で担当を起こし直す
     for (const s of STAGES) {
-      if (p.setting(`plan_started:${s}`) && !hasContent(p, s)) await p.pdb.k.deleteFrom("settings").where("project_id", "in", scopeIds(p.pdb)).where("key", "=", `plan_started:${s}`).execute();
+      if (p.setting(`plan_started:${s}`) && !await hasContent(p, s)) await p.pdb.k.deleteFrom("settings").where("project_id", "in", scopeIds(p.pdb)).where("key", "=", `plan_started:${s}`).execute();
     }
     if (p.setting("plan_handoff_requested_at") && !p.setting("plan_handed_at")) await p.pdb.k.deleteFrom("settings").where("project_id", "in", scopeIds(p.pdb)).where("key", "=", "plan_handoff_requested_at").execute();
     p.event("system", "restored", null, { exportedAt: d.exportedAt });

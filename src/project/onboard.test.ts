@@ -34,10 +34,10 @@ describe("既存のリポジトリの続きから(ADR-0030)", () => {
   it("GitHub の途中の仕事を取ってきて、担当にはリポジトリを読んで現状を起こすよう頼む。画面の試作は既定で省く", async () => {
     const p = await setup();
     expect(fromExisting(p)).toBe(true);
-    expect(stageRow(p, "screen").mode).toBe("skip");
+    expect((await stageRow(p, "screen")).mode).toBe("skip");
     expect(snapshotText(p)).toContain("PR #42");
     expect(snapshotText(p)).toContain("Issue #7");
-    advance(p);
+    await advance(p);
     const m = get<{ payload: string }>(p.db, "SELECT payload FROM messages WHERE kind = 'plan' AND to_role = 'planner'")!;
     const text = (JSON.parse(m.payload) as { events: { text: string }[] }).events[0]!.text;
     expect(text).toContain("既存のリポジトリの続きから");
@@ -48,11 +48,11 @@ describe("既存のリポジトリの続きから(ADR-0030)", () => {
 
   it("チームに渡すとき、開いている PR は確認の工程から引き継ぎ、Issue のチケットの PR には Closes を付ける", async () => {
     const p = await setup();
-    upsertRequirement(p, { name: "検索", acceptance: "語で絞り込める" });
-    for (const s of STAGES) if (s !== "req" && stageRow(p, s).mode !== "skip") setMode(p, s, "skip");
+    await upsertRequirement(p, { name: "検索", acceptance: "語で絞り込める" });
+    for (const s of STAGES) if (s !== "req" && (await stageRow(p, s)).mode !== "skip") await setMode(p, s, "skip");
     p.setSetting("plan_started:req", p.now());
     run2(p);
-    handoff(p);
+    await handoff(p);
     const hand = get<{ payload: string }>(p.db, "SELECT payload FROM messages WHERE kind = 'plan' AND to_role = 'lead'")!;
     expect(hand.payload).toContain("adopt_pr");
 

@@ -82,7 +82,7 @@ export async function productivity(p: Project) {
     rework: { total: changes + conflicts + retries, changes, conflicts, retries },
     help: { total: decisions + planAsks, decisions, planAsks },
     // 開発ルールに反した件数と、うち持ち主が自動で直した件数(R15)
-    ruleViolations: violationTotals(p),
+    ruleViolations: await violationTotals(p),
   };
 
   // ---- 日ごと(サーバーの時刻の日付で区切る) ----

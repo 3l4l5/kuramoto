@@ -44,28 +44,28 @@ async function fullProject(hq: Hq) {
   const p = await hq.openProject(rec.id);
   p.setSetting("jira_key", "RSV");
   p.setSetting("plan_session:5", "このマシンだけのセッション");
-  putArtifact(p, "req", "brief", "main", { purpose: "予約を 1 分で", users: ["会員"], outOfScope: ["決済"] });
-  upsertRequirement(p, { name: "空き枠を探す", acceptance: "残りのある枠が並ぶ" });
-  upsertRequirement(p, { name: "予約する", acceptance: "確定すると予約できる" });
-  answerOpenItem(p, addOpenItem(p, "req", { question: "変更を作るか", options: ["作らない", "作る"], recommended: 0, why: "足りる", reversible: true }), "作らない");
-  withdrawOpenItem(p, addOpenItem(p, "req", { question: "取り下げる問い", options: ["a", "b"], recommended: 0, why: "", reversible: true }), "聞く意味がなくなった");
-  chat(p, "req", "予約サイトを作りたい");
-  agree(p, "req");
+  await putArtifact(p, "req", "brief", "main", { purpose: "予約を 1 分で", users: ["会員"], outOfScope: ["決済"] });
+  await upsertRequirement(p, { name: "空き枠を探す", acceptance: "残りのある枠が並ぶ" });
+  await upsertRequirement(p, { name: "予約する", acceptance: "確定すると予約できる" });
+  await answerOpenItem(p, await addOpenItem(p, "req", { question: "変更を作るか", options: ["作らない", "作る"], recommended: 0, why: "足りる", reversible: true }), "作らない");
+  await withdrawOpenItem(p, await addOpenItem(p, "req", { question: "取り下げる問い", options: ["a", "b"], recommended: 0, why: "", reversible: true }), "聞く意味がなくなった");
+  await chat(p, "req", "予約サイトを作りたい");
+  await agree(p, "req");
   // 合意した要件を直して、版を上げておく
-  upsertRequirement(p, { code: "R2", name: "予約する", acceptance: "確定すると予約でき、メールが届く" });
-  putArtifact(p, "flow", "flow", "main", { nodes: [{ id: "S1", label: "探す", col: 2, row: 1 }], edges: [] });
-  agree(p, "flow");
-  putScreen(p, "search", { name: "空き枠を探す", device: "phone", requirements: ["R1"], variants: [{ id: "A", html: "<p>A</p>" }, { id: "B", html: "<p>B</p>" }], chosen: null, agreed: false });
-  putScreen(p, "confirm", { name: "予約の確認", device: "desktop", requirements: ["R2"], variants: [{ id: "A", html: "<p>C</p>" }], chosen: "A", agreed: false });
-  pickVariant(p, "search", "B");
-  const c1 = addComment(p, "search", { variant: "B", x: 40, y: 60, body: "大きく" });
-  resolveComment(p, c1);
-  addComment(p, "search", { variant: "B", x: 10, y: 20, body: "まだ直っていない" });
-  agreeScreen(p, "confirm");
-  setMode(p, "infra", "skip");
-  setMode(p, "model", "delegate");
-  addOpenItem(p, "model", { question: "データを消すか", options: ["消す", "残す"], recommended: 1, why: "戻せない", reversible: false });
-  putArtifact(p, "model", "architecture", "main", {
+  await upsertRequirement(p, { code: "R2", name: "予約する", acceptance: "確定すると予約でき、メールが届く" });
+  await putArtifact(p, "flow", "flow", "main", { nodes: [{ id: "S1", label: "探す", col: 2, row: 1 }], edges: [] });
+  await agree(p, "flow");
+  await putScreen(p, "search", { name: "空き枠を探す", device: "phone", requirements: ["R1"], variants: [{ id: "A", html: "<p>A</p>" }, { id: "B", html: "<p>B</p>" }], chosen: null, agreed: false });
+  await putScreen(p, "confirm", { name: "予約の確認", device: "desktop", requirements: ["R2"], variants: [{ id: "A", html: "<p>C</p>" }], chosen: "A", agreed: false });
+  await pickVariant(p, "search", "B");
+  const c1 = await addComment(p, "search", { variant: "B", x: 40, y: 60, body: "大きく" });
+  await resolveComment(p, c1);
+  await addComment(p, "search", { variant: "B", x: 10, y: 20, body: "まだ直っていない" });
+  await agreeScreen(p, "confirm");
+  await setMode(p, "infra", "skip");
+  await setMode(p, "model", "delegate");
+  await addOpenItem(p, "model", { question: "データを消すか", options: ["消す", "残す"], recommended: 1, why: "戻せない", reversible: false });
+  await putArtifact(p, "model", "architecture", "main", {
     style: { name: "モジュラーモノリス", why: "速い", alternatives: [] },
     modules: [],
     principles: [],
@@ -82,16 +82,16 @@ describe("設計書からの復元", () => {
     const hq = newHq();
     const rec = await hq.createProject("途中", [{ fullName: "acme/mid", role: "API" }]);
     const p = await hq.openProject(rec.id);
-    advance(p); // 要件の段階を始める
-    upsertRequirement(p, { name: "探す", acceptance: "並ぶ" });
-    agree(p, "req"); // フローの担当が起こされる(まだ描いていない)
+    await advance(p); // 要件の段階を始める
+    await upsertRequirement(p, { name: "探す", acceptance: "並ぶ" });
+    await agree(p, "req"); // フローの担当が起こされる(まだ描いていない)
     expect(p.setting("plan_started:flow")).toBeTruthy();
     const data = extractTransfer(await exportDesignDoc(p, "途中"));
 
     const q = await hq.openProject((await hq.createProject("途中", data.repos)).id);
     await restoreTransfer(q, data);
     expect(q.setting("plan_started:flow")).toBeUndefined();
-    advance(q);
+    await advance(q);
     expect(q.db.prepare("SELECT to_role, json_extract(payload, '$.stage') AS stage FROM messages WHERE status = 'pending'").all()).toEqual([
       { to_role: "designer", stage: "flow" },
     ]);

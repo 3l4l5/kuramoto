@@ -155,7 +155,7 @@ describe("リーダーの見回り(ADR-0026)", () => {
     expect(await blockers(p, later.id)).toEqual([keep.number]);
     expect(all(p.db, "SELECT 1 FROM messages WHERE ticket_id = ? AND status = 'pending'", [dup.id])).toEqual([]);
     // 責任者には報告だけ
-    expect(leadMessages(p).at(-1)!.body).toContain("【見回り】");
+    expect((await leadMessages(p)).at(-1)!.body).toContain("【見回り】");
     // 見たものは数え直すので、続けて見回りを頼まない
     expect(await loopSignals(p)).toEqual([]);
   });

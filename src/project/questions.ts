@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { all, get, run, tx } from "../db/sqlite.js";
+import { inScope } from "../db/count.js";
 import { hasRoute } from "../domain/route.js";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
 import { send } from "./inbox.js";
@@ -33,14 +33,14 @@ export type QuestionRow = {
   answered_at: string | null;
 };
 
-export function question(p: Project, id: number): QuestionRow {
-  const q = get<QuestionRow>(p.db, "SELECT * FROM ticket_questions WHERE id = ?", [id]);
+export async function question(p: Project, id: number): Promise<QuestionRow> {
+  const q = (await inScope(p.pdb, "ticket_questions").where("id", "=", id).executeTakeFirst()) as unknown as QuestionRow | undefined;
   if (!q) throw new Error(`質問 ${id} はありません`);
   return q;
 }
 
-export function questionsOf(p: Project, ticketId: number): QuestionRow[] {
-  return all<QuestionRow>(p.db, "SELECT * FROM ticket_questions WHERE ticket_id = ? ORDER BY id", [ticketId]);
+export async function questionsOf(p: Project, ticketId: number): Promise<QuestionRow[]> {
+  return (await inScope(p.pdb, "ticket_questions").where("ticket_id", "=", ticketId).orderBy("id").execute()) as unknown as QuestionRow[];
 }
 
 const isLead = (to: string) => ["lead", "リーダー"].includes(to.trim().toLowerCase());
@@ -49,7 +49,7 @@ const isLead = (to: string) => ["lead", "リーダー"].includes(to.trim().toLow
  * 質問を出す。経路があれば相手の島の受信箱へ、無ければリーダーへ。
  * @returns 質問したメンバーに返す一言(道具の返事)
  */
-export function askQuestion(p: Project, from: MemberRow, ticket: TicketRow, to: string, body: string): string {
+export async function askQuestion(p: Project, from: MemberRow, ticket: TicketRow, to: string, body: string): Promise<string> {
   const text = body.trim();
   if (!text) return "質問の中身がありません。聞きたいことを書いて呼び直してください。";
   const formation = p.currentFormation();
@@ -62,9 +62,9 @@ export function askQuestion(p: Project, from: MemberRow, ticket: TicketRow, to: 
 
   // リーダーへの質問は、そのままリーダーへ(経路は要らない)
   if (!target && isLead(to)) {
-    tx(p.db, () => {
-      run(p.db, "INSERT INTO ticket_questions (ticket_id, from_member_id, to_target, body, routed_to_lead, asked_at) VALUES (?, ?, ?, ?, 1, ?)", [ticket.id, from.id, LEAD_TARGET, text, p.now()]);
-      sayToLead(p, `【${place} 質問しています】\n${text}`);
+    await p.pdb.transaction(async () => {
+      await p.pdb.insert("ticket_questions", { ticket_id: ticket.id, from_member_id: from.id, to_target: LEAD_TARGET, body: text, routed_to_lead: 1, asked_at: p.now() }).execute();
+      await sayToLead(p, `【${place} 質問しています】\n${text}`);
       p.event(from.name, "question_asked", ticket.id, { to: LEAD_TARGET, routedToLead: true });
     });
     return "リーダーに送りました。答えを待たずに作業を続けてください。";
@@ -73,8 +73,8 @@ export function askQuestion(p: Project, from: MemberRow, ticket: TicketRow, to: 
 
   // 経路があって、相手が島のときだけ、相手の島の手すきの人が答える
   if (target && mine && hasRoute(formation.routes, mine.name, target.name)) {
-    tx(p.db, () => {
-      const qid = run(p.db, "INSERT INTO ticket_questions (ticket_id, from_member_id, to_target, body, asked_at) VALUES (?, ?, ?, ?, ?)", [ticket.id, from.id, target.name, text, p.now()]).lastId;
+    await p.pdb.transaction(async () => {
+      const qid = await p.pdb.dialect.insertedId(p.pdb.insert("ticket_questions", { ticket_id: ticket.id, from_member_id: from.id, to_target: target.name, body: text, asked_at: p.now() }));
       // 起動はチケットを持たない(チケットの 1 チケット 1 起動を邪魔しない)。ひも付けは payload と runs.about_ticket_id
       send(p, { ticketId: null, toRole: target.roles[0]!, kind: "ask", payload: { questionId: qid } satisfies AskPayload });
       p.event(from.name, "question_asked", ticket.id, { to: target.name, routedToLead: false });
@@ -84,9 +84,9 @@ export function askQuestion(p: Project, from: MemberRow, ticket: TicketRow, to: 
 
   // 経路が無い(島が無い・結ばれていない・担当への質問): リーダーに回し、そのことを残す
   const label = target?.name ?? to.trim();
-  tx(p.db, () => {
-    run(p.db, "INSERT INTO ticket_questions (ticket_id, from_member_id, to_target, body, routed_to_lead, asked_at) VALUES (?, ?, ?, ?, 1, ?)", [ticket.id, from.id, label, text, p.now()]);
-    sayToLead(p, `【${place} 「${label}」に質問しようとしましたが、経路が無いのでリーダーに回ってきました】\n${text}`);
+  await p.pdb.transaction(async () => {
+    await p.pdb.insert("ticket_questions", { ticket_id: ticket.id, from_member_id: from.id, to_target: label, body: text, routed_to_lead: 1, asked_at: p.now() }).execute();
+    await sayToLead(p, `【${place} 「${label}」に質問しようとしましたが、経路が無いのでリーダーに回ってきました】\n${text}`);
     p.event(from.name, "question_asked", ticket.id, { to: label, routedToLead: true, noRoute: true });
   });
   return `「${label}」との経路が無いので、リーダーに回しました。答えを待たずに作業を続けてください。`;
@@ -151,33 +151,33 @@ ${q.body}
 }
 
 /** 答えを記録する。聞いたチケットの担当・工程には触らない。 */
-export function recordAnswer(p: Project, q: QuestionRow, by: MemberRow, answer: string): void {
-  run(p.db, "UPDATE ticket_questions SET answer = ?, answered_by_member_id = ?, answered_at = ? WHERE id = ?", [answer.trim(), by.id, p.now(), q.id]);
+export async function recordAnswer(p: Project, q: QuestionRow, by: MemberRow, answer: string): Promise<void> {
+  await p.pdb.update("ticket_questions", { answer: answer.trim(), answered_by_member_id: by.id, answered_at: p.now() }).where("id", "=", q.id).execute();
   p.event(by.name, "question_answered", q.ticket_id, { questionId: q.id });
 }
 
 /** リーダーに回ってきて、まだ答えが無い質問(リーダー宛て・経路が無かったもの・島が無くなったもの)。 */
-export function leadPendingQuestions(p: Project): QuestionRow[] {
-  return all<QuestionRow>(p.db, "SELECT * FROM ticket_questions WHERE routed_to_lead = 1 AND answer IS NULL ORDER BY id");
+export async function leadPendingQuestions(p: Project): Promise<QuestionRow[]> {
+  return (await inScope(p.pdb, "ticket_questions").where("routed_to_lead", "=", 1).where("answer", "is", null).orderBy("id").execute()) as unknown as QuestionRow[];
 }
 
 /**
  * リーダーの答えを、リーダーに回ってきた質問に結び付けて残す。
  * @returns リーダーに返す道具の返事
  */
-export function answerLeadQuestion(p: Project, lead: MemberRow, questionId: number, answer: string): string {
+export async function answerLeadQuestion(p: Project, lead: MemberRow, questionId: number, answer: string): Promise<string> {
   const text = answer.trim();
   if (!text) return "答えが空です。答えを書いて呼び直してください。";
-  const q = get<QuestionRow>(p.db, "SELECT * FROM ticket_questions WHERE id = ?", [questionId]);
+  const q = (await inScope(p.pdb, "ticket_questions").where("id", "=", questionId).executeTakeFirst()) as unknown as QuestionRow | undefined;
   if (!q || !q.routed_to_lead) return `質問 ${questionId} は、リーダーに回ってきた質問にありません。`;
   if (q.answer !== null) return `質問 ${questionId} には、もう答えが残っています。`;
-  tx(p.db, () => recordAnswer(p, q, lead, text));
+  await recordAnswer(p, q, lead, text);
   return `質問 ${questionId} の答えを、チケットのやりとりに残しました。次にそのチケットの仕事をする担当の指示に入ります。`;
 }
 
 /** リーダーへの指示に載せる、答えを待っている質問(番号つき)。 */
-export function leadPendingBlock(p: Project): string {
-  const qs = leadPendingQuestions(p);
+export async function leadPendingBlock(p: Project): Promise<string> {
+  const qs = await leadPendingQuestions(p);
   if (!qs.length) return "(なし)";
   return qs
     .map((q) => {
@@ -190,8 +190,8 @@ export function leadPendingBlock(p: Project): string {
 }
 
 /** 次にそのチケットの仕事をする担当の指示に載せる、答えが返ってきた質問。 */
-export function answeredBlock(p: Project, ticketId: number): string {
-  const qs = questionsOf(p, ticketId).filter((q) => q.answer !== null);
+export async function answeredBlock(p: Project, ticketId: number): Promise<string> {
+  const qs = (await questionsOf(p, ticketId)).filter((q) => q.answer !== null);
   if (!qs.length) return "";
   const label = (q: QuestionRow) => {
     const who = q.routed_to_lead ? "リーダー" : q.to_target;
@@ -201,8 +201,8 @@ export function answeredBlock(p: Project, ticketId: number): string {
 }
 
 /** 答える島が無くなっていた(編成が変わった)質問を、リーダーに回す。 */
-export function reroutedToLead(p: Project, q: QuestionRow, ticket: TicketRow): void {
-  run(p.db, "UPDATE ticket_questions SET routed_to_lead = 1 WHERE id = ?", [q.id]);
-  sayToLead(p, `【#${ticket.number}「${ticket.title}」で、「${q.to_target}」への質問が、島が無くなったためリーダーに回ってきました】\n${q.body}`);
+export async function reroutedToLead(p: Project, q: QuestionRow, ticket: TicketRow): Promise<void> {
+  await p.pdb.update("ticket_questions", { routed_to_lead: 1 }).where("id", "=", q.id).execute();
+  await sayToLead(p, `【#${ticket.number}「${ticket.title}」で、「${q.to_target}」への質問が、島が無くなったためリーダーに回ってきました】\n${q.body}`);
   p.event("system", "question_rerouted", q.ticket_id, { to: q.to_target });
 }

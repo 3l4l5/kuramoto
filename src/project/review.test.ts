@@ -160,7 +160,7 @@ describe("何を止めるか(受け入れ条件・セキュリティ・この差
         }),
       );
     });
-    upsertRequirement(p, { name: "一覧", acceptance: "すべてのメモが更新順で表示される" });
+    await upsertRequirement(p, { name: "一覧", acceptance: "すべてのメモが更新順で表示される" });
     const t = await createTicket(p, { title: "一覧の外枠", body: "## 受け入れ条件\n- R1: 一覧が出る" });
     run(p.db, "UPDATE tickets SET triaged = 1 WHERE id = ?", [t.id]);
     // 別に開いているチケット(まだ着手しない)

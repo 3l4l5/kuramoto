@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { KIND_LABEL, TICKET_KINDS } from "../domain/flow.js";
-import { all, run, tx } from "../db/sqlite.js";
+import { inScope, scopeIds } from "../db/count.js";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
 import { send } from "./inbox.js";
 import { runWork } from "./progress.js";
@@ -10,6 +10,7 @@ import { dropTicketTool } from "./patrol.js";
 import { answerLeadQuestion, leadPendingBlock } from "./questions.js";
 import { pendingOwnerDecisions, createTicket } from "./workflow.js";
 import { designSystem, requirements, screens } from "./planning.js";
+import { addDependency } from "./planning-agent.js";
 
 /**
  * 責任者とリーダーのチャット(非同期)。書いたメッセージは受信箱を通してリーダーに届き、リーダーが手すきのときに返事をする。
@@ -18,31 +19,31 @@ import { designSystem, requirements, screens } from "./planning.js";
 
 export type LeadMessage = { id: number; who: "owner" | "lead" | "system"; body: string; at: string };
 
-export function leadMessages(p: Project): LeadMessage[] {
-  return all(p.db, "SELECT * FROM lead_messages ORDER BY id");
+export async function leadMessages(p: Project): Promise<LeadMessage[]> {
+  return (await inScope(p.pdb, "lead_messages").orderBy("id").execute()) as unknown as LeadMessage[];
 }
 
-export function sayToLead(p: Project, body: string): void {
+export async function sayToLead(p: Project, body: string): Promise<void> {
   const text = body.trim();
   if (!text) throw new Error("メッセージがありません");
-  tx(p.db, () => {
-    run(p.db, "INSERT INTO lead_messages (who, body, at) VALUES ('owner', ?, ?)", [text, p.now()]);
-    // まだ取り出されていない依頼があれば、そこにまとめる(何通書いても、リーダーは 1 回で読む)
-    const pending = all<{ id: number }>(p.db, "SELECT id FROM messages WHERE kind = 'chat' AND status = 'pending'");
-    if (!pending.length) send(p, { ticketId: null, toRole: "lead", kind: "chat", payload: {} });
+  await p.pdb.transaction(async () => {
+    await p.pdb.insert("lead_messages", { who: "owner", body: text, at: p.now() }).execute();
+    // まだ取り出されていない依頼があれば、そこにまとめる(何通書いても、リーダーは 1 回で読む。読んでから書くので tx の中で)
+    const pending = await inScope(p.pdb, "messages").where("kind", "=", "chat").where("status", "=", "pending").executeTakeFirst();
+    if (!pending) send(p, { ticketId: null, toRole: "lead", kind: "chat", payload: {} });
   });
 }
 
 export async function leadChatView(p: Project) {
-  const r = all<{ id: number; status: string; run_id: number | null }>(
-    p.db,
-    `SELECT m.id, m.status, (SELECT r.id FROM runs r WHERE r.message_id = m.id AND r.ended_at IS NULL ORDER BY r.id DESC LIMIT 1) AS run_id
-     FROM messages m WHERE m.kind = 'chat' AND m.status IN ('pending','claimed') ORDER BY m.id LIMIT 1`,
-  )[0];
-  const w = r?.run_id ? await runWork(p, r.run_id) : null;
+  const r = await inScope(p.pdb, "messages").where("kind", "=", "chat").where("status", "in", ["pending", "claimed"]).orderBy("id").limit(1).executeTakeFirst();
+  const open = r
+    ? await p.pdb.k.selectFrom("runs").select("id").where("project_id", "in", scopeIds(p.pdb)).where("message_id", "=", r.id).where("ended_at", "is", null).orderBy("id", "desc").limit(1).executeTakeFirst()
+    : undefined;
+  const run_id = open?.id ?? null;
+  const w = run_id ? await runWork(p, run_id) : null;
   return {
     lead: p.fixedMember("lead").name,
-    messages: leadMessages(p),
+    messages: await leadMessages(p),
     work: w ? { state: "running" as const, ...w } : r ? { state: "queued" as const } : null,
   };
 }
@@ -51,8 +52,8 @@ export async function leadChatView(p: Project) {
  * リーダーがまだ読んでいない責任者のメッセージ。どこまで読んだかは、チャットの起動ごとに覚えておく(設定 lead_chat_read)。
  * 「最後のリーダーの発言より後」で数えると、交通整理・見回りの報告や、書いている最中の返事に追い越されたメッセージが読まれずに残っていた。
  */
-export function unreadOwnerMessages(p: Project): LeadMessage[] {
-  const msgs = leadMessages(p);
+export async function unreadOwnerMessages(p: Project): Promise<LeadMessage[]> {
+  const msgs = await leadMessages(p);
   const read = p.setting("lead_chat_read");
   if (read !== undefined) return msgs.filter((m) => m.who === "owner" && m.id > Number(read));
   // まだ覚えていない(この仕組みの前のデータ)なら、前のやり方で数える
@@ -61,18 +62,18 @@ export function unreadOwnerMessages(p: Project): LeadMessage[] {
 }
 
 /** 企画で合意した画面とデザインシステムの有無(リーダーが画面のチケットにひも付けるため)。 */
-function planScreens(p: Project): string {
-  const list = [...screens(p)].map(([key, s]) => `- ${key}: ${s.name}(${s.device === "phone" ? "スマホ" : "パソコン"}、要件 ${s.requirements.join("・") || "—"}${s.agreed ? "、合意済み" : "、まだ合意していない"})`);
-  const ds = designSystem(p);
+async function planScreens(p: Project): Promise<string> {
+  const list = [...(await screens(p))].map(([key, s]) => `- ${key}: ${s.name}(${s.device === "phone" ? "スマホ" : "パソコン"}、要件 ${s.requirements.join("・") || "—"}${s.agreed ? "、合意済み" : "、まだ合意していない"})`);
+  const ds = await designSystem(p);
   return `${list.join("\n") || "(なし)"}\nデザインシステム: ${ds ? `あり(トークン ${ds.tokens.length}・部品 ${ds.components.length})` : "まだありません"}`;
 }
 
 /** 返事をするメッセージより前の、最近のやりとり(責任者とリーダーの会話。報告は短く)。 */
-function recentChat(p: Project, unread: LeadMessage[]): string {
+async function recentChat(p: Project, unread: LeadMessage[]): Promise<string> {
   const first = unread[0]?.id ?? Infinity;
   const n = p.settingNumber("lead_chat_history", 12);
   const lead = p.fixedMember("lead").name;
-  const rows = leadMessages(p).filter((m) => m.id < first && m.who !== "system").slice(-n);
+  const rows = (await leadMessages(p)).filter((m) => m.id < first && m.who !== "system").slice(-n);
   return rows.map((m) => `- ${m.who === "owner" ? "責任者" : lead}: ${m.body.length > 400 ? `${m.body.slice(0, 400)}…` : m.body}`).join("\n") || "(なし)";
 }
 
@@ -82,7 +83,8 @@ export function markOwnerMessagesRead(p: Project, upTo: number): void {
 }
 
 /** リーダーへの指示。今のチケットの状況と、まだ返事をしていない責任者のメッセージを渡す。 */
-export async function leadChatPrompt(p: Project, unread: LeadMessage[] = unreadOwnerMessages(p)): Promise<string> {
+export async function leadChatPrompt(p: Project, unread?: LeadMessage[]): Promise<string> {
+  unread ??= await unreadOwnerMessages(p);
   const tickets = p.tickets().filter((t) => t.stage !== "dropped");
   const board = tickets.map((t) => `- #${t.number} ${t.title} [${t.stage}]${t.rounds ? ` 往復 ${t.rounds}` : ""}`).join("\n") || "(チケットはまだありません)";
   const decisions = (await pendingOwnerDecisions(p)).map((d) => `- ${d.question.split("\n").pop()}`).join("\n") || "(なし)";
@@ -98,13 +100,13 @@ ${await teamStatus(p)}
 ${decisions}
 
 ## メンバーからの質問で、リーダーの答えを待っているもの(経路が無くて回ってきたものを含む)
-${leadPendingBlock(p)}
+${await leadPendingBlock(p)}
 
 ## 企画の画面(画面を作る・直すチケットは、create_ticket の screens にこの key を書く)
-${planScreens(p)}
+${await planScreens(p)}
 
 ## 最近のやりとり(古い順。前の起動の会話は引き継がないので、ここで流れをつかむ)
-${recentChat(p, unread)}
+${await recentChat(p, unread)}
 
 ## 責任者のメッセージ(まだ返事をしていないもの)
 ${unread.map((m) => `- ${m.body}`).join("\n")}
@@ -139,10 +141,10 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
         after: z.array(z.number().int()).optional().describe("先に merge されている必要があるチケットの番号(画面のチケットは、デザインシステムの土台のチケットを書く)"),
       },
       handler: async (a) => {
-        const known = new Set(screens(p).keys());
+        const known = new Set((await screens(p)).keys());
         const bad = (a.screens ?? []).filter((k) => !known.has(k));
         if (bad.length) return `画面 ${bad.join("・")} は企画にありません。使えるのは ${[...known].join("・") || "(なし)"}`;
-        const item = a.requirement ? requirements(p).find((r) => r.code === a.requirement) : undefined;
+        const item = a.requirement ? (await requirements(p)).find((r) => r.code === a.requirement) : undefined;
         if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
         const t = await createTicket(p, {
           title: a.title,
@@ -153,7 +155,7 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
         });
         for (const n of a.after ?? []) {
           const dep = p.tickets().find((x) => x.number === n);
-          if (dep) run(p.db, "INSERT OR IGNORE INTO ticket_deps (ticket_id, depends_on) VALUES (?, ?)", [t.id, dep.id]);
+          if (dep) await addDependency(p, t.id, dep.id);
         }
         return `#${t.number} を作りました。`;
       },
@@ -178,6 +180,6 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
   ];
 }
 
-export function leadReply(p: Project, body: string): void {
-  if (body.trim()) run(p.db, "INSERT INTO lead_messages (who, body, at) VALUES ('lead', ?, ?)", [body.trim(), p.now()]);
+export async function leadReply(p: Project, body: string): Promise<void> {
+  if (body.trim()) await p.pdb.insert("lead_messages", { who: "lead", body: body.trim(), at: p.now() }).execute();
 }

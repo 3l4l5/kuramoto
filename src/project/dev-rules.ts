@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { all, get, run } from "../db/sqlite.js";
+import { sql } from "kysely";
+import { inScope, scopeIds } from "../db/count.js";
 import { defineTool, type Harness, type HarnessUsage } from "../harness/types.js";
 import type { Project, TicketRow } from "./project.js";
 
@@ -91,36 +92,45 @@ function toRule(r: RuleRow): DevRule {
   };
 }
 
-export function devRules(p: Project): DevRule[] {
-  return all<RuleRow>(p.db, "SELECT * FROM dev_rules WHERE deleted_at IS NULL ORDER BY id").map(toRule);
+export async function devRules(p: Project): Promise<DevRule[]> {
+  return ((await inScope(p.pdb, "dev_rules").where("deleted_at", "is", null).orderBy("id").execute()) as unknown as RuleRow[]).map(toRule);
 }
 
 /** 画面の一覧用。ルールごとの違反の数(うち自動で直した数)つき。 */
-export function devRulesView(p: Project) {
-  const counts = new Map(
-    all<{ rule_id: number; n: number; fixed: number }>(p.db, "SELECT rule_id, COUNT(*) AS n, SUM(handled = 'autofixed') AS fixed FROM rule_violations GROUP BY rule_id").map((c) => [c.rule_id, c]),
-  );
-  const rules = devRules(p).map((r) => ({ ...r, violations: counts.get(r.id)?.n ?? 0, autofixed: counts.get(r.id)?.fixed ?? 0 }));
+export async function devRulesView(p: Project) {
+  // ルールごとの違反の数は、違反を 1 文で取って JS で数える
+  const counts = new Map<number, { n: number; fixed: number }>();
+  for (const v of await inScope(p.pdb, "rule_violations").execute()) {
+    const c = counts.get(v.rule_id) ?? { n: 0, fixed: 0 };
+    c.n++;
+    if (v.handled === "autofixed") c.fixed++;
+    counts.set(v.rule_id, c);
+  }
+  const rules = (await devRules(p)).map((r) => ({ ...r, violations: counts.get(r.id)?.n ?? 0, autofixed: counts.get(r.id)?.fixed ?? 0 }));
   const added = new Set(rules.map((r) => r.template));
-  return { version: devRulesVersion(p), rules, templates: TEMPLATES.map((t) => ({ ...t, added: added.has(t.key) })) };
+  return { version: await devRulesVersion(p), rules, templates: TEMPLATES.map((t) => ({ ...t, added: added.has(t.key) })) };
 }
 
 /** 開発ルールの今の版。ルールを足す・直す・消す・有効 / 無効にするたびに 1 つ上がり、そのときのルールの一覧を dev_rule_versions に残す。 */
-export function devRulesVersion(p: Project): number {
+export async function devRulesVersion(p: Project): Promise<number> {
   // 版はプロジェクトごと(主キーは (project_id, version))。まだ 0 のままの行(同期の INSERT)も、このプロジェクトのものとして数える
-  return get<{ v: number | null }>(p.db, "SELECT MAX(version) AS v FROM dev_rule_versions WHERE project_id IN (?, ?)", [p.projectId, 0])?.v ?? 1;
+  const r = await p.pdb.k.selectFrom("dev_rule_versions").select(sql<number | null>`MAX(version)`.as("v")).where("project_id", "in", scopeIds(p.pdb)).executeTakeFirst();
+  return Number(r?.v ?? 1);
 }
 
-function bumpVersion(p: Project): number {
-  const version = devRulesVersion(p) + 1;
-  const rules = devRules(p).map((r) => ({ id: r.id, name: r.name, body: r.body, appliesTo: r.appliesTo, check: r.check, pattern: r.pattern, onFail: r.onFail, enabled: r.enabled }));
-  run(p.db, "INSERT INTO dev_rule_versions (project_id, version, rules, created_at) VALUES (?, ?, ?, ?)", [p.projectId, version, JSON.stringify(rules), p.now()]);
-  return version;
+/** 版を 1 つ上げて、いまのルールの一覧を残す。版を読んでから書くので、呼ぶ側の tx の中で使う(単独でもここで張る)。 */
+async function bumpVersion(p: Project): Promise<number> {
+  return p.pdb.transaction(async () => {
+    const version = (await devRulesVersion(p)) + 1;
+    const rules = (await devRules(p)).map((r) => ({ id: r.id, name: r.name, body: r.body, appliesTo: r.appliesTo, check: r.check, pattern: r.pattern, onFail: r.onFail, enabled: r.enabled }));
+    await p.pdb.insert("dev_rule_versions", { version, rules: JSON.stringify(rules), created_at: p.now() }).execute();
+    return version;
+  });
 }
 
 /** 残してある版ごとの、そのときのルールの一覧。 */
-export function devRulesVersions(p: Project): { version: number; createdAt: string; rules: { id: number; name: string; enabled: boolean }[] }[] {
-  return all<{ version: number; rules: string; created_at: string }>(p.db, "SELECT * FROM dev_rule_versions WHERE project_id IN (?, ?) ORDER BY version", [p.projectId, 0]).map((v) => ({
+export async function devRulesVersions(p: Project): Promise<{ version: number; createdAt: string; rules: { id: number; name: string; enabled: boolean }[] }[]> {
+  return (await inScope(p.pdb, "dev_rule_versions").orderBy("version").execute()).map((v) => ({
     version: v.version,
     createdAt: v.created_at,
     rules: JSON.parse(v.rules) as { id: number; name: string; enabled: boolean }[],
@@ -157,66 +167,68 @@ function validRule(base: Partial<RuleInput>): RuleInput & { pattern: string | nu
   return { name, body, appliesTo, check: base.check!, pattern, onFail: base.onFail! };
 }
 
-export function addDevRule(p: Project, input: Partial<RuleInput> & { template?: string }): DevRule {
+export async function addDevRule(p: Project, input: Partial<RuleInput> & { template?: string }): Promise<DevRule> {
   let base: Partial<RuleInput> = input;
   let template: string | null = null;
   if (input.template) {
     const t = TEMPLATES.find((x) => x.key === input.template);
     if (!t) throw new Error(`ひな形がありません: ${input.template}`);
-    if (devRules(p).some((r) => r.template === t.key)) throw new Error(`「${t.name}」はもう足してあります`);
     base = { ...t, ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)) };
     template = t.key;
   }
   const v = validRule(base);
-  const id = run(p.db, "INSERT INTO dev_rules (name, body, applies_to, check_kind, pattern, on_fail, enabled, template, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)", [
-    v.name,
-    v.body,
-    v.appliesTo.join(","),
-    v.check,
-    v.pattern,
-    v.onFail,
-    template,
-    p.now(),
-  ]).lastId;
-  const version = bumpVersion(p);
-  p.event("owner", "dev_rule_added", null, { id, name: v.name, version });
-  return liveRule(p, id);
+  return p.pdb.transaction(async () => {
+    // 同じひな形がもうあるかを読んでから足すので、tx の中で
+    if (template && (await devRules(p)).some((r) => r.template === template)) throw new Error(`「${TEMPLATES.find((x) => x.key === template)!.name}」はもう足してあります`);
+    const id = await p.pdb.dialect.insertedId(
+      p.pdb.insert("dev_rules", { name: v.name, body: v.body, applies_to: v.appliesTo.join(","), check_kind: v.check, pattern: v.pattern, on_fail: v.onFail, enabled: 1, template, created_at: p.now() }),
+    );
+    const version = await bumpVersion(p);
+    p.event("owner", "dev_rule_added", null, { id, name: v.name, version });
+    return liveRule(p, id);
+  });
 }
 
-function liveRule(p: Project, id: number): DevRule {
-  const r = devRules(p).find((x) => x.id === id);
+async function liveRule(p: Project, id: number): Promise<DevRule> {
+  const r = (await devRules(p)).find((x) => x.id === id);
   if (!r) throw new Error("そのルールはありません");
   return r;
 }
 
 /** ルールの中身を直す。渡した項目だけを変える(ひな形から足したものも直せる)。直すと版が上がる。 */
-export function updateDevRule(p: Project, id: number, input: Partial<RuleInput>): DevRule {
-  const was = liveRule(p, id);
-  const given = Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined));
-  const v = validRule({ name: was.name, body: was.body, appliesTo: was.appliesTo, check: was.check, pattern: was.pattern, onFail: was.onFail, ...given });
-  run(p.db, "UPDATE dev_rules SET name = ?, body = ?, applies_to = ?, check_kind = ?, pattern = ?, on_fail = ? WHERE id = ?", [v.name, v.body, v.appliesTo.join(","), v.check, v.pattern, v.onFail, id]);
-  const version = bumpVersion(p);
-  p.event("owner", "dev_rule_updated", null, { id, name: v.name, version });
-  return liveRule(p, id);
+export async function updateDevRule(p: Project, id: number, input: Partial<RuleInput>): Promise<DevRule> {
+  return p.pdb.transaction(async () => {
+    const was = await liveRule(p, id);
+    const given = Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined));
+    const v = validRule({ name: was.name, body: was.body, appliesTo: was.appliesTo, check: was.check, pattern: was.pattern, onFail: was.onFail, ...given });
+    await p.pdb.update("dev_rules", { name: v.name, body: v.body, applies_to: v.appliesTo.join(","), check_kind: v.check, pattern: v.pattern, on_fail: v.onFail }).where("id", "=", id).execute();
+    const version = await bumpVersion(p);
+    p.event("owner", "dev_rule_updated", null, { id, name: v.name, version });
+    return liveRule(p, id);
+  });
 }
 
 /**
  * ルールを消す。違反の記録(チケットのやりとり・生産性の数)は残すので、行は消さずに印を付ける。
  * 消したルールは確かめず、一覧にも出さず、同じひな形をもう一度足せる。
  */
-export function deleteDevRule(p: Project, id: number): void {
-  const was = liveRule(p, id);
-  run(p.db, "UPDATE dev_rules SET deleted_at = ? WHERE id = ?", [p.now(), id]);
-  const version = bumpVersion(p);
-  p.event("owner", "dev_rule_deleted", null, { id, name: was.name, version });
+export async function deleteDevRule(p: Project, id: number): Promise<void> {
+  await p.pdb.transaction(async () => {
+    const was = await liveRule(p, id);
+    await p.pdb.update("dev_rules", { deleted_at: p.now() }).where("id", "=", id).execute();
+    const version = await bumpVersion(p);
+    p.event("owner", "dev_rule_deleted", null, { id, name: was.name, version });
+  });
 }
 
-export function setDevRuleEnabled(p: Project, id: number, enabled: boolean): DevRule {
-  liveRule(p, id);
-  run(p.db, "UPDATE dev_rules SET enabled = ? WHERE id = ?", [enabled ? 1 : 0, id]);
-  const version = bumpVersion(p);
-  p.event("owner", enabled ? "dev_rule_enabled" : "dev_rule_disabled", null, { id, version });
-  return liveRule(p, id);
+export async function setDevRuleEnabled(p: Project, id: number, enabled: boolean): Promise<DevRule> {
+  return p.pdb.transaction(async () => {
+    await liveRule(p, id);
+    await p.pdb.update("dev_rules", { enabled: enabled ? 1 : 0 }).where("id", "=", id).execute();
+    const version = await bumpVersion(p);
+    p.event("owner", enabled ? "dev_rule_enabled" : "dev_rule_disabled", null, { id, version });
+    return liveRule(p, id);
+  });
 }
 
 // ---- 確かめる ----
@@ -271,7 +283,7 @@ function patternDetails(rule: DevRule, s: RuleSubject): { target: RuleTarget; te
  * judge が無い・落ちたときは、AI のルールは確かめなかったことにする(PR は止めない)。
  */
 export async function checkRules(p: Project, subject: RuleSubject, judge?: RuleJudge): Promise<Checked> {
-  const rules = devRules(p).filter((r) => r.enabled);
+  const rules = (await devRules(p)).filter((r) => r.enabled);
   const found: Found[] = [];
   const evaluated = new Set<number>();
   for (const r of rules.filter((x) => x.check === "pattern" && x.pattern)) {
@@ -308,47 +320,58 @@ export type ViolationRow = { id: number; rule_id: number; ticket_id: number; han
  * 確かめた結果を違反に反映する。新しく見つかった違反を残し、確かめた上で守れていたもの(前に違反していたもの)には resolved_at を入れる。
  * 同じルールの違反が直っていないうちは、出し直しても 1 件のまま。
  */
-export function recordViolations(p: Project, ticketId: number, runId: number | null, checked: Checked): void {
-  const open = all<ViolationRow>(p.db, "SELECT * FROM rule_violations WHERE ticket_id = ? AND resolved_at IS NULL", [ticketId]);
-  const foundIds = new Set(checked.found.map((f) => f.rule.id));
-  for (const f of checked.found) {
-    const was = open.find((v) => v.rule_id === f.rule.id);
-    if (was) {
-      // 持ち主が直せる分を直したあとに、直せない分(ブランチ名)だけが残ったなら、レビューで指摘に回す
-      const handled = was.handled === "autofixed" && f.onFail !== "autofix" ? HANDLED[f.onFail] : was.handled;
-      run(p.db, "UPDATE rule_violations SET detail = ?, handled = ? WHERE id = ?", [f.detail, handled, was.id]);
-      continue;
+export async function recordViolations(p: Project, ticketId: number, runId: number | null, checked: Checked): Promise<void> {
+  await p.pdb.transaction(async () => {
+    const open = (await inScope(p.pdb, "rule_violations").where("ticket_id", "=", ticketId).where("resolved_at", "is", null).execute()) as unknown as ViolationRow[];
+    const foundIds = new Set(checked.found.map((f) => f.rule.id));
+    for (const f of checked.found) {
+      const was = open.find((v) => v.rule_id === f.rule.id);
+      if (was) {
+        // 持ち主が直せる分を直したあとに、直せない分(ブランチ名)だけが残ったなら、レビューで指摘に回す
+        const handled = was.handled === "autofixed" && f.onFail !== "autofix" ? HANDLED[f.onFail] : was.handled;
+        await p.pdb.update("rule_violations", { detail: f.detail, handled }).where("id", "=", was.id).execute();
+        continue;
+      }
+      await p.pdb.insert("rule_violations", { rule_id: f.rule.id, ticket_id: ticketId, handled: HANDLED[f.onFail], created_at: p.now(), detail: f.detail, run_id: runId }).execute();
+      p.event("system", "rule_violated", ticketId, { rule: f.rule.name, handled: HANDLED[f.onFail] });
     }
-    run(p.db, "INSERT INTO rule_violations (rule_id, ticket_id, handled, created_at, detail, run_id) VALUES (?, ?, ?, ?, ?, ?)", [f.rule.id, ticketId, HANDLED[f.onFail], p.now(), f.detail, runId]);
-    p.event("system", "rule_violated", ticketId, { rule: f.rule.name, handled: HANDLED[f.onFail] });
-  }
-  for (const v of open) if (checked.evaluated.has(v.rule_id) && !foundIds.has(v.rule_id)) run(p.db, "UPDATE rule_violations SET resolved_at = ? WHERE id = ?", [p.now(), v.id]);
+    for (const v of open) if (checked.evaluated.has(v.rule_id) && !foundIds.has(v.rule_id)) await p.pdb.update("rule_violations", { resolved_at: p.now() }).where("id", "=", v.id).execute();
+  });
+}
+
+/** 違反にルールの名前・本文を付けて取る(JOIN で 1 文)。 */
+function violationsWithRule(p: Project, ticketId: number) {
+  return p.pdb.k
+    .selectFrom("rule_violations as v")
+    .innerJoin("dev_rules as r", "r.id", "v.rule_id")
+    .selectAll("v")
+    .select(["r.name as name", "r.body as body"])
+    .where("v.project_id", "in", scopeIds(p.pdb))
+    .where("v.ticket_id", "=", ticketId)
+    .orderBy("v.id");
 }
 
 /** 今も直っていない違反(有効なルールのものだけ)。 */
-export function openViolations(p: Project, ticketId: number, handled?: Handled): (ViolationRow & { name: string; body: string })[] {
-  return all<ViolationRow & { name: string; body: string }>(
-    p.db,
-    `SELECT v.*, r.name, r.body FROM rule_violations v JOIN dev_rules r ON r.id = v.rule_id
-     WHERE v.ticket_id = ? AND v.resolved_at IS NULL AND r.enabled = 1 AND r.deleted_at IS NULL ${handled ? "AND v.handled = ?" : ""} ORDER BY v.id`,
-    handled ? [ticketId, handled] : [ticketId],
-  );
+export async function openViolations(p: Project, ticketId: number, handled?: Handled): Promise<(ViolationRow & { name: string; body: string })[]> {
+  let q = violationsWithRule(p, ticketId).where("v.resolved_at", "is", null).where("r.enabled", "=", 1).where("r.deleted_at", "is", null);
+  if (handled) q = q.where("v.handled", "=", handled);
+  return (await q.execute()) as unknown as (ViolationRow & { name: string; body: string })[];
 }
 
 /** チケットのやりとりに出す、違反の記録(ルールの名前つき)。 */
-export function violationsOf(p: Project, ticketId: number) {
-  return all<ViolationRow & { name: string }>(p.db, "SELECT v.*, r.name FROM rule_violations v JOIN dev_rules r ON r.id = v.rule_id WHERE v.ticket_id = ? ORDER BY v.id", [ticketId]);
+export async function violationsOf(p: Project, ticketId: number): Promise<(ViolationRow & { name: string })[]> {
+  return (await violationsWithRule(p, ticketId).execute()) as unknown as (ViolationRow & { name: string })[];
 }
 
 /** 生産性: ルール違反の件数と、うち自動で直した件数(handled = 'autofixed')。 */
-export function violationTotals(p: Project): { total: number; autofixed: number } {
-  const r = get<{ n: number; fixed: number | null }>(p.db, "SELECT COUNT(*) AS n, SUM(handled = 'autofixed') AS fixed FROM rule_violations");
-  return { total: r?.n ?? 0, autofixed: r?.fixed ?? 0 };
+export async function violationTotals(p: Project): Promise<{ total: number; autofixed: number }> {
+  const rows = await p.pdb.k.selectFrom("rule_violations").select("handled").where("project_id", "in", scopeIds(p.pdb)).execute();
+  return { total: rows.length, autofixed: rows.filter((r) => r.handled === "autofixed").length };
 }
 
 /** レビューの指摘に載せる違反(handled = 'review'で、直っておらず、まだ指摘にしていないもの)。指摘にしたかは違反の番号で覚える。 */
-export function reviewFindingsFor(p: Project, ticketId: number): { violationId: number; category: string; severity: "medium"; blocking: true; basis: "acceptance"; body: string }[] {
-  return openViolations(p, ticketId, "review").filter((v) => !p.setting(`rule_listed:${v.id}`)).map((v) => ({
+export async function reviewFindingsFor(p: Project, ticketId: number): Promise<{ violationId: number; category: string; severity: "medium"; blocking: true; basis: "acceptance"; body: string }[]> {
+  return (await openViolations(p, ticketId, "review")).filter((v) => !p.setting(`rule_listed:${v.id}`)).map((v) => ({
     violationId: v.id,
     category: "dev-rule",
     severity: "medium" as const,
@@ -368,8 +391,8 @@ export function ruleFindingBody(name: string, detail: string): string {
 }
 
 /** 担当への指示に足す、守ってほしい開発ルールの一覧。無ければ空。 */
-export function rulesNote(p: Project): string {
-  const rules = devRules(p).filter((r) => r.enabled);
+export async function rulesNote(p: Project): Promise<string> {
+  const rules = (await devRules(p)).filter((r) => r.enabled);
   if (!rules.length) return "";
   const how = { autofix: "反していたら submit_pr が戻ってくるので、直して出し直す", review: "反していたらレビューで指摘される", block: "反していたら、直すまで次の工程に進めない" };
   const branchNote = (r: DevRule) => (r.onFail === "autofix" && r.appliesTo.includes("branch") ? "ブランチ名は Kuramoto が決めるので直せません。ブランチ名だけが反しているときはレビューで指摘されます。" : "");
@@ -394,10 +417,10 @@ export type PreCheck = {
  * 返さなければ PR を出してよい(レビューで指摘・直すまで進めない、は PR を出したあとに工程が扱う)。
  */
 export async function checkBeforePr(p: Project, c: PreCheck): Promise<string | undefined> {
-  if (!devRules(p).some((r) => r.enabled)) return undefined;
+  if (!(await devRules(p)).some((r) => r.enabled)) return undefined;
   const changes = await c.changes();
   const checked = await checkRules(p, { branch: c.branch, title: c.draft.title ?? c.defaultTitle, body: c.draft.body ?? c.draft.summary, ...changes }, c.judge);
-  recordViolations(p, c.ticket.id, c.runId, checked);
+  await recordViolations(p, c.ticket.id, c.runId, checked);
   // 持ち主が直せる違反だけを返して戻す(ブランチ名は Kuramoto が決めるので、戻さない)
   const fix = checked.found.filter((f) => f.onFail === "autofix");
   if (!fix.length) return undefined;

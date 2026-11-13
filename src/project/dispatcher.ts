@@ -80,7 +80,7 @@ export class Dispatcher {
   async housekeep(): Promise<void> {
     await expireDecisions(this.p);
     // 企画スタジオが同じところを回っていたら止める
-    if (checkStudioLoop(this.p)) this.stopPlanning();
+    if (await checkStudioLoop(this.p)) this.stopPlanning();
     // チームの CI を使うなら、GitHub Actions の CI のためのチケットは片付ける(ADR-0028)
     if (teamCiEnabled(this.p)) await dropGithubCiTickets(this.p);
     // 始業中なら、新しいチケットの交通整理をリーダーに頼む
@@ -324,7 +324,7 @@ export class Dispatcher {
 
   private async assignAsk(msg: MessageRow): Promise<Job | "wait" | "handled"> {
     const p = this.p;
-    const q = question(p, (JSON.parse(msg.payload) as AskPayload).questionId);
+    const q = await question(p, (JSON.parse(msg.payload) as AskPayload).questionId);
     if (q.answer !== null) {
       await complete(p, msg.id);
       return "handled";
@@ -334,7 +334,7 @@ export class Dispatcher {
       // 編成が変わって、宛先の島が無くなった。経路が無いものとしてリーダーに回す
       await p.pdb.transaction(async () => {
         await complete(p, msg.id);
-        reroutedToLead(p, q, p.ticket(q.ticket_id));
+        await reroutedToLead(p, q, p.ticket(q.ticket_id));
       });
       return "handled";
     }
@@ -442,9 +442,9 @@ export class Dispatcher {
       const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: ticket.number, role, memberName: member.name, branch: preDev ? "" : branch });
       // 画面のデザイン: 企画で合意した試作・デザインシステム・お手本の画像を作業場所に置き、役割ごとの使い方を指示に足す(ADR-0033・0034)
       const designUse = ["dev", "review", "qa"].includes(role) && !preDev;
-      const designs = designUse ? designFor(p, ticket) : [];
-      const system = designUse ? designSystem(p) : null;
-      const systemTicket = designUse && isDesignSystemTicket(p, ticket);
+      const designs = designUse ? await designFor(p, ticket) : [];
+      const system = designUse ? await designSystem(p) : null;
+      const systemTicket = designUse && await isDesignSystemTicket(p, ticket);
       const withSystem = !!system && (designs.length > 0 || systemTicket);
       const refs = new Map<string, { id: number; png: Buffer }>();
       if (designs.length && this.deps.designStore && this.deps.renderer)
@@ -606,8 +606,8 @@ export class Dispatcher {
       result = await harness.run({
         cwd: ws.path,
         confine: confinementFor(p, ws, role),
-        systemPrompt: planningSystemPrompt(p, role, policy.focus) + planWebNote(p),
-        prompt: planningPrompt(p, payload, { fresh: !resume }),
+        systemPrompt: await planningSystemPrompt(p, role, policy.focus) + planWebNote(p),
+        prompt: await planningPrompt(p, payload, { fresh: !resume }),
         model: policy.model,
         effort: policy.effort,
         ...(resume ? { resumeSessionId: resume } : {}),
@@ -647,7 +647,7 @@ export class Dispatcher {
     });
 
     if (error) {
-      say(p, payload.stage, "system", `${member.name} の起動がエラーで止まりました: ${error}`);
+      await say(p, payload.stage, "system", `${member.name} の起動がエラーで止まりました: ${error}`);
       await this.failed(msg, null, error);
       return;
     }
@@ -667,7 +667,7 @@ export class Dispatcher {
       return;
     }
     // チャット: 読んでいない責任者のメッセージが無ければ起こさない(前の起動でまとめて返事をしたなど)
-    const unread = mode === "chat" ? unreadOwnerMessages(p) : [];
+    const unread = mode === "chat" ? await unreadOwnerMessages(p) : [];
     if (mode === "chat" && !unread.length) {
       await complete(p, msg.id);
       return;
@@ -729,14 +729,14 @@ export class Dispatcher {
         await markTriaged(p, targets.map((t) => t.id));
         p.event(member.name, "triaged", null, { tickets: targets.map((t) => t.number) });
         const text = result?.finalText?.trim();
-        leadReply(p, `【交通整理 #${targets.map((t) => t.number).join(", #")}】${text ? `\n${text}` : ""}`);
+        await leadReply(p, `【交通整理 #${targets.map((t) => t.number).join(", #")}】${text ? `\n${text}` : ""}`);
       } else if (mode === "patrol") {
         await finishPatrol(p, signals, deadlocks);
         p.event(member.name, "patrolled", null, { tickets: signals.map((s) => s.ticket.number), deadlocks: deadlocks.map((x) => x.key) });
         const text = result?.finalText?.trim();
-        leadReply(p, `【見回り】${text ? `\n${text}` : ""}`);
+        await leadReply(p, `【見回り】${text ? `\n${text}` : ""}`);
       } else {
-        leadReply(p, result?.finalText ?? "");
+        await leadReply(p, result?.finalText ?? "");
         // 渡したメッセージまで読んだことにする(返事の最中に届いたものは、次の起動で読む)
         markOwnerMessagesRead(p, Math.max(...unread.map((m) => m.id)));
       }
@@ -751,7 +751,7 @@ export class Dispatcher {
   private async executeMemberChat(job: Job): Promise<void> {
     const p = this.p;
     const { msg, member, role } = job;
-    const unread = unreadForMember(p, member.id);
+    const unread = await unreadForMember(p, member.id);
     // 返事をする相手のチケット(最初の未読のもの)。ほかのチケットのものは、このあと続けて起こす
     const ticketId = unread[0]?.ticketId ?? null;
     const batch = unread.filter((m) => m.ticketId === ticketId);
@@ -786,7 +786,7 @@ export class Dispatcher {
         cwd: ws.path,
         confine: confinementFor(p, ws, role),
         systemPrompt: memberChatSystem(p, member, { name: use.unitName, focus: use.unitFocus }, finished) + speechNote(member.name),
-        prompt: memberChatPrompt(p, member, ticket, batch),
+        prompt: await memberChatPrompt(p, member, ticket, batch),
         model: use.model,
         effort: use.effort,
         ...(resumeId ? { resumeSessionId: resumeId } : {}),
@@ -816,7 +816,7 @@ export class Dispatcher {
     }
     await p.pdb.transaction(async () => {
       await complete(p, msg.id);
-      finishMemberChat(p, member, batch, result?.finalText ?? "", !!done.handedOver);
+      await finishMemberChat(p, member, batch, result?.finalText ?? "", !!done.handedOver);
       p.event(member.name, "member_chat_finished", ticket.id, { handedOver: !!done.handedOver });
     });
   }
@@ -829,7 +829,7 @@ export class Dispatcher {
   private async executeAsk(job: Job): Promise<void> {
     const p = this.p;
     const { msg, member, role } = job;
-    const q = question(p, (JSON.parse(msg.payload) as AskPayload).questionId);
+    const q = await question(p, (JSON.parse(msg.payload) as AskPayload).questionId);
     const ticket = p.ticket(q.ticket_id);
     const policy = p.policy(role);
     const use = p.modelFor(member, policy);
@@ -878,7 +878,7 @@ export class Dispatcher {
     }
     await p.pdb.transaction(async () => {
       await complete(p, msg.id);
-      recordAnswer(p, q, member, answer!);
+      await recordAnswer(p, q, member, answer!);
     });
   }
 
@@ -980,7 +980,7 @@ export class Dispatcher {
       await complete(p, msg.id);
       const text = result?.finalText?.trim();
       const what = { hold: "保留にして、あなたに対応をお願いしました。", closed: "変更がすでに main に入っていたので、完了にしました。", dropped: "やることが無いチケットだったので、取りやめました。", retry: "助言を渡して、やり直してもらいます。" }[done.action ?? "retry"];
-      leadReply(p, `【#${ticket.number} の手助け】${what}${text ? `\n${text}` : ""}`);
+      await leadReply(p, `【#${ticket.number} の手助け】${what}${text ? `\n${text}` : ""}`);
       p.event(member.name, done.action === "hold" ? "unstick_held" : done.action === "closed" ? "unstick_closed" : done.action === "dropped" ? "unstick_dropped" : "unstick_retried", ticket.id, {});
     });
   }

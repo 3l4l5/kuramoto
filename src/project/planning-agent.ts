@@ -35,6 +35,7 @@ import {
   onlyQuestions,
   designSystem,
   type DesignSystem,
+  commentsByScreen,
 } from "./planning.js";
 import type { Project } from "./project.js";
 import { createTicket } from "./workflow.js";
@@ -100,20 +101,20 @@ function openItemTools(p: Project, stage: Stage): KuramotoTool[] {
         why: z.string().describe("推奨の理由と、間違えると何が起きるか"),
         reversible: z.boolean().describe("後から戻せるか"),
       },
-      handler: (a) => `未決 #${addOpenItem(p, stage, a)} に入れました。`,
+      handler: async (a) => `未決 #${await addOpenItem(p, stage, a)} に入れました。`,
     }),
     defineTool({
       name: "answer_open_item",
       description: "お任せの段階で、未決を推奨などで決める。戻せない判断は決められない(責任者に残す)。",
       input: { id: z.number().int(), answer: z.string() },
-      handler: (a) => aiAnswerOpenItem(p, a.id, a.answer) ?? "決めました。決めた内容を返事で責任者に報告してください。",
+      handler: async (a) => await aiAnswerOpenItem(p, a.id, a.answer) ?? "決めました。決めた内容を返事で責任者に報告してください。",
     }),
     defineTool({
       name: "withdraw_open_item",
       description: "聞く意味がなくなった未決を、理由を添えて取り下げる。",
       input: { id: z.number().int(), reason: z.string() },
-      handler: (a) => {
-        withdrawOpenItem(p, a.id, a.reason);
+      handler: async (a) => {
+        await withdrawOpenItem(p, a.id, a.reason);
         return "取り下げました。";
       },
     }),
@@ -129,7 +130,7 @@ const requirementTool = (p: Project, stage: Stage) =>
       name: z.string().describe("機能の名前(例: 空き枠を探す)"),
       acceptance: z.string().describe("受け入れ条件。QA がそのまま確かめられる書き方で"),
     },
-    handler: (a) => `${upsertRequirement(p, a, stage)} を書きました。`,
+    handler: async (a) => `${await upsertRequirement(p, a, stage)} を書きました。`,
   });
 
 export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoTool[] {
@@ -140,8 +141,8 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
           name: "set_brief",
           description: "目的・使う人・やらないことを書く(全体を置き換える)。",
           input: { purpose: z.string(), users: z.array(z.string()), out_of_scope: z.array(z.string()) },
-          handler: (a) => {
-            putArtifact(p, "req", "brief", "main", { purpose: a.purpose, users: a.users, outOfScope: a.out_of_scope } satisfies Brief);
+          handler: async (a) => {
+            await putArtifact(p, "req", "brief", "main", { purpose: a.purpose, users: a.users, outOfScope: a.out_of_scope } satisfies Brief);
             return "書きました。";
           },
         }),
@@ -150,8 +151,8 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
           name: "remove_requirement",
           description: "要件の項目を外す。",
           input: { code: z.string() },
-          handler: (a) => {
-            removeRequirement(p, a.code);
+          handler: async (a) => {
+            await removeRequirement(p, a.code);
             return "外しました。";
           },
         }),
@@ -179,12 +180,12 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
             operations: z.object({ monitoring: z.string(), logging: z.string(), backup: z.string(), rollback: z.string().describe("障害時の戻し方") }),
             cost: z.object({ assumptions: z.array(z.string()).describe("見積もりの前提"), monthly: z.array(z.object({ item: z.string(), usd: z.number() })) }),
           },
-          handler: (a) => {
+          handler: async (a) => {
             const names = new Set(a.components.map((c) => c.name));
             const bad = a.links.filter((l) => !names.has(l.from) || !names.has(l.to));
             if (bad.length) return `存在しない構成要素へのつながりがあります: ${bad.map((l) => `${l.from}→${l.to}`).join(", ")}`;
-            putArtifact(p, "infra", "infra", "main", a as Infra);
-            return `インフラ v${stageRow(p, "infra").version} を書きました。`;
+            await putArtifact(p, "infra", "infra", "main", a as Infra);
+            return `インフラ v${(await stageRow(p, "infra")).version} を書きました。`;
           },
         }),
         ...openItemTools(p, "infra"),
@@ -207,12 +208,12 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
             ),
             edges: z.array(z.object({ from: z.string(), to: z.string(), label: z.string().optional(), alt: z.boolean().optional() })),
           },
-          handler: (a) => {
+          handler: async (a) => {
             const ids = new Set(a.nodes.map((n) => n.id));
             const bad = a.edges.filter((e) => !ids.has(e.from) || !ids.has(e.to));
             if (bad.length) return `存在しない箱への矢印があります: ${bad.map((e) => `${e.from}→${e.to}`).join(", ")}`;
-            putArtifact(p, "flow", "flow", "main", a as Flow);
-            return `フロー v${stageRow(p, "flow").version} を書きました。`;
+            await putArtifact(p, "flow", "flow", "main", a as Flow);
+            return `フロー v${(await stageRow(p, "flow")).version} を書きました。`;
           },
         }),
         requirementTool(p, "flow"),
@@ -230,11 +231,11 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
             requirements: z.array(z.string()).describe("この画面が満たす要件の code"),
             variants: z.array(z.object({ id: z.string().regex(/^[A-Z]$/), html: z.string(), note: z.string().optional() })).min(1).max(2),
           },
-          handler: (a) => {
-            const prev = screens(p).get(a.key);
+          handler: async (a) => {
+            const prev = (await screens(p)).get(a.key);
             const chosen = prev?.chosen && a.variants.some((v) => v.id === prev.chosen) ? prev.chosen : a.variants.length === 1 ? a.variants[0]!.id : null;
-            putScreen(p, a.key, { name: a.name, device: a.device, requirements: a.requirements, variants: a.variants, chosen, agreed: false });
-            return `画面「${a.name}」を v${stageRow(p, "screen").version} に書きました。`;
+            await putScreen(p, a.key, { name: a.name, device: a.device, requirements: a.requirements, variants: a.variants, chosen, agreed: false });
+            return `画面「${a.name}」を v${(await stageRow(p, "screen")).version} に書きました。`;
           },
         }),
         defineTool({
@@ -263,8 +264,8 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
               )
               .min(1),
           },
-          handler: (a) => {
-            putArtifact(p, "screen", "designsystem", "main", { principles: a.principles, tokens: a.tokens, components: a.components } satisfies DesignSystem);
+          handler: async (a) => {
+            await putArtifact(p, "screen", "designsystem", "main", { principles: a.principles, tokens: a.tokens, components: a.components } satisfies DesignSystem);
             return `デザインシステムを書きました(トークン ${a.tokens.length}・部品 ${a.components.length})。試作は、このトークンと部品で組み立ててください。`;
           },
         }),
@@ -272,14 +273,14 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
           name: "get_screen",
           description: "今の試作の HTML とコメントを読む。",
           input: { key: z.string() },
-          handler: (a) => JSON.stringify({ screen: screens(p).get(a.key) ?? null, comments: comments(p, a.key) }),
+          handler: async (a) => JSON.stringify({ screen: (await screens(p)).get(a.key) ?? null, comments: await comments(p, a.key) }),
         }),
         defineTool({
           name: "remove_screen",
           description: "画面を外す。",
           input: { key: z.string() },
-          handler: (a) => {
-            putScreen(p, a.key, null);
+          handler: async (a) => {
+            await putScreen(p, a.key, null);
             return "外しました。";
           },
         }),
@@ -287,8 +288,8 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
           name: "resolve_comment",
           description: "直したコメントを対応済みにする。",
           input: { id: z.number().int() },
-          handler: (a) => {
-            resolveComment(p, a.id);
+          handler: async (a) => {
+            await resolveComment(p, a.id);
             return "対応済みにしました。";
           },
         }),
@@ -325,11 +326,11 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
               .optional()
               .describe("技術選定。新しく技術を選ぶ必要がある領域だけ書く"),
           },
-          handler: (a) => {
+          handler: async (a) => {
             const bad = (a.selections ?? []).filter((x) => !x.candidates.some((c) => c.name === x.choice));
             if (bad.length) return `選んだものが候補にありません: ${bad.map((x) => `${x.area}(${x.choice})`).join(", ")}`;
-            putArtifact(p, "model", "architecture", "main", a as Architecture);
-            return `アーキテクチャ v${stageRow(p, "model").version} を書きました。`;
+            await putArtifact(p, "model", "architecture", "main", a as Architecture);
+            return `アーキテクチャ v${(await stageRow(p, "model")).version} を書きました。`;
           },
         }),
         defineTool({
@@ -345,9 +346,9 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
             entities: z.array(z.object({ name: z.string(), isNew: z.boolean(), fields: z.array(z.string()) })),
             relations: z.array(z.object({ from: z.string(), to: z.string(), label: z.string() })),
           },
-          handler: (a) => {
-            putArtifact(p, "model", "domain", "main", a as Domain);
-            return `ドメインモデル v${stageRow(p, "model").version} を書きました。`;
+          handler: async (a) => {
+            await putArtifact(p, "model", "domain", "main", a as Domain);
+            return `ドメインモデル v${(await stageRow(p, "model")).version} を書きました。`;
           },
         }),
         defineTool({
@@ -358,8 +359,8 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
               z.object({ name: z.string(), change: z.enum(["new", "alter", "none"]), columns: z.array(z.string()), note: z.string(), reversible: z.boolean() }),
             ),
           },
-          handler: (a) => {
-            putArtifact(p, "model", "data", "main", a as DataDesign);
+          handler: async (a) => {
+            await putArtifact(p, "model", "data", "main", a as DataDesign);
             return "データ設計を書きました。";
           },
         }),
@@ -385,10 +386,11 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
           handler: async (a) => {
             const repos = p.repos().map((r) => r.full_name);
             if (a.repo && !repos.includes(a.repo)) return `登録されていないリポジトリです。使えるのは ${repos.join(", ")}`;
-            const item = a.requirement ? requirements(p).find((r) => r.code === a.requirement) : undefined;
+            const item = a.requirement ? (await requirements(p)).find((r) => r.code === a.requirement) : undefined;
             if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
-            const modes = Object.fromEntries(STAGES.map((s) => [s, stageRow(p, s).mode]));
-            const versions = Object.fromEntries(STAGES.map((s) => [s, stageRow(p, s).version]));
+            const rows = await Promise.all(STAGES.map(async (s) => [s, await stageRow(p, s)] as const));
+            const modes = Object.fromEntries(rows.map(([s, r]) => [s, r.mode]));
+            const versions = Object.fromEntries(rows.map(([s, r]) => [s, r.version]));
             const t = await createTicket(p, {
               title: a.title,
               body: a.body,
@@ -417,7 +419,7 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
                   body: z.string().optional().describe("やること・受け入れ条件(省くと PR の本文)"),
                 },
                 handler: async (a) => {
-                  const item = a.requirement ? requirements(p).find((r) => r.code === a.requirement) : undefined;
+                  const item = a.requirement ? (await requirements(p)).find((r) => r.code === a.requirement) : undefined;
                   if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
                   const r = await adoptPull(p, { repo: a.repo ?? p.repos()[0]!.full_name, number: a.number, ...(a.title ? { title: a.title } : {}), ...(a.body ? { body: a.body } : {}), ...(item ? { requirementItemId: item.id } : {}) });
                   return typeof r === "string" ? r : `#${r.number} を作り、PR #${a.number} を確認の工程から続けます。`;
@@ -429,7 +431,7 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
           name: "finish_handoff",
           description: "チケットを作り終えたら呼ぶ。",
           input: {},
-          handler: () => {
+          handler: async () => {
             const n = p.tickets().length;
             if (n === 0) return "チケットが 1 件もありません。create_ticket で作ってください。";
             p.setSetting("plan_handed_at", p.now());
@@ -441,7 +443,7 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
   }
 }
 
-export function planningSystemPrompt(p: Project, role: Role, focus: string): string {
+export async function planningSystemPrompt(p: Project, role: Role, focus: string): Promise<string> {
   const parts = [BASE[role] ?? ""];
   if (focus.trim()) parts.push(`\n## このプロジェクトで重視すること\n${focus.trim()}`);
   parts.push(speechNote(castName(role)));
@@ -449,46 +451,47 @@ export function planningSystemPrompt(p: Project, role: Role, focus: string): str
 }
 
 /** 今の企画の中身を、担当に渡す形にまとめる(試作の HTML は大きいので名前と状態だけ)。 */
-function snapshot(p: Project, stage: Stage | "handoff"): string {
-  const rows = STAGES.map((s) => stageRow(p, s));
+async function snapshot(p: Project, stage: Stage | "handoff"): Promise<string> {
+  const rows = await Promise.all(STAGES.map((s) => stageRow(p, s)));
   const data: Record<string, unknown> = {
     project: { repos: p.repos().map((r) => `${r.full_name}(${r.role})`) },
     stages: rows.map((r) => ({ stage: r.stage, mode: r.mode, version: r.version, agreed: r.agreed_version === r.version })),
-    brief: artifact(p, "req", "brief", "main"),
-    requirements: requirements(p).map((r) => ({ code: r.code, name: r.name, acceptance: r.acceptance })),
-    openItems: openItems(p).map((o) => ({ id: o.id, stage: o.stage, question: o.question, options: JSON.parse(o.options), answer: o.answer, decidedBy: o.decided_by, reversible: !!o.reversible })),
+    brief: await artifact(p, "req", "brief", "main"),
+    requirements: (await requirements(p)).map((r) => ({ code: r.code, name: r.name, acceptance: r.acceptance })),
+    openItems: (await openItems(p)).map((o) => ({ id: o.id, stage: o.stage, question: o.question, options: JSON.parse(o.options), answer: o.answer, decidedBy: o.decided_by, reversible: !!o.reversible })),
   };
-  if (stage !== "req") data.flow = artifact(p, "flow", "flow", "main");
-  if (stage === "infra" || stage === "model" || stage === "handoff") data.infra = artifact(p, "infra", "infra", "main");
-  if (stage === "screen" || stage === "handoff") data.designSystem = designSystem(p);
+  if (stage !== "req") data.flow = await artifact(p, "flow", "flow", "main");
+  if (stage === "infra" || stage === "model" || stage === "handoff") data.infra = await artifact(p, "infra", "infra", "main");
+  if (stage === "screen" || stage === "handoff") data.designSystem = await designSystem(p);
   if (stage === "screen" || stage === "infra" || stage === "model" || stage === "handoff") {
-    data.screens = [...screens(p)].map(([key, s]) => ({
+    const cs = await commentsByScreen(p);
+    data.screens = [...(await screens(p))].map(([key, s]) => ({
       key,
       name: s.name,
       requirements: s.requirements,
       variants: s.variants.map((v) => v.id),
       chosen: s.chosen,
       agreed: s.agreed,
-      openComments: comments(p, key).filter((c) => c.resolved_in === null),
+      openComments: (cs.get(key) ?? []).filter((c) => c.resolved_in === null),
     }));
   }
   if (stage === "model" || stage === "handoff") {
-    data.architecture = artifact(p, "model", "architecture", "main");
-    data.domain = artifact(p, "model", "domain", "main");
-    data.data = artifact(p, "model", "data", "main");
+    data.architecture = await artifact(p, "model", "architecture", "main");
+    data.domain = await artifact(p, "model", "domain", "main");
+    data.data = await artifact(p, "model", "data", "main");
   }
   return JSON.stringify(data, null, 1);
 }
 
 /** チケットの依存を 1 本足す(あれば何もしない。読んでから書くので、トランザクションの中で)。 */
-async function addDependency(p: Project, ticketId: number, dependsOn: number): Promise<void> {
+export async function addDependency(p: Project, ticketId: number, dependsOn: number): Promise<void> {
   await p.pdb.transaction(async () => {
     const has = await inScope(p.pdb, "ticket_deps").where("ticket_id", "=", ticketId).where("depends_on", "=", dependsOn).executeTakeFirst();
     if (!has) await p.pdb.insert("ticket_deps", { ticket_id: ticketId, depends_on: dependsOn }).execute();
   });
 }
 
-export function planningPrompt(p: Project, payload: PlanPayload, opts: { fresh?: boolean } = {}): string {
+export async function planningPrompt(p: Project, payload: PlanPayload, opts: { fresh?: boolean } = {}): Promise<string> {
   const where = payload.stage === "handoff" ? "チームへの引き渡し" : `段階「${STAGE_LABEL[payload.stage]}」(${payload.stage})`;
   const name = p.setting("project_name") ?? "";
   const events = payload.events.map((e) => (e.type === "chat" ? `責任者: ${e.text}` : e.type === "question" ? `責任者の質問: ${e.text}` : `[${e.type}] ${e.text}`)).join("\n");
@@ -496,9 +499,9 @@ export function planningPrompt(p: Project, payload: PlanPayload, opts: { fresh?:
   return `プロジェクト「${name}」の企画スタジオ、${where}です。
 
 ## 今の企画の中身
-${snapshot(p, payload.stage)}
+${await snapshot(p, payload.stage)}
 
-${opts.fresh ? `## この段階のこれまでの会話(最近の分。前の起動の会話は引き継いでいないので、ここで流れをつかむ)\n${recentPlanChat(p, payload.stage)}\n\n` : ""}## 起きたこと
+${opts.fresh ? `## この段階のこれまでの会話(最近の分。前の起動の会話は引き継いでいないので、ここで流れをつかむ)\n${await recentPlanChat(p, payload.stage)}\n\n` : ""}## 起きたこと
 ${events}
 
 ${
@@ -509,18 +512,18 @@ ${
 }
 
 /** その段階の最近の会話(古い順)。 */
-function recentPlanChat(p: Project, stage: Stage | "handoff"): string {
-  const rows = messages(p, stage).slice(-p.settingNumber("plan_chat_history", 12));
+async function recentPlanChat(p: Project, stage: Stage | "handoff"): Promise<string> {
+  const rows = (await messages(p, stage)).slice(-p.settingNumber("plan_chat_history", 12));
   return rows.map((m) => `- ${m.who === "me" ? "責任者" : m.who === "system" ? "Kuramoto" : SPEAKER_NAME[m.who] ?? m.who}: ${m.body.length > 500 ? `${m.body.slice(0, 500)}…` : m.body}`).join("\n") || "(まだありません)";
 }
 const SPEAKER_NAME: Record<string, string> = { plan: "企画", design: "デザイナー", arch: "アーキテクト", lead: "リーダー" };
 
 /** 起動が終わったあと: 返事を会話に残し、段階が終わっていれば次の段階を起こす。 */
-export function afterPlanningRun(p: Project, msg: MessageRow, role: Role, finalText: string): void {
+export async function afterPlanningRun(p: Project, msg: MessageRow, role: Role, finalText: string): Promise<void> {
   const payload = JSON.parse(msg.payload) as PlanPayload;
-  if (finalText.trim()) say(p, payload.stage, SPEAKER[role] ?? role, finalText.trim());
+  if (finalText.trim()) await say(p, payload.stage, SPEAKER[role] ?? role, finalText.trim());
   if (payload.stage === "handoff" && p.setting("plan_handed_at")) {
-    say(p, "handoff", "lead", `チームに渡しました。チケットを ${p.tickets().length} 件作りました。オフィスで「始業」を押すと、開発が始まります。`);
+    await say(p, "handoff", "lead", `チームに渡しました。チケットを ${p.tickets().length} 件作りました。オフィスで「始業」を押すと、開発が始まります。`);
   }
-  advance(p);
+  await advance(p);
 }

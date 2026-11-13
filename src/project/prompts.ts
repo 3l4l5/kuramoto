@@ -7,7 +7,7 @@ import { ROLE_LABEL, type Role } from "../domain/roles.js";
 import type { MessageRow } from "./inbox.js";
 import type { PolicyRow, Project, TicketRow } from "./project.js";
 import { requirements } from "./planning.js";
-import { all, get } from "../db/sqlite.js";
+import { inScope } from "../db/count.js";
 import { decision, nonstop, type DecisionOption } from "./workflow.js";
 
 /**
@@ -84,12 +84,12 @@ export async function promptFor(p: Project, msg: MessageRow, ticket: TicketRow |
   const head = ticket
     ? ticketBlock(ticket) +
       (notes.length ? `\n\n### メモ(責任者・リーダーから)\n${notes.map((n) => `- ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.body}`).join("\n")}` : "") +
-      (ticket ? answeredBlock(p, ticket.id) : "") +
+      (ticket ? await answeredBlock(p, ticket.id) : "") +
       (handoffs.length ? `\n\n### 申し送り(開発より前の確認から。着手の前に読んでください)\n${handoffs.map((h) => `- ${ROLE_LABEL[h.role] ?? h.role}: ${h.body}`).join("\n")}` : "")
     : "";
   switch (msg.kind) {
     case "implement":
-      return `${head}\n\nこのチケットを実装してください。リポジトリは ${ctx.repo}、ブランチは ${ctx.branch}(作業場所で取り出し済み)です。終わったら変更をコミットし、submit_pr で報告してください(PR のタイトルと本文も渡せます)。push と PR の作成は Kuramoto が行います。${teamCiNote(p, ctx.repo)}${rulesNote(p)}`;
+      return `${head}\n\nこのチケットを実装してください。リポジトリは ${ctx.repo}、ブランチは ${ctx.branch}(作業場所で取り出し済み)です。終わったら変更をコミットし、submit_pr で報告してください(PR のタイトルと本文も渡せます)。push と PR の作成は Kuramoto が行います。${teamCiNote(p, ctx.repo)}${await rulesNote(p)}`;
     case "fix": {
       // CI の失敗など、スレッドにならない指示
       const extra = ((payload.findings as { severity: string; body: string }[] | undefined) ?? []).map((f) => `- [${f.severity}] ${f.body}`).join("\n");
@@ -98,7 +98,7 @@ export async function promptFor(p: Project, msg: MessageRow, ticket: TicketRow |
       }
       if (Array.isArray(payload.rules)) {
         const rules = payload.rules as { name: string; body: string; detail: string }[];
-        return `${head}\n\nあなたが出した PR #${ctx.prNumber ?? "?"}(リポジトリは ${ctx.repo}、ブランチは ${ctx.branch})は、次の開発ルールに反したままです。直すまで次の工程(レビューなど)には進めません。\n${rules.map((r) => `- 「${r.name}」: ${r.detail}(守ること: ${r.body})`).join("\n")}\n\nルールを守るように直し、コミットして submit_pr で報告してください。何も変えずに出し直しても、同じように戻ってきます。${rulesNote(p)}`;
+        return `${head}\n\nあなたが出した PR #${ctx.prNumber ?? "?"}(リポジトリは ${ctx.repo}、ブランチは ${ctx.branch})は、次の開発ルールに反したままです。直すまで次の工程(レビューなど)には進めません。\n${rules.map((r) => `- 「${r.name}」: ${r.detail}(守ること: ${r.body})`).join("\n")}\n\nルールを守るように直し、コミットして submit_pr で報告してください。何も変えずに出し直しても、同じように戻ってきます。${await rulesNote(p)}`;
       }
       const must = ticket ? await mustAnswer(p, ticket.id) : [];
       const nits = ticket ? await openNits(p, ticket.id) : [];
@@ -124,7 +124,7 @@ ${nits.map(threadText).join("\n") || "(なし)"}
     case "qa": {
       if (payload.preDev) return preDevPrompt(p, msg.kind, ticket, head);
       const prior = ticket ? await mustResolve(p, ticket.id, msg.kind) : [];
-      const criteria = ticket ? acceptanceBlock(p, ticket) : "";
+      const criteria = ticket ? (await acceptanceBlock(p, ticket)) : "";
       const how = `${criteria}## 何を止めるか(必須にしてよいのは 3 つだけ)
 - 必須(blocking: true)にしてよいのは、次のどれかに当たるものだけです。根拠を basis に付けます。
   - acceptance: このチケットの受け入れ条件を満たしていない
@@ -134,7 +134,7 @@ ${nits.map(threadText).join("\n") || "(なし)"}
 - このチケットの範囲外のこと(後のチケットで扱う機能・別の画面・別の API)は、指摘にせず followups に書きます。PR は止めません。
   - 先に下の「開いているチケット」を見て、同じことを扱うチケットがあれば、followups の existing にその番号を書きます(新しいチケットは作らず、そのチケットにメモとして足します)。
   - 無ければ、この PR が merge されたときに別チケットになり、リーダーが順番と担当を決めます。
-${ticket ? openTicketsBlock(p, ticket) : ""}
+${ticket ? await openTicketsBlock(p, ticket) : ""}
 - ベースのブランチとの衝突・merge できるかどうかは見ません。merge の前に Kuramoto が確かめ、衝突していれば持ち主に直させます。
 - 確かめるための道具が動かない(テストやブラウザが起動しない)ときは、それを理由に差し戻しません。コードを読んで確かめられた範囲で判断し、動かせなかったことを提案として書きます。
 - 指摘には、何が問題で、どう直すべきかを書きます。`;
@@ -193,7 +193,7 @@ export const PRE_DEV_NOTE = `
 - 結果は submit_review ではなく leave_handoff で報告します。差し戻しはありません(往復にも数えません)。`;
 
 /** 開発より前の確認(R17)の指示。コードは見ず、チケットの中身を読んで、開発への申し送りを残す。 */
-function preDevPrompt(p: Project, role: "review" | "sec" | "qa", ticket: TicketRow | null, head: string): string {
+async function preDevPrompt(p: Project, role: "review" | "sec" | "qa", ticket: TicketRow | null, head: string): Promise<string> {
   const refs = ticket ? (JSON.parse(ticket.plan_refs || "{}") as { screens?: string[]; design?: string[] }) : {};
   const refLines = [refs.screens?.length ? `- ひも付く画面: ${refs.screens.join("・")}` : "", refs.design?.length ? `- ひも付く設計の節: ${refs.design.join("・")}` : ""].filter(Boolean).join("\n");
   const view: Record<"review" | "sec" | "qa", string> = {
@@ -203,7 +203,7 @@ function preDevPrompt(p: Project, role: "review" | "sec" | "qa", ticket: TicketR
   };
   return `${head}
 
-${ticket ? acceptanceBlock(p, ticket) : ""}${refLines ? `${refLines}\n\n` : ""}このチケットは開発より前の${ROLE_LABEL[role]}です。コードは見ずに、上のチケットの中身(本文・要件の受け入れ条件・画面・設計)だけを読んでください。
+${ticket ? (await acceptanceBlock(p, ticket)) : ""}${refLines ? `${refLines}\n\n` : ""}このチケットは開発より前の${ROLE_LABEL[role]}です。コードは見ずに、上のチケットの中身(本文・要件の受け入れ条件・画面・設計)だけを読んでください。
 開発が着手する前に知っておくべきこととして、特に次を、開発への申し送りにまとめます。
 - ${view[role]}
 - チケットの本文だけでは曖昧な点(あれば、どう解釈して進めるとよいか)
@@ -214,12 +214,12 @@ ${ticket ? acceptanceBlock(p, ticket) : ""}${refLines ? `${refLines}\n\n` : ""}�
  * 判断の基準にする受け入れ条件。チケットにひも付いた要件と、本文に出てくる要件の番号(R1 など)の受け入れ条件を並べる。
  * チケットの本文の「受け入れ条件」は、チケットの節にそのまま入っている。
  */
-export function acceptanceBlock(p: Project, t: TicketRow): string {
+export async function acceptanceBlock(p: Project, t: TicketRow): Promise<string> {
   const codes = new Set<string>(t.body.match(/\bR\d+\b/g) ?? []);
-  const reqId = get<{ requirement_item_id: number | null }>(p.db, "SELECT requirement_item_id FROM tickets WHERE id = ?", [t.id])?.requirement_item_id;
-  const linked = reqId ? requirements(p).find((r) => r.id === reqId) : undefined;
+  const reqId = (await inScope(p.pdb, "tickets").where("id", "=", t.id).executeTakeFirst())?.requirement_item_id;
+  const linked = reqId ? (await requirements(p)).find((r) => r.id === reqId) : undefined;
   if (linked) codes.add(linked.code);
-  const items = requirements(p).filter((r) => codes.has(r.code));
+  const items = (await requirements(p)).filter((r) => codes.has(r.code));
   if (!items.length) return "## 判断の基準\nこのチケットの本文(やること・受け入れ条件)を基準にします。\n\n";
   return `## 判断の基準: 受け入れ条件\nこのチケットの本文に加えて、次の要件の受け入れ条件を基準にします。\n${items.map((r) => `- ${r.code} ${r.name}: ${r.acceptance}`).join("\n")}\n\n`;
 }
@@ -230,12 +230,8 @@ function ticketBlock(t: TicketRow): string {
 }
 
 /** 確認する人に見せる、開いているチケットの一覧(followups の重複を避けるため)。このチケットから出たものを先に、多すぎれば新しいものから。 */
-function openTicketsBlock(p: Project, ticket: TicketRow): string {
-  const rows = all<{ number: number; title: string; plan_refs: string }>(
-    p.db,
-    "SELECT number, title, plan_refs FROM tickets WHERE stage NOT IN ('done','dropped') AND id <> ? ORDER BY number DESC LIMIT 200",
-    [ticket.id],
-  );
+async function openTicketsBlock(p: Project, ticket: TicketRow): Promise<string> {
+  const rows = await inScope(p.pdb, "tickets").where("stage", "not in", ["done", "dropped"]).where("id", "<>", ticket.id).orderBy("number", "desc").limit(200).execute();
   const mine = rows.filter((r) => (JSON.parse(r.plan_refs || "{}") as { followupOf?: number }).followupOf === ticket.number);
   const others = rows.filter((r) => !mine.includes(r)).slice(0, Math.max(0, 80 - mine.length));
   const list = [...mine, ...others].map((r) => `  - #${r.number} ${r.title}`).join("\n");

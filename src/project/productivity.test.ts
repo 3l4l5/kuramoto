@@ -74,8 +74,8 @@ describe("生産性: ルール違反(R15)", () => {
     p.addRepo("acme/shop", "API");
     const a = await createTicket(p, { title: "A" });
     const b = await createTicket(p, { title: "B" });
-    const fix = addDevRule(p, { template: "jira" });
-    const block = addDevRule(p, { template: "migration-alone" });
+    const fix = await addDevRule(p, { template: "jira" });
+    const block = await addDevRule(p, { template: "migration-alone" });
     const add = (rule: number, ticket: number, handled: string) =>
       run(p.db, "INSERT INTO rule_violations (rule_id, ticket_id, handled, created_at, detail) VALUES (?, ?, ?, ?, '')", [rule, ticket, handled, p.now()]);
     add(fix.id, a.id, "autofixed");

@@ -309,7 +309,7 @@ export class KuramotoServer {
       }
     }
     p.event("owner", "ci_mode", null, { mode, done, failed });
-    leadReply(
+    await leadReply(
       p,
       mode === "team"
         ? `【チームの CI に切り替えました】これからは、担当が PR を出すたびに Kuramoto が閉じ込めの中で確認を流し、通ったものだけをレビューに回します。merge の直前にも、main が進んでいれば流し直します。GitHub の CI は待ちません。${done.length ? `\n${done.join("・")} の GitHub Actions を止めました。` : ""}${failed.length ? `\nGitHub Actions を止められませんでした: ${failed.join("・")}。リポジトリの Settings > Actions で止めてください。` : ""}\nリポジトリのブランチ保護で「CI の確認が通ること」を必須にしていると、GitHub が merge を断ります。そのときは必須の確認を外してください。`
@@ -473,9 +473,9 @@ export class KuramotoServer {
     }
     if (b === "team" && method === "GET") return teamView(p);
     if (b === "productivity" && method === "GET") return productivity(p);
-    if (b === "dev-rules" && !c && method === "GET") return devRulesView(p);
+    if (b === "dev-rules" && !c && method === "GET") return await devRulesView(p);
     if (b === "dev-rules" && !c && method === "POST") {
-      addDevRule(p, {
+      await addDevRule(p, {
         ...(typeof body.template === "string" ? { template: body.template } : {}),
         ...(typeof body.name === "string" ? { name: body.name } : {}),
         ...(typeof body.body === "string" ? { body: body.body } : {}),
@@ -484,10 +484,10 @@ export class KuramotoServer {
         ...(typeof body.pattern === "string" ? { pattern: body.pattern } : {}),
         ...(typeof body.onFail === "string" ? { onFail: body.onFail as never } : {}),
       });
-      return devRulesView(p);
+      return await devRulesView(p);
     }
     if (b === "dev-rules" && c && !parts[4] && method === "POST") {
-      updateDevRule(p, Number(c), {
+      await updateDevRule(p, Number(c), {
         ...(typeof body.name === "string" ? { name: body.name } : {}),
         ...(typeof body.body === "string" ? { body: body.body } : {}),
         ...(Array.isArray(body.appliesTo) ? { appliesTo: body.appliesTo as never } : {}),
@@ -495,22 +495,22 @@ export class KuramotoServer {
         ...(typeof body.pattern === "string" ? { pattern: body.pattern } : {}),
         ...(typeof body.onFail === "string" ? { onFail: body.onFail as never } : {}),
       });
-      return devRulesView(p);
+      return await devRulesView(p);
     }
     if (b === "dev-rules" && c && parts[4] === "delete" && method === "POST") {
-      deleteDevRule(p, Number(c));
-      return devRulesView(p);
+      await deleteDevRule(p, Number(c));
+      return await devRulesView(p);
     }
     if (b === "dev-rules" && c && parts[4] === "enabled" && method === "POST") {
-      setDevRuleEnabled(p, Number(c), body.enabled === true);
-      return devRulesView(p);
+      await setDevRuleEnabled(p, Number(c), body.enabled === true);
+      return await devRulesView(p);
     }
     if (b === "office" && method === "GET") return { ...(await officeView(p)), running: this.running.has(id) };
     // メンバーの今していること・話す欄(オフィスでメンバーを押して開く引き出し)
     if (b === "members" && c && parts[4] === "now" && method === "GET") return memberNow(p, Number(c));
     if (b === "members" && c && parts[4] === "chat" && method === "GET") return memberChatView(p, Number(c));
     if (b === "members" && c && parts[4] === "chat" && method === "POST") {
-      sayToMember(p, Number(c), String(body.body ?? ""));
+      await sayToMember(p, Number(c), String(body.body ?? ""));
       this.poke(id);
       return memberChatView(p, Number(c));
     }
@@ -518,7 +518,7 @@ export class KuramotoServer {
     if (b === "units" && c && method === "GET") return await unitView(p, Number(c), await officeView(p));
     if (b === "lead-chat" && method === "GET") return leadChatView(p);
     if (b === "lead-chat" && method === "POST") {
-      sayToLead(p, String(body.body ?? ""));
+      await sayToLead(p, String(body.body ?? ""));
       this.poke(id);
       return leadChatView(p);
     }
@@ -586,7 +586,7 @@ export class KuramotoServer {
     switch (a) {
       case "pause": {
         // 企画スタジオを止める(動いている担当もその場で止める)・再開する
-        setStudioPaused(p, !!body.paused);
+        await setStudioPaused(p, !!body.paused);
         if (body.paused) this.runners.get(id)?.dispatcher.stopPlanning();
         else this.poke(id);
         return { paused: !!studioPaused(p) };
@@ -594,7 +594,7 @@ export class KuramotoServer {
       case "chat": {
         const text = String(body.text ?? "").trim();
         if (!text) throw new Error("メッセージがありません");
-        chat(p, body.stage === "handoff" ? "handoff" : stage(body.stage), text, body.kind === "question" ? "question" : "chat");
+        await chat(p, body.stage === "handoff" ? "handoff" : stage(body.stage), text, body.kind === "question" ? "question" : "chat");
         return { ok: true };
       }
       case "open-items":
@@ -606,13 +606,13 @@ export class KuramotoServer {
         else return undefined;
         return { ok: true };
       case "screens":
-        if (c === "pick") pickVariant(p, String(key), String(body.variant));
-        else if (c === "agree") agreeScreen(p, String(key));
-        else if (c === "comments") addComment(p, String(key), { variant: String(body.variant), x: Number(body.x), y: Number(body.y), body: String(body.body ?? "").trim() || (() => { throw new Error("コメントがありません"); })() });
+        if (c === "pick") await pickVariant(p, String(key), String(body.variant));
+        else if (c === "agree") await agreeScreen(p, String(key));
+        else if (c === "comments") await addComment(p, String(key), { variant: String(body.variant), x: Number(body.x), y: Number(body.y), body: String(body.body ?? "").trim() || (() => { throw new Error("コメントがありません"); })() });
         else return undefined;
         return { ok: true };
       case "handoff":
-        handoff(p);
+        await handoff(p);
         return { ok: true };
     }
     return undefined;
@@ -624,7 +624,7 @@ export class KuramotoServer {
     const projects = await Promise.all(recs.map(async (rec) => {
       const p = this.project(rec.id);
       const m = await metrics(p);
-      const stages = STAGES.map((s) => ({ key: s, done: stageDone(p, s) }));
+      const stages = await Promise.all(STAGES.map(async (s) => ({ key: s, done: await stageDone(p, s) })));
       return {
         id: rec.id,
         name: rec.name,
@@ -643,7 +643,7 @@ export class KuramotoServer {
       const p = this.project(rec.id);
       const owed = await pendingOwnerDecisions(p);
       return [
-        ...ownerPlanItems(p).map((x) => ({ projectId: rec.id, projectName: rec.name, kind: "plan", text: x.text, deadline: null })),
+        ...(await ownerPlanItems(p)).map((x) => ({ projectId: rec.id, projectName: rec.name, kind: "plan", text: x.text, deadline: null })),
         ...owed.map((d) => ({ projectId: rec.id, projectName: rec.name, kind: "decide", text: d.question.split("\n").pop(), deadline: d.deadline_at })),
         ...(await suggestedMergeOrder(p)).map((t) => ({ projectId: rec.id, projectName: rec.name, kind: "merge", text: `#${t.number} ${t.title} を merge できます`, deadline: null })),
       ];
@@ -706,7 +706,7 @@ export class KuramotoServer {
         // 取りやめたとき: 誰が・なぜ・いつ(ボードの「取りやめ」に出す)
         dropped: await droppedInfo(p, t.id),
         // 「直すまで進めない」ルールに反して止まっているルールの名前(ボードの赤い札)
-        ruleBlocked: openViolations(p, t.id, "blocked").map((v) => v.name),
+        ruleBlocked: (await openViolations(p, t.id, "blocked")).map((v) => v.name),
       };
     }));
     const decisions = (await pendingOwnerDecisions(p)).map((d) => {
@@ -787,7 +787,7 @@ export class KuramotoServer {
     const render = this.deps.renderer ?? playwrightRenderer;
     const images = new Map<string, string>();
     const files: { name: string; data: Buffer | string }[] = [];
-    for (const [key, s] of screens(p)) {
+    for (const [key, s] of await screens(p)) {
       const v = s.variants.find((x) => x.id === s.chosen) ?? s.variants[0];
       if (!v) continue;
       const ref = await referenceImage(p, store, render, { key, html: v.html, device: s.device });

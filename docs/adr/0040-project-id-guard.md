@@ -29,7 +29,7 @@ ADR-0039(1/2)の続き。残りの src/project・server を async + Kysely に�
 
 ## C(#44)の途中経過
 
-- 移した: metrics・productivity・formation-marks・transfer(と export の async 化)・design・planning-agent・design-visual・ticket(ticketView)・office・people・team・onboard。
+- 移した: metrics・productivity・formation-marks・transfer(と export の async 化)・design・planning-agent・design-visual・ticket(ticketView)・office・people・team・onboard、C2(#57)で planning・questions・leadchat・member-chat・dev-rules・prompts。planning は 段階・版・要件・未決・コメント・画面の取得。画面ごとの取得は 1 文にまとめ、版を上げる・未決に答える・企画の担当への送信は tx の中で読んでから書く。要件の番号の最大・並びは JS で数え、方言に依る SQL は dialect を通す。dev-rules の版を上げる(版を読んで +1 して書く)・ルールを足す(同じひな形の有無を読んでから書く)・違反を残す・member-chat の返事を残す・leadchat のチャットの受信箱への送りまとめは、tx の中で読んでから書く。ルールごとの違反の数・手順・トークンの合計は、SUM(...) や相関サブクエリでなく、行を IN / JOIN で 1 文で取って JS で数える。
 - **読むときの project_id は「自分の id と 0」(`src/db/count.ts` の `inScope` / `countFrom`)**。Project 本体・workflow・planning などの同期の INSERT は project_id を書かず、開き直すまで 0 のまま。`= 自分の id` だけで読むと、開いている間の画面から、その間に入った行(チケット・出来事・設定など)が欠ける。同期の書き込みが無くなったら(D)、`= 自分の id` に戻す。
 - dev_rule_versions は、版の番号をプロジェクトごとの MAX で決め、project_id を書いて残すようにした(同期のまま。#41 の QA)。
-- **まだ移していない(C の残り)**: planning・questions・leadchat・member-chat・dev-rules・prompts。これらを呼ぶのが、まだ同期の workflow(applyReview・applyDevReport など。A の対象)と outage(B の対象)で、async にすると await が、それらの同期の関数の呼び出しの連鎖(enterStage・advance など)へ広がる。後続のチケット「DB の非同期化 C2」で移す。着手できるのは、workflow(A: #42)・outage(B: #43)・server.ts の本体(#45)が async に移った後。C2 の受け入れ条件は、この 6 本を NOT_MIGRATED から外すこと、dev-rules の「読んでから書く」を tx か 1 文にすること、画面の取得を IN (…) でまとめること、npm test と npm run e2e が通ること。
+- **まだ移していないのは #45 の範囲だけ**: server.ts・project/inbox.ts・project/project.ts(src/db/no-raw-sql.test.ts の NOT_MIGRATED に残る 3 本)。C2 で 6 本(planning・questions・leadchat・member-chat・dev-rules・prompts)を async + Kysely に移し終えた。これらを呼ぶ呼び出し元(dispatcher・server・ticket・workflow・productivity・outage など)には await を足した。#45 がこの 3 本を移し、NOT_MIGRATED が空になる。

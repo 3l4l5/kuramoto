@@ -200,7 +200,7 @@ async function applyDev(p: Project, ticket: TicketRow, memberId: number, report:
     await setStatus(p, r.findingId, r.action === "fixed" ? "addressed" : "disputed");
   }
   // 「直すまで進めない」開発ルール(R15)に反したまま。PR は出したが、次の工程には進めず、持ち主に戻す
-  const blocked = openViolations(p, ticket.id, "blocked");
+  const blocked = await openViolations(p, ticket.id, "blocked");
   if (blocked.length) {
     p.event("system", "rule_blocked", ticket.id, { rules: blocked.map((v) => v.name) });
     await enterStage(p, ticket, "dev", {
@@ -268,7 +268,7 @@ async function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId:
   // 「レビューで指摘」の開発ルール(R15)の違反は、最初の確認の工程が、まだ指摘にしていないものを指摘に足す
   // (開発より前の工程は差分を見ないので、最初の確認は開発より後ろの工程から数える)
   const first = pipelineOf(p.currentFormation(), ticket.kind, { devDone: true }).find((r) => r !== "dev");
-  const ruleFindings = role === first ? reviewFindingsFor(p, ticket.id) : [];
+  const ruleFindings = role === first ? await reviewFindingsFor(p, ticket.id) : [];
   for (const f of ruleFindings) markListed(p, f.violationId);
   const findings: Finding[] = [...report.review.findings, ...ruleFindings.map(({ violationId: _, ...f }) => f)];
   const reviewer = (await p.pdb.from("runs").select("member_id").where("id", "=", runId).executeTakeFirstOrThrow()).member_id;
