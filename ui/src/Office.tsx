@@ -242,7 +242,7 @@ function RouteMap({ data, kind, children }: { data: OfficeView; kind: string; ch
   const lineName = (l: OfficeView["lines"][number]) => {
     const shapes = l.kinds.map((k) => KIND_SHAPE[k.kind]).join("");
     const names = l.kinds.map((k) => k.label).join("・");
-    return l.isDefault ? `${shapes} 既定線(${names})` : `${shapes} ${names}線${l.skipped.length ? `(${l.skipped.join("・")}を通過)` : ""}`;
+    return l.isDefault ? `${shapes} 既定線(${names})` : `${shapes} ${names}線${l.skipped.length ? `(${l.skipped.join("・")}を省略)` : ""}`;
   };
   const built = geo
     ? data.lines.map((l, i) => {

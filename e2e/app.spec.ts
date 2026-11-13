@@ -423,11 +423,11 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(floor.locator("path.of-route")).toHaveCount(2);
     await expect(floor.locator("path.of-route-draft")).toHaveCount(0);
     await expect(floor).not.toContainText("保存前の案を表示中");
-    // 路線図: バグ修正だけ専用の流れ(QA → 開発 → レビュー、セキュリティは通過)なので、路線は既定線とバグ修正線の 2 本になる
+    // 路線図: バグ修正だけ専用の流れ(QA → 開発 → レビュー、セキュリティは省略)なので、路線は既定線とバグ修正線の 2 本になる
     const rails = floor.getByRole("img", { name: /^路線図:/ });
     await expect(rails.locator("[data-line]")).toHaveCount(2);
     await expect(rails).toHaveAttribute("aria-label", /既定線\(機能・リファクタ・ドキュメント\)/);
-    await expect(rails).toHaveAttribute("aria-label", /▲ バグ修正線\(セキュリティを通過\)/);
+    await expect(rails).toHaveAttribute("aria-label", /▲ バグ修正線\(セキュリティを省略\)/);
     // 種類を選ぶと、その種類を含む路線だけが濃くなる
     await floor.getByRole("radiogroup", { name: "路線の種類" }).getByRole("radio", { name: /バグ修正/ }).click();
     await expect(rails.locator('[data-line="bugfix"]')).toHaveClass(/of-line-on/);
