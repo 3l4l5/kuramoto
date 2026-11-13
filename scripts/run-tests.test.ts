@@ -1,15 +1,21 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { DisposableDb } from "../src/db/mysql-test-support.js";
-import { findMysqlTestFiles, main, type Deps } from "./run-tests.js";
+import { findMysqlTestFiles, isMainModule, main, splitArgs, type Deps } from "./run-tests.js";
 
 /** vitest と mysql-test の代わり。呼ばれた回と、使い捨ての database を作った・消した順を残す。 */
-function fake(over: { sqlite?: number; mysql?: number; createFails?: boolean } = {}) {
+function fake(over: { sqlite?: number; mysql?: number; createFails?: boolean; interruptAfterFirst?: boolean } = {}) {
   const calls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
   const events: string[] = [];
   const lines: string[] = [];
+  let stop = false;
   const deps: Deps = {
     vitest: async (args, env) => {
       calls.push({ args, env });
+      if (over.interruptAfterFirst) stop = true;
       return env.KURAMOTO_TEST_DB === "mysql" ? (over.mysql ?? 0) : (over.sqlite ?? 0);
     },
     createDb: async () => {
@@ -20,6 +26,7 @@ function fake(over: { sqlite?: number; mysql?: number; createFails?: boolean } =
     },
     mysqlFiles: () => ["src/db/a.test.ts"],
     log: (l) => lines.push(l),
+    interrupted: () => stop,
   };
   return { deps, calls, events, lines };
 }
@@ -66,6 +73,39 @@ describe("npm test(SQLite の回と MySQL の回)", () => {
     const f = fake();
     await main(["src/foo.test.ts"], {}, f.deps);
     expect(f.calls.map((c) => c.args)).toEqual([["src/foo.test.ts"], ["--passWithNoTests", "src/foo.test.ts"]]);
+  });
+
+  it("フラグだけを渡したときは、SQLite の回にはそのまま、MySQL の回にはフラグと mysql-test の試験だけを渡す(全部の試験を 2 度流さない)", async () => {
+    const f = fake();
+    await main(["--reporter=verbose", "-t", "名前"], {}, f.deps);
+    expect(f.calls[0]!.args).toEqual(["--reporter=verbose", "-t", "名前"]);
+    expect(f.calls[1]!.args).toEqual(["--passWithNoTests", "--reporter=verbose", "-t", "名前", "src/db/a.test.ts"]);
+    expect(splitArgs(["--reporter=verbose", "src/x.test.ts", "foo.test.ts"])).toEqual({ files: ["src/x.test.ts", "foo.test.ts"], flags: ["--reporter=verbose"] });
+  });
+
+  it("SQLite の回の途中で中断されたら、MySQL の回は流さず、database を消して終わる", async () => {
+    const f = fake({ interruptAfterFirst: true });
+    expect(await main([], {}, f.deps)).toBe(130);
+    expect(f.calls.map((c) => c.env.KURAMOTO_TEST_DB)).toEqual(["sqlite"]);
+    expect(f.events).toEqual(["create", "drop"]);
+  });
+
+  it("直接起動の判定は、空白・日本語を含むパスと、シンボリックリンクを通したパスでも一致する(一致しないと試験を 1 つも流さずに 0 で終わる)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "kuramoto run 試験-"));
+    try {
+      mkdirSync(join(dir, "real dir"));
+      const file = join(dir, "real dir", "run tests.ts");
+      writeFileSync(file, "");
+      symlinkSync(join(dir, "real dir"), join(dir, "link"));
+      const url = pathToFileURL(file).href;
+      expect(url).toContain("%20"); // パーセントエンコードされている
+      expect(isMainModule(url, file)).toBe(true);
+      expect(isMainModule(url, join(dir, "link", "run tests.ts"))).toBe(true);
+      expect(isMainModule(url, join(dir, "other.ts"))).toBe(false);
+      expect(isMainModule(url, undefined)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("MySQL の回の試験は、mysql-test を使うファイルを自動で見つける", () => {
