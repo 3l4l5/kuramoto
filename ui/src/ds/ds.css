@@ -1,0 +1,127 @@
+/* 共通の部品の見た目。色・文字・余白・角丸・影・高さはトークン(tokens.css)だけを使う。
+   直書きしてよいのは線の太さと、末尾の「絵」の節の形の大きさだけ(src/ds.test.ts で確かめる)。 */
+
+/* ボタン(主・副・文字だけ・押せない) */
+.ds-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-1);
+  height: var(--h-control); padding: 0 var(--sp-4); border-radius: var(--r-md);
+  border: 1px solid var(--action); background: var(--surface); color: var(--action);
+  font-family: var(--f-body); font-size: var(--fs-base); font-weight: var(--fw-bold); line-height: var(--lh-tight);
+  cursor: pointer; white-space: nowrap;
+}
+.ds-btn--sm { height: var(--h-control-sm); padding: 0 var(--sp-3); border-radius: var(--r-sm); font-size: var(--fs-md); }
+.ds-btn--primary { background: var(--action); color: var(--surface); }
+.ds-btn--primary:hover, .ds-btn--primary[data-hover] { background: var(--action-hover); border-color: var(--action-hover); }
+.ds-btn--secondary:hover, .ds-btn--secondary[data-hover] { background: var(--bg); }
+.ds-btn--text { border: 0; background: transparent; color: var(--dev); padding: 0 var(--sp-3); font-weight: var(--fw-regular); text-decoration: underline; }
+.ds-btn--text:hover, .ds-btn--text[data-hover] { color: var(--dev-hover); }
+.ds-btn:disabled { border: 1px solid var(--line); background: var(--bg); color: var(--muted); cursor: not-allowed; }
+.ds-btn--text:disabled { border: 0; background: transparent; }
+
+/* 入力欄(ラベル上・ヒントとエラー下) */
+.ds-field { display: flex; flex-direction: column; gap: var(--sp-1); font-family: var(--f-body); color: var(--ink); }
+.ds-field__label { font-size: var(--fs-md); font-weight: var(--fw-bold); }
+.ds-field__hint { font-size: var(--fs-sm); color: var(--muted); }
+.ds-field__error { font-size: var(--fs-sm); color: var(--danger-ink); }
+.ds-input {
+  height: var(--h-control); padding: 0 var(--sp-3); border: 1px solid var(--muted); border-radius: var(--r-md);
+  background: var(--surface); color: var(--ink); font-family: var(--f-body); font-size: var(--fs-base);
+}
+.ds-input:focus, .ds-input:focus-visible, .ds-input[data-focus] { border-color: var(--dev); outline: 2px solid var(--dev); outline-offset: 1px; box-shadow: none; }
+.ds-input[aria-invalid="true"] { border: 2px solid var(--danger); }
+.ds-input:disabled { background: var(--bg); color: var(--muted); border-color: var(--line); }
+
+/* 切り替え(セグメント) */
+.ds-seg { display: inline-flex; padding: var(--sp-1); border-radius: var(--r-lg); background: var(--bg); border: 1px solid var(--line); font-family: var(--f-body); }
+.ds-seg__opt {
+  height: var(--h-control-sm); padding: 0 var(--sp-3); border: 0; border-radius: var(--r-md); background: transparent;
+  color: var(--muted); font-family: var(--f-body); font-size: var(--fs-md); font-weight: var(--fw-medium); cursor: pointer;
+}
+.ds-seg__opt[aria-checked="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.ds-seg__opt:disabled { cursor: not-allowed; }
+
+/* スイッチ */
+.ds-switch { display: inline-flex; align-items: center; gap: var(--sp-2); font-family: var(--f-body); font-size: var(--fs-md); color: var(--ink); background: none; border: 0; padding: 0; cursor: pointer; }
+.ds-switch[aria-checked="false"] { color: var(--muted); }
+.ds-switch__track { position: relative; display: inline-block; width: var(--switch-w); height: var(--switch-h); border-radius: var(--r-pill); background: var(--line-strong); }
+.ds-switch[aria-checked="true"] .ds-switch__track { background: var(--ok); }
+.ds-switch__knob { position: absolute; top: 2px; left: 2px; width: calc(var(--switch-h) - 4px); height: calc(var(--switch-h) - 4px); border-radius: var(--r-pill); background: var(--surface); }
+.ds-switch[aria-checked="true"] .ds-switch__knob { left: auto; right: 2px; }
+.ds-switch:disabled { cursor: not-allowed; }
+
+/* チップ(既定・注意・エラー・完了・レビュー・版)。淡い地の上の字は -ink の色 */
+.ds-chip {
+  display: inline-flex; align-items: center; gap: var(--sp-1); height: var(--h-chip); padding: 0 var(--sp-2); border-radius: var(--r-sm);
+  font-family: var(--f-body); font-size: var(--fs-sm); font-weight: var(--fw-medium); white-space: nowrap;
+  background: var(--dev-soft); color: var(--dev);
+}
+.ds-chip--warn { background: var(--warn-soft); color: var(--warn-ink); }
+.ds-chip--danger { background: var(--danger-soft); color: var(--danger-ink); }
+.ds-chip--ok { background: var(--ok-soft); color: var(--ok); }
+.ds-chip--review { background: var(--review-soft); color: var(--review-ink); }
+.ds-chip--version { background: var(--bg); color: var(--muted); border: 1px solid var(--line); font-family: var(--f-mono); font-size: var(--fs-xs); font-weight: var(--fw-regular); }
+
+/* 引き出し(タブあり) */
+.ds-drawer { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow); color: var(--ink); font-family: var(--f-body); }
+.ds-drawer__head { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); }
+.ds-drawer__title { margin: 0; flex: 1; font-size: var(--fs-lg); font-weight: var(--fw-bold); line-height: var(--lh-tight); }
+.ds-drawer__version { font-family: var(--f-mono); font-size: var(--fs-xs); font-weight: var(--fw-regular); color: var(--muted); }
+.ds-drawer__close { width: var(--h-control-sm); height: var(--h-control-sm); border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font-size: var(--fs-lg); cursor: pointer; }
+.ds-drawer__close:hover { background: var(--bg); }
+.ds-drawer__tabs { display: flex; gap: var(--sp-1); padding: 0 var(--sp-4); border-bottom: 1px solid var(--line); }
+.ds-drawer__tab {
+  display: inline-flex; align-items: center; gap: var(--sp-1); height: var(--h-tab); padding: 0 var(--sp-3); border: 0; background: none;
+  border-bottom: 3px solid transparent; color: var(--muted); font-family: var(--f-body); font-size: var(--fs-base); cursor: pointer;
+}
+.ds-drawer__tab[aria-selected="true"] { border-bottom-color: var(--dev); color: var(--ink); font-weight: var(--fw-bold); }
+.ds-drawer__badge { display: inline-flex; align-items: center; justify-content: center; min-width: var(--fs-lg); height: var(--fs-lg); padding: 0 var(--sp-1); border-radius: var(--r-pill); background: var(--warn-soft); color: var(--warn-ink); font-family: var(--f-mono); font-size: var(--fs-xs); font-weight: var(--fw-bold); }
+.ds-drawer__badge--error { background: var(--danger-soft); color: var(--danger-ink); }
+.ds-drawer__body { padding: var(--sp-4); font-size: var(--fs-base); line-height: var(--lh-body); }
+.ds-drawer__foot { display: flex; justify-content: flex-end; align-items: center; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line); }
+
+/* 節の小見出し */
+.ds-section-heading { margin: 0 0 var(--sp-2); font-family: var(--f-body); font-size: var(--fs-sm); font-weight: var(--fw-bold); color: var(--muted); }
+
+/* 一覧(通常・選んでいる・無効)。1 つの枠に区切り線で並べる */
+.ds-list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; background: var(--surface); font-family: var(--f-body); font-size: var(--fs-md); line-height: var(--lh-tight); color: var(--ink); }
+.ds-list__item { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3); }
+.ds-list__item + .ds-list__item { border-top: 1px solid var(--line); }
+.ds-list__item--button { cursor: pointer; }
+.ds-list__item--button:hover { background: var(--bg); }
+.ds-list__item[aria-selected="true"] { background: var(--dev-soft); box-shadow: inset 3px 0 0 var(--dev); }
+.ds-list__item[aria-disabled="true"] { background: var(--bg); color: var(--muted); cursor: default; }
+.ds-list__main { flex: 1; font-weight: var(--fw-bold); }
+.ds-list__item[aria-disabled="true"] .ds-list__main { font-weight: var(--fw-regular); }
+.ds-list__meta { font-size: var(--fs-sm); color: var(--muted); }
+
+/* 知らせ(エラー・注意・完了) */
+.ds-notice { padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md); border-left: 4px solid var(--danger); background: var(--danger-soft); color: var(--danger-ink); font-family: var(--f-body); font-size: var(--fs-md); line-height: var(--lh-body); }
+.ds-notice--warn { border-left-color: var(--warn); background: var(--warn-soft); color: var(--warn-ink); }
+.ds-notice--ok { border-left-color: var(--ok); background: var(--ok-soft); color: var(--ok); }
+
+/* ---- 絵(art): ここから下は絵の形の大きさだけ直書きしてよい ---- */
+
+/* 吹き出しとアバター(作業中・手すき) */
+.ds-member { position: relative; display: inline-flex; flex-direction: column; align-items: center; font-family: var(--f-body); }
+.ds-bubble { padding: var(--sp-1) var(--sp-2); border: 2px solid var(--art-outline); border-radius: var(--r-lg); background: var(--surface); font-size: var(--fs-xs); line-height: var(--lh-tight); white-space: nowrap; box-shadow: var(--shadow); color: var(--ink); }
+.ds-bubble--idle { background: var(--art-note); box-shadow: none; }
+.ds-member > .ds-bubble { position: absolute; bottom: 100%; margin-bottom: var(--sp-1); }
+.ds-avatar { display: inline-flex; flex-direction: column; align-items: center; }
+.ds-avatar__head { width: 28px; height: 28px; border-radius: 50%; background: var(--art-skin); border: 2px solid var(--art-outline); box-shadow: inset 0 10px 0 var(--art-hair); }
+.ds-avatar--dark-hair .ds-avatar__head { box-shadow: inset 0 10px 0 var(--art-outline); }
+.ds-avatar__body { width: 40px; height: 14px; margin-top: -2px; border-radius: var(--r-lg) var(--r-lg) var(--r-sm) var(--r-sm); background: var(--dev); }
+.ds-avatar--review .ds-avatar__body { background: var(--review); }
+.ds-avatar--lead .ds-avatar__body { background: var(--lead); }
+.ds-avatar--design .ds-avatar__body { background: var(--design); }
+.ds-avatar--ok .ds-avatar__body { background: var(--ok); }
+
+/* 机 */
+.ds-desk {
+  position: relative; height: 52px; border: 1px solid var(--art-wood-edge); border-radius: var(--r-lg);
+  background: linear-gradient(var(--art-wood), var(--art-wood-dark)); box-shadow: var(--shadow-desk);
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-2); font-family: var(--f-mono); font-size: var(--fs-xs); color: var(--ink);
+}
+button.ds-desk { cursor: pointer; padding: 0; }
+.ds-desk__paper { padding: var(--sp-1) var(--sp-2); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-sm); box-shadow: 0 3px 0 -1px var(--surface), 0 3px 0 0 var(--line-strong); }
+.ds-desk__mug { position: absolute; left: var(--sp-3); top: var(--sp-3); width: 14px; height: 16px; border-radius: 2px 2px 5px 5px; background: var(--surface); border: 2px solid var(--art-mug); }
+.ds-desk__plant { position: absolute; right: var(--sp-3); bottom: var(--sp-2); width: 16px; height: 13px; border-radius: 2px 2px 6px 6px; background: var(--art-pot); box-shadow: 0 -10px 0 2px var(--art-leaf); }

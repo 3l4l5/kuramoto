@@ -1,0 +1,23 @@
+/* カタログ(/_design)だけの並べ方。部品ではないが、ここもトークンだけを使う */
+.ds-cat { padding: var(--sp-5); background: var(--surface); color: var(--ink); font-family: var(--f-body); font-size: var(--fs-base); line-height: var(--lh-body); }
+.ds-cat__h1 { margin: 0 0 var(--sp-2); font-size: var(--fs-xl); }
+.ds-cat__part { margin: var(--sp-5) 0 var(--sp-3); padding-bottom: var(--sp-2); border-bottom: 1px solid var(--line); font-size: var(--fs-xl); }
+.ds-cat__block { margin: var(--sp-5) 0; }
+.ds-cat__h2 { margin: 0 0 var(--sp-1); font-size: var(--fs-lg); }
+.ds-cat__note, .ds-cat__muted { margin: 0 0 var(--sp-2); color: var(--muted); font-size: var(--fs-sm); }
+.ds-cat__sample { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); border: 1px dashed var(--line-strong); }
+.ds-cat__line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.ds-cat__top { align-items: flex-start; gap: var(--sp-4); }
+.ds-cat__col { display: flex; flex-direction: column; gap: var(--sp-2); }
+.ds-cat__members { gap: var(--sp-5); padding-top: var(--sp-5); }
+.ds-cat__w400 { width: 400px; }
+.ds-cat__swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--sp-2); }
+.ds-cat__swatch { display: grid; grid-template-columns: auto 1fr; column-gap: var(--sp-2); align-items: center; font-size: var(--fs-sm); }
+.ds-cat__swatch .ds-cat__muted { grid-column: 2; margin: 0; }
+.ds-cat__chip { grid-row: span 3; width: 48px; height: 48px; border: 1px solid var(--line); border-radius: var(--r-md); }
+.ds-cat__row { display: grid; grid-template-columns: 320px 240px 1fr; gap: var(--sp-3); align-items: center; font-size: var(--fs-sm); }
+.ds-cat__bar { display: inline-block; min-width: var(--sp-1); min-height: var(--sp-2); background: var(--dev); }
+.ds-cat__box { display: inline-block; width: 48px; height: 32px; border: 1px solid var(--line); background: var(--surface); }
+.ds-cat__screens { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: var(--sp-5); }
+.ds-cat__screen { margin: 0; }
+.ds-cat__screen img { display: block; max-width: 100%; margin-top: var(--sp-2); border: 1px solid var(--line); }
