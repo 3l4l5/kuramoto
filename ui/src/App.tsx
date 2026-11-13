@@ -4,6 +4,7 @@ import { Home } from "./Home";
 import { go, useAct, useProject, useRoute, useStudio } from "./hooks";
 import { NewProject } from "./NewProject";
 import { ProjectPage } from "./Project";
+import { TicketPage } from "./Ticket";
 import { Studio } from "./studio/Studio";
 import { ProductivityPage } from "./Productivity";
 import { SettingsPage } from "./Settings";
@@ -15,7 +16,7 @@ import { clearRequestedTab, useFormationUi } from "./formationUi";
 
 export function App() {
   const route = useRoute();
-  const inProject = route.name === "project" || route.name === "studio" || route.name === "metrics" || route.name === "settings";
+  const inProject = route.name === "project" || route.name === "studio" || route.name === "metrics" || route.name === "settings" || route.name === "ticket";
   const { drawer, moveTo, guard } = useDrawerState("id" in route ? route.id : null);
   // 床の凡例の「経路を変える」「流れを変える」で、編成の引き出しを開く(開発ルールの下書きがあれば、捨ててよいか確かめる)
   const seq = useFormationUi().request.seq;
@@ -48,7 +49,7 @@ export function App() {
             <Btn kind={route.name === "studio" ? "solid-fill" : "outline"} size="sm" aria-pressed={route.name === "studio"} onClick={() => go(`#/p/${route.id}/studio`)}>
               企画スタジオ
             </Btn>
-            <Btn kind={route.name === "project" ? "solid-fill" : "outline"} size="sm" aria-pressed={route.name === "project"} onClick={() => go(`#/p/${route.id}`)}>
+            <Btn kind={route.name === "project" || route.name === "ticket" ? "solid-fill" : "outline"} size="sm" aria-pressed={route.name === "project" || route.name === "ticket"} onClick={() => go(`#/p/${route.id}`)}>
               オフィス
             </Btn>
             <Btn kind={route.name === "metrics" ? "solid-fill" : "outline"} size="sm" aria-pressed={route.name === "metrics"} onClick={() => go(`#/p/${route.id}/metrics`)}>
@@ -60,7 +61,7 @@ export function App() {
           </div>
         )}
         <div className="spacer" />
-        {route.name === "project" && (
+        {(route.name === "project" || route.name === "ticket") && (
           <>
             <OfficeStatus id={route.id} />
             {(Object.keys(DRAWER_LABEL) as Drawer[]).map((k) => (
@@ -74,6 +75,7 @@ export function App() {
       {route.name === "home" && <Home />}
       {route.name === "new" && <NewProject />}
       {route.name === "project" && <ProjectPage id={route.id} drawer={drawer} closeDrawer={() => moveTo(null)} guard={guard} />}
+      {route.name === "ticket" && <TicketPage id={route.id} ticketId={route.ticketId} drawer={drawer} closeDrawer={() => moveTo(null)} guard={guard} />}
       {route.name === "studio" && <Studio id={route.id} />}
       {route.name === "metrics" && <ProductivityPage id={route.id} />}
       {route.name === "settings" && <SettingsPage id={route.id} />}

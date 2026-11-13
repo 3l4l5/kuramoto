@@ -1,28 +1,26 @@
-import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { createContext, useContext, useState, type FormEvent, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, post, type TicketView } from "./api";
 import { droppedText, hhmm, usd, waitText } from "./format";
 import { BudgetInput, budgetOk } from "./BudgetInput";
-import { duration, useAct } from "./hooks";
+import { duration, go, useAct } from "./hooks";
 import { Btn } from "./ui";
 import { Chip, Input, Segmented, Textarea, type ChipTone } from "./ds";
 import { KINDS, KindChip, PRE_DEV_LABEL } from "./kind";
+import { TeamDrawer, type Drawer, type RuleGuard } from "./Team";
 
 /**
- * チケットの詳細(モーダル)。中身・ひも付く要件と画面・PR・金額と、
- * 起動・レビューの指摘・判断・衝突・merge・責任者のメモを時刻順に並べた「やりとり」を見せる。
+ * チケットの詳細(1 枚の画面)。上はボードと同じ共通ヘッダー(App)、その下に「← ボードに戻る・番号・題名・工程・往復」の帯、
+ * 左に中身・ひも付く要件と画面・PR・金額、右に起動・レビューの指摘・判断・衝突・merge・責任者のメモを時刻順に並べた「やりとり」を見せる。
+ * アドレスは #/p/<プロジェクト>/t/<チケット>。
  */
 const OpenTicket = createContext<(ticketId: number) => void>(() => {});
 export const useOpenTicket = () => useContext(OpenTicket);
 
+export const ticketHash = (projectId: number, ticketId: number) => `#/p/${projectId}/t/${ticketId}`;
+
 export function TicketProvider({ projectId, children }: { projectId: number; children: ReactNode }) {
-  const [open, setOpen] = useState<number | null>(null);
-  return (
-    <OpenTicket.Provider value={setOpen}>
-      {children}
-      {open !== null && <TicketDialog projectId={projectId} ticketId={open} close={() => setOpen(null)} />}
-    </OpenTicket.Provider>
-  );
+  return <OpenTicket.Provider value={(ticketId) => go(ticketHash(projectId, ticketId))}>{children}</OpenTicket.Provider>;
 }
 
 /** チケットを開くボタン(文字だけ)。 */
@@ -49,48 +47,57 @@ const HANDLED: Record<string, string> = { autofixed: "持ち主が自動で直�
 const ACTION: Record<string, string> = { fixed: "直した", wontfix: "直さない", resolved: "解決を確認", accepted: "直さないのを了承", reopened: "まだ直っていない", ruled: "裁定" };
 const DECIDED_BY: Record<string, string> = { owner: "あなた", lead: "リーダー", timeout: "期限切れで推奨" };
 
-function TicketDialog({ projectId, ticketId, close }: { projectId: number; ticketId: number; close: () => void }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  const { data } = useQuery({ queryKey: ["ticket", projectId, ticketId], queryFn: () => api<TicketView>("GET", `/projects/${projectId}/tickets/${ticketId}`), refetchInterval: 3000 });
-  useEffect(() => {
-    const d = ref.current;
-    if (d && !d.open) d.showModal();
-  }, []);
+export function TicketPage({ id, ticketId, drawer, closeDrawer, guard }: { id: number; ticketId: number; drawer: Drawer | null; closeDrawer: () => void; guard: RuleGuard }) {
   return (
-    <dialog ref={ref} className="ticketdialog" aria-label={data ? `チケット #${data.number}` : "チケット"} onClose={close} onCancel={close}>
-      {!data ? (
-        <p className="hint">読み込んでいます…</p>
-      ) : (
-        <>
-          <header>
-            <h2>
-              #{data.number}
-              {data.jiraKey ? ` · ${data.jiraKey}` : ""} {data.title}
-            </h2>
-            <Chip tone={data.stage === "done" ? "ok" : data.stage === "decision" ? "warn" : "default"}>
-              {STAGE[data.stage] ?? data.stage}
-            </Chip>
-            <KindChip kind={data.kind} label={data.kindLabel} />
-            {data.ruleBlocked.length > 0 && <Chip tone="danger">ルール違反で止まっている: {data.ruleBlocked.join("・")}</Chip>}
-            {data.stage === "dropped" && <Reopen projectId={projectId} id={data.id} />}
-            <Btn kind="text" size="sm" style={{ marginLeft: "auto" }} onClick={() => ref.current?.close()}>
-              閉じる
-            </Btn>
-          </header>
-          {data.dropped && (
-            <div className="dropnote" role="note">
-              {droppedText(data.dropped)}
-              {data.dropped.at && <span className="at">({new Date(data.dropped.at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })})</span>}
-            </div>
-          )}
-          {data.designCompare.length > 0 && <DesignCompare projectId={projectId} rows={data.designCompare} />}
-          <div className="cols">
-            <Details projectId={projectId} t={data} />
-            <Timeline projectId={projectId} t={data} />
-          </div>
-        </>
+    <div className="layout">
+      <div className="main">
+        <TicketScreen projectId={id} ticketId={ticketId} />
+      </div>
+      {drawer && <TeamDrawer id={id} drawer={drawer} close={closeDrawer} guard={guard} />}
+    </div>
+  );
+}
+
+function TicketScreen({ projectId, ticketId }: { projectId: number; ticketId: number }) {
+  const { data, error } = useQuery({ queryKey: ["ticket", projectId, ticketId], queryFn: () => api<TicketView>("GET", `/projects/${projectId}/tickets/${ticketId}`), refetchInterval: 3000 });
+  const back = (
+    <Btn kind="text" size="sm" className="back" onClick={() => go(`#/p/${projectId}`)}>
+      ← ボードに戻る
+    </Btn>
+  );
+  if (!data)
+    return (
+      <section className="ticketpage" aria-label="チケット">
+        <header className="tk-band">{back}</header>
+        <p className="hint pad">{error ? "このチケットは見つかりません。" : "読み込んでいます…"}</p>
+      </section>
+    );
+  return (
+    <section className="ticketpage" aria-label={`チケット #${data.number}`}>
+      <header className="tk-band">
+        {back}
+        <h2>
+          <span className="num">#{data.number}</span>
+          {data.jiraKey ? ` · ${data.jiraKey}` : ""} {data.title}
+        </h2>
+        <Chip tone={data.stage === "done" ? "ok" : data.stage === "decision" ? "warn" : "default"}>{STAGE[data.stage] ?? data.stage}</Chip>
+        <KindChip kind={data.kind} label={data.kindLabel} />
+        <span className="rounds">往復 {data.rounds}</span>
+        {data.ruleBlocked.length > 0 && <Chip tone="danger">ルール違反で止まっている: {data.ruleBlocked.join("・")}</Chip>}
+        {data.stage === "dropped" && <Reopen projectId={projectId} id={data.id} />}
+      </header>
+      {data.dropped && (
+        <div className="dropnote" role="note">
+          {droppedText(data.dropped)}
+          {data.dropped.at && <span className="at">({new Date(data.dropped.at).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })})</span>}
+        </div>
       )}
-    </dialog>
+      {data.designCompare.length > 0 && <DesignCompare projectId={projectId} rows={data.designCompare} />}
+      <div className="cols">
+        <Details projectId={projectId} t={data} />
+        <Timeline projectId={projectId} t={data} />
+      </div>
+    </section>
   );
 }
 
@@ -320,10 +327,6 @@ function Budget({ projectId, t }: { projectId: number; t: TicketView }) {
 function Timeline({ projectId, t }: { projectId: number; t: TicketView }) {
   const act = useAct();
   const [note, setNote] = useState("");
-  const end = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    end.current?.scrollIntoView({ block: "nearest" });
-  }, [t.timeline.length]);
   const send = async (e: FormEvent) => {
     e.preventDefault();
     if (!note.trim()) return;
@@ -341,7 +344,6 @@ function Timeline({ projectId, t }: { projectId: number; t: TicketView }) {
           </li>
         ))}
       </ol>
-      <div ref={end} />
       <form className="note" onSubmit={send}>
         <label className="h" htmlFor="tk-note">
           メモを残す
