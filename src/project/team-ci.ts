@@ -6,7 +6,7 @@ import type { Confinement } from "../harness/types.js";
 import { confinementFor } from "./confine.js";
 import type { Project, TicketRow } from "./project.js";
 import type { Workspace } from "./workspace.js";
-import { baseBranchOf } from "./base-branch.js";
+import { baseBranchOf } from "./branches.js";
 
 /**
  * チームの CI(ADR-0028)。GitHub Actions を待たずに、Kuramoto が PR の中身を最新の main と合わせた状態で、

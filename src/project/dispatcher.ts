@@ -11,7 +11,7 @@ import { advance, applyReport, decision, expireDecisions, holdTicket, nonstop, r
 import { leftUsd, projectExhausted, projectLeftUsd, unitExhausted, unitLeftUsd } from "./budget.js";
 import { askLeadToUnstick, resetUnstick, unstickPrompt, unstickTools, type StuckPayload } from "./unstick.js";
 import type { Workspace } from "./workspace.js";
-import { baseBranchOf } from "./base-branch.js";
+import { baseBranchOf, branchPrefixOf } from "./branches.js";
 import type { GitHub } from "../github/github.js";
 import { ciTools } from "./ci-tools.js";
 import { planWebNote, planWebTools } from "./web-access.js";
@@ -832,7 +832,7 @@ function devBranch(p: Project, t: TicketRow, repoId: number): string {
   const existing = get<{ branch: string }>(p.db, "SELECT branch FROM sessions WHERE ticket_id = ? AND repo_id = ? AND branch IS NOT NULL LIMIT 1", [t.id, repoId]);
   if (existing) return existing.branch;
   const pr = get<{ head: string }>(p.db, "SELECT head FROM pull_requests WHERE ticket_id = ? AND repo_id = ?", [t.id, repoId]);
-  return pr?.head ?? `kuramoto/${t.jira_key ?? t.number}`;
+  return pr?.head ?? `${branchPrefixOf(p)}${t.jira_key ?? t.number}`;
 }
 
 function prNumber(p: Project, ticketId: number, repoId: number): { prNumber?: number } {

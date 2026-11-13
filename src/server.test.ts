@@ -67,6 +67,12 @@ describe("ローカルサーバー", () => {
     expect((await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], baseBranches: { "acme/shop": "a..b" } })).status).toBeGreaterThanOrEqual(400);
     expect((await call("GET", `/api/projects/${created.id}/settings`)).json.baseBranches).toEqual({ "acme/shop": "develop" });
     await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], baseBranches: { "acme/shop": "" } });
+    // 作るブランチの名前の頭も変えられる。空なら kuramoto/
+    expect((await call("GET", `/api/projects/${created.id}/settings`)).json.branchPrefix).toBe("");
+    await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], branchPrefix: "feature/" });
+    expect((await call("GET", `/api/projects/${created.id}/settings`)).json.branchPrefix).toBe("feature/");
+    expect((await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], branchPrefix: "a b/" })).status).toBeGreaterThanOrEqual(400);
+    await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], branchPrefix: "" });
     // チームの CI に切り替えると、GitHub Actions を止める。戻すと動かす(ADR-0028)
     expect((await call("GET", `/api/projects/${created.id}/settings`)).json.ciMode).toBe("github");
     await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], ciMode: "team", ciCommands: { "acme/shop": "npm ci\nnpm test" } });

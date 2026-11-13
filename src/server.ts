@@ -37,7 +37,7 @@ import { areaWait, blockers, dependsOn, mergeBlockers, mergeUnblocks } from "./p
 import { budgetView, projectBudgetUsd, projectSpentUsd, setProjectBudget } from "./project/budget.js";
 import type { Project } from "./project/project.js";
 import { GitWorkspace, type Workspace } from "./project/workspace.js";
-import { baseBranchOf, branchNameOk, setBaseBranch } from "./project/base-branch.js";
+import { baseBranchOf, branchNameOk, branchPrefixOk, setBaseBranch, setBranchPrefix } from "./project/branches.js";
 import { answerDecision, createTicket, defaultTicketBudgetUsd, droppedInfo, nonstop, pendingOwnerDecisions, reopenTicket, resumeChecks, setDefaultTicketBudget, setTicketBudget, type DecisionOption } from "./project/workflow.js";
 import {
   addComment,
@@ -425,12 +425,16 @@ export class KuramotoServer {
         ciCommands: Object.fromEntries(p.repos().map((r) => [r.full_name, p.setting(`team_ci_commands:${r.full_name}`) ?? ""])),
         // merge 先のブランチ(リポジトリごと)。空なら origin の既定のブランチ
         baseBranches: Object.fromEntries(p.repos().map((r) => [r.full_name, baseBranchOf(p, r.full_name) ?? ""])),
+        // 開発が作るブランチの名前の頭(空なら kuramoto/)
+        branchPrefix: p.setting("branch_prefix") ?? "",
       };
     if (b === "settings" && method === "POST") {
       const budget = body.ticketBudgetUsd === undefined ? undefined : body.ticketBudgetUsd === null ? null : Number(body.ticketBudgetUsd);
       if (budget !== undefined && budget !== null && !(Number.isFinite(budget) && budget > 0)) throw new Error("チケット 1 枚の予算は 0 より大きい金額か、無制限にしてください");
       const baseBranches = body.baseBranches && typeof body.baseBranches === "object" ? Object.entries(body.baseBranches as Record<string, unknown>).map(([repo, b]) => [repo, String(b ?? "").trim()] as const) : [];
       for (const [repo, b] of baseBranches) if (b && !branchNameOk(b)) throw new Error(`${repo} の merge 先のブランチ名「${b}」は、git のブランチ名として使えません`);
+      const prefix = typeof body.branchPrefix === "string" ? body.branchPrefix.trim() : undefined;
+      if (prefix && !branchPrefixOk(prefix)) throw new Error(`ブランチの名前の頭「${prefix}」は、番号を付けても git のブランチ名として使えません`);
       const repos = (body.repos as { fullName: string; role: string }[] | undefined) ?? [];
       const rec = this.hq.updateProject(p, id, { name: String(body.name ?? ""), repos: repos.map((r) => ({ fullName: String(r.fullName).trim(), role: String(r.role) })) });
       const total = body.projectBudgetUsd === undefined ? undefined : body.projectBudgetUsd === null || body.projectBudgetUsd === "" ? null : Number(body.projectBudgetUsd);
@@ -446,6 +450,7 @@ export class KuramotoServer {
       if (body.ciCommands && typeof body.ciCommands === "object")
         for (const [repo, cmds] of Object.entries(body.ciCommands as Record<string, unknown>)) p.setSetting(`team_ci_commands:${repo}`, String(cmds ?? "").trim());
       for (const [repo, b] of baseBranches) setBaseBranch(p, repo, b);
+      if (prefix !== undefined) setBranchPrefix(p, prefix);
       if ((body.ciMode === "team" || body.ciMode === "github") && (body.ciMode === "team") !== teamCiEnabled(p)) await this.setCiMode(p, body.ciMode);
       this.poke(id);
       return { name: rec.name };

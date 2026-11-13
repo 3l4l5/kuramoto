@@ -14,6 +14,28 @@ export function setBaseBranch(p: Project, repo: string, branch: string): void {
   p.setSetting(`base_branch:${repo}`, b);
 }
 
+/** 作るブランチの名前の頭の既定。チケット #12 なら kuramoto/12。 */
+export const DEFAULT_BRANCH_PREFIX = "kuramoto/";
+
+/**
+ * 開発が作るブランチの名前の頭(プロジェクトで 1 つ。設定の branch_prefix)。頭のあとにチケットの番号(Jira のキーがあればそれ)が付く。
+ * 決めていなければ kuramoto/。作ったあとのブランチの名前は変えない(作業の記録と PR が持っている)。
+ */
+export function branchPrefixOf(p: Project): string {
+  return p.setting("branch_prefix")?.trim() || DEFAULT_BRANCH_PREFIX;
+}
+
+/** 空なら既定(kuramoto/)に戻す。頭に番号を付けたものが git のブランチ名にならなければ断る。 */
+export function setBranchPrefix(p: Project, prefix: string): void {
+  const v = prefix.trim();
+  if (v && !branchPrefixOk(v)) throw new Error(`ブランチの名前の頭「${v}」は、番号を付けても git のブランチ名として使えません`);
+  p.setSetting("branch_prefix", v);
+}
+
+export function branchPrefixOk(prefix: string): boolean {
+  return branchNameOk(`${prefix}1`);
+}
+
 /** git check-ref-format の主な決まり(空白・制御文字・~^:?*[\ を含まない、.. や @{ を含まない、/ や . で始まり終わらない、.lock で終わらない)。 */
 export function branchNameOk(s: string): boolean {
   if (!s || s === "@" || s.startsWith("-")) return false;

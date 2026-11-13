@@ -26,7 +26,7 @@ const branchOk = (s: string) =>
     !s.endsWith(".") &&
     !s.endsWith(".lock") &&
     s.split("/").every((part) => part && !part.startsWith(".")));
-type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean; resumeChecks: boolean; patrolMin: number; planWeb: boolean; planWebDomains: string; ciMode: "team" | "github"; ciCommands: Record<string, string>; baseBranches: Record<string, string> };
+type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean; resumeChecks: boolean; patrolMin: number; planWeb: boolean; planWebDomains: string; ciMode: "team" | "github"; ciCommands: Record<string, string>; baseBranches: Record<string, string>; branchPrefix: string };
 
 /** プロジェクトの設定: 名前とリポジトリ(足す・外す・役割を変える)。 */
 export function SettingsPage({ id }: { id: number }) {
@@ -45,6 +45,7 @@ export function SettingsPage({ id }: { id: number }) {
   const [planWebDomains, setPlanWebDomains] = useState("");
   const [ciCommands, setCiCommands] = useState<Record<string, string>>({});
   const [baseBranches, setBaseBranches] = useState<Record<string, string>>({});
+  const [branchPrefix, setBranchPrefix] = useState("");
   const reset = () => {
     if (!data) return;
     setName(data.name);
@@ -59,6 +60,7 @@ export function SettingsPage({ id }: { id: number }) {
     setPlanWebDomains(data.planWebDomains);
     setCiCommands(data.ciCommands);
     setBaseBranches(data.baseBranches);
+    setBranchPrefix(data.branchPrefix);
     setRepos(data.repos.map((x) => ({ r: x.fullName, role: x.role })));
   };
   useEffect(() => {
@@ -71,10 +73,12 @@ export function SettingsPage({ id }: { id: number }) {
   const budgetOk = totalOk(budget);
   const bases = Object.fromEntries(list.map((x) => [x.fullName, (baseBranches[x.fullName] ?? "").trim()]));
   const basesBefore = Object.fromEntries(list.map((x) => [x.fullName, data.baseBranches[x.fullName] ?? ""]));
-  const changed = name !== data.name || JSON.stringify(list) !== JSON.stringify(data.repos) || budget !== data.ticketBudgetUsd || total !== data.projectBudgetUsd || nonstopOn !== data.nonstop || autoMergeOn !== data.autoMerge || resumeOn !== data.resumeChecks || patrolMin !== String(data.patrolMin) || planWeb !== data.planWeb || planWebDomains !== data.planWebDomains || ciMode !== data.ciMode || JSON.stringify(ciCommands) !== JSON.stringify(data.ciCommands) || JSON.stringify(bases) !== JSON.stringify(basesBefore);
+  const changed = name !== data.name || JSON.stringify(list) !== JSON.stringify(data.repos) || budget !== data.ticketBudgetUsd || total !== data.projectBudgetUsd || nonstopOn !== data.nonstop || autoMergeOn !== data.autoMerge || resumeOn !== data.resumeChecks || patrolMin !== String(data.patrolMin) || planWeb !== data.planWeb || planWebDomains !== data.planWebDomains || ciMode !== data.ciMode || JSON.stringify(ciCommands) !== JSON.stringify(data.ciCommands) || JSON.stringify(bases) !== JSON.stringify(basesBefore) || branchPrefix.trim() !== data.branchPrefix;
   const patrolOk = /^\d+$/.test(patrolMin);
-  const invalid = !name.trim() || !list.length || list.some((x) => !repoOk(x.fullName)) || !budgetOk || !totalOk(total) || !patrolOk || Object.values(bases).some((b) => !branchOk(b));
-  const save = () => act(() => post(`/projects/${id}/settings`, { name: name.trim(), repos: list, ticketBudgetUsd: budget, projectBudgetUsd: total, nonstop: nonstopOn, autoMerge: autoMergeOn, resumeChecks: resumeOn, patrolMin: Number(patrolMin), planWeb, planWebDomains, ciMode, ciCommands, baseBranches: bases }), "プロジェクトの設定を保存しました");
+  // 頭のあとに番号が付くので、番号を付けた形で確かめる
+  const prefixOk = !branchPrefix.trim() || branchOk(`${branchPrefix.trim()}1`);
+  const invalid = !name.trim() || !list.length || list.some((x) => !repoOk(x.fullName)) || !budgetOk || !totalOk(total) || !patrolOk || Object.values(bases).some((b) => !branchOk(b)) || !prefixOk;
+  const save = () => act(() => post(`/projects/${id}/settings`, { name: name.trim(), repos: list, ticketBudgetUsd: budget, projectBudgetUsd: total, nonstop: nonstopOn, autoMerge: autoMergeOn, resumeChecks: resumeOn, patrolMin: Number(patrolMin), planWeb, planWebDomains, ciMode, ciCommands, baseBranches: bases, branchPrefix: branchPrefix.trim() }), "プロジェクトの設定を保存しました");
 
   return (
     <section aria-label="プロジェクトの設定">
@@ -142,6 +146,16 @@ export function SettingsPage({ id }: { id: number }) {
           <Btn kind="text" size="sm" onClick={() => setRepos([...repos, { r: "", role: "フロント" }])}>
             + リポジトリを足す
           </Btn>
+        </div>
+        <div>
+          <label className="h" htmlFor="ps-prefix">
+            作るブランチの名前の頭
+          </label>
+          <div className="hint" style={{ marginBottom: 6 }}>
+            開発が作るブランチは、この頭のあとにチケットの番号(Jira のキーがあればそれ)を付けた名前になります。空なら <code>kuramoto/</code>(例: <code>kuramoto/12</code>)。<code>feature/</code> にすると <code>feature/12</code> です。変えても、もう作ったブランチの名前はそのままです。
+          </div>
+          <Input type="text" id="ps-prefix" blockSize="md" isError={!prefixOk} className="w-full font-mono" value={branchPrefix} onChange={(e) => setBranchPrefix(e.target.value)} />
+          {!prefixOk && <div className="bad">git のブランチ名として使えない文字が入っています</div>}
         </div>
         <fieldset className="runmode">
           <legend className="h">進め方</legend>

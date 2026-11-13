@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ManualClock } from "../clock.js";
 import { FakeHarness, fixedAll, withResolutions } from "../harness/fake.js";
-import { baseBranchOf, branchNameOk, setBaseBranch } from "./base-branch.js";
+import { baseBranchOf, branchNameOk, branchPrefixOf, setBaseBranch, setBranchPrefix } from "./branches.js";
 import { Dispatcher } from "./dispatcher.js";
 import { Project } from "./project.js";
 import { createTicket } from "./workflow.js";
@@ -43,6 +43,39 @@ describe("merge 先のブランチ", () => {
     await d.drain();
     expect(workspace.published).toMatchObject([{ repo: "acme/shop", base: "develop" }]);
     expect(harness.calls[0]!.prompt).toContain("origin/develop");
+  });
+
+  it("作るブランチの名前の頭は、決めていなければ kuramoto/。空にすると戻る。番号を付けてもブランチ名にならないものは断る", () => {
+    const p = new Project(":memory:", new ManualClock());
+    expect(branchPrefixOf(p)).toBe("kuramoto/");
+    setBranchPrefix(p, " feature/ ");
+    expect(branchPrefixOf(p)).toBe("feature/");
+    setBranchPrefix(p, "feat-");
+    expect(branchPrefixOf(p)).toBe("feat-");
+    setBranchPrefix(p, "");
+    expect(branchPrefixOf(p)).toBe("kuramoto/");
+    for (const bad of ["a b/", "x..", "-", "a~", ".x/"]) expect(() => setBranchPrefix(p, bad)).toThrow("ブランチの名前の頭");
+  });
+
+  it("決めた頭でブランチを作る。頭を変えても、もう作ったブランチの名前はそのまま", async () => {
+    const p = new Project(":memory:", new ManualClock());
+    p.addRepo("acme/shop", "API");
+    setBranchPrefix(p, "feature/");
+    const harness = new FakeHarness(async (req, call) => {
+      if (req.tools.some((t) => t.name === "submit_pr")) await call("submit_pr", { summary: "足した", responses: fixedAll(req.prompt) });
+      else await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] }));
+    });
+    const workspace = new StaticWorkspace("/tmp/ws");
+    const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace });
+    createTicket(p, { title: "CSV の書き出し" });
+    await d.drain();
+    expect(workspace.published).toMatchObject([{ branch: "feature/1" }]);
+    expect(harness.calls[0]!.prompt).toContain("ブランチは feature/1");
+
+    setBranchPrefix(p, "fix/");
+    createTicket(p, { title: "一覧の並び順" });
+    await d.drain();
+    expect(workspace.published.map((x) => x.branch)).toEqual(["feature/1", "fix/2"]);
   });
 
   it("GitWorkspace は、決めた merge 先から作業を始め、チームの CI もそこと合わせる。origin に無ければ断る", async () => {
