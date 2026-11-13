@@ -208,7 +208,7 @@ export function SettingsPage({ id }: { id: number }) {
         <div>
           <div className="h">危険な操作</div>
           <div className="hint" style={{ marginBottom: 6 }}>
-            プロジェクトを消します。チケット・やりとり・設定など、このプロジェクトの記録と、Kuramoto の作業場所(clone と worktree)が消えます。GitHub のリポジトリ・PR・Issue はそのまま残ります。
+            プロジェクトを消します。チケット・やりとり・設定など、このプロジェクトの記録(画面の画像などのファイルも)と、Kuramoto の作業場所(clone と worktree)が消えます。GitHub のリポジトリ・PR・Issue はそのまま残ります。
           </div>
           <Btn kind="outline" onClick={() => setDeleting(true)}>
             このプロジェクトを削除

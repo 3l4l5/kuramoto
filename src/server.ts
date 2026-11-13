@@ -327,7 +327,7 @@ export class KuramotoServer {
    * プロジェクトを消す(責任者の操作)。順に:
    *  1. 動きを止める(始業の取り消し・ディスパッチャ・merge の見回り・走っているメンバーの起動)
    *  2. DB の行を消す(project_id で絞る。本部の記録も)
-   *  3. 作業場所(worktree と clone)を消す。消せなくても止めず、ログに残す
+   *  3. 作業場所(worktree と clone)と、データの置き場所(data_dir: SQLite・design/ の画像)を消す。消せなくても止めず、ログに残す
    * GitHub 上のリポジトリ・PR・Issue には触れない。
    */
   async deleteProject(id: number): Promise<{ ok: true; failed: { path: string; error: string }[] }> {
@@ -362,6 +362,13 @@ export class KuramotoServer {
       failed = (await w.removeProjectFiles?.(repos))?.failed ?? [];
     } catch (e) {
       failed = [{ path: rec.data_dir, error: e instanceof Error ? e.message : String(e) }];
+    }
+    // データの置き場所(project.sqlite と design/ の画像)も消す。SQLite は上で閉じてある。
+    // 消さないと、同じリポジトリで作り直したときに createProject が既存のディレクトリを避けて repo-2 になる
+    try {
+      this.hq.removeDataDir(rec.data_dir);
+    } catch (e) {
+      failed.push({ path: rec.data_dir, error: e instanceof Error ? e.message : String(e) });
     }
     // DB はもう消えている。消せなかったファイルはログに残すだけ
     for (const f of failed) console.error(`プロジェクト ${id}(${rec.name})の作業場所を消せませんでした: ${f.path}: ${f.error.slice(0, 300)}`);
