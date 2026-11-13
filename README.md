@@ -66,5 +66,6 @@ database:
 |---|---|
 | [docs/design.md](docs/design.md) | 設計書。全体構成・役割・仕事の流れ・画面・つまみ・指標・データ設計 |
 | [docs/adr/](docs/adr/) | 判断の記録(1 件ずつ、背景・決定・結果・検討した別案) |
+| [docs/mysql.md](docs/mysql.md) | 手元の MySQL(`compose.yaml`)の立て方・バックアップ・戻し方・DB の切り替え |
 | [docs/mock.md](docs/mock.md) | mock の動かし方と、シミュレーションに置いた仮の値 |
 | [mock/index.html](mock/index.html) | mock 本体。ブラウザで開けば動く |
