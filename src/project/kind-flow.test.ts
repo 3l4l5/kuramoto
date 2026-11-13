@@ -94,7 +94,7 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
     expect(devCall!.prompt).toContain("申し送り");
     expect(devCall!.prompt).toContain("再現手順を先に確かめる");
     // 開発より後のレビューは今までどおり差分を確かめる
-    expect(harness.calls[2]!.tools.map((x) => x.name)).toEqual(["submit_review"]);
+    expect(harness.calls[2]!.tools.map((x) => x.name)).toEqual(["submit_review", "ask_island"]);
     expect(harness.calls[2]!.prompt).toContain("git diff");
 
     // やりとりに申し送りが残る

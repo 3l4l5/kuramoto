@@ -2,6 +2,7 @@ import { iso, systemClock, type Clock } from "../clock.js";
 import { all, get, openDb, run, tx, type Db } from "../db/sqlite.js";
 import { PROJECT_MIGRATIONS } from "../db/schema.js";
 import { isTicketKind, parseFlows, type FlowsSpec, type TicketKind } from "../domain/flow.js";
+import { parseRoutes, normalizeRoutes, routesAmong, type RouteSpec } from "../domain/route.js";
 import { covers, DEFAULT_FORMATION, validateFormation, type FormationSpec, type Pull, type UnitSpec } from "../domain/formation.js";
 import { DEFAULT_POLICIES, type Effort, type Role, type WorkRole } from "../domain/roles.js";
 import { FIXED_CAST, MEMBER_POOL } from "../domain/cast.js";
@@ -70,7 +71,7 @@ export type UnitRow = {
   budget_usd: number | null;
 };
 
-export type FormationRow = { id: number; version: number; pull: Pull; units: UnitRow[]; flows: FlowsSpec };
+export type FormationRow = { id: number; version: number; pull: Pull; units: UnitRow[]; flows: FlowsSpec; routes: RouteSpec[] };
 
 /** 1 つのプロジェクトの DB(ADR-0004)。 */
 export class Project {
@@ -158,7 +159,9 @@ export class Project {
       const version = (prev?.version ?? 0) + 1;
       // 流れを渡さなければ前の版の流れを引き継ぐ(編成だけを変える保存で、種類ごとの流れが消えないように)
       const flows = spec.flows ?? prev?.flows ?? {};
-      const fid = run(this.db, "INSERT INTO formations (version, pull, flows, created_at) VALUES (?, ?, ?, ?)", [version, spec.pull, JSON.stringify(flows), this.now()]).lastId;
+      // 経路も同じ。渡さなければ前の版の経路を引き継ぎ、島が無くなったものは外す。渡したものはそのとおりに保存する(「連絡しない」は持たない)
+      const routes = spec.routes ? normalizeRoutes(spec.routes) : routesAmong(prev?.routes ?? [], spec.units.map((u) => u.name));
+      const fid = run(this.db, "INSERT INTO formations (version, pull, flows, routes, created_at) VALUES (?, ?, ?, ?, ?)", [version, spec.pull, JSON.stringify(flows), JSON.stringify(routes), this.now()]).lastId;
       for (const u of spec.units) this.insertUnit(fid, u);
       this.carryOverMembers(prev);
       this.event(prev ? "owner" : "system", "formation_saved", null, { version });
@@ -249,12 +252,12 @@ export class Project {
   }
 
   currentFormationOrNull(): FormationRow | null {
-    const f = get<{ id: number; version: number; pull: Pull; flows: string }>(this.db, "SELECT id, version, pull, flows FROM formations ORDER BY version DESC LIMIT 1");
+    const f = get<{ id: number; version: number; pull: Pull; flows: string; routes: string }>(this.db, "SELECT id, version, pull, flows, routes FROM formations ORDER BY version DESC LIMIT 1");
     if (!f) return null;
     const units = all<Omit<UnitRow, "roles" | "repos"> & { roles: string; repos: string }>(this.db, "SELECT * FROM units WHERE formation_id = ? ORDER BY id", [f.id]).map(
       (u) => ({ ...u, roles: JSON.parse(u.roles) as WorkRole[], repos: JSON.parse(u.repos) as string[] }),
     );
-    return { id: f.id, version: f.version, pull: f.pull, units, flows: parseFlows(f.flows) };
+    return { id: f.id, version: f.version, pull: f.pull, units, flows: parseFlows(f.flows), routes: parseRoutes(f.routes) };
   }
 
   currentFormation(): FormationRow {

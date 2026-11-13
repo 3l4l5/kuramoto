@@ -2,6 +2,7 @@ import { z } from "zod";
 import { all } from "../db/sqlite.js";
 import { flowsSchema, parseFlows } from "../domain/flow.js";
 import type { FormationSpec } from "../domain/formation.js";
+import { parseRoutes, routesSchema } from "../domain/route.js";
 import { EFFORTS, MODELS, ROLE_LABEL, type Role, type WorkRole } from "../domain/roles.js";
 import type { Project } from "./project.js";
 
@@ -43,6 +44,8 @@ const formationInput = z.object({
   pull: z.enum(["down", "start"]),
   /** 種類ごとの流れ(R17)。省くと前の版の流れを引き継ぐ */
   flows: flowsSchema.optional(),
+  /** 島どうしの連絡経路(R16)。省くと前の版の経路を引き継ぐ。「連絡しない」の組み合わせは持たない */
+  routes: routesSchema.optional(),
   units: z.array(
     z.object({
       name: z.string().trim().min(1, "島の名前がありません"),
@@ -68,7 +71,7 @@ export function saveFormationInput(p: Project, input: unknown) {
 // ---- 画面に出す: 今の設定と、版の歴史 ----
 
 export function teamView(p: Project) {
-  const formations = all<{ id: number; version: number; pull: "down" | "start"; flows: string; created_at: string }>(p.db, "SELECT * FROM formations ORDER BY version").map((f) => {
+  const formations = all<{ id: number; version: number; pull: "down" | "start"; flows: string; created_at: string; routes: string }>(p.db, "SELECT * FROM formations ORDER BY version").map((f) => {
     const units = all<{ id: number; name: string; roles: string; max_members: number; summon_at: number; idle_sec: number; repos: string; model: string | null; effort: string | null; focus: string | null; budget_usd: number | null }>(p.db, "SELECT * FROM units WHERE formation_id = ? ORDER BY id", [f.id]).map((u) => ({
       name: u.name,
       roles: JSON.parse(u.roles) as WorkRole[],
@@ -81,7 +84,7 @@ export function teamView(p: Project) {
       focus: u.focus,
       budgetUsd: u.budget_usd,
     }));
-    return { id: f.id, version: f.version, pull: f.pull, flows: parseFlows(f.flows), createdAt: f.created_at, units };
+    return { id: f.id, version: f.version, pull: f.pull, flows: parseFlows(f.flows), routes: parseRoutes(f.routes), createdAt: f.created_at, units };
   });
   const current = p.currentFormation();
   const policies = POLICY_ROLES.map((role) => {

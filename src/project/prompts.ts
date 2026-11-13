@@ -1,3 +1,4 @@
+import { answeredBlock } from "./questions.js";
 import { configuredCommands, teamCiEnabled } from "./team-ci.js";
 import { rulesNote } from "./dev-rules.js";
 import { speechNote } from "../domain/cast.js";
@@ -83,6 +84,7 @@ export function promptFor(p: Project, msg: MessageRow, ticket: TicketRow | null,
   const head = ticket
     ? ticketBlock(ticket) +
       (notes.length ? `\n\n### メモ(責任者・リーダーから)\n${notes.map((n) => `- ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.body}`).join("\n")}` : "") +
+      (ticket ? answeredBlock(p, ticket.id) : "") +
       (handoffs.length ? `\n\n### 申し送り(開発より前の確認から。着手の前に読んでください)\n${handoffs.map((h) => `- ${ROLE_LABEL[h.role] ?? h.role}: ${h.body}`).join("\n")}` : "")
     : "";
   switch (msg.kind) {
@@ -174,6 +176,7 @@ ${how}`;
     case "unstick":
     case "patrol":
     case "member_chat":
+    case "ask":
       return "";
     case "decide": {
       const d = decision(p, Number(payload.decision_id));

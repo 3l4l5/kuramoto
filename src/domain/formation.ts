@@ -1,4 +1,5 @@
 import { flowFor, validateFlows, type FlowsSpec, type TicketKind } from "./flow.js";
+import { routeErrors, type RouteSpec } from "./route.js";
 import { EFFORTS, MODELS, ROLE_LABEL, WORK_ROLES, type Effort, type WorkRole } from "./roles.js";
 
 export type Pull = "down" | "start";
@@ -22,8 +23,11 @@ export type UnitSpec = {
   budgetUsd?: number | null;
 };
 
-/** flows: 種類ごとの流れ(R17)。省くと、前の版の流れを引き継ぐ。 */
-export type FormationSpec = { pull: Pull; units: UnitSpec[]; flows?: FlowsSpec };
+/**
+ * flows: 種類ごとの流れ(R17)。routes: 島どうしの連絡経路(R16)。どちらも省くと、前の版のものを引き継ぐ。
+ * 島・流れ・経路は同じ版で保存する(1 回の保存で版が 1 つ上がる)。
+ */
+export type FormationSpec = { pull: Pull; units: UnitSpec[]; flows?: FlowsSpec; routes?: RouteSpec[] };
 
 /** 島の数と、島ごとの最大人数の上限(ADR-0019)。 */
 export const MAX_UNITS = 6;
@@ -69,6 +73,8 @@ export function validateFormation(f: FormationSpec, repos?: string[]): string[] 
   if (!pipeline.includes("dev")) errors.push("開発の役割は必須です");
   // 流れが決まりに反していないか(開発が無い・merge 待ちの前に工程が無い・同じ工程が 2 回)。島が無い工程は飛ばすだけなので、ここでは確かめない
   errors.push(...validateFlows(f.flows));
+  // 連絡経路の端が、この編成の島か(リーダー・アーキテクト)であること
+  errors.push(...routeErrors(f.routes, f.units.map((u) => u.name)));
   // 各工程は、どのリポジトリのチケットでも、受け持つ島がある
   if (repos) {
     for (const role of pipeline) {
