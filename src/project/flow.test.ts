@@ -340,6 +340,8 @@ describe("止まる条件", () => {
     expect((await p.ticket(before.id)).stage).toBe("done");
     expect((await p.notes(before.id)).at(-1)!.body).toContain("すでに main に入っていました");
     expect(workspace.closed).toMatchObject([{ number: 77 }]);
+    // 実際の流れ(drain)で、作業場所を片付ける(merge を通らない道でも)
+    expect(workspace.cleaned).toContainEqual({ repo: REPO, ticketNumber: before.number });
     expect(all(p.db, "SELECT 1 FROM messages WHERE kind = 'unstick'")).toEqual([]);
     // 待っていたチケットは動き出せる
     const { blockers } = await import("./triage.js");
@@ -347,7 +349,7 @@ describe("止まる条件", () => {
   });
 
   it("詰まったチケットの変更がすでに main に入っていたら、リーダーが確かめて完了にする(保留にしない)", async () => {
-    const { p, d, clock } = await setup(async (req, call) => {
+    const { p, d, clock, workspace } = await setup(async (req, call) => {
       if (req.tools.some((t) => t.name === "close_as_already_done")) {
         await call("close_as_already_done", { commit: "3677184", reason: "#41 と重複していた" });
         return { finalText: "重複だったので閉じたわ。" };
@@ -362,6 +364,8 @@ describe("止まる条件", () => {
     expect((await p.ticket(t.id)).stage).toBe("done");
     expect(await pendingOwnerDecisions(p)).toEqual([]);
     expect(all(p.db, "SELECT 1 FROM messages WHERE ticket_id = ? AND status = 'pending'", [t.id])).toEqual([]);
+    // リーダーの起動が終わってから、そのチケットの作業場所を片付ける
+    expect(workspace.cleaned).toContainEqual({ repo: REPO, ticketNumber: t.number });
   });
 
   it("利用の上限で止まったときは失敗に数えず、時間を置いてやり直す", async () => {
