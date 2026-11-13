@@ -115,10 +115,23 @@ describe("登場人物の名前", () => {
     const path = join(mkdtempSync(join(tmpdir(), "kuramoto-cast-")), "p.sqlite");
     new P(path, new ManualClock()).close();
     const raw = new DatabaseSync(path);
+    // 版 22 で主キーに project_id が入った表(settings・plan_stages・dev_rule_versions)は、列を外せないので前の形に作り直す
+    raw.exec(`
+CREATE TABLE settings_v1 (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+INSERT INTO settings_v1 (key, value) SELECT key, value FROM settings;
+DROP TABLE settings;
+ALTER TABLE settings_v1 RENAME TO settings;
+CREATE TABLE plan_stages_v1 (stage TEXT PRIMARY KEY CHECK (stage IN ('req','infra','flow','screen','model')),
+  mode TEXT NOT NULL CHECK (mode IN ('agree','delegate','skip')), version INTEGER NOT NULL, agreed_version INTEGER);
+INSERT INTO plan_stages_v1 (stage, mode, version, agreed_version) SELECT stage, mode, version, agreed_version FROM plan_stages;
+DROP TABLE plan_stages;
+ALTER TABLE plan_stages_v1 RENAME TO plan_stages;
+DROP TABLE dev_rule_versions;
+`);
     // 版 21 で足した project_id の索引と列も外す
     for (const i of raw.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE '%\\_project%' ESCAPE '\\'").all() as { name: string }[]) raw.exec(`DROP INDEX ${i.name}`);
-    for (const t of PROJECT_ID_TABLES) raw.exec(`ALTER TABLE ${t} DROP COLUMN project_id`);
-    raw.exec("UPDATE members SET name = CASE name WHEN '咲季' THEN 'サキ' WHEN '手毬' THEN 'ハル' ELSE name END; ALTER TABLE units DROP COLUMN repos; ALTER TABLE units DROP COLUMN model; ALTER TABLE units DROP COLUMN effort; ALTER TABLE runs DROP COLUMN model; ALTER TABLE runs DROP COLUMN effort; ALTER TABLE units DROP COLUMN focus; ALTER TABLE runs DROP COLUMN summary; DROP TABLE ticket_notes; DROP TABLE lead_messages; ALTER TABLE tickets DROP COLUMN triaged; DROP TABLE ticket_deps; DROP TABLE finding_comments; ALTER TABLE units DROP COLUMN budget_usd; ALTER TABLE runs DROP COLUMN unit_name; ALTER TABLE decisions DROP COLUMN lead_note; ALTER TABLE tickets DROP COLUMN dropped_by; ALTER TABLE tickets DROP COLUMN dropped_reason; ALTER TABLE tickets DROP COLUMN dropped_at; ALTER TABLE formations DROP COLUMN routes; ALTER TABLE formations DROP COLUMN flows; ALTER TABLE tickets DROP COLUMN kind; ALTER TABLE tickets DROP COLUMN dev_done; ALTER TABLE dev_rules DROP COLUMN template; ALTER TABLE dev_rules DROP COLUMN created_at; ALTER TABLE rule_violations DROP COLUMN detail; ALTER TABLE rule_violations DROP COLUMN run_id; ALTER TABLE rule_violations DROP COLUMN resolved_at; ALTER TABLE runs DROP COLUMN about_ticket_id; ALTER TABLE dev_rules DROP COLUMN deleted_at; DROP TABLE dev_rule_versions; PRAGMA user_version = 4;");
+    for (const t of PROJECT_ID_TABLES.filter((t) => !(["settings", "plan_stages", "dev_rule_versions"] as string[]).includes(t))) raw.exec(`ALTER TABLE ${t} DROP COLUMN project_id`);
+    raw.exec("UPDATE members SET name = CASE name WHEN '咲季' THEN 'サキ' WHEN '手毬' THEN 'ハル' ELSE name END; ALTER TABLE units DROP COLUMN repos; ALTER TABLE units DROP COLUMN model; ALTER TABLE units DROP COLUMN effort; ALTER TABLE runs DROP COLUMN model; ALTER TABLE runs DROP COLUMN effort; ALTER TABLE units DROP COLUMN focus; ALTER TABLE runs DROP COLUMN summary; DROP TABLE ticket_notes; DROP TABLE lead_messages; ALTER TABLE tickets DROP COLUMN triaged; DROP TABLE ticket_deps; DROP TABLE finding_comments; ALTER TABLE units DROP COLUMN budget_usd; ALTER TABLE runs DROP COLUMN unit_name; ALTER TABLE decisions DROP COLUMN lead_note; ALTER TABLE tickets DROP COLUMN dropped_by; ALTER TABLE tickets DROP COLUMN dropped_reason; ALTER TABLE tickets DROP COLUMN dropped_at; ALTER TABLE formations DROP COLUMN routes; ALTER TABLE formations DROP COLUMN flows; ALTER TABLE tickets DROP COLUMN kind; ALTER TABLE tickets DROP COLUMN dev_done; ALTER TABLE dev_rules DROP COLUMN template; ALTER TABLE dev_rules DROP COLUMN created_at; ALTER TABLE rule_violations DROP COLUMN detail; ALTER TABLE rule_violations DROP COLUMN run_id; ALTER TABLE rule_violations DROP COLUMN resolved_at; ALTER TABLE runs DROP COLUMN about_ticket_id; ALTER TABLE dev_rules DROP COLUMN deleted_at; PRAGMA user_version = 4;");
     raw.close();
     const q = new P(path, new ManualClock());
     expect(q.fixedMember("planner").name).toBe("咲季");

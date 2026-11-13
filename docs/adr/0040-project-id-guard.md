@@ -21,7 +21,11 @@ ADR-0039(1/2)の続き。残りの src/project・server を async + Kysely に�
   - B. レビュー・merge・チームの CI(review・merge・ci-tools・outage・budget)
   - C. 企画スタジオ・生産性・R15〜R17(planning・planning-agent・design・design-visual・productivity・metrics・ticket・transfer・questions・member-chat・leadchat ほか)
   - D. server・Project 本体(最後。「project / hq が node:sqlite を直接 import しない」を満たし、同期の run() の見張りを本番でも有効にする、または同期の書き込みを無くす。#16 レビューの「同期の書き込みが他の流れの非同期トランザクションに混ざる」はここで閉じる)
-- **同じ database に 2 つのプロジェクトを置くとき**、版 21 は前の版の UNIQUE(tickets.number・settings.key など)を残している。SQLite のままでは、別のプロジェクトでも同じ number・key は入らない。MySQL の最初の版で project_id 込みの UNIQUE だけにするか、SQLite 側で前の UNIQUE を外すかは、同じ database に置く段で決める。
+- **同じ database に 2 つのプロジェクトを置くとき**(#41 で解決): 版 21 は前の版の UNIQUE(tickets.number・settings.key など)を残していたので、SQLite のままでは別のプロジェクトでも同じ number・key は入らなかった。SQLite の版 22 で、次の表を作り直して UNIQUE を (project_id, …) だけにした(MySQL の最初の版は最初からこの形。MySQL の版 22 は流すものの無い印)。
+  - 外した前の UNIQUE → 付けた UNIQUE: `tickets(number)` → `(project_id, number)`、`repos(full_name)` → `(project_id, full_name)`、`formations(version)` → `(project_id, version)`、`policies(role, version)` → `(project_id, role, version)`、`requirements(version)` → `(project_id, version)`、`settings(key)`(主キー)→ 主キー `(project_id, key)`、`plan_stages(stage)`(主キー)→ 主キー `(project_id, stage)`、`dev_rule_versions(version)`(主キー)→ 主キー `(project_id, version)`。
+  - 変えないもの: `sessions(member_id, ticket_id, repo_id)`・`pull_requests(ticket_id, repo_id)`・`ticket_deps`・`ticket_areas` の主キー・`one_run_per_ticket(ticket_id)` は id だけでできていて、id は全プロジェクトで重ならないので project_id は要らない(MySQL も同じ)。
+  - SQLite は表の UNIQUE・主キーを外せないので、対象の表を作り直す(行・id・列の並びは同じ。外部キーの検査はトランザクションの最後まで遅らせる)。
+  - `ON CONFLICT(key)` のような、前の UNIQUE の列だけを指す書き方は通らなくなる。`Project.setSetting` は `ON CONFLICT(project_id, key)` に替えた。ほかのクエリは、A〜C の async 化で ProjectDb を通るときに project_id を書く。
 
 ## C(#44)の途中経過
 
