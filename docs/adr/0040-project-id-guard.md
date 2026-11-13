@@ -22,3 +22,9 @@ ADR-0039(1/2)の続き。残りの src/project・server を async + Kysely に�
   - C. 企画スタジオ・生産性・R15〜R17(planning・planning-agent・design・design-visual・productivity・metrics・ticket・transfer・questions・member-chat・leadchat ほか)
   - D. server・Project 本体(最後。「project / hq が node:sqlite を直接 import しない」を満たし、同期の run() の見張りを本番でも有効にする、または同期の書き込みを無くす。#16 レビューの「同期の書き込みが他の流れの非同期トランザクションに混ざる」はここで閉じる)
 - **同じ database に 2 つのプロジェクトを置くとき**、版 21 は前の版の UNIQUE(tickets.number・settings.key など)を残している。SQLite のままでは、別のプロジェクトでも同じ number・key は入らない。MySQL の最初の版で project_id 込みの UNIQUE だけにするか、SQLite 側で前の UNIQUE を外すかは、同じ database に置く段で決める。
+
+## C(#44)の途中経過
+
+- 移した: metrics・productivity・formation-marks・transfer(と export の async 化)・design・planning-agent・design-visual・ticket(ticketView)。
+- **読むときの project_id は「自分の id と 0」(`src/db/count.ts` の `inScope` / `countFrom`)**。Project 本体・workflow・planning などの同期の INSERT は project_id を書かず、開き直すまで 0 のまま。`= 自分の id` だけで読むと、開いている間の画面から、その間に入った行(チケット・出来事・設定など)が欠ける。同期の書き込みが無くなったら(D)、`= 自分の id` に戻す。
+- まだ移していない(C の残り): planning・questions・leadchat・member-chat・dev-rules・office・people・onboard・prompts・team。leadchat の `leadReply`・`sayToLead` を async にすると outage(B)・dispatcher(A)・server へ await が広がるため、A・B と足並みを揃えて移す。
