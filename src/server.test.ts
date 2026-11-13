@@ -49,7 +49,7 @@ describe("ローカルサーバー", () => {
     await call("POST", `/api/projects/${created.id}/tickets`, { title: "CSV" });
     await call("POST", `/api/projects/${created.id}/run`, { running: true });
 
-    for (let i = 0; i < 50 && app.projectView(created.id).mergeOrder.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+    for (let i = 0; i < 50 && (await app.projectView(created.id)).mergeOrder.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
     const hq = (await call("GET", "/api/hq")).json;
     expect(hq.queue).toMatchObject([{ kind: "merge", projectName: "お試し" }]);
     expect(hq.projects[0]).toMatchObject({ running: true, merges: 1 });
@@ -71,10 +71,10 @@ describe("ローカルサーバー", () => {
     await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], ciMode: "github" });
     expect(github.actions).toEqual(["acme/shop:false", "acme/shop:true"]);
 
-    const ticketId = app.projectView(created.id).mergeOrder[0];
+    const ticketId = (await app.projectView(created.id)).mergeOrder[0];
     expect((await call("POST", `/api/projects/${created.id}/merge/${ticketId}`)).json).toEqual({ result: "merged" });
     expect(github.merged).toEqual([5]);
-    expect(app.hq.project(created.id).status).toBe("running");
+    expect((await app.hq.project(created.id)).status).toBe("running");
   });
 
   it("チケットに種類を付けて作り、責任者が API で変えると、やりとりに残り、次の工程から新しい流れになる(R17)", async () => {
@@ -131,7 +131,7 @@ describe("ローカルサーバー", () => {
     // 1 枚進めてから終業する(終業中でも会話は取り出される)
     await call("POST", `${base}/tickets`, { title: "CSV" });
     await call("POST", `${base}/run`, { running: true });
-    for (let i = 0; i < 50 && app.projectView(created.id).mergeOrder.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+    for (let i = 0; i < 50 && (await app.projectView(created.id)).mergeOrder.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
     await call("POST", `${base}/run`, { running: false });
     const ticket = p.tickets()[0]!;
     const memberId = ticket.owner_member_id!;

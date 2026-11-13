@@ -13,7 +13,7 @@ import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import type { Harness } from "./harness/types.js";
 import { GhCli, type GitHub } from "./github/github.js";
 import { ConfigError, loadStartupConfig } from "./config.js";
-import { Hq, kuramotoHome, workDirFor } from "./hq.js";
+import { currentWorkspaceId, Hq, kuramotoHome, workDirFor, type ProjectRecord } from "./hq.js";
 import { Dispatcher } from "./project/dispatcher.js";
 import { recoverStale } from "./project/inbox.js";
 import { autoMerge, autoMergeEnabled, ownerMerge, suggestedMergeOrder, type TeamCiHook } from "./project/merge.js";
@@ -101,6 +101,9 @@ export class KuramotoServer {
   private readonly checkRunner: CommandRunner;
   /** オフィス(チケットの仕事)を動かしているプロジェクト。企画スタジオの担当は止めていても動く。 */
   private readonly running = new Set<number>();
+  private readonly records = new Map<number, ProjectRecord>();
+  private readonly opening = new Map<number, Promise<Project>>();
+  private readonly looping = new Set<number>();
   private readonly harnesses: Record<string, Harness>;
   private readonly github: GitHub;
   private readonly workspaceFor: (dataDir: string) => Workspace;
@@ -119,31 +122,56 @@ export class KuramotoServer {
   }
 
   /** すべてのプロジェクトの受信箱を見始める。前回「稼働中」のまま止めたものはオフィスも再開する。 */
-  resume(): void {
-    for (const rec of this.hq.projects()) {
+  async resume(): Promise<void> {
+    for (const rec of await this.hq.projects()) {
       if (rec.status === "running") this.running.add(rec.id);
       // 止まっている間に始められるようになった段階があれば始める
-      advance(this.project(rec.id));
-      this.loop(rec.id);
+      advance(await this.open(rec.id));
+      await this.loop(rec.id);
     }
   }
 
-  project(id: number): Project {
-    let p = this.projects.get(id);
-    if (!p) {
-      p = this.hq.openProject(id);
-      this.projects.set(id, p);
+  /**
+   * 入口: プロジェクトの id がいまのワークスペースの中にあるかを本部で確かめ、DB を開いて(開いてあれば再利用して)返す。
+   * ワークスペースの外・無い id は投げる。以後の project(id) / record(id) は、ここで開いたものを同期で引く。
+   */
+  async open(id: number): Promise<Project> {
+    this.records.set(id, await this.hq.project(id));
+    const known = this.projects.get(id);
+    if (known) return known;
+    let opening = this.opening.get(id);
+    if (!opening) {
+      opening = this.hq.openProject(id).then((p) => {
+        this.projects.set(id, p);
+        return p;
+      });
+      this.opening.set(id, opening);
+      opening.then(() => this.opening.delete(id), () => this.opening.delete(id));
     }
+    return opening;
+  }
+
+  /** open() で開いてあるプロジェクト。開いていなければ投げる。 */
+  project(id: number): Project {
+    const p = this.projects.get(id);
+    if (!p) throw new Error(`プロジェクト ${id} がありません`);
     return p;
   }
 
+  /** open() で確かめた本部の記録(名前・データの置き場所など)。 */
+  record(id: number): ProjectRecord {
+    const r = this.records.get(id);
+    if (!r) throw new Error(`プロジェクト ${id} がありません`);
+    return r;
+  }
+
   /** オフィスを動かす。 */
-  start(id: number): void {
+  async start(id: number): Promise<void> {
     this.running.add(id);
-    this.hq.setStatus(id, "running");
+    await this.hq.setStatus(id, "running");
     // 始業したら、リーダーがまずボードを見回る(重複・回り続けているチケット。ADR-0026)
     startPatrol(this.project(id));
-    this.loop(id);
+    await this.loop(id);
     this.poke(id);
   }
 
@@ -157,17 +185,23 @@ export class KuramotoServer {
   }
 
   /** オフィスを止める(企画スタジオの担当は動き続ける)。 */
-  stop(id: number): void {
+  async stop(id: number): Promise<void> {
     this.running.delete(id);
-    this.hq.setStatus(id, handedOff(this.project(id)) ? "starting" : "planning");
+    await this.hq.setStatus(id, handedOff(this.project(id)) ? "starting" : "planning");
   }
 
   /** プロジェクトの受信箱を見回るループ。1 プロジェクトに 1 つ。 */
-  private loop(id: number): void {
-    if (this.runners.has(id)) return;
+  private async loop(id: number): Promise<void> {
+    if (this.runners.has(id) || this.looping.has(id)) return;
+    this.looping.add(id);
     const p = this.project(id);
-    recoverStale(p);
-    const workspace = this.workspaceFor(this.hq.project(id).data_dir);
+    try {
+      await recoverStale(p);
+    } finally {
+      this.looping.delete(id);
+    }
+    if (this.runners.has(id)) return;
+    const workspace = this.workspaceFor(this.record(id).data_dir);
     // merge の直前にチームの CI を流す口(ADR-0028)
     const teamCi: TeamCiHook = {
       run: (t, repo, branch) => runTeamCi(p, workspace, this.checkRunner, t, repo, branch),
@@ -285,7 +319,7 @@ export class KuramotoServer {
       if (!url.pathname.startsWith("/api/")) return await this.serveStatic(url.pathname, res);
       if (req.method !== "GET" && req.headers["x-kuramoto"] !== "1") return send(res, 403, { error: "ヘッダーがありません" });
       const exp = req.method === "GET" && url.pathname.match(/^\/api\/projects\/(\d+)\/studio\/export$/);
-      if (exp) return this.sendExport(Number(exp[1]), res);
+      if (exp) return await this.sendExport(Number(exp[1]), res);
       const expZip = req.method === "GET" && url.pathname.match(/^\/api\/projects\/(\d+)\/studio\/export\.zip$/);
       if (expZip) return await this.sendExportZip(Number(expZip[1]), res);
       const img = req.method === "GET" && url.pathname.match(/^\/api\/projects\/(\d+)\/design-images\/(\d+)$/);
@@ -334,29 +368,30 @@ export class KuramotoServer {
     if (idStr === "import" && method === "POST") {
       // 書き出した設計書から、新しいプロジェクトとして復元する
       const data = extractTransfer(String(body.markdown ?? ""));
-      const rec = this.hq.createProject(data.project.name, data.repos);
-      restoreTransfer(this.project(rec.id), data);
-      this.hq.setStatus(rec.id, handedOff(this.project(rec.id)) ? "starting" : "planning");
+      const rec = await this.hq.createProject(data.project.name, data.repos);
+      restoreTransfer(await this.open(rec.id), data);
+      await this.hq.setStatus(rec.id, handedOff(this.project(rec.id)) ? "starting" : "planning");
       advance(this.project(rec.id));
-      this.loop(rec.id);
+      await this.loop(rec.id);
       return { id: rec.id };
     }
     if (!idStr && method === "POST") {
       const repos = (body.repos as { fullName: string; role: string }[] | undefined) ?? [];
-      const rec = this.hq.createProject(String(body.name ?? ""), repos.map((r) => ({ fullName: String(r.fullName).trim(), role: String(r.role) })));
+      const rec = await this.hq.createProject(String(body.name ?? ""), repos.map((r) => ({ fullName: String(r.fullName).trim(), role: String(r.role) })));
+      await this.open(rec.id);
       // 既存のリポジトリの続きから: GitHub の途中の仕事(開いている PR・Issue)を取ってきてから、担当に現状を読ませる(ADR-0030)
       if (body.mode === "existing") {
-        markExisting(this.project(rec.id), typeof body.issueLabel === "string" ? body.issueLabel : "kuramoto");
+        markExisting(await this.open(rec.id), typeof body.issueLabel === "string" ? body.issueLabel : "kuramoto");
         await fetchGithubSnapshot(this.project(rec.id), this.github);
       }
       // リポジトリを登録したら、企画スタジオの企画担当が要件を聞き始める(既存なら現状を読み始める)
       advance(this.project(rec.id));
-      this.loop(rec.id);
+      await this.loop(rec.id);
       return { id: rec.id };
     }
     const id = Number(idStr);
     if (!Number.isInteger(id)) return undefined;
-    const p = this.project(id);
+    const p = await this.open(id); // 入口: id がいまのワークスペースの中にあるかを確かめる
     if (!b && method === "GET") return this.projectView(id);
     if (b === "tickets" && c && method === "GET") return ticketView(p, Number(c));
     if (b === "tickets" && c && parts[4] === "notes" && method === "POST") {
@@ -396,12 +431,12 @@ export class KuramotoServer {
       return { ok: true };
     }
     if (b === "merge" && c && method === "POST") {
-      this.loop(id);
+      await this.loop(id);
       return ownerMerge(p, this.github, Number(c), "owner", { teamCi: this.runners.get(id)!.teamCi });
     }
     if (b === "run" && method === "POST") {
-      if (body.running) this.start(id);
-      else this.stop(id);
+      if (body.running) await this.start(id);
+      else await this.stop(id);
       return { running: this.running.has(id) };
     }
     if (b === "team" && method === "GET") return teamView(p);
@@ -457,8 +492,8 @@ export class KuramotoServer {
     }
     if (b === "settings" && method === "GET")
       return {
-        name: this.hq.project(id).name,
-        dataDir: this.hq.project(id).data_dir,
+        name: this.record(id).name,
+        dataDir: this.record(id).data_dir,
         repos: p.repos().map((r) => ({ fullName: r.full_name, role: r.role })),
         ticketBudgetUsd: defaultTicketBudgetUsd(p),
         projectBudgetUsd: projectBudgetUsd(p),
@@ -477,7 +512,7 @@ export class KuramotoServer {
       const budget = body.ticketBudgetUsd === undefined ? undefined : body.ticketBudgetUsd === null ? null : Number(body.ticketBudgetUsd);
       if (budget !== undefined && budget !== null && !(Number.isFinite(budget) && budget > 0)) throw new Error("チケット 1 枚の予算は 0 より大きい金額か、無制限にしてください");
       const repos = (body.repos as { fullName: string; role: string }[] | undefined) ?? [];
-      const rec = this.hq.updateProject(p, id, { name: String(body.name ?? ""), repos: repos.map((r) => ({ fullName: String(r.fullName).trim(), role: String(r.role) })) });
+      const rec = await this.hq.updateProject(p, id, { name: String(body.name ?? ""), repos: repos.map((r) => ({ fullName: String(r.fullName).trim(), role: String(r.role) })) });
       const total = body.projectBudgetUsd === undefined ? undefined : body.projectBudgetUsd === null || body.projectBudgetUsd === "" ? null : Number(body.projectBudgetUsd);
       if (total !== undefined && total !== null && !(Number.isFinite(total) && total > 0)) throw new Error("全体の予算は 0 より大きい金額か、無制限にしてください");
       if (budget !== undefined) setDefaultTicketBudget(p, budget);
@@ -551,8 +586,10 @@ export class KuramotoServer {
     return undefined;
   }
 
-  hqView() {
-    const projects = this.hq.projects().map((rec) => {
+  async hqView() {
+    const recs = await this.hq.projects();
+    for (const rec of recs) await this.open(rec.id);
+    const projects = recs.map((rec) => {
       const p = this.project(rec.id);
       const m = metrics(p);
       const stages = STAGES.map((s) => ({ key: s, done: stageDone(p, s) }));
@@ -570,7 +607,7 @@ export class KuramotoServer {
         metrics: m,
       };
     });
-    const queue = this.hq.projects().flatMap((rec) => {
+    const queue = recs.flatMap((rec) => {
       const p = this.project(rec.id);
       return [
         ...ownerPlanItems(p).map((x) => ({ projectId: rec.id, projectName: rec.name, kind: "plan", text: x.text, deadline: null })),
@@ -583,13 +620,14 @@ export class KuramotoServer {
     return { projects, queue };
   }
 
-  studioViewOf(id: number) {
-    return { ...studioView(this.project(id)), project: { id, name: this.hq.project(id).name } };
+  async studioViewOf(id: number) {
+    await this.open(id);
+    return { ...studioView(this.project(id)), project: { id, name: this.record(id).name } };
   }
 
-  projectView(id: number) {
-    const p = this.project(id);
-    const rec = this.hq.project(id);
+  async projectView(id: number) {
+    const p = await this.open(id);
+    const rec = this.record(id);
     const members = new Map(p.activeMembers().concat(all(p.db, "SELECT * FROM members WHERE left_at IS NOT NULL")).map((m) => [m.id, m.name]));
     const working = new Map(
       all<{ id: number; ticket_id: number; member_id: number; role: string }>(p.db, "SELECT id, ticket_id, member_id, role FROM runs WHERE ended_at IS NULL AND ticket_id IS NOT NULL").map((r) => [r.ticket_id, r]),
@@ -690,7 +728,7 @@ export class KuramotoServer {
   /** 要件と技術的な設計を Markdown でダウンロードさせる。 */
   /** 画面の画像(お手本・実装・違い)を返す(ADR-0034)。 */
   private async sendDesignImage(id: number, imageId: number, res: ServerResponse): Promise<void> {
-    const row = imageRow(this.project(id), imageId);
+    const row = imageRow(await this.open(id), imageId);
     const data = row ? await this.designStoreFor(id).get(row.store_key) : null;
     if (!data) return send(res, 404, { error: "画像がありません" });
     res.writeHead(200, { "content-type": "image/png", "cache-control": "private, max-age=86400" });
@@ -699,7 +737,7 @@ export class KuramotoServer {
 
   /** 画面の画像の置き場所。既定はプロジェクトのデータの置き場所の design/(S3 に替えるときは deps.designStoreFor)。 */
   private designStoreFor(id: number): DesignStore {
-    return this.deps.designStoreFor?.(this.hq.project(id).data_dir) ?? new FileDesignStore(join(this.hq.project(id).data_dir, "design"));
+    return this.deps.designStoreFor?.(this.record(id).data_dir) ?? new FileDesignStore(join(this.record(id).data_dir, "design"));
   }
 
   /**
@@ -707,8 +745,8 @@ export class KuramotoServer {
    * 設計書から画像を参照するので、GitHub などに置いても画面の絵が出る。描けなかった画面は画像なしで書く。
    */
   private async sendExportZip(id: number, res: ServerResponse): Promise<void> {
-    const p = this.project(id);
-    const name = this.hq.project(id).name;
+    const p = await this.open(id);
+    const name = this.record(id).name;
     const store = this.designStoreFor(id);
     const render = this.deps.renderer ?? playwrightRenderer;
     const images = new Map<string, string>();
@@ -732,9 +770,10 @@ export class KuramotoServer {
     res.end(body);
   }
 
-  private sendExport(id: number, res: ServerResponse): void {
-    const name = this.hq.project(id).name;
-    const md = exportDesignDoc(this.project(id), name);
+  private async sendExport(id: number, res: ServerResponse): Promise<void> {
+    const p = await this.open(id);
+    const name = this.record(id).name;
+    const md = exportDesignDoc(p, name);
     const file = `${name}-設計書.md`;
     res.writeHead(200, {
       "content-type": "text/markdown; charset=utf-8",
@@ -758,9 +797,9 @@ export class KuramotoServer {
 }
 
 /** 画面(ui/)が受け取る API の形。サーバーの戻り値から型を作り、画面とずれないようにする。 */
-export type HqView = ReturnType<KuramotoServer["hqView"]>;
-export type ProjectView = ReturnType<KuramotoServer["projectView"]>;
-export type StudioView = ReturnType<KuramotoServer["studioViewOf"]>;
+export type HqView = Awaited<ReturnType<KuramotoServer["hqView"]>>;
+export type ProjectView = Awaited<ReturnType<KuramotoServer["projectView"]>>;
+export type StudioView = Awaited<ReturnType<KuramotoServer["studioViewOf"]>>;
 export type TeamView = ReturnType<typeof teamView>;
 export type DevRulesView = ReturnType<typeof devRulesView>;
 export type ProductivityView = ReturnType<typeof productivity>;
@@ -851,8 +890,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const port = Number(process.env.KURAMOTO_PORT ?? 4300);
   const open = process.env.KURAMOTO_PUBLIC === "1";
   const token = open ? publicToken() : undefined;
-  const app = new KuramotoServer({ hq: new Hq(), ...(token ? { publicToken: token } : {}) });
-  app.resume();
+  // 入口で今のワークスペースを決め、本部へ渡す
+  const app = new KuramotoServer({ hq: new Hq(undefined, undefined, currentWorkspaceId()), ...(token ? { publicToken: token } : {}) });
+  await app.resume();
   const server = createServer((req, res) => void app.handle(req, res));
   server.listen(port, open ? "0.0.0.0" : "127.0.0.1", () => {
     console.log(`Kuramoto: http://localhost:${port}`);

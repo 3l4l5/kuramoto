@@ -1,5 +1,7 @@
 import { iso } from "../clock.js";
-import { get, run, tx } from "../db/sqlite.js";
+import { sql, type SqlBool } from "kysely";
+import { run } from "../db/sqlite.js";
+import { dialect } from "../db/dialect/index.js";
 import type { Pull } from "../domain/formation.js";
 import type { Role } from "../domain/roles.js";
 import type { Project } from "./project.js";
@@ -36,6 +38,11 @@ export type MessageRow = {
   last_error: string | null;
 };
 
+/**
+ * 受信箱に 1 通入れる。
+ * 同期のまま(まだ非同期に移していない workflow などの書き込みの途中から呼ばれるため)。非同期への移行の 2/2 で async にする。
+ * project_id は書く側で入れる(ADR-0037)。
+ */
 export function send(
   p: Project,
   m: { ticketId: number | null; toRole: Role; toMemberId?: number | null; kind: MessageKind; payload?: Record<string, unknown>; delayMs?: number },
@@ -43,8 +50,8 @@ export function send(
   const at = iso(new Date(p.clock.now().getTime() + (m.delayMs ?? 0)));
   return run(
     p.db,
-    "INSERT INTO messages (ticket_id, to_role, to_member_id, kind, payload, available_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    [m.ticketId, m.toRole, m.toMemberId ?? null, m.kind, JSON.stringify(m.payload ?? {}), at, p.now()],
+    "INSERT INTO messages (project_id, ticket_id, to_role, to_member_id, kind, payload, available_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    [p.projectId, m.ticketId, m.toRole, m.toMemberId ?? null, m.kind, JSON.stringify(m.payload ?? {}), at, p.now()],
   ).lastId;
 }
 
@@ -58,8 +65,8 @@ const ORDER: Record<Pull, MessageKind[]> = {
   start: ["member_chat", "ask", "chat", "triage", "patrol", "plan", "unstick", "answer", "decide", "fix", "implement", "review", "sec", "qa"],
 };
 
-function orderSql(pull: Pull): string {
-  return `CASE kind ${ORDER[pull].map((k, i) => `WHEN '${k}' THEN ${i}`).join(" ")} ELSE 99 END`;
+function orderSql(pull: Pull) {
+  return sql.raw(`CASE m.kind ${ORDER[pull].map((k, i) => `WHEN '${k}' THEN ${i}`).join(" ")} ELSE 99 END`);
 }
 
 /**
@@ -76,76 +83,79 @@ export const AREA_BUSY_SQL = `EXISTS (
 )`;
 
 /**
- * 受信箱から 1 通取り出す。取り出しは 1 文の UPDATE で行い、二重に取られないようにする。
+ * 受信箱から 1 通取り出す。取り出しは方言の助け(dialect.claimMessage)で、他の取り出しと重ならない 1 文にする(SQLite は 1 文の UPDATE)。
  * 他の起動がまだ終わっていないチケット宛てのものは飛ばす(1 チケット 1 起動)。
  * 同じ場所を触るチケットが先に進んでいれば、まだ取りかかっていないチケットの実装は始めない(ADR-0024)。
  */
-export function claimNext(p: Project, opts: { exclude?: number[]; planningOnly?: boolean; triage?: boolean; noPlan?: boolean } = {}): MessageRow | undefined {
+export async function claimNext(p: Project, opts: { exclude?: number[]; planningOnly?: boolean; triage?: boolean; noPlan?: boolean } = {}): Promise<MessageRow | undefined> {
   const pull = p.currentFormation().pull;
   const exclude = opts.exclude ?? [];
-  return get<MessageRow>(
-    p.db,
-    `UPDATE messages SET status = 'claimed', claimed_at = ?, attempts = attempts + 1
-     WHERE id = (
-       SELECT m.id FROM messages m
-       WHERE m.status = 'pending' AND m.available_at <= ?
-         AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id = m.ticket_id AND r.ended_at IS NULL)
-         AND NOT (m.ticket_id IS NULL AND m.kind NOT IN ('member_chat','ask') AND EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id IS NULL AND r.role = m.to_role AND r.ended_at IS NULL))
-         AND NOT (m.kind = 'member_chat' AND EXISTS (SELECT 1 FROM runs r WHERE r.member_id = m.to_member_id AND r.ended_at IS NULL))
-         ${opts.planningOnly ? "AND m.ticket_id IS NULL" : ""}
-         ${opts.noPlan ? "AND m.kind <> 'plan'" : ""}
-         ${
-           opts.triage
-             ? `AND NOT ((m.kind = 'implement' OR json_extract(m.payload, '$.preDev') = 1) AND EXISTS (SELECT 1 FROM tickets t WHERE t.id = m.ticket_id AND t.triaged = 0))
-         AND NOT (m.kind = 'implement' AND EXISTS (SELECT 1 FROM ticket_deps d JOIN tickets b ON b.id = d.depends_on WHERE d.ticket_id = m.ticket_id AND b.stage NOT IN ('done','dropped')))
-         AND NOT (m.kind = 'implement' AND NOT EXISTS (SELECT 1 FROM runs r0 WHERE r0.ticket_id = m.ticket_id AND r0.role = 'dev') AND ${AREA_BUSY_SQL.replace("%T", "m.ticket_id")})`
-             : ""
-         }
-         ${exclude.length ? `AND m.id NOT IN (${exclude.map(() => "?").join(",")})` : ""}
-       ORDER BY ${orderSql(pull)}, m.available_at, m.id
-       LIMIT 1
-     )
-     RETURNING *`,
-    [p.now(), p.now(), ...exclude],
-  );
+  const now = p.now();
+  const k = p.pdb.k;
+  let candidate = k
+    .selectFrom("messages as m")
+    .select("m.id")
+    .where("m.project_id", "=", p.projectId)
+    .where("m.status", "=", "pending")
+    .where("m.available_at", "<=", now)
+    .where(sql<SqlBool>`NOT EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id = m.ticket_id AND r.ended_at IS NULL)`)
+    .where(sql<SqlBool>`NOT (m.ticket_id IS NULL AND m.kind NOT IN ('member_chat','ask') AND EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id IS NULL AND r.role = m.to_role AND r.ended_at IS NULL))`)
+    .where(sql<SqlBool>`NOT (m.kind = 'member_chat' AND EXISTS (SELECT 1 FROM runs r WHERE r.member_id = m.to_member_id AND r.ended_at IS NULL))`);
+  if (opts.planningOnly) candidate = candidate.where("m.ticket_id", "is", null);
+  if (opts.noPlan) candidate = candidate.where("m.kind", "<>", "plan");
+  if (opts.triage) {
+    candidate = candidate
+      .where(sql<SqlBool>`NOT ((m.kind = 'implement' OR ${dialect.jsonExtract("m.payload", "preDev")} = 1) AND EXISTS (SELECT 1 FROM tickets t WHERE t.id = m.ticket_id AND t.triaged = 0))`)
+      .where(sql<SqlBool>`NOT (m.kind = 'implement' AND EXISTS (SELECT 1 FROM ticket_deps d JOIN tickets b ON b.id = d.depends_on WHERE d.ticket_id = m.ticket_id AND b.stage NOT IN ('done','dropped')))`)
+      .where(sql<SqlBool>`NOT (m.kind = 'implement' AND NOT EXISTS (SELECT 1 FROM runs r0 WHERE r0.ticket_id = m.ticket_id AND r0.role = 'dev') AND ${sql.raw(AREA_BUSY_SQL.replace("%T", "m.ticket_id"))})`);
+  }
+  if (exclude.length) candidate = candidate.where("m.id", "not in", exclude);
+  candidate = candidate.orderBy(orderSql(pull)).orderBy("m.available_at").orderBy("m.id").limit(1);
+  return (await dialect.claimMessage(k, candidate, now)) as MessageRow | undefined;
 }
 
-export function complete(p: Project, id: number): void {
-  run(p.db, "UPDATE messages SET status = 'done' WHERE id = ?", [id]);
+export async function complete(p: Project, id: number): Promise<void> {
+  await p.pdb.update("messages", { status: "done" }).where("id", "=", id).execute();
 }
 
 /** 起動できなかった(人手が足りない等)。試行回数を戻して後で取り直す。 */
-export function release(p: Project, id: number, delayMs: number): void {
+export async function release(p: Project, id: number, delayMs: number): Promise<void> {
   const at = iso(new Date(p.clock.now().getTime() + delayMs));
-  run(p.db, "UPDATE messages SET status = 'pending', claimed_at = NULL, attempts = attempts - 1, available_at = ? WHERE id = ?", [at, id]);
+  await p.pdb.update("messages", { status: "pending", claimed_at: null, attempts: sql`attempts - 1`, available_at: at }).where("id", "=", id).execute();
 }
 
 /**
  * 失敗した。上限までは間を空けて再試行し、尽きたら failed にする。
  * @returns 再試行が尽きたら true
  */
-export function fail(p: Project, msg: MessageRow, error: string): boolean {
+export async function fail(p: Project, msg: MessageRow, error: string): Promise<boolean> {
   const max = p.settingNumber("max_attempts", 3);
   if (msg.attempts >= max) {
-    run(p.db, "UPDATE messages SET status = 'failed', last_error = ? WHERE id = ?", [error, msg.id]);
+    await p.pdb.update("messages", { status: "failed", last_error: error }).where("id", "=", msg.id).execute();
     return true;
   }
   const backoffMs = 30_000 * 2 ** (msg.attempts - 1);
   const at = iso(new Date(p.clock.now().getTime() + backoffMs));
-  run(p.db, "UPDATE messages SET status = 'pending', claimed_at = NULL, last_error = ?, available_at = ? WHERE id = ?", [error, at, msg.id]);
+  await p.pdb.update("messages", { status: "pending", claimed_at: null, last_error: error, available_at: at }).where("id", "=", msg.id).execute();
   return false;
 }
 
 /** 起動中に Kuramoto が落ちたときの取りこぼしを戻す。起動時に 1 回呼ぶ。 */
-export function recoverStale(p: Project): number {
-  return tx(p.db, () => {
-    run(p.db, "UPDATE runs SET ended_at = ?, outcome = 'abandoned', error = 'Kuramoto が止まっていました' WHERE ended_at IS NULL", [p.now()]);
-    return run(p.db, "UPDATE messages SET status = 'pending', claimed_at = NULL WHERE status = 'claimed'").changes;
+export async function recoverStale(p: Project): Promise<number> {
+  return p.pdb.transaction(async () => {
+    await p.pdb.update("runs", { ended_at: p.now(), outcome: "abandoned", error: "Kuramoto が止まっていました" }).where("ended_at", "is", null).execute();
+    const r = await p.pdb.update("messages", { status: "pending", claimed_at: null }).where("status", "=", "claimed").executeTakeFirst();
+    return Number(r.numUpdatedRows);
   });
 }
 
-export function pendingCount(p: Project, kinds: MessageKind[]): number {
-  return (
-    get<{ n: number }>(p.db, `SELECT COUNT(*) AS n FROM messages WHERE status = 'pending' AND kind IN (${kinds.map(() => "?").join(",")})`, kinds)?.n ?? 0
-  );
+export async function pendingCount(p: Project, kinds: MessageKind[]): Promise<number> {
+  const row = await p.pdb.k
+    .selectFrom("messages")
+    .select((eb) => eb.fn.countAll<number>().as("n"))
+    .where("project_id", "=", p.projectId)
+    .where("status", "=", "pending")
+    .where("kind", "in", kinds)
+    .executeTakeFirst();
+  return Number(row?.n ?? 0);
 }

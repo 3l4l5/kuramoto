@@ -3,7 +3,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { loadStartupConfig } from "./config.js";
 import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import { GhCli } from "./github/github.js";
-import { Hq, workDirFor } from "./hq.js";
+import { currentWorkspaceId, Hq, workDirFor } from "./hq.js";
 import { Dispatcher } from "./project/dispatcher.js";
 import { recoverStale } from "./project/inbox.js";
 import { ownerMerge, suggestedMergeOrder } from "./project/merge.js";
@@ -30,14 +30,15 @@ async function main(argv: string[]): Promise<void> {
   const [cmd, sub, ...rest] = positionals;
   // 設定は stderr に出す(一覧などの出力に混ぜない)
   loadStartupConfig((line) => console.error(line));
-  const hq = new Hq();
+  // 入口で今のワークスペースを決め、本部へ渡す。プロジェクトの id がそのワークスペースの中にあるかは、hq.project() / hq.openProject() が確かめる
+  const hq = new Hq(undefined, undefined, currentWorkspaceId());
   try {
     switch (cmd) {
       case "project":
         if (sub === "create") {
           const [name, ...repos] = rest;
           if (!name || repos.length === 0) throw new Error(USAGE);
-          const rec = hq.createProject(
+          const rec = await hq.createProject(
             name,
             repos.map((r) => {
               const [fullName, role] = r.split(":");
@@ -46,28 +47,28 @@ async function main(argv: string[]): Promise<void> {
           );
           console.log(`作りました: ${rec.id} ${rec.name}(${rec.data_dir})`);
         } else {
-          for (const q of hq.ownerQueue()) console.log(`${q.project.id}\t${q.project.name}\t${q.project.status}\t判断 ${q.decisions} / merge 待ち ${q.merges}`);
+          for (const q of await hq.ownerQueue()) console.log(`${q.project.id}\t${q.project.name}\t${q.project.status}\t判断 ${q.decisions} / merge 待ち ${q.merges}`);
         }
         return;
       case "ticket": {
-        const p = hq.openProject(Number(rest[0]));
+        const p = await hq.openProject(Number(rest[0]));
         const t = createTicket(p, { title: rest[1] ?? "", body: values.body ?? "" });
         console.log(`#${t.number} を作りました`);
         p.close();
         return;
       }
       case "status": {
-        const p = hq.openProject(Number(sub));
+        const p = await hq.openProject(Number(sub));
         for (const t of p.tickets()) console.log(`#${t.number}\t${t.stage}\t往復 ${t.rounds}\t${t.title}`);
         console.log(JSON.stringify(metrics(p), null, 2));
         p.close();
         return;
       }
       case "run": {
-        const rec = hq.project(Number(sub));
-        const p = hq.openProject(rec.id);
+        const rec = await hq.project(Number(sub));
+        const p = await hq.openProject(rec.id);
         const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": new ClaudeAgentSdkHarness() }, workspace: new GitWorkspace(workDirFor(rec.data_dir)) });
-        const recovered = recoverStale(p);
+        const recovered = await recoverStale(p);
         if (recovered) console.log(`止まっていた ${recovered} 件を受信箱に戻しました`);
         const concurrency = Number(values.concurrency ?? 1);
         for (;;) {
@@ -80,7 +81,7 @@ async function main(argv: string[]): Promise<void> {
         return;
       }
       case "decisions": {
-        const p = hq.openProject(Number(sub));
+        const p = await hq.openProject(Number(sub));
         for (const d of pendingOwnerDecisions(p)) {
           const opts = (JSON.parse(d.options) as DecisionOption[]).map((o, i) => `  ${i}. ${o.label}${i === d.recommended ? "(推奨)" : ""}`).join("\n");
           console.log(`[${d.id}] ${d.question}\n${opts}\n  理由: ${d.why}\n  間違えると: ${d.impact}(${d.reversible ? "戻せる" : "戻せない"})\n  期限: ${d.deadline_at}(過ぎると推奨で進みます)\n`);
@@ -89,14 +90,14 @@ async function main(argv: string[]): Promise<void> {
         return;
       }
       case "answer": {
-        const p = hq.openProject(Number(sub));
+        const p = await hq.openProject(Number(sub));
         answerDecision(p, Number(rest[0]), Number(rest[1]));
         console.log("答えました");
         p.close();
         return;
       }
       case "merge": {
-        const p = hq.openProject(Number(sub));
+        const p = await hq.openProject(Number(sub));
         const t = p.tickets().find((x) => x.number === Number(rest[0]));
         if (!t) {
           console.log(`merge 待ち(この順がおすすめ): ${suggestedMergeOrder(p).map((x) => `#${x.number}`).join(" → ") || "なし"}`);
