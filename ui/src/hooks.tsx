@@ -80,13 +80,15 @@ export function useToast() {
   return useContext(ToastCtx).toast;
 }
 
-// ---- 画面の切り替え(#/ · #/new · #/p/<id> · #/p/<id>/studio) ----
+// ---- 画面の切り替え(#/ · #/new · #/p/<id> · #/p/<id>/studio · #/p/<id>/t/<チケット>) ----
 
-export type Route = { name: "home" } | { name: "new" } | { name: "project"; id: number } | { name: "studio"; id: number } | { name: "metrics"; id: number } | { name: "settings"; id: number };
+export type Route = { name: "home" } | { name: "new" } | { name: "project"; id: number } | { name: "studio"; id: number } | { name: "metrics"; id: number } | { name: "settings"; id: number } | { name: "ticket"; id: number; ticketId: number };
 
 function parse(): Route {
   const h = location.hash.replace(/^#\/?/, "");
   if (h === "new") return { name: "new" };
+  const tk = h.match(/^p\/(\d+)\/t\/(\d+)$/);
+  if (tk) return { name: "ticket", id: Number(tk[1]), ticketId: Number(tk[2]) };
   const se = h.match(/^p\/(\d+)\/settings$/);
   if (se) return { name: "settings", id: Number(se[1]) };
   const mt = h.match(/^p\/(\d+)\/metrics$/);
