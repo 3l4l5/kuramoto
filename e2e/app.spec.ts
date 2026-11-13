@@ -591,7 +591,11 @@ test("チケットの種類: 詳細で変えられ、ボードは種類の流れ
     await expect(dialog.locator("header")).toContainText("バグ修正");
     const kindFlow = dialog.getByLabel("バグ修正の流れ");
     await expect(kindFlow).toHaveText("バグ修正の流れ: QA 申し送り → 開発 → merge 待ち");
-    await dialog.getByLabel("チケットの種類").selectOption("docs");
+    const seg = dialog.getByRole("radiogroup", { name: "チケットの種類" });
+    await expect(seg.getByRole("radio", { name: "バグ修正" })).toHaveAttribute("aria-checked", "true");
+    await expect(seg.getByRole("radio")).toHaveCount(4);
+    await seg.getByRole("radio", { name: "ドキュメント" }).click();
+    await expect(seg.getByRole("radio", { name: "ドキュメント" })).toHaveAttribute("aria-checked", "true");
     await expect(page.getByRole("status", { name: "お知らせ" })).toContainText("種類を「ドキュメント」に変えました");
     await expect(dialog.locator("header")).toContainText("ドキュメント");
     await expect(dialog.locator(".kindchanged")).toHaveText("バグ修正 → ドキュメントに変えました。次の工程からドキュメントの流れで進みます。");

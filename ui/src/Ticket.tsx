@@ -5,7 +5,7 @@ import { droppedText, hhmm, usd, waitText } from "./format";
 import { BudgetInput, budgetOk } from "./BudgetInput";
 import { duration, useAct } from "./hooks";
 import { Btn } from "./ui";
-import { Chip, Input, Select, Textarea, type ChipTone } from "./ds";
+import { Chip, Input, Segmented, Textarea, type ChipTone } from "./ds";
 import { KINDS, KindChip, PRE_DEV_LABEL } from "./kind";
 
 /**
@@ -240,16 +240,7 @@ function KindSelect({ projectId, t }: { projectId: number; t: TicketView }) {
   };
   return (
     <div className="kindsel">
-      <label className="sr" htmlFor="tk-kind">
-        チケットの種類
-      </label>
-      <Select id="tk-kind" size="sm" value={t.kind} onChange={(e) => void change(e.target.value)}>
-        {KINDS.map((k) => (
-          <option key={k.key} value={k.key}>
-            {k.label}
-          </option>
-        ))}
-      </Select>
+      <Segmented label="チケットの種類" value={t.kind} onChange={(k) => void change(k)} options={KINDS.map((k) => ({ value: k.key as string, label: k.label }))} />
       <div className="kindflow" aria-label={`${t.kindLabel}の流れ`}>
         {t.kindLabel}の流れ:{" "}
         {[...t.flow.map((f) => ({ key: f.key, text: f.preDev ? `${f.label} ${PRE_DEV_LABEL}` : f.label })), { key: "merge", text: "merge 待ち" }].map((f, i) => (
