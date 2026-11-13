@@ -28,6 +28,32 @@ export type CiRun = { id: number; url: string; workflow: string; status: string;
  */
 export type CiDetail = { headSha: string; base: string; failing: FailedCheck[]; baseFailing: string[] };
 
+/** PR の確認 1 つ(CI の各チェック)。 */
+export type PrCheck = { name: string; status: string; conclusion: string | null; link: string | null };
+
+/**
+ * PR の読み取り用の詳細(merge できるか・できない理由・CI の各チェック・レビュー)。リーダーが読むだけ(#56)。
+ * - mergeStateStatus: GitHub が merge できるかを判定した結果(CLEAN・BLOCKED・BEHIND・DIRTY・UNSTABLE・DRAFT・UNKNOWN など)
+ * - ahead / behind: 向き先との差(コミット数)。分からなければ null
+ */
+export type PrDetail = {
+  title: string;
+  url: string;
+  state: PrStatus["state"];
+  draft: boolean;
+  mergeable: PrStatus["mergeable"];
+  mergeStateStatus: string;
+  reviewDecision: string | null;
+  base: string;
+  head: string;
+  headSha: string;
+  checks: PrCheck[];
+  ahead: number | null;
+  behind: number | null;
+  reviews: { author: string; state: string; body: string; at: string }[];
+  comments: { author: string; body: string; at: string; path?: string }[];
+};
+
 /** Kuramoto が GitHub に対して行うこと。差分は持たず、状態の写しだけを取る(ADR-0003)。CI が落ちたときだけ、ログを取ってくる。 */
 export interface GitHub {
   prStatus(repo: string, number: number): Promise<PrStatus>;
@@ -49,6 +75,8 @@ export interface GitHub {
   openIssues?(repo: string, label: string | null): Promise<{ number: number; title: string; body: string; url: string; labels: string[] }[]>;
   /** リポジトリの GitHub Actions を動かすか止めるか(チームの CI を使うときは止める。ADR-0028)。 */
   setActionsEnabled?(repo: string, enabled: boolean): Promise<void>;
+  /** PR の詳細(読むだけ。リーダーの読み取り用の道具が使う)。 */
+  prDetail?(repo: string, number: number): Promise<PrDetail>;
   /** 向き先のブランチの最近の CI の実行。 */
   recentRuns?(repo: string, branch: string): Promise<{ id: number; workflow: string; status: string; conclusion: string | null; headSha: string; createdAt: string }[]>;
 }
@@ -123,6 +151,61 @@ export class GhCli implements GitHub {
       () => [] as string[],
     );
     return { headSha: j.headRefOid, base: j.baseRefName, failing, baseFailing };
+  }
+
+  async prDetail(repo: string, number: number): Promise<PrDetail> {
+    const { stdout } = await exec(
+      "gh",
+      ["pr", "view", String(number), "--repo", repo, "--json", "title,url,state,isDraft,mergeable,mergeStateStatus,reviewDecision,baseRefName,headRefName,headRefOid,statusCheckRollup,reviews,comments"],
+      { maxBuffer: 16 * 1024 * 1024 },
+    );
+    const j = JSON.parse(stdout) as {
+      title: string;
+      url: string;
+      state: PrStatus["state"];
+      isDraft: boolean;
+      mergeable: PrStatus["mergeable"];
+      mergeStateStatus: string;
+      reviewDecision: string | null;
+      baseRefName: string;
+      headRefName: string;
+      headRefOid: string;
+      statusCheckRollup: { name?: string; context?: string; status?: string | null; state?: string | null; conclusion?: string | null; detailsUrl?: string; targetUrl?: string }[];
+      reviews: { author?: { login: string } | null; state: string; body: string; submittedAt?: string }[];
+      comments: { author?: { login: string } | null; body: string; createdAt: string }[];
+    };
+    // 向き先との差(衝突・遅れの手がかり)と、コードへの行のコメント。取れなくても詳細は返す
+    const diff = await exec("gh", ["api", `repos/${repo}/compare/${j.baseRefName}...${j.headRefOid}`, "--jq", "[.ahead_by, .behind_by] | @tsv"]).then(
+      (r) => r.stdout.trim().split("\t").map(Number),
+      () => undefined,
+    );
+    const inline = await exec("gh", ["api", `repos/${repo}/pulls/${number}/comments`, "--jq", '.[] | [.user.login, .path, .created_at, (.body | gsub("[\\t\\n]"; " "))] | @tsv']).then(
+      (r) =>
+        r.stdout
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => l.split("\t"))
+          .map(([author, path, at, body]) => ({ author: author ?? "", body: body ?? "", at: at ?? "", path })),
+      () => [] as { author: string; body: string; at: string; path?: string }[],
+    );
+    const num = (n: number | undefined) => (n === undefined || Number.isNaN(n) ? null : n);
+    return {
+      title: j.title,
+      url: j.url,
+      state: j.state,
+      draft: j.isDraft,
+      mergeable: j.mergeable,
+      mergeStateStatus: j.mergeStateStatus,
+      reviewDecision: j.reviewDecision || null,
+      base: j.baseRefName,
+      head: j.headRefName,
+      headSha: j.headRefOid,
+      checks: j.statusCheckRollup.map((c) => ({ name: c.name ?? c.context ?? "(名前なし)", status: c.status ?? c.state ?? "", conclusion: c.conclusion ?? null, link: c.detailsUrl ?? c.targetUrl ?? null })),
+      ahead: num(diff?.[0]),
+      behind: num(diff?.[1]),
+      reviews: j.reviews.map((r) => ({ author: r.author?.login ?? "", state: r.state, body: r.body ?? "", at: r.submittedAt ?? "" })),
+      comments: [...j.comments.map((c) => ({ author: c.author?.login ?? "", body: c.body, at: c.createdAt })), ...inline],
+    };
   }
 
   async openPulls(repo: string) {

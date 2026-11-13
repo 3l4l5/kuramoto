@@ -15,6 +15,7 @@ import { askLeadToUnstick, resetUnstick, unstickPrompt, unstickTools, type Stuck
 import type { Workspace } from "./workspace.js";
 import type { GitHub } from "../github/github.js";
 import { ciTools } from "./ci-tools.js";
+import { githubReadTools } from "./github-read.js";
 import { planWebNote, planWebTools } from "./web-access.js";
 import { designFor, designPrompt, designSystemFiles, isDesignSystemTicket } from "./design.js";
 import { compareScreenTools } from "./design-tools.js";
@@ -689,10 +690,10 @@ export class Dispatcher {
         effort: policy.effort,
         tools:
           mode === "chat"
-            ? leadChatTools(p, { closePrs })
+            ? [...leadChatTools(p, { closePrs }), ...githubReadTools(p, this.deps.github), ...ciTools(p, this.deps.github, {})]
             : mode === "triage"
               ? triageTools(p)
-              : [...patrolTools(p, { closePrs }), ...triageTools(p).filter((t) => t.name === "plan_work"), ...leadChatTools(p).filter((t) => t.name === "create_ticket"), ...ciTools(p, this.deps.github, { rerun: true })],
+              : [...patrolTools(p, { closePrs }), ...triageTools(p).filter((t) => t.name === "plan_work"), ...leadChatTools(p).filter((t) => t.name === "create_ticket"), ...githubReadTools(p, this.deps.github), ...ciTools(p, this.deps.github, { rerun: true })],
         allowedTools: ["Read", "Glob", "Grep"],
         maxBudgetUsd: await this.runBudget(),
         onProgress: progressRecorder(p, runId),
