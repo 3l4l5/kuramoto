@@ -37,7 +37,7 @@ const DS: DesignSystem = {
 };
 
 describe("画面を画像で見比べる(ADR-0034)", () => {
-  it("同じ画像は違い 0、半分違えば約 50%。大きさが違えば知らせる", () => {
+  it("同じ画像は違い 0、半分違えば約 50%。大きさが違えば知らせる", async () => {
     const a = png(40, 40, [255, 255, 255]);
     expect(compareImages(a, a).ratio).toBe(0);
     expect(compareImages(a, png(40, 40, [255, 255, 255], [0, 0, 0])).ratio).toBeCloseTo(0.5, 1);
@@ -112,11 +112,11 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
     putArtifact(p, "screen", "designsystem", "main", DS);
     expect(agreeBlocker(p, "screen")).toBeNull();
 
-    const tool = async (name: string) => (await planningTools(p, "handoff")).find((x) => x.name === name)!;
-    await (await tool("create_ticket")).handler({ title: "デザインシステムの土台", body: "トークン・部品・/_design", screens: [], design: [], design_system: true } as never);
-    await (await tool("create_ticket")).handler({ title: "一覧の画面", body: "部品で組み立てる", screens: ["list"], design: [], after: [1] } as never);
+    const tool = (name: string) => planningTools(p, "handoff").find((x) => x.name === name)!;
+    void tool("create_ticket").handler({ title: "デザインシステムの土台", body: "トークン・部品・/_design", screens: [], design: [], design_system: true } as never);
+    await tool("create_ticket").handler({ title: "一覧の画面", body: "部品で組み立てる", screens: ["list"], design: [], after: [1] } as never);
     const [base, screen] = p.tickets();
-    expect(blockers(p, screen!.id)).toEqual([base!.number]);
+    expect(await blockers(p, screen!.id)).toEqual([base!.number]);
   });
 
   it.skipIf(process.platform !== "darwin")("手元のブラウザで、試作を実際の幅の画像にする", async () => {

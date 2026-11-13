@@ -60,7 +60,7 @@ class FakeGitHub implements GitHub {
 }
 
 describe("チームの CI(ADR-0028)", () => {
-  it("package.json から、入れる → lint → 型 → テストを決める", () => {
+  it("package.json から、入れる → lint → 型 → テストを決める", async () => {
     const dir = mkdtempSync(join(tmpdir(), "kuramoto-ci-"));
     try {
       writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { lint: "eslint .", typecheck: "tsc", test: "vitest run", dev: "vite" } }));
@@ -148,14 +148,14 @@ describe("チームの CI(ADR-0028)", () => {
     const { p, d } = setup(runner);
     const fixer = await createTicket(p, { title: "main の CI を直す(check)", planRefs: { repo: REPO, baseCi: REPO } });
     const { holdTicket, droppedInfo } = await import("./workflow.js");
-    holdTicket(p, fixer.id, { reason: "Actions の請求で止まっている", ownerAction: "請求を直す", resume: { toRole: "dev", toMemberId: null, kind: "implement", payload: {} } });
+    await holdTicket(p, fixer.id, { reason: "Actions の請求で止まっている", ownerAction: "請求を直す", resume: { toRole: "dev", toMemberId: null, kind: "implement", payload: {} } });
     p.setSetting("ci_blocked", JSON.stringify([{ repo: REPO, since: "", notes: [], probedAt: "", runIds: [] }]));
     await d.housekeep();
     expect(p.ticket(fixer.id).stage).toBe("dropped");
-    expect(droppedInfo(p, fixer.id)!.reason).toContain("チームの CI");
+    expect((await droppedInfo(p, fixer.id))!.reason).toContain("チームの CI");
     expect(p.setting("ci_blocked")).toBe("[]");
     const { pendingOwnerDecisions } = await import("./workflow.js");
-    expect(pendingOwnerDecisions(p)).toEqual([]);
+    expect(await pendingOwnerDecisions(p)).toEqual([]);
 
     // 手助けの道具: やることの無いチケットを取りやめる(リーダー自身の起動中でも)
     const { unstickTools } = await import("./unstick.js");

@@ -94,9 +94,13 @@ describe("チームに渡したあとのデザインの合わせ直し(ADR-0034)
     p.addRepo("acme/shop", "API");
     putScreen(p, "list", { name: "メモ一覧", device: "phone", requirements: [], variants: [{ id: "A", html: "<p>一覧</p>" }], chosen: "A", agreed: true });
     putArtifact(p, "screen", "designsystem", "main", { principles: [], tokens: [{ group: "color", name: "--c", value: "#000", use: "x" }], components: [{ name: "ボタン", use: "x", states: [], html: "<button/>" }] });
-    expect(leadChatPrompt(p, [])).toContain("- list: メモ一覧");
-    expect(leadChatPrompt(p, [])).toContain("デザインシステム: あり");
-    const create = (await leadChatTools(p)).find((t) => t.name === "create_ticket")!;
+    expect(await leadChatPrompt(p, [])).toContain("- list: メモ一覧");
+    expect(await leadChatPrompt(p, [])).toContain("デザインシステム: あり");
+    // チームの今(島・メンバー)が、Promise のままでなく文字で入る
+    const prompt = await leadChatPrompt(p, []);
+    expect(prompt).not.toContain("[object Promise]");
+    expect(prompt).toMatch(/## チームの今[^\n]*\n- /);
+    const create = leadChatTools(p).find((t) => t.name === "create_ticket")!;
     expect(await create.handler({ title: "x", body: "", screens: ["nope"] } as never)).toContain("企画にありません");
     await create.handler({ title: "デザインシステムの土台", body: "トークン・部品・/_design", design_system: true } as never);
     await create.handler({ title: "一覧を試作に合わせ直す", body: "部品で組み立て直す", screens: ["list"], after: [1] } as never);
@@ -104,6 +108,6 @@ describe("チームに渡したあとのデザインの合わせ直し(ADR-0034)
     expect(isDesignSystemTicket(p, base!)).toBe(true);
     expect(designFor(p, base!).map((d) => d.key)).toEqual(["list"]); // 土台はカタログに全部の画面を並べる
     expect(designFor(p, screen!).map((d) => d.key)).toEqual(["list"]);
-    expect(blockers(p, screen!.id)).toEqual([base!.number]);
+    expect(await blockers(p, screen!.id)).toEqual([base!.number]);
   });
 });

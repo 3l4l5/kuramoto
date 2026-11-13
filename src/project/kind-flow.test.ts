@@ -127,20 +127,20 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
   it("種類を変えると、変えたことがやりとりに残り、今の工程はそのまま次の工程から新しい流れになる", async () => {
     const { p, d } = setup({ bugfix: ["dev"], feature: ["dev", "review", "qa"] });
     const t = await mk(p, "feature");
-    setTicketKind(p, t.id, "bugfix");
+    await setTicketKind(p, t.id, "bugfix");
     expect(p.ticket(t.id).stage).toBe("dev");
     const item = (await ticketView(p, t.id)).timeline.find((i) => i.type === "kind_change");
     expect(item).toMatchObject({ from: "機能", to: "バグ修正", who: "あなた" });
     expect((await ticketView(p, t.id)).kind).toBe("bugfix");
     await d.drain();
     expect(trail(p, t.id)).toEqual(["dev"]);
-    expect(() => setTicketKind(p, t.id, "chore")).toThrow("知らないチケットの種類");
+    await expect(setTicketKind(p, t.id, "chore")).rejects.toThrow("知らないチケットの種類");
   });
 
   it("開発より前の工程にいるうちに種類を変えて流れで開発より後ろになっても、開発を飛ばさない", async () => {
     const { p, d } = setup({ bugfix: ["qa", "dev"], feature: ["dev", "review", "qa"] });
     const t = await mk(p, "bugfix");
-    setTicketKind(p, t.id, "feature");
+    await setTicketKind(p, t.id, "feature");
     await d.drain();
     expect(trail(p, t.id)).toEqual(["qa*", "dev", "review", "qa"]);
   });
@@ -184,7 +184,7 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
       await script(req, call);
       if (!changed && req.tools.some((x) => x.name === "submit_pr")) {
         changed = true;
-        setTicketKind(p, t.id, "bugfix");
+        await setTicketKind(p, t.id, "bugfix");
       }
     });
     const d2 = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp/ws", { prNumber: (r) => r.ticketNumber + 9 }) });
@@ -248,7 +248,7 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
 
   it("リーダーが create_ticket で 4 種類から 1 つを付ける", async () => {
     const { p } = setup({ bugfix: ["qa", "dev"] });
-    const create = (await leadChatTools(p)).find((x) => x.name === "create_ticket")!;
+    const create = leadChatTools(p).find((x) => x.name === "create_ticket")!;
     expect(await create.handler({ title: "落ちる", body: "直す", kind: "bugfix" } as never)).toMatch(/作りました/);
     const t = p.tickets().at(-1)!;
     expect(t.kind).toBe("bugfix");

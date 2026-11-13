@@ -285,6 +285,7 @@ INSERT OR IGNORE INTO dev_rule_versions (version, rules, created_at)
   //  - 列は NOT NULL DEFAULT 0。今ある行は、実行器が渡すプロジェクトの id(ctx.projectId)で埋める。渡されなければ 0 のまま。
   //  - 索引は project_id を先頭にする。前の版の索引・UNIQUE は消せないので残し、project_id 込みの索引を足す。
   //  - 前の版のコードは project_id を書かない INSERT をする。DEFAULT 0 で通り、project_id 込みの UNIQUE にも収まる(同じ 0 の中で前と同じ決まり)。
+  //    前の UNIQUE は、この版では残る(外すのは版 22)。
   (k, ctx) => [
     ...PROJECT_ID_TABLES.map((t) => k.schema.alterTable(t).addColumn("project_id", "integer", (c) => c.notNull().defaultTo(0))),
     ...(ctx.projectId === undefined ? [] : PROJECT_ID_TABLES.map((t) => k.updateTable(t).set({ project_id: ctx.projectId! }))),
@@ -294,6 +295,84 @@ INSERT OR IGNORE INTO dev_rule_versions (version, rules, created_at)
       return b.on(table).columns(["project_id", ...columns]);
     }),
   ],
+  // 22: 前の版の UNIQUE(tickets.number・settings.key など)を project_id 込みだけにする(ADR-0040)。
+  // 同じ database に 2 つのプロジェクトを置くと、別のプロジェクトでも同じ number・key が入らなかった。MySQL の最初の版は、最初から project_id 込みだけ。
+  // SQLite は表に書いた UNIQUE・主キーを外せないので、対象の表を作り直す(行・id・列の並びはそのまま。project_id は最後)。
+  //  - 外す: repos(full_name)・formations(version)・policies(role, version)・requirements(version)・tickets(number) の UNIQUE、
+  //          settings(key)・plan_stages(stage)・dev_rule_versions(version) の主キー。
+  //  - 付ける: 上の列の前に project_id を足した UNIQUE(id の表は版 21 と同じ名前の索引、主キーの表は (project_id, …) の主キー)。
+  //  - 残す: sessions(member_id, ticket_id, repo_id)・pull_requests(ticket_id, repo_id)・ticket_deps・ticket_areas の主キー・one_run_per_ticket は、
+  //          id だけでできていて id は全プロジェクトで重ならないので、project_id が要らない(MySQL も同じ)。
+  // 他の表から指されている表(tickets・repos・formations・policies)は、DROP が外部キーに触れるので、トランザクションの最後まで検査を遅らせ、
+  // 同じ行を入れ直した時点で満たす。表を RENAME はしない(子の REFERENCES が書き換わるため)。
+  `
+PRAGMA defer_foreign_keys = ON;
+CREATE TABLE _v22_repos AS SELECT * FROM repos;
+CREATE TABLE _v22_settings AS SELECT * FROM settings;
+CREATE TABLE _v22_formations AS SELECT * FROM formations;
+CREATE TABLE _v22_policies AS SELECT * FROM policies;
+CREATE TABLE _v22_plan_stages AS SELECT * FROM plan_stages;
+CREATE TABLE _v22_requirements AS SELECT * FROM requirements;
+CREATE TABLE _v22_tickets AS SELECT * FROM tickets;
+CREATE TABLE _v22_dev_rule_versions AS SELECT * FROM dev_rule_versions;
+DROP TABLE repos;
+DROP TABLE settings;
+DROP TABLE formations;
+DROP TABLE policies;
+DROP TABLE plan_stages;
+DROP TABLE requirements;
+DROP TABLE tickets;
+DROP TABLE dev_rule_versions;
+
+CREATE TABLE repos (id INTEGER PRIMARY KEY, full_name TEXT NOT NULL, role TEXT NOT NULL, project_id INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE settings (key TEXT NOT NULL, value TEXT NOT NULL, project_id INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (project_id, key));
+CREATE TABLE formations (id INTEGER PRIMARY KEY, version INTEGER NOT NULL, pull TEXT NOT NULL CHECK (pull IN ('down','start')), created_at TEXT NOT NULL,
+  routes TEXT NOT NULL DEFAULT '[]', flows TEXT NOT NULL DEFAULT '{}', project_id INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE policies (id INTEGER PRIMARY KEY, role TEXT NOT NULL, version INTEGER NOT NULL,
+  model TEXT NOT NULL, effort TEXT NOT NULL, focus TEXT NOT NULL, options TEXT NOT NULL DEFAULT '{}',
+  harness TEXT NOT NULL DEFAULT 'claude-agent-sdk', created_at TEXT NOT NULL, project_id INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE plan_stages (stage TEXT NOT NULL CHECK (stage IN ('req','infra','flow','screen','model')),
+  mode TEXT NOT NULL CHECK (mode IN ('agree','delegate','skip')), version INTEGER NOT NULL, agreed_version INTEGER,
+  project_id INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (project_id, stage));
+CREATE TABLE requirements (id INTEGER PRIMARY KEY, version INTEGER NOT NULL, created_at TEXT NOT NULL, project_id INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE tickets (id INTEGER PRIMARY KEY, number INTEGER NOT NULL, jira_key TEXT, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+  stage TEXT NOT NULL CHECK (stage IN ('dev','review','sec','qa','decision','merge','done','dropped')),
+  owner_member_id INTEGER REFERENCES members(id), requirement_item_id INTEGER REFERENCES requirement_items(id),
+  plan_refs TEXT NOT NULL DEFAULT '{}',
+  rounds INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, done_at TEXT, active_ms INTEGER NOT NULL DEFAULT 0,
+  triaged INTEGER NOT NULL DEFAULT 1, dropped_by TEXT, dropped_reason TEXT, dropped_at TEXT,
+  kind TEXT NOT NULL DEFAULT 'feature', dev_done INTEGER NOT NULL DEFAULT 0, project_id INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE dev_rule_versions (version INTEGER NOT NULL, rules TEXT NOT NULL, created_at TEXT NOT NULL,
+  project_id INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (project_id, version));
+
+INSERT INTO repos (id, full_name, role, project_id) SELECT id, full_name, role, project_id FROM _v22_repos;
+INSERT INTO settings (key, value, project_id) SELECT key, value, project_id FROM _v22_settings;
+INSERT INTO formations (id, version, pull, created_at, routes, flows, project_id) SELECT id, version, pull, created_at, routes, flows, project_id FROM _v22_formations;
+INSERT INTO policies (id, role, version, model, effort, focus, options, harness, created_at, project_id)
+  SELECT id, role, version, model, effort, focus, options, harness, created_at, project_id FROM _v22_policies;
+INSERT INTO plan_stages (stage, mode, version, agreed_version, project_id) SELECT stage, mode, version, agreed_version, project_id FROM _v22_plan_stages;
+INSERT INTO requirements (id, version, created_at, project_id) SELECT id, version, created_at, project_id FROM _v22_requirements;
+INSERT INTO tickets (id, number, jira_key, title, body, stage, owner_member_id, requirement_item_id, plan_refs, rounds, created_at, done_at, active_ms,
+    triaged, dropped_by, dropped_reason, dropped_at, kind, dev_done, project_id)
+  SELECT id, number, jira_key, title, body, stage, owner_member_id, requirement_item_id, plan_refs, rounds, created_at, done_at, active_ms,
+    triaged, dropped_by, dropped_reason, dropped_at, kind, dev_done, project_id FROM _v22_tickets;
+INSERT INTO dev_rule_versions (version, rules, created_at, project_id) SELECT version, rules, created_at, project_id FROM _v22_dev_rule_versions;
+
+DROP TABLE _v22_repos;
+DROP TABLE _v22_settings;
+DROP TABLE _v22_formations;
+DROP TABLE _v22_policies;
+DROP TABLE _v22_plan_stages;
+DROP TABLE _v22_requirements;
+DROP TABLE _v22_tickets;
+DROP TABLE _v22_dev_rule_versions;
+
+CREATE UNIQUE INDEX repos_project_full_name ON repos(project_id, full_name);
+CREATE UNIQUE INDEX formations_project_version ON formations(project_id, version);
+CREATE UNIQUE INDEX policies_project_role_version ON policies(project_id, role, version);
+CREATE UNIQUE INDEX requirements_project_version ON requirements(project_id, version);
+CREATE UNIQUE INDEX tickets_project_number ON tickets(project_id, number);
+`,
 ];
 
 /** 版 21 で project_id を足す表(プロジェクト DB の全部)。表を足すときは、その版で project_id も足す(schema.test.ts が確かめる)。 */
@@ -307,7 +386,7 @@ export const PROJECT_ID_TABLES = [
 
 /**
  * 版 21 で足す索引(列は project_id の後ろ。名前は <表>_project_<列>)。
- *  - unique: 前の版の UNIQUE に project_id を足したもの(前の UNIQUE も残る)。
+ *  - unique: 前の版の UNIQUE に project_id を足したもの(前の UNIQUE は版 22 で外す)。
  *  - 前の版にあった索引は、project_id を先頭にしたものを足す。
  *  - どちらも無い表には (project_id) だけの索引を足す。
  */

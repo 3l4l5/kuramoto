@@ -77,7 +77,7 @@ describe("作業場所への閉じ込め", () => {
     expect(workspace.published).toHaveLength(1);
   });
 
-  it("SDK には、ファイルの道具の締め出しと、抜け道の無いサンドボックスとして渡す", () => {
+  it("SDK には、ファイルの道具の締め出しと、抜け道の無いサンドボックスとして渡す", async () => {
     const o = confineOptions("/w", { readable: ["/t"], writable: ["/g"], hidden: ["/k"], allowedDomains: ["github.com"], hiddenEnv: ["GH_TOKEN"], allowLocalSockets: true, env: { MISE_TRUSTED_CONFIG_PATHS: "/w" } });
     expect(o.env.MISE_TRUSTED_CONFIG_PATHS).toBe("/w");
     expect(o.env.PATH).toBe(process.env.PATH);

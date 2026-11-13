@@ -32,13 +32,13 @@ export function sayToLead(p: Project, body: string): void {
   });
 }
 
-export function leadChatView(p: Project) {
+export async function leadChatView(p: Project) {
   const r = all<{ id: number; status: string; run_id: number | null }>(
     p.db,
     `SELECT m.id, m.status, (SELECT r.id FROM runs r WHERE r.message_id = m.id AND r.ended_at IS NULL ORDER BY r.id DESC LIMIT 1) AS run_id
      FROM messages m WHERE m.kind = 'chat' AND m.status IN ('pending','claimed') ORDER BY m.id LIMIT 1`,
   )[0];
-  const w = r?.run_id ? runWork(p, r.run_id) : null;
+  const w = r?.run_id ? await runWork(p, r.run_id) : null;
   return {
     lead: p.fixedMember("lead").name,
     messages: leadMessages(p),
@@ -81,17 +81,17 @@ export function markOwnerMessagesRead(p: Project, upTo: number): void {
 }
 
 /** リーダーへの指示。今のチケットの状況と、まだ返事をしていない責任者のメッセージを渡す。 */
-export function leadChatPrompt(p: Project, unread: LeadMessage[] = unreadOwnerMessages(p)): string {
+export async function leadChatPrompt(p: Project, unread: LeadMessage[] = unreadOwnerMessages(p)): Promise<string> {
   const tickets = p.tickets().filter((t) => t.stage !== "dropped");
   const board = tickets.map((t) => `- #${t.number} ${t.title} [${t.stage}]${t.rounds ? ` 往復 ${t.rounds}` : ""}`).join("\n") || "(チケットはまだありません)";
-  const decisions = pendingOwnerDecisions(p).map((d) => `- ${d.question.split("\n").pop()}`).join("\n") || "(なし)";
+  const decisions = (await pendingOwnerDecisions(p)).map((d) => `- ${d.question.split("\n").pop()}`).join("\n") || "(なし)";
   return `責任者からチャットが届きました。
 
 ## 今のチケット
 ${board}
 
 ## チームの今(島・メンバー・空き)
-${teamStatus(p)}
+${await teamStatus(p)}
 
 ## 責任者の答えを待っている判断
 ${decisions}

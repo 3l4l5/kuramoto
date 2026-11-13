@@ -55,34 +55,34 @@ describe("リーダーの見回り(ADR-0026)", () => {
     const a = await make("一覧");
     // 前回の見回りの後に新しいチケットが無く、回っているものも無い
     p.setSetting("patrol_last_ticket", String(a.number));
-    expect(requestPatrol(p)).toBe(false); // 初めては、ここから間隔を数え始める
+    expect(await requestPatrol(p)).toBe(false); // 初めては、ここから間隔を数え始める
     clock.advance(6 * 60_000);
-    expect(requestPatrol(p)).toBe(false);
+    expect(await requestPatrol(p)).toBe(false);
 
     pingPong(p, a.id, 4);
-    expect(loopSignals(p).map((s) => [s.ticket.number, s.reasons])).toEqual([[a.number, ["差し戻しが 4 回"]]]);
-    expect(requestPatrol(p)).toBe(true);
-    expect(requestPatrol(p)).toBe(false); // まだ待っている
+    expect((await loopSignals(p)).map((s) => [s.ticket.number, s.reasons])).toEqual([[a.number, ["差し戻しが 4 回"]]]);
+    expect(await requestPatrol(p)).toBe(true);
+    expect(await requestPatrol(p)).toBe(false); // まだ待っている
     run(p.db, "UPDATE messages SET status = 'done' WHERE kind = 'patrol'");
     clock.advance(3 * 60_000);
-    expect(requestPatrol(p)).toBe(false); // 間隔(既定 5 分)がまだ
+    expect(await requestPatrol(p)).toBe(false); // 間隔(既定 5 分)がまだ
     clock.advance(3 * 60_000);
-    expect(requestPatrol(p)).toBe(true);
+    expect(await requestPatrol(p)).toBe(true);
 
     // 止めておける
     run(p.db, "UPDATE messages SET status = 'done' WHERE kind = 'patrol'");
     clock.advance(60 * 60_000);
     p.setSetting("patrol_min", "0");
-    expect(requestPatrol(p)).toBe(false);
+    expect(await requestPatrol(p)).toBe(false);
   });
 
   it("始業したときは、見るものが無くても必ず見回る。間隔は設定で変えられ、0 なら見回らない", async () => {
     const { p, clock, make } = setup();
     await make("一覧");
     const patrols = () => all(p.db, "SELECT payload FROM messages WHERE kind = 'patrol' AND status = 'pending'");
-    expect(startPatrol(p)).toBe(true);
+    expect(await startPatrol(p)).toBe(true);
     expect(patrols()).toEqual([{ payload: JSON.stringify({ start: true }) }]);
-    expect(startPatrol(p)).toBe(false); // まだ待っている見回りがあれば重ねない
+    expect(await startPatrol(p)).toBe(false); // まだ待っている見回りがあれば重ねない
     run(p.db, "UPDATE messages SET status = 'done' WHERE kind = 'patrol'");
 
     // 間隔を 30 分にすると、回っているものがあっても 30 分経つまで見回らない
@@ -91,13 +91,13 @@ describe("リーダーの見回り(ADR-0026)", () => {
     p.event("system", "ready_to_merge", p.tickets()[0]!.id, {});
     p.event("system", "ready_to_merge", p.tickets()[0]!.id, {});
     clock.advance(10 * 60_000);
-    expect(requestPatrol(p)).toBe(false);
+    expect(await requestPatrol(p)).toBe(false);
     clock.advance(21 * 60_000);
-    expect(requestPatrol(p)).toBe(true);
+    expect(await requestPatrol(p)).toBe(true);
     run(p.db, "UPDATE messages SET status = 'done' WHERE kind = 'patrol'");
 
     setPatrolMinutes(p, 0);
-    expect(startPatrol(p)).toBe(false);
+    expect(await startPatrol(p)).toBe(false);
     expect(() => setPatrolMinutes(p, -1)).toThrow();
   });
 
@@ -107,7 +107,7 @@ describe("リーダーの見回り(ADR-0026)", () => {
     const b = await make("保存");
     for (let i = 0; i < 3; i++) addRun(p, a.id, "dev", "npm test が落ちる");
     for (let i = 0; i < 3; i++) p.event("system", "ready_to_merge", b.id, {});
-    const s = loopSignals(p);
+    const s = await loopSignals(p);
     expect(s.map((x) => x.ticket.number)).toEqual([a.number, b.number]);
     expect(s[0]!.sameError).toEqual({ count: 3, error: "npm test が落ちる" });
     expect(s[1]!.reasons[0]).toContain("merge 待ちに 3 回");
@@ -150,12 +150,12 @@ describe("リーダーの見回り(ADR-0026)", () => {
     expect(p.ticket(dup.id).stage).toBe("dropped");
     expect(ws.closed).toMatchObject([{ repo: "acme/shop", number: 42 }]);
     expect(p.notes(keep.id).at(-1)!.body).toContain("自動保存とそろえる");
-    expect(blockers(p, later.id)).toEqual([keep.number]);
+    expect(await blockers(p, later.id)).toEqual([keep.number]);
     expect(all(p.db, "SELECT 1 FROM messages WHERE ticket_id = ? AND status = 'pending'", [dup.id])).toEqual([]);
     // 責任者には報告だけ
     expect(leadMessages(p).at(-1)!.body).toContain("【見回り】");
     // 見たものは数え直すので、続けて見回りを頼まない
-    expect(loopSignals(p)).toEqual([]);
+    expect(await loopSignals(p)).toEqual([]);
   });
 
   it("起動中・merge 待ちのチケットは片付けない", async () => {
@@ -181,22 +181,22 @@ describe("リーダーの見回り(ADR-0026)", () => {
     const closed: number[] = [];
 
     // チャットでも使える
-    expect((await leadChatTools(p)).map((t) => t.name)).toContain("drop_ticket");
+    expect(leadChatTools(p).map((t) => t.name)).toContain("drop_ticket");
     expect(await dropUnneeded(p, a.number, "", async () => {})).toContain("理由");
     expect(await dropUnneeded(p, a.number, "責任者がチャットで CSV はいらないと言ったため", async (t) => void closed.push(t.number))).toContain("取りやめました");
 
     expect(p.ticket(a.id).stage).toBe("dropped");
-    expect(droppedInfo(p, a.id)).toMatchObject({ by: "lead", reason: "責任者がチャットで CSV はいらないと言ったため" });
+    expect(await droppedInfo(p, a.id)).toMatchObject({ by: "lead", reason: "責任者がチャットで CSV はいらないと言ったため" });
     expect(p.notes(a.id).at(-1)!.body).toContain("【取りやめ】");
     expect(closed).toEqual([a.number]);
-    expect(blockers(p, b.id)).toEqual([]); // 待つのをやめる
+    expect(await blockers(p, b.id)).toEqual([]); // 待つのをやめる
     expect(all(p.db, "SELECT 1 FROM messages WHERE ticket_id = ? AND status = 'pending'", [a.id])).toEqual([]);
     expect(get<{ type: string }>(p.db, "SELECT type FROM events WHERE ticket_id = ? ORDER BY id DESC LIMIT 1", [a.id])!.type).toBe("ticket_dropped");
     expect(await dropUnneeded(p, a.number, "もう一度")).toContain("もう取りやめ");
 
     // 責任者が戻せば、取りやめの印は消える
-    reopenTicket(p, a.id);
-    expect(droppedInfo(p, a.id)).toBeNull();
+    await reopenTicket(p, a.id);
+    expect(await droppedInfo(p, a.id)).toBeNull();
   });
 
   it("重複の片付けも、取りやめた理由として残る", async () => {
@@ -204,7 +204,7 @@ describe("リーダーの見回り(ADR-0026)", () => {
     const { dropAsDuplicate } = await import("./triage.js");
     const keep = await make("412 の文言");
     const dup = await make("保存で 412 の文言");
-    dropAsDuplicate(p, dup.number, keep.number);
-    expect(droppedInfo(p, dup.id)).toMatchObject({ by: "lead", reason: `#${keep.number}「412 の文言」と重複していたため` });
+    await dropAsDuplicate(p, dup.number, keep.number);
+    expect(await droppedInfo(p, dup.id)).toMatchObject({ by: "lead", reason: `#${keep.number}「412 の文言」と重複していたため` });
   });
 });

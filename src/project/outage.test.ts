@@ -66,13 +66,13 @@ describe("GitHub に入れない(認証切れ)とき(ADR-0027)", () => {
     // 前に(この仕組みの前に)認証切れで保留になっていたチケット
     const held = await createTicket(p, { title: "C" });
     run(p.db, "UPDATE messages SET status = 'failed' WHERE ticket_id = ?", [held.id]);
-    holdTicket(p, held.id, { reason: "gh pr list が HTTP 401 (Requires authentication) を返す", ownerAction: "gh を認証し直す", resume: { toRole: "dev", toMemberId: null, kind: "implement", payload: {} } });
+    await holdTicket(p, held.id, { reason: "gh pr list が HTTP 401 (Requires authentication) を返す", ownerAction: "gh を認証し直す", resume: { toRole: "dev", toMemberId: null, kind: "implement", payload: {} } });
 
     await d.drain({ maxRuns: 5 });
     expect(githubDown(p)).toMatchObject({ error: expect.stringContaining("401") });
     // 失敗に数えない・保留にしない・リーダーの手助けも頼まない
     expect(all(p.db, "SELECT 1 FROM messages WHERE (status = 'failed' AND ticket_id <> ?) OR kind = 'unstick'", [held.id])).toEqual([]);
-    expect(pendingOwnerDecisions(p).length).toBe(1); // 前からある C の保留だけ
+    expect((await pendingOwnerDecisions(p)).length).toBe(1); // 前からある C の保留だけ
     expect(leadMessages(p).filter((m) => m.body.includes("【GitHub に入れません】")).length).toBe(1);
     expect(leadMessages(p).at(-1)!.body).toContain("gh auth login");
     // 入れない間は、チケットの仕事を起こさない
@@ -87,7 +87,7 @@ describe("GitHub に入れない(認証切れ)とき(ADR-0027)", () => {
     await d.drain();
     expect(githubDown(p)).toBeNull();
     expect(leadMessages(p).some((m) => m.body.includes("【GitHub に戻れました】"))).toBe(true);
-    expect(pendingOwnerDecisions(p)).toEqual([]);
+    expect(await pendingOwnerDecisions(p)).toEqual([]);
     expect(p.tickets().map((t) => t.stage)).toEqual(["merge", "merge", "merge"]);
     expect(workspace.published.length).toBe(3);
     expect(p.ticket(a.id).stage).toBe("merge");

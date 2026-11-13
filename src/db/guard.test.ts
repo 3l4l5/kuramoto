@@ -15,7 +15,7 @@ const dry = new Kysely<ProjectDatabase>({
 const violation = (q: { toOperationNode(): unknown }) => projectIdViolation(q.toOperationNode() as never);
 
 describe("requireProjectIdPlugin: project_id の無い文を落とす", () => {
-  it("SELECT / UPDATE / DELETE は、project_id で絞っていなければ落ちる", () => {
+  it("SELECT / UPDATE / DELETE は、project_id で絞っていなければ落ちる", async () => {
     expect(violation(dry.selectFrom("tickets").selectAll())).toMatch(/project_id/);
     expect(violation(dry.selectFrom("tickets").selectAll().where("project_id", "=", 1))).toBeUndefined();
     expect(violation(dry.updateTable("tickets").set({ title: "x" }).where("id", "=", 1))).toMatch(/UpdateQuery/);
@@ -23,18 +23,18 @@ describe("requireProjectIdPlugin: project_id の無い文を落とす", () => {
     expect(violation(dry.deleteFrom("ticket_deps").where("ticket_id", "=", 1))).toMatch(/DeleteQuery/);
   });
 
-  it("INSERT は、列に project_id が無ければ落ちる", () => {
+  it("INSERT は、列に project_id が無ければ落ちる", async () => {
     expect(violation(dry.insertInto("settings").values({ key: "k", value: "v" }))).toMatch(/InsertQuery/);
     expect(violation(dry.insertInto("settings").values({ key: "k", value: "v", project_id: 1 }))).toBeUndefined();
   });
 
-  it("結合のどこかで project_id を見ていれば通す。project_id の表を触らない文は対象外", () => {
+  it("結合のどこかで project_id を見ていれば通す。project_id の表を触らない文は対象外", async () => {
     const q = dry.selectFrom("tickets").innerJoin("pull_requests", "pull_requests.ticket_id", "tickets.id").selectAll("tickets").where("pull_requests.project_id", "=", 1);
     expect(violation(q)).toBeUndefined();
     expect(violation((dry as unknown as Kysely<{ other: { a: number } }>).selectFrom("other").selectAll())).toBeUndefined();
   });
 
-  it("生 SQL は通せないので落ちる", () => {
+  it("生 SQL は通せないので落ちる", async () => {
     expect(() => requireProjectIdPlugin.transformQuery({ node: sql`SELECT 1`.compile(dry) && ({ kind: "RawNode" } as never), queryId: {} as never })).toThrow(/生 SQL/);
   });
 });
@@ -53,9 +53,9 @@ describe("2 つのプロジェクトを同じ database に置いても混ざら�
 
   it("insert / from / update / deleteFrom は、自分のプロジェクトの行だけを書く・見る", async () => {
     const { a, b } = twoProjects();
-    // SQLite の版 21 は、前の版の UNIQUE(key・number など)を残している。同じ database に置くなら、その列の値は重ならないようにする
-    await a.insert("settings", { key: "ka", value: "a" }).execute();
-    await b.insert("settings", { key: "kb", value: "b" }).execute();
+    // 版 22 で UNIQUE は project_id 込みだけになったので、別のプロジェクトなら同じ key(・number など)が入る
+    await a.insert("settings", { key: "k", value: "a" }).execute();
+    await b.insert("settings", { key: "k", value: "b" }).execute();
     expect((await a.from("settings").execute()).map((r) => r.value)).toEqual(["a"]);
     expect((await b.from("settings").execute()).map((r) => r.value)).toEqual(["b"]);
 
@@ -112,7 +112,7 @@ describe("同期の書き込みは、他の流れの非同期トランザクシ�
   });
 });
 
-it("enableProjectIdGuard(false) で見張りを外せる", () => {
+it("enableProjectIdGuard(false) で見張りを外せる", async () => {
   enableProjectIdGuard(false);
   try {
     const raw = openDb(":memory:", PROJECT_MIGRATIONS);

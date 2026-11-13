@@ -140,7 +140,7 @@ describe("判断", () => {
     const t = await createTicket(p, { title: "x" });
     await d.drain();
     expect(p.ticket(t.id).stage).toBe("decision");
-    const [card] = pendingOwnerDecisions(p);
+    const [card] = await pendingOwnerDecisions(p);
     expect(card).toBeDefined();
     expect(card!.deadline_at).not.toBeNull();
 
@@ -174,7 +174,7 @@ describe("判断", () => {
     p.setSetting("nonstop", "0");
     const t = await createTicket(p, { title: "CI" });
     await d.drain();
-    const [card] = pendingOwnerDecisions(p);
+    const [card] = await pendingOwnerDecisions(p);
     expect(card!.lead_note).toBe("(1) MySQL の版を決めてください");
     expect(card!.impact).toContain("MinIO のイメージが取れない");
 
@@ -218,7 +218,7 @@ describe("判断", () => {
     const t = await createTicket(p, { title: "退会" });
     await d.drain();
     expect(p.ticket(t.id).stage).toBe("decision");
-    expect(pendingOwnerDecisions(p)).toHaveLength(1);
+    expect(await pendingOwnerDecisions(p)).toHaveLength(1);
   });
 });
 
@@ -253,7 +253,7 @@ describe("止まる条件", () => {
     expect(leadPrompt).toContain("vitest: command not found");
     expect(p.notes(t.id).map((n) => n.body)).toContain("【手助け】テストの前に npm ci を動かす");
     expect(devPrompts.at(-1)).toContain("テストの前に npm ci を動かす");
-    expect(pendingOwnerDecisions(p)).toEqual([]);
+    expect(await pendingOwnerDecisions(p)).toEqual([]);
     expect(p.ticket(t.id).stage).toBe("merge");
     expect(p.setting(`unstick_count:${t.id}`)).toBe("0"); // 前に進んだので数え直し
     devPrompts = [];
@@ -277,11 +277,11 @@ describe("止まる条件", () => {
     });
     p.setSetting("unstick_max", "2");
     const t = await createTicket(p, { title: "x" });
-    for (let i = 0; i < 20 && !pendingOwnerDecisions(p).length; i++) {
+    for (let i = 0; i < 20 && !(await pendingOwnerDecisions(p)).length; i++) {
       await d.drain();
       clock.advance(10 * 60_000);
     }
-    const [hold] = pendingOwnerDecisions(p);
+    const [hold] = await pendingOwnerDecisions(p);
     expect(hold!.question).toContain("リーダーが 2 回手助けしても");
     expect(hold!.question).toContain("DATABASE_URL");
     expect(hold!.deadline_at).toBeNull();
@@ -310,7 +310,7 @@ describe("止まる条件", () => {
       await d.drain();
       clock.advance(10 * 60_000);
     }
-    const [hold] = pendingOwnerDecisions(p);
+    const [hold] = await pendingOwnerDecisions(p);
     expect(hold!.question).toContain("CI の秘密情報が無い");
     expect(hold!.impact).toContain("NPM_TOKEN");
     expect(p.ticket(t.id).stage).toBe("decision");
@@ -343,7 +343,7 @@ describe("止まる条件", () => {
     expect(all(p.db, "SELECT 1 FROM messages WHERE kind = 'unstick'")).toEqual([]);
     // 待っていたチケットは動き出せる
     const { blockers } = await import("./triage.js");
-    expect(blockers(p, after.id)).toEqual([]);
+    expect(await blockers(p, after.id)).toEqual([]);
   });
 
   it("詰まったチケットの変更がすでに main に入っていたら、リーダーが確かめて完了にする(保留にしない)", async () => {
@@ -360,7 +360,7 @@ describe("止まる条件", () => {
       clock.advance(10 * 60_000);
     }
     expect(p.ticket(t.id).stage).toBe("done");
-    expect(pendingOwnerDecisions(p)).toEqual([]);
+    expect(await pendingOwnerDecisions(p)).toEqual([]);
     expect(all(p.db, "SELECT 1 FROM messages WHERE ticket_id = ? AND status = 'pending'", [t.id])).toEqual([]);
   });
 
@@ -392,7 +392,7 @@ describe("止まる条件", () => {
     expect(p.ticket(t.id).stage).toBe("decision");
     expect(get(p.db, "SELECT COUNT(*) AS n FROM runs")).toEqual({ n: 3 });
 
-    await answerDecision(p, pendingOwnerDecisions(p)[0]!.id, 0);
+    await answerDecision(p, (await pendingOwnerDecisions(p))[0]!.id, 0);
     await d.drain();
     expect(get(p.db, "SELECT COUNT(*) AS n FROM runs")).toEqual({ n: 6 });
   });
@@ -408,7 +408,7 @@ describe("止まる条件", () => {
     await d.drain();
     // 実装で 1 ドル使い切り、レビューの前で止まる。同じ判断を重ねて出さない
     await d.drain();
-    const cards = pendingOwnerDecisions(p);
+    const cards = await pendingOwnerDecisions(p);
     expect(cards).toHaveLength(1);
     expect(JSON.parse(cards[0]!.options).map((o: { action: string }) => o.action)).toEqual(["continue", "unlimited"]);
     expect(cards[0]!.deadline_at).toBeNull();
@@ -435,7 +435,7 @@ describe("止まる条件", () => {
     const t = await createTicket(p, { title: "x" });
     await d.drain();
     expect(ticketBudgetUsd(p, t.id)).toBeNull();
-    expect(pendingOwnerDecisions(p)).toEqual([]);
+    expect(await pendingOwnerDecisions(p)).toEqual([]);
     expect(p.ticket(t.id).stage).toBe("merge");
   });
 
@@ -456,16 +456,16 @@ describe("止まる条件", () => {
 
     await d.drain();
     expect(p.ticket(t.id).stage).toBe("decision");
-    expect(ticketSpentUsd(p, t.id)).toBe(2);
+    expect(await ticketSpentUsd(p, t.id)).toBe(2);
 
     // 使った額以下では止まったまま。上回ると判断が「続ける」で閉じ、足した分なしで新しい予算になる
     await setTicketBudget(p, t.id, 2);
-    expect(pendingOwnerDecisions(p).filter((x) => x.ticket_id === t.id)).toHaveLength(1);
+    expect((await pendingOwnerDecisions(p)).filter((x) => x.ticket_id === t.id)).toHaveLength(1);
     await setTicketBudget(p, t.id, 4);
-    expect(pendingOwnerDecisions(p).filter((x) => x.ticket_id === t.id)).toHaveLength(0);
+    expect((await pendingOwnerDecisions(p)).filter((x) => x.ticket_id === t.id)).toHaveLength(0);
     expect(ticketBudgetUsd(p, t.id)).toBe(4);
     await d.drain();
-    expect(ticketSpentUsd(p, t.id)).toBe(4);
+    expect(await ticketSpentUsd(p, t.id)).toBe(4);
 
     // 既定に戻す
     await setTicketBudget(p, t.id, null);
@@ -622,6 +622,8 @@ describe("受信箱", () => {
     const t = await createTicket(p, { title: "x" });
     const job = (await d.next())!;
     const running = d.execute(job);
+    // 起動の行が書かれるまで待つ(書く前に、DB を何度か待つため)
+    while (!get(p.db, "SELECT 1 AS x FROM runs")) await new Promise((r) => setTimeout(r, 1));
     // 同じチケットへの別のメッセージがあっても取り出されない
     p.db.prepare("INSERT INTO messages (ticket_id, to_role, kind, available_at, created_at) VALUES (?, 'dev', 'fix', ?, ?)").run(t.id, p.now(), p.now());
     expect(await d.next()).toBeNull();
@@ -650,7 +652,7 @@ describe("ノンストップ(ADR-0022)", () => {
     const t = await createTicket(p, { title: "CI" });
     await d.drain();
     expect(replies[0]).toContain("責任者に上げません");
-    expect(pendingOwnerDecisions(p)).toEqual([]);
+    expect(await pendingOwnerDecisions(p)).toEqual([]);
     expect(p.notes(t.id).map((n) => n.body)).toContain("MySQL は 8.4 で進める");
     expect(leadMessages(p).at(-1)!.body).toContain("【#1 の判断】");
     expect(p.ticket(t.id).stage).toBe("merge");
@@ -662,10 +664,10 @@ describe("ノンストップ(ADR-0022)", () => {
     const { p, d, clock } = setup(script());
     const a = await createTicket(p, { title: "土台" });
     const b = await createTicket(p, { title: "画面" });
-    planWork(p, [{ number: 2, after: [1] }]);
+    await planWork(p, [{ number: 2, after: [1] }]);
     await d.drain();
     expect(p.ticket(a.id).stage).toBe("merge");
-    expect(blockers(p, b.id)).toEqual([1]);
+    expect(await blockers(p, b.id)).toEqual([1]);
 
     const gh = new FakeGitHub();
     // このディスパッチャは交通整理をしないので、#2 も merge 待ちまで来ている。#2(PR #11)は CI の途中にしておく
@@ -678,7 +680,7 @@ describe("ノンストップ(ADR-0022)", () => {
     expect(await autoMerge(p, gh)).toBe(1);
     expect(gh.merged).toEqual([10]);
     expect(p.ticket(a.id).stage).toBe("done");
-    expect(blockers(p, b.id)).toEqual([]);
+    expect(await blockers(p, b.id)).toEqual([]);
     expect(p.events(50).some((e) => e.type === "merged" && e.actor === "team")).toBe(true);
 
     // 設定で切ると、責任者が押すまで merge しない
@@ -715,6 +717,6 @@ describe("ノンストップ(ADR-0022)", () => {
     }
     expect(p.notes(t.id).map((n) => n.body)).toContain("【手助け・担当替え】前の担当は依存の入れ方で詰まっていた");
     expect(p.ticket(t.id).stage).toBe("merge");
-    expect(pendingOwnerDecisions(p)).toEqual([]);
+    expect(await pendingOwnerDecisions(p)).toEqual([]);
   });
 });

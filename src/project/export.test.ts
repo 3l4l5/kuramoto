@@ -11,13 +11,13 @@ describe("設計書のエクスポート", () => {
     putArtifact(p, "req", "brief", "main", { purpose: "予約を 1 分で", users: ["会員"], outOfScope: ["決済"] });
     upsertRequirement(p, { name: "空き枠を探す", acceptance: "残りのある枠が | 時間順に並ぶ\n満席は出さない" });
     const q = addOpenItem(p, "req", { question: "変更を作るか", options: ["作らない", "作る"], recommended: 0, why: "", reversible: true });
-    await answerOpenItem(p, q, "作らない");
+    answerOpenItem(p, q, "作らない");
     putArtifact(p, "flow", "flow", "main", {
       nodes: [{ id: "S1", label: "探す", col: 0, row: 0 }, { id: "Q", label: "?", sub: "満席なら", col: 1, row: 0, kind: "question" }],
       edges: [{ from: "S1", to: "Q", label: "確定の直前に \"満席\"", alt: true }],
     });
     putScreen(p, "search", { name: "空き枠を探す", device: "phone", requirements: ["R1"], variants: [{ id: "A", html: "<p>A</p>" }, { id: "B", html: "<p>B</p>" }], chosen: "B", agreed: true });
-    await setMode(p, "infra", "skip");
+    setMode(p, "infra", "skip");
     putArtifact(p, "model", "architecture", "main", {
       style: { name: "モジュラーモノリス", why: "小さいチームで速く", alternatives: [{ name: "サービス分割", whyNot: "運用が重い" }] },
       modules: [{ name: "予約", responsibility: "枠と予約", repo: "acme/shop" }],

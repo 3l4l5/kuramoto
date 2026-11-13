@@ -179,7 +179,7 @@ ${how}`;
     case "ask":
       return "";
     case "decide": {
-      const d = decision(p, Number(payload.decision_id));
+      const d = await decision(p, Number(payload.decision_id));
       const options = (JSON.parse(d.options) as DecisionOption[]).map((o, i) => `${i}. ${o.label}${i === d.recommended ? "(推奨)" : ""}`).join("\n");
       return `${head}\n\nチームから判断が上がりました。\n${d.question}\n選択肢:\n${options}\n推奨の理由: ${d.why}\n間違えると: ${d.impact}\n戻せるか: ${d.reversible ? "戻せる" : "戻せない"}\n\ndecide で決めるか、escalate_to_owner で責任者に上げてください。`;
     }

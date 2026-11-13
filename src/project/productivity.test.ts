@@ -36,7 +36,7 @@ describe("生産性: 流れとメンバー(ADR-0029)", () => {
     p.event("team", "merged", a.id, {}); // 入ってから 3 時間・取りかかってから 2 時間・merge 待ち 1 時間
     run(p.db, "UPDATE tickets SET stage = 'done', active_ms = ? WHERE id = ?", [30 * 60_000, a.id]);
     const c = await createTicket(p, { title: "C", planRefs: { splitFrom: a.number } });
-    dropTicket(p, c.id, { by: "lead", reason: "いらなくなった" });
+    await dropTicket(p, c.id, { by: "lead", reason: "いらなくなった" });
 
     const f = productivity(p).flow;
     expect(f.throughput).toMatchObject({ mergedLast24h: 1, createdLast24h: 3, closedLast24h: 2, netLast24h: 1 });

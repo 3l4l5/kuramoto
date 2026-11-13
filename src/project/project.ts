@@ -84,6 +84,12 @@ export class Project {
   constructor(path: string, readonly clock: Clock = systemClock, projectId?: number) {
     this.db = openDb(path, PROJECT_MIGRATIONS, { projectId });
     this.pdb = new ProjectDb(this.db, projectId ?? 0);
+    // まだ移していない同期の INSERT は project_id を書かない(0 のまま)。移した側(pdb)は project_id で絞るので、
+    // 入れた行を見失わないよう、この接続の間だけ、0 で入った行をこのプロジェクトの id に直す(同期の書き込みが無くなったら外す)
+    if (projectId) {
+      for (const t of PROJECT_ID_TABLES)
+        this.db.exec(`CREATE TEMP TRIGGER IF NOT EXISTS fill_project_id_${t} AFTER INSERT ON ${t} WHEN NEW.project_id = 0 BEGIN UPDATE ${t} SET project_id = ${Number(projectId)} WHERE rowid = NEW.rowid; END`);
+    }
     this.backfillProjectId();
     this.seed();
     this.fillSeats();
@@ -143,7 +149,8 @@ export class Project {
   }
 
   setSetting(key: string, value: string): void {
-    run(this.db, "INSERT INTO settings (project_id, key, value) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [this.projectId, key, value]);
+    // 版 22 で settings の主キーは (project_id, key)。project_id を書かないと、別の project_id の同じ key と衝突しない行が増える
+    run(this.db, "INSERT INTO settings (key, value, project_id) VALUES (?, ?, ?) ON CONFLICT(project_id, key) DO UPDATE SET value = excluded.value", [key, value, this.pdb.projectId]);
   }
 
   addRepo(fullName: string, role: string): number {

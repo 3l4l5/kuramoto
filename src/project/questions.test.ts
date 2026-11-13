@@ -51,7 +51,7 @@ const state = (p: Project, id: number) => {
 };
 
 describe("連絡経路の保存(R16)", () => {
-  it("島・流れ・経路を 1 回の保存で、版が 1 つ上がる。既定は連絡しない(経路なし)", () => {
+  it("島・流れ・経路を 1 回の保存で、版が 1 つ上がる。既定は連絡しない(経路なし)", async () => {
     const p = new Project(":memory:", new ManualClock());
     p.addRepo("acme/shop", "API");
     const v1 = p.saveFormation({ pull: "down", units: UNITS });
@@ -64,7 +64,7 @@ describe("連絡経路の保存(R16)", () => {
     expect(teamView(p).formation.versions.slice(-2).map((v) => [v.version, v.routes.length])).toEqual([[v1.version, 0], [v2.version, 1]]);
   });
 
-  it("経路を渡さない保存は、前の版の経路を引き継ぐ。無くなった島の経路は外す", () => {
+  it("経路を渡さない保存は、前の版の経路を引き継ぐ。無くなった島の経路は外す", async () => {
     const p = new Project(":memory:", new ManualClock());
     p.addRepo("acme/shop", "API");
     p.saveFormation({ pull: "down", units: UNITS, routes: [...ROUTES, { from: "QA", to: "レビュー", mode: "ask" }, { from: "開発", to: "lead", mode: "ask" }] });
@@ -77,7 +77,7 @@ describe("連絡経路の保存(R16)", () => {
     expect(p.currentFormation().routes).toEqual([]);
   });
 
-  it("島に無い端・自分自身との経路は保存できず、版も上がらない", () => {
+  it("島に無い端・自分自身との経路は保存できず、版も上がらない", async () => {
     const p = new Project(":memory:", new ManualClock());
     p.addRepo("acme/shop", "API");
     const base = p.saveFormation({ pull: "down", units: UNITS }).version;
@@ -87,7 +87,7 @@ describe("連絡経路の保存(R16)", () => {
     expect(p.currentFormation().version).toBe(base);
   });
 
-  it("経路を変えた版が、効率のグラフの印として返る(版の差から拾う)", () => {
+  it("経路を変えた版が、効率のグラフの印として返る(版の差から拾う)", async () => {
     const p = new Project(":memory:", new ManualClock());
     p.addRepo("acme/shop", "API");
     p.saveFormation({ pull: "down", units: UNITS }); // 最初に決めた版(島の設定を変えた印は付く)
@@ -112,7 +112,7 @@ describe("島への質問・相談(R16)", () => {
     const { p, d, harness } = setup();
     const { ticket, owner } = await worked(p, d);
     const before = state(p, ticket.id);
-    const spent = ticketSpentUsd(p, ticket.id);
+    const spent = await ticketSpentUsd(p, ticket.id);
 
     const said = askQuestion(p, owner, p.ticket(ticket.id), "レビュー", "CSV の空のときはどう確かめる?");
     expect(said).toContain("レビュー に送りました");
@@ -136,7 +136,7 @@ describe("島への質問・相談(R16)", () => {
     // 担当・工程・往復・種類は変わらない
     expect(state(p, ticket.id)).toEqual(before);
     // 答える起動の金額は、聞かれたチケットに数える
-    expect(ticketSpentUsd(p, ticket.id)).toBeCloseTo(spent + run.cost_usd, 6);
+    expect(await ticketSpentUsd(p, ticket.id)).toBeCloseTo(spent + run.cost_usd, 6);
     expect((await ticketView(p, ticket.id)).costUsd).toBeCloseTo(spent + run.cost_usd, 6);
     // チケットのやりとりに、質問と答えが並ぶ
     const item = (await ticketView(p, ticket.id)).timeline.find((x) => x.type === "question");

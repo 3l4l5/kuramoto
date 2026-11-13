@@ -508,11 +508,11 @@ function recentPlanChat(p: Project, stage: Stage | "handoff"): string {
 const SPEAKER_NAME: Record<string, string> = { plan: "企画", design: "デザイナー", arch: "アーキテクト", lead: "リーダー" };
 
 /** 起動が終わったあと: 返事を会話に残し、段階が終わっていれば次の段階を起こす。 */
-export async function afterPlanningRun(p: Project, msg: MessageRow, role: Role, finalText: string): Promise<void> {
+export function afterPlanningRun(p: Project, msg: MessageRow, role: Role, finalText: string): void {
   const payload = JSON.parse(msg.payload) as PlanPayload;
   if (finalText.trim()) say(p, payload.stage, SPEAKER[role] ?? role, finalText.trim());
   if (payload.stage === "handoff" && p.setting("plan_handed_at")) {
     say(p, "handoff", "lead", `チームに渡しました。チケットを ${p.tickets().length} 件作りました。オフィスで「始業」を押すと、開発が始まります。`);
   }
-  await advance(p);
+  advance(p);
 }

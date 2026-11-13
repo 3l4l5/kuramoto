@@ -19,7 +19,7 @@ const projectWith = () => {
 const template = (p: Project, key: string) => addDevRule(p, { template: key });
 
 describe("開発ルール: 一覧・追加・有効 / 無効", () => {
-  it("ひな形 4 つから足せる。足したものは 2 度目を断り、一覧では足した印が付く", () => {
+  it("ひな形 4 つから足せる。足したものは 2 度目を断り、一覧では足した印が付く", async () => {
     const p = projectWith();
     expect(TEMPLATES.map((t) => t.name)).toEqual(["Jira 番号をそろえる", "PR 本文の先頭に対象", "マイグレーションは単独の PR", "コミット 1 行目 50 字以内"]);
     const r = template(p, "jira");
@@ -30,7 +30,7 @@ describe("開発ルール: 一覧・追加・有効 / 無効", () => {
     expect(v.templates.map((t) => [t.key, t.added])).toEqual([["jira", true], ["pr-body-target", false], ["migration-alone", false], ["commit-50", false]]);
   });
 
-  it("名前・何を守るか・どこに効くか・確かめ方・違反時の扱いを決めて足せる。足りない・読めない入力は断る", () => {
+  it("名前・何を守るか・どこに効くか・確かめ方・違反時の扱いを決めて足せる。足りない・読めない入力は断る", async () => {
     const p = projectWith();
     const r = addDevRule(p, { name: "console.log を残さない", body: "デバッグ出力を残さない", appliesTo: ["code"], check: "pattern", pattern: "!console\\.log", onFail: "review" });
     expect(r).toMatchObject({ appliesTo: ["code"], pattern: "!console\\.log", onFail: "review", template: null });
@@ -44,7 +44,7 @@ describe("開発ルール: 一覧・追加・有効 / 無効", () => {
     expect(() => addDevRule(p, { template: "nothing" })).toThrow("ひな形がありません");
   });
 
-  it("有効 / 無効を切り替えられる", () => {
+  it("有効 / 無効を切り替えられる", async () => {
     const p = projectWith();
     const r = template(p, "commit-50");
     expect(setDevRuleEnabled(p, r.id, false).enabled).toBe(false);
@@ -55,7 +55,7 @@ describe("開発ルール: 一覧・追加・有効 / 無効", () => {
 });
 
 describe("開発ルール: 版・直す・消す", () => {
-  it("足す・直す・消す・有効 / 無効のたびに版が 1 つ上がり、そのときのルールの一覧が残る", () => {
+  it("足す・直す・消す・有効 / 無効のたびに版が 1 つ上がり、そのときのルールの一覧が残る", async () => {
     const p = projectWith();
     expect(devRulesView(p).version).toBe(1);
     const r = template(p, "jira");
@@ -79,7 +79,7 @@ describe("開発ルール: 版・直す・消す", () => {
     ]);
   });
 
-  it("直せるのは渡した項目だけ。足すときと同じ確かめで断り、断ったら中身も版も変わらない", () => {
+  it("直せるのは渡した項目だけ。足すときと同じ確かめで断り、断ったら中身も版も変わらない", async () => {
     const p = projectWith();
     const r = template(p, "jira");
     const u = updateDevRule(p, r.id, { onFail: "review", appliesTo: ["pr_title"] });

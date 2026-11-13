@@ -423,11 +423,11 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(floor.locator("path.of-route")).toHaveCount(2);
     await expect(floor.locator("path.of-route-draft")).toHaveCount(0);
     await expect(floor).not.toContainText("保存前の案を表示中");
-    // 路線図: バグ修正だけ専用の流れ(QA → 開発 → レビュー、セキュリティは通過)なので、路線は既定線とバグ修正線の 2 本になる
+    // 路線図: バグ修正だけ専用の流れ(QA → 開発 → レビュー、セキュリティは省略)なので、路線は既定線とバグ修正線の 2 本になる
     const rails = floor.getByRole("img", { name: /^路線図:/ });
     await expect(rails.locator("[data-line]")).toHaveCount(2);
     await expect(rails).toHaveAttribute("aria-label", /既定線\(機能・リファクタ・ドキュメント\)/);
-    await expect(rails).toHaveAttribute("aria-label", /▲ バグ修正線\(セキュリティを通過\)/);
+    await expect(rails).toHaveAttribute("aria-label", /▲ バグ修正線\(セキュリティを省略\)/);
     // 種類を選ぶと、その種類を含む路線だけが濃くなる
     await floor.getByRole("radiogroup", { name: "路線の種類" }).getByRole("radio", { name: /バグ修正/ }).click();
     await expect(rails.locator('[data-line="bugfix"]')).toHaveClass(/of-line-on/);
@@ -468,7 +468,23 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(tiles.getByRole("listitem", { name: "消費トークン" })).not.toContainText(/^消費トークン0/);
     await expect(tiles.getByRole("listitem", { name: "人間に助けを求めた" })).toBeVisible();
     await expect(tiles.getByRole("listitem", { name: "手戻り" })).toBeVisible();
+    // 流れ: フロー効率の推移に、編成の版が上がった日(v2 は島、v3 は連絡経路と流れ)の縦の点線と札が入り、表に切り替えても残る
+    const trend = page.getByRole("figure", { name: "フロー効率の推移と編成を変えた日" });
+    await expect(trend.locator('g.mark[data-version="2"]')).toContainText("v2 島");
+    await expect(trend.locator('g.mark[data-version="3"]')).toContainText("v3 連絡経路・流れ");
+    await expect(trend.locator("g.mark line")).toHaveCount(2);
+    // 同じ日に版が 2 つ上がっても、札(rect)は縦にも横にも重ならず読める
+    const boxes = await trend.locator("g.mark rect").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ l: r.left, r: r.right, t: r.top, b: r.bottom })));
+    expect(boxes).toHaveLength(2);
+    const [c1, c2] = boxes as [(typeof boxes)[number], (typeof boxes)[number]];
+    expect(c1.r <= c2.l || c2.r <= c1.l || c1.b <= c2.t || c2.b <= c1.t).toBe(true);
+    await page.getByRole("group", { name: "表示" }).getByRole("button", { name: "表" }).click();
+    await expect(trend.locator("g.mark")).toHaveCount(2);
+    await page.getByRole("group", { name: "表示" }).getByRole("button", { name: "グラフ" }).click();
+    await expect(trend.locator("g.mark")).toHaveCount(2);
+    await shot(page, "productivity-flow");
     // 日ごとの推移: グラフと表を切り替えられる
+    await page.getByRole("tab", { name: "日ごとの推移" }).click();
     await expect(page.getByRole("tab", { name: "日ごとの推移" })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByRole("figure", { name: "使った金額の日ごとの推移" })).toBeVisible();
     await expect(page.getByRole("figure", { name: "出した PRの日ごとの推移" })).toBeVisible();

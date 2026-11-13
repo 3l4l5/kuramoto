@@ -170,7 +170,7 @@ export class KuramotoServer {
     this.running.add(id);
     await this.hq.setStatus(id, "running");
     // 始業したら、リーダーがまずボードを見回る(重複・回り続けているチケット。ADR-0026)
-    startPatrol(this.project(id));
+    await startPatrol(this.project(id));
     await this.loop(id);
     this.poke(id);
   }
@@ -399,13 +399,13 @@ export class KuramotoServer {
       return await ticketView(p, Number(c));
     }
     if (b === "tickets" && c && parts[4] === "reopen" && method === "POST") {
-      reopenTicket(p, Number(c));
+      await reopenTicket(p, Number(c));
       this.poke(id);
       return await ticketView(p, Number(c));
     }
     // 責任者がチケットの種類を変える。次の工程から新しい種類の流れで進み、変えたことはやりとりに残る(R17)
     if (b === "tickets" && c && parts[4] === "kind" && method === "POST") {
-      setTicketKind(p, Number(c), body.kind);
+      await setTicketKind(p, Number(c), body.kind);
       this.poke(id);
       return await ticketView(p, Number(c));
     }
@@ -600,21 +600,23 @@ export class KuramotoServer {
         running: this.running.has(rec.id),
         planning: { handed: handedOff(p), stages: stages.length, stagesDone: stages.filter((s) => s.done).length, current: stages.find((s) => !s.done)?.key ?? null },
         repos: p.repos().map((r) => ({ fullName: r.full_name, role: r.role })),
-        decisions: pendingOwnerDecisions(p).length,
+        decisions: (await pendingOwnerDecisions(p)).length,
         merges: (await suggestedMergeOrder(p)).length,
         open: p.tickets().filter((t) => !["done", "dropped"].includes(t.stage)).length,
         working: get<{ n: number }>(p.db, "SELECT COUNT(*) AS n FROM runs WHERE ended_at IS NULL")?.n ?? 0,
         metrics: m,
       };
     }));
-    const queue = (await Promise.all(recs.map(async (rec) => {
+    const queueParts = await Promise.all(recs.map(async (rec) => {
       const p = this.project(rec.id);
+      const owed = await pendingOwnerDecisions(p);
       return [
         ...ownerPlanItems(p).map((x) => ({ projectId: rec.id, projectName: rec.name, kind: "plan", text: x.text, deadline: null })),
-        ...pendingOwnerDecisions(p).map((d) => ({ projectId: rec.id, projectName: rec.name, kind: "decide", text: d.question.split("\n").pop(), deadline: d.deadline_at })),
+        ...owed.map((d) => ({ projectId: rec.id, projectName: rec.name, kind: "decide", text: d.question.split("\n").pop(), deadline: d.deadline_at })),
         ...(await suggestedMergeOrder(p)).map((t) => ({ projectId: rec.id, projectName: rec.name, kind: "merge", text: `#${t.number} ${t.title} を merge できます`, deadline: null })),
       ];
-    }))).flat();
+    }));
+    const queue = queueParts.flat();
     const order = { decide: 0, merge: 1, plan: 2 } as Record<string, number>;
     queue.sort((x, y) => (x.kind === y.kind ? String(x.deadline).localeCompare(String(y.deadline)) : order[x.kind]! - order[y.kind]!));
     return { projects, queue };
@@ -622,7 +624,7 @@ export class KuramotoServer {
 
   async studioViewOf(id: number) {
     await this.open(id);
-    return { ...studioView(this.project(id)), project: { id, name: this.record(id).name } };
+    return { ...(await studioView(this.project(id))), project: { id, name: this.record(id).name } };
   }
 
   async projectView(id: number) {
@@ -639,10 +641,10 @@ export class KuramotoServer {
       ).map((r) => [r.ticket_id, r]),
     );
     const formation = p.currentFormation();
-    const unblocks = mergeUnblocks(p);
+    const unblocks = await mergeUnblocks(p);
     // 開発に一度でも取りかかったチケット(ボードで「未着手」と「開発中」を分ける)
     const started = new Set(all<{ ticket_id: number }>(p.db, "SELECT DISTINCT ticket_id FROM runs WHERE ticket_id IS NOT NULL AND role = 'dev'").map((r) => r.ticket_id));
-    const tickets = p.tickets().map((t) => {
+    const tickets = await Promise.all(p.tickets().map(async (t) => {
       const w = working.get(t.id);
       return {
         id: t.id,
@@ -657,25 +659,25 @@ export class KuramotoServer {
         rounds: t.rounds,
         started: started.has(t.id) || !!w,
         owner: t.owner_member_id ? members.get(t.owner_member_id) : null,
-        worker: w ? { name: members.get(w.member_id), role: ROLE_LABEL[w.role as keyof typeof ROLE_LABEL], work: runWork(p, w.id, 3) } : null,
+        worker: w ? { name: members.get(w.member_id), role: ROLE_LABEL[w.role as keyof typeof ROLE_LABEL], work: await runWork(p, w.id, 3) } : null,
         pr: prs.get(t.id) ?? null,
         // リーダーの交通整理: まだなら triaging、先に終わらせるチケットが残っていれば waitFor
         triaging: !(get<{ triaged: number }>(p.db, "SELECT triaged FROM tickets WHERE id = ?", [t.id])?.triaged ?? 1),
-        waitFor: blockers(p, t.id),
+        waitFor: await blockers(p, t.id),
         // 同じ場所を触るチケットが先に進んでいて、まだ取りかかれないもの(ADR-0024)
-        waitArea: areaWait(p, t.id),
+        waitArea: await areaWait(p, t.id),
         // waitFor のうち merge 待ちの棚にあるもの(責任者が merge を押せば外れる)
-        waitMerge: mergeBlockers(p, t.id),
+        waitMerge: await mergeBlockers(p, t.id),
         // merge 待ちのとき: merge すると動き出すチケット
         unblocks: unblocks.get(t.id) ?? null,
         conflict: !!get(p.db, "SELECT 1 AS x FROM conflicts c JOIN pull_requests pr ON pr.id = c.pr_id WHERE pr.ticket_id = ? AND c.resolved_at IS NULL", [t.id]),
         // 取りやめたとき: 誰が・なぜ・いつ(ボードの「取りやめ」に出す)
-        dropped: droppedInfo(p, t.id),
+        dropped: await droppedInfo(p, t.id),
         // 「直すまで進めない」ルールに反して止まっているルールの名前(ボードの赤い札)
         ruleBlocked: openViolations(p, t.id, "blocked").map((v) => v.name),
       };
-    });
-    const decisions = pendingOwnerDecisions(p).map((d) => {
+    }));
+    const decisions = (await pendingOwnerDecisions(p)).map((d) => {
       const t = p.ticket(d.ticket_id);
       return {
         id: d.id,
@@ -806,7 +808,7 @@ export type ProductivityView = ReturnType<typeof productivity>;
 export type OfficeView = Awaited<ReturnType<typeof officeView>> & { running: boolean };
 export type { MemberView, UnitView };
 export type TicketView = Awaited<ReturnType<typeof ticketView>>;
-export type LeadChatView = ReturnType<typeof leadChatView>;
+export type LeadChatView = Awaited<ReturnType<typeof leadChatView>>;
 export type { MemberChatView, MemberNow } from "./project/member-chat.js";
 
 const MIME: Record<string, string> = {

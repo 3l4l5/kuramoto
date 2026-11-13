@@ -54,7 +54,7 @@ describe("メンバーとの会話", () => {
     expect(call.prompt).toContain("- いま何をやってる?");
     expect(call.tools.map((t) => t.name)).toEqual(["hand_to_lead"]);
     expect(call.allowedTools).toEqual(["Read", "Glob", "Grep"]);
-    expect(memberChatView(p, member.id).messages.filter((m) => m.who !== "system").map((m) => [m.who, m.body])).toEqual([
+    expect((await memberChatView(p, member.id)).messages.filter((m) => m.who !== "system").map((m) => [m.who, m.body])).toEqual([
       ["owner", "いま何をやってる?"],
       ["member", "いま CSV の文字コードを見ているよ"],
     ]);
@@ -76,7 +76,7 @@ describe("メンバーとの会話", () => {
     const closed = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp"), ticketsAllowed: () => false });
     sayToMember(p, member.id, "調子はどう?");
     await closed.drain();
-    expect(memberChatView(p, member.id).messages.map((m) => m.who)).toContain("member");
+    expect((await memberChatView(p, member.id)).messages.map((m) => m.who)).toContain("member");
   });
 
   it("伝える: 伝えたことはそのチケットのメモ(kind = member)に残り、担当・工程は変わらない。次の仕事で読まれる", async () => {
@@ -89,7 +89,7 @@ describe("メンバーとの会話", () => {
 
     const notes = p.notes(ticket.id).filter((n) => n.kind === "member");
     expect(notes.map((n) => [n.who, n.body])).toEqual([["owner", "区切り文字を変えたときも見てね"]]);
-    expect(memberChatView(p, member.id).messages.at(-1)).toMatchObject({ who: "system", body: `#${ticket.number} のメモに書き足しました` });
+    expect((await memberChatView(p, member.id)).messages.at(-1)).toMatchObject({ who: "system", body: `#${ticket.number} のメモに書き足しました` });
     expect(p.ticket(ticket.id)).toMatchObject({ stage: before.stage, owner_member_id: before.owner_member_id });
     // 次にこのチケットの仕事をする担当の指示に、メモとして入る
     const { promptFor } = await import("./prompts.js");
@@ -117,7 +117,7 @@ describe("メンバーとの会話", () => {
     expect(handed.body).toContain("PDF 出力も欲しい");
     expect(handed.body).toContain("請求書を PDF で出したい");
     expect(p.notes(ticket.id).filter((n) => n.kind === "member")).toEqual([]); // 今のチケットのメモには書かない
-    expect(memberChatView(p, member.id).messages.at(-1)).toMatchObject({ who: "member", body: "それは新しい仕事だから、リーダーに回したよ" });
+    expect((await memberChatView(p, member.id)).messages.at(-1)).toMatchObject({ who: "member", body: "それは新しい仕事だから、リーダーに回したよ" });
     // リーダーは、回ってきた頼みを読んでチケットを作る
     const leadCall = harness.calls.find((c) => c.prompt.includes("責任者からチャットが届きました"))!;
     expect(leadCall.prompt).toContain("PDF 出力も欲しい");
@@ -144,7 +144,7 @@ describe("メンバーとの会話", () => {
           const t = p.tickets()[0]!;
           const m = get<{ member_id: number }>(p.db, "SELECT member_id FROM runs WHERE ticket_id = ? AND ended_at IS NULL", [t.id])!.member_id;
           sayToMember(p, m, "どう?");
-          expect(memberNow(p, m).state).toBe("working");
+          expect((await memberNow(p, m)).state).toBe("working");
         }
         await call("submit_pr", { summary: "", responses: fixedAll(req.prompt) });
       } else await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] }));
@@ -202,7 +202,7 @@ describe("終わったチケット(done・dropped)について話しかける", 
       expect(call.prompt).toContain("メモに残りません");
       expect(prepared.map((r) => [r.role, r.branch])).toEqual([[member.role ?? "dev", ""]]);
       // 答えは残るが、メモは増えず、「メモに書き足しました」も出ない
-      expect(memberChatView(p, member.id).messages.map((m) => [m.who, m.body])).toEqual([
+      expect((await memberChatView(p, member.id)).messages.map((m) => [m.who, m.body])).toEqual([
         ["owner", "あれってどうなった?"],
         ["member", "もう終わったチケットだよ"],
       ]);
@@ -267,7 +267,7 @@ describe("メンバーの今していること", () => {
   it("手すきなら「手すき」と直前に終えたチケット、起動中ならチケットの種類・工程・往復・経過・トークンと直近の手順", async () => {
     const { p, d } = setup(() => undefined);
     const { ticket, member } = await worked(p, d);
-    const idle = memberNow(p, member.id);
+    const idle = await memberNow(p, member.id);
     expect(idle).toMatchObject({ state: "idle", doing: null, last: { number: ticket.number, title: "CSV 出力" }, ticket: { number: ticket.number, kind: "feature" } });
     expect(idle.ticket!.tokens).toBeGreaterThan(0);
     expect(idle.events.map((e) => e.type)).toContain("run_finished");
@@ -281,8 +281,10 @@ describe("メンバーの今していること", () => {
         .prepare("INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at, model, effort) VALUES (?, ?, ?, 'dev', ?, ?, ?, ?, ?)")
         .run(msgId, ticket.id, member.id, policy.id, p.currentFormation().id, p.now(), policy.model, policy.effort).lastInsertRowid,
     );
-    progressRecorder(p, runId)({ type: "step", kind: "tool", text: "テストを流した" });
-    const now = memberNow(p, member.id);
+    const rec = progressRecorder(p, runId);
+    rec({ type: "step", kind: "tool", text: "テストを流した" });
+    await rec.flush();
+    const now = await memberNow(p, member.id);
     expect(now).toMatchObject({ state: "working", last: null, doing: { kind: "直し", live: "テストを流した" } });
     expect(now.steps.map((s) => s.text)).toEqual(["テストを流した"]);
   });

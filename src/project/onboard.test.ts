@@ -37,7 +37,7 @@ describe("既存のリポジトリの続きから(ADR-0030)", () => {
     expect(stageRow(p, "screen").mode).toBe("skip");
     expect(snapshotText(p)).toContain("PR #42");
     expect(snapshotText(p)).toContain("Issue #7");
-    await advance(p);
+    advance(p);
     const m = get<{ payload: string }>(p.db, "SELECT payload FROM messages WHERE kind = 'plan' AND to_role = 'planner'")!;
     const text = (JSON.parse(m.payload) as { events: { text: string }[] }).events[0]!.text;
     expect(text).toContain("既存のリポジトリの続きから");
@@ -49,7 +49,7 @@ describe("既存のリポジトリの続きから(ADR-0030)", () => {
   it("チームに渡すとき、開いている PR は確認の工程から引き継ぎ、Issue のチケットの PR には Closes を付ける", async () => {
     const p = await setup();
     upsertRequirement(p, { name: "検索", acceptance: "語で絞り込める" });
-    for (const s of STAGES) if (s !== "req" && stageRow(p, s).mode !== "skip") await setMode(p, s, "skip");
+    for (const s of STAGES) if (s !== "req" && stageRow(p, s).mode !== "skip") setMode(p, s, "skip");
     p.setSetting("plan_started:req", p.now());
     run2(p);
     handoff(p);
@@ -62,7 +62,7 @@ describe("既存のリポジトリの続きから(ADR-0030)", () => {
     const adopted = p.tickets().find((t) => t.title === "メモの検索")!;
     // 企画スタジオの引き渡しの表に出しても落ちないよう、ひも付けは空で埋めて渡す
     const { studioView } = await import("./planning.js");
-    expect(studioView(p).tickets.find((t) => t.number === adopted.number)!.refs).toMatchObject({ adoptedPr: 42, screens: [], design: [], modes: {} });
+    expect((await studioView(p)).tickets.find((t) => t.number === adopted.number)!.refs).toMatchObject({ adoptedPr: 42, screens: [], design: [], modes: {} });
     expect(adopted.stage).toBe("review");
     expect(get(p.db, "SELECT number, head FROM pull_requests WHERE ticket_id = ?", [adopted.id])).toEqual({ number: 42, head: "feature/search" });
 
