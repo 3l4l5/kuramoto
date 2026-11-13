@@ -129,16 +129,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .tr-node { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 6px 10px; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--bg); font-size: var(--fs-md); }
 .tr-node .tr-num { font-weight: 700; }
 .tr-node .tr-stage { font-size: var(--fs-xs); padding: 0 6px; border-radius: var(--r-sm); background: var(--bg); color: var(--ink); }
-.tr-node .tr-state { font-size: var(--fs-sm); }
+.tr-node .tr-state { display: inline-flex; align-items: center; height: var(--h-chip); padding: 0 var(--sp-2); border-radius: var(--r-sm); font-size: var(--fs-sm); }
 .tr-node .tr-why { flex-basis: 100%; font-size: var(--fs-xs); color: var(--muted); }
 .tr-node .tr-also { font-size: var(--fs-xs); color: var(--muted); }
 .tr-node .tr-blocks { margin-left: auto; font-size: var(--fs-sm); font-weight: 700; color: var(--ink); }
 .tr-work { border-color: var(--dev); }
-.tr-work .tr-state { color: var(--dev); }
+.tr-work .tr-state { background: var(--dev-soft); color: var(--dev); }
 .tr-you { border-color: var(--warn); background: var(--warn-soft); }
-.tr-you .tr-state { color: var(--warn-ink); font-weight: 700; }
-.tr-wait .tr-state { color: var(--muted); }
-.tr-idle .tr-state { color: var(--muted); }
+.tr-you .tr-state { background: var(--warn-soft); color: var(--warn-ink); font-weight: 700; }
+.tr-wait .tr-state { background: var(--bg); color: var(--muted); }
+.tr-idle .tr-state { background: var(--bg); color: var(--muted); }
 .board { display: grid; gap: 10px; min-width: 980px; }
 .col { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 10px; display: flex; flex-direction: column; gap: 8px; min-height: 420px; }
 .col h3 { margin: 0; display: flex; justify-content: space-between; font-size: var(--fs-md); }
@@ -950,7 +950,7 @@ body { background: var(--surface); }
 .tr-node .tr-pre { font-size: var(--fs-xs); padding: 0 6px; border-radius: var(--r-sm); border: 1px dashed var(--design); color: var(--design); }
 .tr-node .tr-viol { font-size: var(--fs-sm); font-weight: 700; color: var(--danger-ink); }
 .tr-blocked { border-color: var(--danger); background: var(--danger-soft); }
-.tr-blocked .tr-state { color: var(--danger-ink); font-weight: 700; }
+.tr-blocked .tr-state { background: var(--danger-soft); color: var(--danger-ink); font-weight: 700; }
 .kindbar { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-2); }
 .kindbar .kindfilter { margin-bottom: 0; }
 .kindnote { font-size: var(--fs-sm); color: var(--muted); }

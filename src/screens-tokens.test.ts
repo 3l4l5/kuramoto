@@ -98,10 +98,19 @@ describe("既存の画面をトークンにそろえる", () => {
   });
 
   it("ツリーの状態の色: 待ち = 灰、止まっている = 赤(試作 tree)。「N 件がこれを待っています」は本文色", () => {
-    expect(style).toMatch(/\.tr-wait \.tr-state \{ color: var\(--muted\)/);
-    expect(style).toMatch(/\.tr-idle \.tr-state \{ color: var\(--muted\)/);
-    expect(style).toMatch(/\.tr-blocked \.tr-state \{ color: var\(--danger-ink\)/);
+    expect(style).toMatch(/\.tr-wait \.tr-state \{[^}]*color: var\(--muted\)/);
+    expect(style).toMatch(/\.tr-idle \.tr-state \{[^}]*color: var\(--muted\)/);
+    expect(style).toMatch(/\.tr-blocked \.tr-state \{[^}]*color: var\(--danger-ink\)/);
     expect(style).toMatch(/\.tr-node \.tr-blocks \{[^}]*color: var\(--ink\)/);
+  });
+
+  it("ツリーの状態は札の形(高さ --h-chip・角丸 --r-sm・状態ごとの淡色の地)(試作 tree の .st)", () => {
+    expect(style).toMatch(/\.tr-node \.tr-state \{[^}]*display: inline-flex[^}]*align-items: center[^}]*height: var\(--h-chip\)[^}]*padding: 0 var\(--sp-2\)[^}]*border-radius: var\(--r-sm\)/);
+    expect(style).toMatch(/\.tr-work \.tr-state \{[^}]*background: var\(--dev-soft\)/);
+    expect(style).toMatch(/\.tr-you \.tr-state \{[^}]*background: var\(--warn-soft\)/);
+    expect(style).toMatch(/\.tr-blocked \.tr-state \{[^}]*background: var\(--danger-soft\)/);
+    expect(style).toMatch(/\.tr-wait \.tr-state \{[^}]*background: var\(--bg\)/);
+    expect(style).toMatch(/\.tr-idle \.tr-state \{[^}]*background: var\(--bg\)/);
   });
 
   it("ボードのカードの往復は、黄の札(Chip warn)で種類の札の横に出す(試作 board)", () => {
