@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { all, get, run, tx } from "../db/sqlite.js";
+import { inferDevDone } from "../domain/dev-done.js";
 import { TICKET_KINDS } from "../domain/flow.js";
 import { artifact, hasContent, STAGES, type Stage } from "./planning.js";
 import type { Project, TicketStage } from "./project.js";
@@ -38,7 +39,7 @@ export const transferSchema = z.object({
   artifacts: z.array(z.object({ stage: stageEnum, kind: z.string(), key: z.string(), body: z.unknown() })),
   comments: z.array(z.object({ screenKey: z.string(), variant: z.string().nullable(), x: z.number().nullable(), y: z.number().nullable(), body: z.string(), resolved: z.boolean() })),
   messages: z.array(z.object({ stage: z.string(), who: z.string(), body: z.string(), at: z.string() })),
-  // kind / devDone は古い書き出し(無し)も読めるよう省略可。無ければ feature・開発前として読む
+  // kind / devDone は古い書き出し(無し)も読めるよう省略可。kind が無ければ feature、devDone が無ければ工程から決める(inferDevDone)
   tickets: z.array(z.object({ title: z.string(), body: z.string(), stage: z.string(), kind: z.enum(TICKET_KINDS).optional(), devDone: z.boolean().optional(), planRefs: z.record(z.string(), z.unknown()) })),
 });
 
@@ -141,8 +142,9 @@ export async function restoreTransfer(p: Project, d: TransferData): Promise<void
 
     for (const t of d.tickets) {
       const final = (t.stage === "done" || t.stage === "dropped") as boolean;
-      // 種類と、開発を通ったか(通っていれば開発より前へは戻らない)を持ち越す。古い書き出しは feature として読む
-      const base = { title: t.title, body: t.body, kind: t.kind, devDone: t.devDone, planRefs: t.planRefs };
+      // 種類と、開発を通ったか(通っていれば開発より前へは戻らない)を持ち越す。古い書き出しは feature として読み、
+      // devDone は SQLite の版 19 と同じ決まりで工程から決める(書き出しに起動の記録は無いので、開発の起動の有無は見られない)
+      const base = { title: t.title, body: t.body, kind: t.kind, devDone: t.devDone ?? inferDevDone(t.stage, false), planRefs: t.planRefs };
       if (final) {
         const row = p.addTicket(base);
         p.setStage(row.id, t.stage as TicketStage);
