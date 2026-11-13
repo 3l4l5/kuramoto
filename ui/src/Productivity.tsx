@@ -90,10 +90,12 @@ export function ProductivityPage({ id }: { id: number }) {
         </div>
       </section>
 
-      {/* どの表示にしても、この図は残る(R16) */}
-      <section className="panel" aria-label="フロー効率の推移">
-        <EfficiencyTrend data={data} />
-      </section>
+      {/* どの表示にしても、この図は残る(R16)。日が 1 つも無いとき(記録も編成の版も無い)は、中身の無い枠だけが残らないよう、枠ごと出さない */}
+      {efficiencyDays(data).length > 0 && (
+        <section className="panel" aria-label="フロー効率の推移">
+          <EfficiencyTrend data={data} />
+        </section>
+      )}
 
       <section className="panel wide" aria-label="指標の中身">
         <div className="bar">
@@ -204,12 +206,14 @@ function BarChart({ title, rows, fmt, tick = (l) => l.slice(5) }: { title: strin
  * 効率が上がり下がりしたのが編成を変えたせいかを、日付で見比べられる。
  */
 const CHANGED_LABEL: Record<string, string> = { routes: "連絡経路", flows: "流れ", units: "島" };
+/** 推移に並ぶ日(効率の記録がある日と、編成の版が上がった日)。 */
+export const efficiencyDays = (data: ProductivityView) => [...new Set([...data.flow.efficiencyDaily.map((r) => r.day), ...data.flow.formationMarks.map((m) => m.day)])].sort();
+
 function EfficiencyTrend({ data }: { data: ProductivityView }) {
   const [picked, setPicked] = useState<number | null>(null); // 押した札の版
   const rows = data.flow.efficiencyDaily;
   const marks = data.flow.formationMarks;
-  const days = [...new Set([...rows.map((r) => r.day), ...marks.map((m) => m.day)])].sort();
-  if (days.length === 0) return null;
+  const days = efficiencyDays(data);
   const W = 386, L = 34, R = 8, B = 36;
   const x = (day: string) => (days.length === 1 ? (L + W - R) / 2 : L + (days.indexOf(day) / (days.length - 1)) * (W - L - R));
   // 札は、横に重なるものを別の段に積む(同じ日に版が複数上がっても、札が重ならず読める)。段の数だけ上の余白を広げ、グラフ本体の高さは変えない
