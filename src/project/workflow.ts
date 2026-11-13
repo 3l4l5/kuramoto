@@ -265,7 +265,8 @@ function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: numbe
   if (!report.review) return "submit_review が呼ばれませんでした";
   const { resolutions } = report.review;
   // 「レビューで指摘」の開発ルール(R15)の違反は、最初の確認の工程が、まだ指摘にしていないものを指摘に足す
-  const first = pipelineOf(p.currentFormation()).find((r) => r !== "dev");
+  // (開発より前の工程は差分を見ないので、最初の確認は開発より後ろの工程から数える)
+  const first = pipelineOf(p.currentFormation(), ticket.kind, { devDone: true }).find((r) => r !== "dev");
   const ruleFindings = role === first ? reviewFindingsFor(p, ticket.id) : [];
   for (const f of ruleFindings) markListed(p, f.violationId);
   const findings: Finding[] = [...report.review.findings, ...ruleFindings.map(({ violationId: _, ...f }) => f)];
