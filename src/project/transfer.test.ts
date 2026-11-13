@@ -162,7 +162,7 @@ describe("設計書からの復元", () => {
     const rec = await hq.createProject("古い", [{ fullName: "acme/old", role: "API" }]);
     const p = await hq.openProject(rec.id);
     await createTicket(p, { title: "t" });
-    const data = extractTransfer(exportDesignDoc(p, "古い"));
+    const data = extractTransfer(await exportDesignDoc(p, "古い"));
     const stages = ["dev", "review", "sec", "qa", "decision", "merge", "done", "dropped"];
     const old = { ...data, tickets: stages.map((stage) => ({ title: stage, body: "", stage, planRefs: {} })) };
     const r = await hq.openProject((await hq.createProject("古い", data.repos)).id);
