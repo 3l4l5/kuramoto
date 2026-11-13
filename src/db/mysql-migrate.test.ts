@@ -57,7 +57,7 @@ describe.skipIf(!conn)("MySQL(mysql-test)に流す", () => {
 
   it("空の database に流すと、SQLite と同じ表・列が全部でき、版が SQLite と同じ番号になる", async () => {
     await migrateMysql(c, MYSQL_MIGRATIONS);
-    expect(await versions(c)).toEqual([21, 22]);
+    expect(await versions(c)).toEqual([21, 22, 23]);
     expect(await mysqlVersion(c)).toBe(PROJECT_MIGRATIONS.length);
 
     const expected = sqliteColumns();
@@ -75,7 +75,7 @@ describe.skipIf(!conn)("MySQL(mysql-test)に流す", () => {
     await c.query("INSERT INTO projects (name, data_dir, status, created_at) VALUES ('p', '/d', 'running', '')");
     const before = await shape(c);
     await migrateMysql(c, MYSQL_MIGRATIONS);
-    expect(await versions(c)).toEqual([21, 22]);
+    expect(await versions(c)).toEqual([21, 22, 23]);
     expect(await shape(c)).toEqual(before);
     expect((await c.query<any[]>("SELECT name FROM projects"))[0]).toEqual([{ name: "p" }]);
     expect((await c.query<any[]>("SELECT id, name FROM workspaces"))[0]).toEqual([{ id: 1, name: "既定" }]);
@@ -87,7 +87,7 @@ describe.skipIf(!conn)("MySQL(mysql-test)に流す", () => {
     await c.query("DELETE FROM schema_version");
     await c.query("DROP TABLE member_messages");
     await migrateMysql(c, MYSQL_MIGRATIONS);
-    expect(await versions(c)).toEqual([21, 22]);
+    expect(await versions(c)).toEqual([21, 22, 23]);
     expect(await shape(c)).toEqual(before);
   });
 
@@ -126,6 +126,16 @@ describe.skipIf(!conn)("MySQL(mysql-test)に流す", () => {
     await expect(ins(1, 1)).rejects.toThrow(/Duplicate entry/);
   });
 
+  it("github_issues(#79): 同じ Issue は、同じプロジェクトでは二度入らない(別のプロジェクトなら入る)。status は決まった値だけ", async () => {
+    await migrateMysql(c, MYSQL_MIGRATIONS);
+    await c.query("INSERT INTO projects (name, data_dir, status, created_at) VALUES ('a', '/a', 'running', ''), ('b', '/b', 'running', '')");
+    const ins = (project: number, status = "new") => c.query("INSERT INTO github_issues (repo, number, title, body, url, status, fetched_at, project_id) VALUES ('acme/shop', 5, 't', '', 'u', ?, '', ?)", [status, project]);
+    await ins(1);
+    await ins(2);
+    await expect(ins(1)).rejects.toThrow(/Duplicate entry/);
+    await expect(ins(2, "nope")).rejects.toThrow();
+  });
+
   it("one_run_per_ticket: 終わっていない起動はチケットに 1 つだけ(終わった起動はいくつでも)", async () => {
     await migrateMysql(c, MYSQL_MIGRATIONS);
     await c.query("INSERT INTO projects (name, data_dir, status, created_at) VALUES ('a', '/a', 'running', '')");
@@ -147,20 +157,20 @@ describe.skipIf(!conn)("MySQL(mysql-test)に流す", () => {
 
   it("MySQL に無い版だけ流す(新しい版は足され、版の行が増える。古い版は流し直さない)", async () => {
     await migrateMysql(c, MYSQL_MIGRATIONS);
-    const next: MysqlMigration = { version: 23, statements: ["CREATE TABLE IF NOT EXISTS probe (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY)"] };
+    const next: MysqlMigration = { version: 24, statements: ["CREATE TABLE IF NOT EXISTS probe (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY)"] };
     await migrateMysql(c, [...MYSQL_MIGRATIONS, next]);
-    expect(await versions(c)).toEqual([21, 22, 23]);
+    expect(await versions(c)).toEqual([21, 22, 23, 24]);
     await c.query("DROP TABLE probe");
-    await migrateMysql(c, [...MYSQL_MIGRATIONS, next]); // 23 は流し終えているので、消した表は戻らない
+    await migrateMysql(c, [...MYSQL_MIGRATIONS, next]); // 24 は流し終えているので、消した表は戻らない
     expect(await tableNames(c)).not.toContain("probe");
     await expect(migrateMysql(c, [next, MYSQL_MIGRATIONS[0]!])).rejects.toThrow(/昇順/);
   });
 
   it("失敗した版は版の行を足さない(前の版までは残る)", async () => {
     await migrateMysql(c, MYSQL_MIGRATIONS);
-    const bad: MysqlMigration = { version: 23, statements: ["CREATE TABLE IF NOT EXISTS ok_table (id BIGINT)", "INSERT INTO missing_table VALUES (1)"] };
+    const bad: MysqlMigration = { version: 24, statements: ["CREATE TABLE IF NOT EXISTS ok_table (id BIGINT)", "INSERT INTO missing_table VALUES (1)"] };
     await expect(migrateMysql(c, [...MYSQL_MIGRATIONS, bad])).rejects.toThrow(/missing_table/);
-    expect(await versions(c)).toEqual([21, 22]);
+    expect(await versions(c)).toEqual([21, 22, 23]);
     // ロックは外れているので、続けて流せる
     await migrateMysql(c, MYSQL_MIGRATIONS);
   });

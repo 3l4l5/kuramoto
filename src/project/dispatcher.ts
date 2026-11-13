@@ -33,6 +33,7 @@ import { finishMemberChat, isFinishedTicket, memberChatPrompt, memberChatSystem,
 import { giveUpTriage, markTriaged, requestTriage, triagePrompt, triageTools, untriaged } from "./triage.js";
 import { LEAD_CHAT_SYSTEM, leadChatPrompt, leadChatTools, leadReply, markOwnerMessagesRead, unreadOwnerMessages } from "./leadchat.js";
 import { dropGithubCiTickets, githubCheckDue, githubDown, githubStillDown, isGithubAuthError, markGithubDown, markGithubUp } from "./outage.js";
+import { issueTools, newIssues, pollIssues, type IssueRow } from "./issues.js";
 import { deadlockSignals, finishPatrol, loopSignals, patrolPrompt, patrolTools, refreshMergedWaits, requestPatrol, type Deadlock, type LoopSignal } from "./patrol.js";
 
 export type DispatcherDeps = {
@@ -136,6 +137,7 @@ export class Dispatcher {
   async dispatchOnce(): Promise<boolean> {
     await this.checkGithub();
     await this.refreshMergedWaits();
+    await this.watchIssues();
     await this.p.pdb.transaction(async () => await this.housekeep());
     await this.releaseFinished();
     const job = await this.next();
@@ -154,6 +156,13 @@ export class Dispatcher {
     const gh = this.deps.github;
     if (!gh || !this.deps.triage || !(this.deps.ticketsAllowed?.() ?? true)) return;
     await refreshMergedWaits(this.p, gh, { workspace: this.deps.workspace });
+  }
+
+  /** 見回り中なら、GitHub の新しい Issue を取ってくる(見回りの間隔ごと。リーダーの見回りが応答する。#79)。取れなくても見回りは止めず、次の周期でやり直す。 */
+  async watchIssues(): Promise<void> {
+    const gh = this.deps.github;
+    if (!gh || !this.deps.triage || !(this.deps.ticketsAllowed?.() ?? true)) return;
+    await pollIssues(this.p, gh).catch((e: unknown) => console.error(`Issue の取得に失敗しました: ${e instanceof Error ? e.message : String(e)}`));
   }
 
   /** GitHub に入れない間は、間を空けて入れるかを確かめ、入れたら再開する(ADR-0027)。 */
@@ -212,6 +221,7 @@ export class Dispatcher {
       if (dbUp() && !this.halt.signal.aborted) {
         await this.checkGithub();
         await this.refreshMergedWaits();
+        await this.watchIssues();
         await this.p.pdb.transaction(async () => await this.housekeep());
         await this.releaseFinished();
       }
@@ -706,6 +716,7 @@ export class Dispatcher {
     }
     const signals: LoopSignal[] = mode === "patrol" ? await loopSignals(p) : [];
     const deadlocks: Deadlock[] = mode === "patrol" ? await deadlockSignals(p) : [];
+    const issues: IssueRow[] = mode === "patrol" ? await newIssues(p) : [];
     const policy = await p.policy("lead");
     const harness = this.deps.harnesses[policy.harness];
     const repo = (await p.repos())[0];
@@ -726,15 +737,15 @@ export class Dispatcher {
         cwd: ws.path,
         confine: await confinementFor(p, ws, "lead"),
         systemPrompt: LEAD_CHAT_SYSTEM + (policy.focus.trim() ? `\n\n## このプロジェクトで重視すること\n${policy.focus.trim()}` : "") + speechNote(member.name),
-        prompt: mode === "chat" ? await leadChatPrompt(p, unread) : mode === "triage" ? await triagePrompt(p, targets) : await patrolPrompt(p, signals, { start: !!(JSON.parse(msg.payload) as { start?: boolean }).start, deadlocks }),
+        prompt: mode === "chat" ? await leadChatPrompt(p, unread) : mode === "triage" ? await triagePrompt(p, targets) : await patrolPrompt(p, signals, { start: !!(JSON.parse(msg.payload) as { start?: boolean }).start, deadlocks, issues }),
         model: policy.model,
         effort: policy.effort,
         tools:
           mode === "chat"
-            ? [...leadChatTools(p, { closePrs }), ...githubReadTools(p, this.deps.github), ...await ciTools(p, this.deps.github, {})]
+            ? [...leadChatTools(p, { closePrs, github: this.deps.github }), ...githubReadTools(p, this.deps.github), ...await ciTools(p, this.deps.github, {})]
             : mode === "triage"
               ? triageTools(p)
-              : [...patrolTools(p, { closePrs }), ...triageTools(p).filter((t) => t.name === "plan_work"), ...leadChatTools(p).filter((t) => t.name === "create_ticket"), ...githubReadTools(p, this.deps.github), ...await ciTools(p, this.deps.github, { rerun: true })],
+              : [...patrolTools(p, { closePrs }), ...issueTools(p, { github: this.deps.github }), ...triageTools(p).filter((t) => t.name === "plan_work"), ...leadChatTools(p, { github: this.deps.github }).filter((t) => t.name === "create_ticket"), ...githubReadTools(p, this.deps.github), ...await ciTools(p, this.deps.github, { rerun: true })],
         allowedTools: ["Read", "Glob", "Grep"],
         maxBudgetUsd: await this.runBudget(),
         signal: this.halt.signal,
@@ -764,8 +775,8 @@ export class Dispatcher {
         const text = result?.finalText?.trim();
         await leadReply(p, `【交通整理 #${targets.map((t) => t.number).join(", #")}】${text ? `\n${text}` : ""}`);
       } else if (mode === "patrol") {
-        await finishPatrol(p, signals, deadlocks);
-        await p.event(member.name, "patrolled", null, { tickets: signals.map((s) => s.ticket.number), deadlocks: deadlocks.map((x) => x.key) });
+        await finishPatrol(p, signals, deadlocks, issues);
+        await p.event(member.name, "patrolled", null, { tickets: signals.map((s) => s.ticket.number), deadlocks: deadlocks.map((x) => x.key), ...(issues.length ? { issues: issues.map((i) => i.number) } : {}) });
         const text = result?.finalText?.trim();
         await leadReply(p, `【見回り】${text ? `\n${text}` : ""}`);
       } else {

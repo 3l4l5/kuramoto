@@ -42,6 +42,7 @@ export const TRANSFER_TABLES: [table: string, refs: Record<string, string>][] = 
   ["ticket_areas", { ticket_id: "tickets" }],
   ["ticket_questions", { ticket_id: "tickets", from_member_id: "members", answered_by_member_id: "members" }],
   ["member_messages", { member_id: "members", ticket_id: "tickets" }],
+  ["github_issues", { ticket_id: "tickets" }],
   ["lead_messages", {}],
   ["design_images", { ticket_id: "tickets" }],
   ["messages", { ticket_id: "tickets", to_member_id: "members" }],

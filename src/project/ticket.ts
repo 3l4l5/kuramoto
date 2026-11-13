@@ -49,7 +49,7 @@ export type TimelineItem =
 
 export async function ticketView(p: Project, ticketId: number) {
   const t = await p.ticket(ticketId);
-  const refs = JSON.parse(t.plan_refs || "{}") as { requirement?: string; screens?: string[]; design?: string[]; repo?: string };
+  const refs = JSON.parse(t.plan_refs || "{}") as { requirement?: string; screens?: string[]; design?: string[]; repo?: string; issue?: number; issueUrl?: string };
   // 読むものは表ごとに 1 文で取り、結び付けは JS でやる(IN でまとめる)
   const [row, prRows, runRows, evs, reviewRows, decisionRows, aboutRuns] = await Promise.all([
     inScope(p.pdb, "tickets").where("id", "=", ticketId).executeTakeFirst(),
@@ -192,6 +192,8 @@ export async function ticketView(p: Project, ticketId: number) {
     rounds: t.rounds,
     owner: t.owner_member_id ? await name(t.owner_member_id) : null,
     requirement: requirement ?? null,
+    // このチケットで片付ける GitHub の Issue(リーダーが Issue から切ったとき)。リンクは GitHub のものだけ
+    issue: refs.issue ? { number: refs.issue, url: refs.issueUrl?.startsWith("https://github.com/") ? refs.issueUrl : null } : null,
     screens: refs.screens ?? [],
     design: refs.design ?? [],
     prs,

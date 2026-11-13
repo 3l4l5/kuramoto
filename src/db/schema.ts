@@ -287,8 +287,8 @@ INSERT OR IGNORE INTO dev_rule_versions (version, rules, created_at)
   //  - 前の版のコードは project_id を書かない INSERT をする。DEFAULT 0 で通り、project_id 込みの UNIQUE にも収まる(同じ 0 の中で前と同じ決まり)。
   //    前の UNIQUE は、この版では残る(外すのは版 22)。
   (k, ctx) => [
-    ...PROJECT_ID_TABLES.map((t) => k.schema.alterTable(t).addColumn("project_id", "integer", (c) => c.notNull().defaultTo(0))),
-    ...(ctx.projectId === undefined ? [] : PROJECT_ID_TABLES.map((t) => k.updateTable(t).set({ project_id: ctx.projectId! }))),
+    ...V21_TABLES.map((t) => k.schema.alterTable(t).addColumn("project_id", "integer", (c) => c.notNull().defaultTo(0))),
+    ...(ctx.projectId === undefined ? [] : V21_TABLES.map((t) => k.updateTable(t).set({ project_id: ctx.projectId! }))),
     ...PROJECT_ID_INDEXES.map(({ table, columns, unique }) => {
       const name = [table, "project", ...columns].join("_");
       const b = unique ? k.schema.createIndex(name).unique() : k.schema.createIndex(name);
@@ -373,10 +373,20 @@ CREATE UNIQUE INDEX policies_project_role_version ON policies(project_id, role, 
 CREATE UNIQUE INDEX requirements_project_version ON requirements(project_id, version);
 CREATE UNIQUE INDEX tickets_project_number ON tickets(project_id, number);
 `,
+  // 23: 見回りが取ってきた GitHub の Issue と、リーダーの扱い(#79)。同じ Issue に二度応答せず、二度チケットを切らないために、扱った Issue を覚える。
+  //  - status: new = まだリーダーが見ていない / ticketed = チケットにした / duplicate = 既存のチケットに足した / owner = 責任者に回した / passed = リーダーが何も決めなかった
+  //  - 新しい表なので project_id は最初から持つ(UNIQUE も project_id 込み)。
+  `
+CREATE TABLE github_issues (id INTEGER PRIMARY KEY, repo TEXT NOT NULL, number INTEGER NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', url TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','ticketed','duplicate','owner','passed')),
+  ticket_id INTEGER REFERENCES tickets(id), note TEXT, fetched_at TEXT NOT NULL, handled_at TEXT, project_id INTEGER NOT NULL DEFAULT 0);
+CREATE UNIQUE INDEX github_issues_project_issue ON github_issues(project_id, repo, number);
+CREATE INDEX github_issues_project_status ON github_issues(project_id, status);
+`,
 ];
 
-/** 版 21 で project_id を足す表(プロジェクト DB の全部)。表を足すときは、その版で project_id も足す(schema.test.ts が確かめる)。 */
-export const PROJECT_ID_TABLES = [
+/** 版 21 で project_id を足す表(その時点のプロジェクト DB の全部)。版 21 の実行と索引に使うので、足さない(後の版の表は PROJECT_ID_TABLES にだけ足す)。 */
+export const V21_TABLES = [
   "repos", "settings", "formations", "units", "policies", "dev_rules",
   "plan_stages", "requirements", "requirement_items", "plan_artifacts", "plan_comments", "plan_open_items", "plan_messages",
   "members", "tickets", "sessions", "pull_requests", "messages", "runs", "run_steps",
@@ -385,12 +395,19 @@ export const PROJECT_ID_TABLES = [
 ] as const;
 
 /**
+ * プロジェクト DB の全部の表(project_id を持つ)。表を足すときは、足す版で project_id も一緒に持たせ(新しい表なので ALTER は要らない)、
+ * ここに足す(scope.test.ts・delete-project.test.ts・sqlite-to-mysql.test.ts が確かめる)。
+ *  - 版 23: github_issues(見回りが取ってきた GitHub の Issue と、リーダーの扱い。#79)
+ */
+export const PROJECT_ID_TABLES = [...V21_TABLES, "github_issues"] as const;
+
+/**
  * 版 21 で足す索引(列は project_id の後ろ。名前は <表>_project_<列>)。
  *  - unique: 前の版の UNIQUE に project_id を足したもの(前の UNIQUE は版 22 で外す)。
  *  - 前の版にあった索引は、project_id を先頭にしたものを足す。
  *  - どちらも無い表には (project_id) だけの索引を足す。
  */
-type IndexSpec = { table: (typeof PROJECT_ID_TABLES)[number]; columns: string[]; unique?: boolean };
+type IndexSpec = { table: (typeof V21_TABLES)[number]; columns: string[]; unique?: boolean };
 const NAMED_INDEXES: IndexSpec[] = [
   { table: "tickets", columns: ["number"], unique: true },
   { table: "formations", columns: ["version"], unique: true },
@@ -416,5 +433,5 @@ const NAMED_INDEXES: IndexSpec[] = [
 ];
 const PROJECT_ID_INDEXES: IndexSpec[] = [
   ...NAMED_INDEXES,
-  ...PROJECT_ID_TABLES.filter((t) => !NAMED_INDEXES.some((i) => i.table === t)).map((table) => ({ table, columns: [] })),
+  ...V21_TABLES.filter((t) => !NAMED_INDEXES.some((i) => i.table === t)).map((table) => ({ table, columns: [] })),
 ];

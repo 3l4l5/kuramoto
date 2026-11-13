@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HQ_MIGRATIONS, PROJECT_ID_TABLES, PROJECT_MIGRATIONS } from "./schema.js";
+import { HQ_MIGRATIONS, PROJECT_MIGRATIONS, V21_TABLES } from "./schema.js";
 import { all, get, openDb } from "./sqlite.js";
 
 /** 版 21(project_id)・本部の版 2(workspace_id)のマイグレーションの試験 */
@@ -69,7 +69,7 @@ describe("版 21: プロジェクトの全部の表の project_id", () => {
     const path = v20Db();
     const db = openDb(path, V21_MIGRATIONS, { projectId: 7 });
     expect(version(db)).toBe(V21);
-    for (const t of PROJECT_ID_TABLES) {
+    for (const t of V21_TABLES) {
       const rows = all<{ project_id: number }>(db, `SELECT project_id FROM ${t}`);
       expect(rows.length, `${t} の行`).toBeGreaterThan(0);
       expect(new Set(rows.map((r) => r.project_id)), t).toEqual(new Set([7]));
@@ -85,9 +85,9 @@ describe("版 21: プロジェクトの全部の表の project_id", () => {
     db.close();
   });
 
-  it("新しい DB でも流れる。全部の表(PROJECT_ID_TABLES と一致)に project_id が NOT NULL DEFAULT 0 である", async () => {
+  it("新しい DB でも流れる。全部の表(その時点の V21_TABLES と一致)に project_id が NOT NULL DEFAULT 0 である", async () => {
     const db = openDb(":memory:", V21_MIGRATIONS, { projectId: 3 });
-    expect(tableNames(db)).toEqual([...PROJECT_ID_TABLES].sort());
+    expect(tableNames(db)).toEqual([...V21_TABLES].sort());
     for (const t of tableNames(db)) {
       expect(columns(db, t).find((c) => c.name === "project_id"), t).toMatchObject({ notnull: 1, dflt_value: "0" });
     }
@@ -124,7 +124,7 @@ describe("版 21: プロジェクトの全部の表の project_id", () => {
       expect(all<{ name: string }>(db, `PRAGMA index_info(${i.name})`)[0]!.name, i.name).toBe("project_id");
     }
     // どの表にも、project_id が先頭の索引が 1 つはある
-    for (const t of PROJECT_ID_TABLES) expect(added.some((i) => i.tbl_name === t), t).toBe(true);
+    for (const t of V21_TABLES) expect(added.some((i) => i.tbl_name === t), t).toBe(true);
     const uniques = (t: string) =>
       all<{ name: string; unique: number }>(db, `PRAGMA index_list(${t})`)
         .filter((i) => i.unique && added.some((a) => a.name === i.name))

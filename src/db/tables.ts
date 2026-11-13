@@ -429,6 +429,21 @@ export interface TicketNotesTable {
   project_id: Generated<number>;
 }
 
+export interface GithubIssuesTable {
+  id: Generated<number>;
+  repo: string;
+  number: number;
+  title: string;
+  body: Generated<string>;
+  url: string;
+  status: Generated<"new" | "ticketed" | "duplicate" | "owner" | "passed">;
+  ticket_id: number | null;
+  note: string | null;
+  fetched_at: string;
+  handled_at: string | null;
+  project_id: Generated<number>;
+}
+
 export interface TicketQuestionsTable {
   id: Generated<number>;
   ticket_id: number;
@@ -517,6 +532,7 @@ export interface ProjectDatabase {
   ticket_deps: TicketDepsTable;
   ticket_notes: TicketNotesTable;
   ticket_questions: TicketQuestionsTable;
+  github_issues: GithubIssuesTable;
   tickets: TicketsTable;
   units: UnitsTable;
 }

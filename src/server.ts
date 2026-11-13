@@ -20,6 +20,7 @@ import { currentWorkspaceId, Hq, kuramotoHome, workDirFor, type ProjectRecord } 
 import { Dispatcher } from "./project/dispatcher.js";
 import { recoverStale } from "./project/inbox.js";
 import { autoMerge, autoMergeEnabled, ownerMerge, suggestedMergeOrder, type TeamCiHook } from "./project/merge.js";
+import { issueCommentEnabled } from "./project/issues.js";
 import { patrolMinutes, setPatrolMinutes, startPatrol } from "./project/patrol.js";
 import type { DbHealth, DbHealthState } from "./db/mysql-health.js";
 import { ciBlockAction, ciBlocked, githubDown } from "./project/outage.js";
@@ -600,6 +601,7 @@ export class KuramotoServer {
         autoMerge: await autoMergeEnabled(p),
         resumeChecks: await resumeChecks(p),
         patrolMin: await patrolMinutes(p),
+        issueComment: await issueCommentEnabled(p),
         planWeb: await planWebEnabled(p),
         planWebDomains: (await planWebDomains(p)).join("\n"),
         ciMode: await teamCiEnabled(p) ? "team" : "github",
@@ -619,6 +621,7 @@ export class KuramotoServer {
       if (typeof body.autoMerge === "boolean") await p.setSetting("auto_merge", body.autoMerge ? "1" : "0");
       if (typeof body.resumeChecks === "boolean") await p.setSetting("resume_checks", body.resumeChecks ? "1" : "0");
       if (body.patrolMin !== undefined) await setPatrolMinutes(p, Number(body.patrolMin));
+      if (typeof body.issueComment === "boolean") await p.setSetting("issue_comment", body.issueComment ? "1" : "0");
       if (typeof body.planWeb === "boolean") await p.setSetting("plan_web", body.planWeb ? "1" : "0");
       if (typeof body.planWebDomains === "string") await p.setSetting("plan_web_domains", body.planWebDomains.trim());
       if (body.ciCommands && typeof body.ciCommands === "object")
