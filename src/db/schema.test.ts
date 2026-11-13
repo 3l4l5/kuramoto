@@ -95,7 +95,7 @@ describe("版 19: R15〜R17 とメンバーとの会話", () => {
   });
 
   it("表・列・索引を足すだけで、作り直し・RENAME・列の削除をせず、新しい列に CHECK を付けない", () => {
-    const sql = PROJECT_MIGRATIONS[V19 - 1]!;
+    const sql = PROJECT_MIGRATIONS[V19 - 1] as string;
     expect(sql).not.toMatch(/\bRENAME\b|\bDROP\b|_new\b/i);
     expect(sql).not.toMatch(/\bCHECK\b/i);
     const statements = sql.split(";").map((s) => s.replace(/--.*$/gm, "").trim()).filter(Boolean);
