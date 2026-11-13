@@ -20,6 +20,14 @@
 - **画像で見比べる**: 開発と QA に `compare_screen` を渡す。担当が撮った実装のスクリーンショットを、Kuramoto がお手本と比べ、違う画素の割合と、違うところを赤く塗った画像を返す。QA は違いが 10% を超えるか、要素・文言・並びが違えば指摘にする。チケットの画面に「お手本 / 実装 / 違い」を並べる。
 - **画像の置き場所**: 画像そのものはデータの置き場所の `design/` に置き、DB(`design_images`)には置き場所・大きさ・違いの割合だけを残す。置き場所は `DesignStore` で差し替えられ、S3(FastFS など)に替えられる。試作の HTML とデザインシステムは、これまでどおり DB(企画の中身)に置く。
 
+- **画面の描画はサーバが行う(`render_page`)**: 担当の作業場所(サンドボックス)の中ではブラウザを起動できない([ADR-0020](0020-confine-agents-to-worktree.md))ので、開発と QA に `render_page` を渡す。担当がアプリ(`npm run dev` など)を動かし、そのローカルの URL(`http://localhost:…`・`127.0.0.1`・`[::1]`)か、作業場所の HTML(試作など)と、幅(390 か 1280)を渡すと、サーバがブラウザで描き、ページ全体の PNG を作業場所の `.kuramoto/design/shots/<name>-<幅>.png` に置く(git には入らない)。それを `compare_screen` に渡せば、お手本と比べられる。
+  - 描く URL は、この機械の中の http(s)(`localhost`・`127.0.0.1`・`[::1]`)だけに絞る。`file:`・作業場所の外のファイルは描かない。
+  - **描いている間のページの通信も、この機械の中(と `data:`・`blob:`)だけ**にする。担当が書いた HTML も、担当が動かしたアプリも、サンドボックスの外のサーバのブラウザで動くので、外へ送らせない(`strictAllowlist` を素通りさせない)。URL の描画にも HTML の描画にも掛ける。要求(http・https)は `route`、WebSocket は `routeWebSocket` で外の宛先を止め、ブラウザ自体にも届かないプロキシを指定して、止め漏れがあっても外へ出ないようにする。お手本の画像(合意した試作を描く `playwrightRenderer`)は、外のフォントなどを読めるまま。`render_page` の HTML は絞った描き手(`playwrightLocalHtmlRenderer`)で描く。
+  - **Kuramoto 自身のポートは描かない**。ローカルからは合言葉なしで入れるので、別のプロジェクトの中身まで画像で読めてしまう。URL としても、描いている間の通信としても断る(`blockRenderPort`)。
+  - **プロジェクトの設定 `sandbox_strict_sockets` が 1 のときは、URL を描かない**(HTML は描く)。担当からのローカルの通信を閉じているのに、サーバの側から localhost に届いて抜け道になるのを防ぐ。
+  - お手本の画像と同じ `playwrightRenderer` の作りで描く(`design-visual.ts`)。サーバの側に Chrome(または Playwright の Chromium)があれば動く。
+  - 合意した試作の HTML・お手本の画像・デザインシステムは、これまでどおり作業場所の `.kuramoto/design/` に置き、その場所を環境変数 `KURAMOTO_DESIGN_DIR` で担当に渡す。
+
 ## 結果
 
 - 色・文字・部品が、企画・試作・実装で同じ決まりになる。

@@ -26,7 +26,7 @@ import { ciBlockAction, ciBlocked, githubDown } from "./project/outage.js";
 import { fetchGithubSnapshot, markExisting } from "./project/onboard.js";
 import { runTeamCi, SandboxRunner, teamCiEnabled, type CommandRunner } from "./project/team-ci.js";
 import { leadReply } from "./project/leadchat.js";
-import { FileDesignStore, imageRow, playwrightRenderer, referenceImage, type DesignStore, type Renderer } from "./project/design-visual.js";
+import { FileDesignStore, imageRow, blockRenderPort, playwrightLocalHtmlRenderer, playwrightRenderer, playwrightUrlRenderer, referenceImage, type DesignStore, type Renderer, type UrlRenderer } from "./project/design-visual.js";
 import { zip } from "./project/zip.js";
 import { planWebDomains, planWebEnabled } from "./project/web-access.js";
 import { metrics } from "./project/metrics.js";
@@ -86,6 +86,8 @@ export type ServerDeps = {
   /** 画面の画像の置き場所(既定はデータの置き場所のファイル)と、試作を画像にする描き手(既定は手元の Chrome)。 */
   designStoreFor?: (dataDir: string) => DesignStore;
   renderer?: Renderer;
+  urlRenderer?: UrlRenderer;
+  localHtmlRenderer?: Renderer;
   /**
    * 他の PC から見られるようにする(npm run start:public)。どの Host でも受けるが、合言葉(トークン)を求める。
    * 合言葉は URL の ?token= で一度渡すと Cookie に入り、以後はそれで通る。この PC 自身(localhost)からは合言葉なしで使える。
@@ -241,6 +243,8 @@ export class KuramotoServer {
       checkRunner: this.checkRunner,
       designStore: this.designStoreFor(id),
       renderer: this.deps.renderer ?? playwrightRenderer,
+      urlRenderer: this.deps.urlRenderer ?? playwrightUrlRenderer,
+      localHtmlRenderer: this.deps.localHtmlRenderer ?? playwrightLocalHtmlRenderer,
       workspace,
       ticketsAllowed: () => this.running.has(id),
       triage: true,
@@ -1030,6 +1034,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     ...(token ? { publicToken: token } : {}),
   });
   await app.resume();
+  // Kuramoto 自身のポートは、担当に描かせない(render_page)
+  blockRenderPort(port);
   const server = createServer((req, res) => void app.handle(req, res));
   server.listen(port, open ? "0.0.0.0" : "127.0.0.1", () => {
     console.log(`Kuramoto: http://localhost:${port}`);

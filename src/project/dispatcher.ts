@@ -18,8 +18,8 @@ import { ciTools } from "./ci-tools.js";
 import { githubReadTools } from "./github-read.js";
 import { planWebNote, planWebTools } from "./web-access.js";
 import { designFor, designPrompt, designSystemFiles, isDesignSystemTicket } from "./design.js";
-import { compareScreenTools } from "./design-tools.js";
-import { referenceImage, type DesignStore, type Renderer } from "./design-visual.js";
+import { compareScreenTools, renderPageTools } from "./design-tools.js";
+import { referenceImage, type DesignStore, type Renderer, type UrlRenderer } from "./design-visual.js";
 import { designSystem } from "./planning.js";
 import { canResume, noteSession } from "./sessions.js";
 import { agentJudge, checkBeforePr } from "./dev-rules.js";
@@ -53,6 +53,10 @@ export type DispatcherDeps = {
   /** 画面の画像(お手本・実装・違い)の置き場所と、試作を画像にする描き手(ADR-0034)。無ければ画像では見比べない。 */
   designStore?: DesignStore;
   renderer?: Renderer;
+  /** 担当が書いた HTML を描く(render_page 用。ページの通信はこの機械の中だけ)。 */
+  localHtmlRenderer?: Renderer;
+  /** URL を描く(担当の作業場所では描けないので、サーバの側で描く。ページの通信はこの機械の中だけ)。 */
+  urlRenderer?: UrlRenderer;
 };
 
 type Job = { msg: MessageRow; member: MemberRow; role: Role; ticket: TicketRow | null };
@@ -481,6 +485,10 @@ export class Dispatcher {
       if (files.length) await this.deps.workspace.writeDesign?.(ws.path, ws.gitDir, files);
       const compareTools =
         refs.size && (role === "dev" || role === "qa") && this.deps.designStore ? compareScreenTools(p, this.deps.designStore, ticket, ws.path, ws.gitDir, refs, this.deps.workspace) : [];
+      const renderTools =
+        (role === "dev" || role === "qa") && this.deps.localHtmlRenderer && this.deps.urlRenderer
+          ? renderPageTools(ws.path, ws.gitDir, this.deps.workspace, { html: this.deps.localHtmlRenderer, url: this.deps.urlRenderer, allowUrl: (await p.setting("sandbox_strict_sockets")) !== "1" })
+          : [];
       result = await harness.run({
         cwd: ws.path,
         confine: await confinementFor(p, ws, role),
@@ -493,6 +501,7 @@ export class Dispatcher {
           // PR がある開発には、CI を調べる道具を渡す(作業場所からは GitHub が見えないため)
           ...(role === "dev" && msg.kind !== "implement" ? await ciTools(p, this.deps.github, { ticket }) : []),
           ...compareTools,
+          ...renderTools,
           ...toolsFor(msg.kind, report, {
           mustAnswer: msg.kind === "fix" && !JSON.parse(msg.payload).conflict ? (await mustAnswer(p, ticket.id)).map((t) => t.id) : [],
           preDev,

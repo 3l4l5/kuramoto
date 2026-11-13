@@ -19,6 +19,8 @@
   - テストを確かめられるように、ホームの下のツールの置き場所(`~/.npm`・`~/.cache`・`~/Library/Caches`・mise の状態と取り込み先など)には書ける。プロジェクトの設定 `sandbox_allow_write` で足せる。
   - テスト用のブラウザと e2e のために、Unix ソケットと localhost での待ち受けを許す(Chrome は起動のたびにプロファイルにソケットを作る)。設定 `sandbox_strict_sockets` を `1` にすると閉じる。
   - mise は知らない場所の設定ファイルを信用しないので、`MISE_TRUSTED_CONFIG_PATHS` で作業場所の設定を信用させる。
+  - 合意した試作の場所を、環境変数 `KURAMOTO_DESIGN_DIR`(作業場所の `.kuramoto/design`)で渡す。e2e などが試作とお手本の画像を読める。置き場所は作業場所の中なので、読める範囲は広がらない。
+  - **ブラウザは作業場所の中では動かさない**。描画(スクリーンショット)は、サンドボックスの外のサーバが `render_page` で行う([ADR-0034](0034-design-system-and-visual-compare.md))。そのため、書ける場所・通信してよいドメインは増やさない(Playwright のブラウザの取得先 `cdn.playwright.dev` なども足さない)。
 - **push と PR**: エージェントはコミットまで。`submit_pr` を受けたら Kuramoto が外で確かめ(コミットし忘れ・コミットが無い)、push(`--force-with-lease`)して、PR が無ければ作る。エージェントは PR のタイトルと本文を渡せる。
 - **レビュー**: `gh pr diff` をやめ、Kuramoto が取り出したブランチを `git diff origin/<既定のブランチ>...HEAD` で見る。
 - **衝突の直し**: Kuramoto が起動の前に fetch しておき、エージェントは `git merge origin/<既定のブランチ>` で解く。
@@ -31,6 +33,7 @@
 - 最初の版では作業場所をデータの置き場所の中に置き、`allowRead` で開け直していた。実機で試すと、作業場所のファイルも `~/.npm` も mise の node も読めなかった(`allowRead` を渡すと読める場所がそこだけに絞られ、書ける場所の中の値は外される)。置き場所を分けた。さらに、ファイルの道具に効かせた「作業場所の外を読ませない」設定はシェルの読み込みにも効き、ホームの下は作業場所しか読めなかった(`~/.npm` に書けても読めない、mise の node が起動できない)。git の本体・ツールチェーン(mise・nix・PATH のうちホームの下の場所)・git の設定・書ける場所を `allowRead` で名指しして開ける形にした。隠す場所の中は開けない。前の worktree(`~/.kuramoto/.../worktrees`)は使われなくなるので、消してよい。
 - 最初の版ではツールの置き場所に書けず、ソケットも閉じていたため、QA が node(mise)もブラウザも動かせなかった(#10 で、確かめられないまま指摘が増えた)。置き場所とソケットを開けて直した。
 - ソケットを開けると、ローカルで動いている別のサービスのソケットにつながる余地が残る。SSH エージェントと Docker は環境変数と置き場所を隠して塞いだ。もっと強く閉じたいプロジェクトは `sandbox_strict_sockets` を使う。
+- 作業場所の中で Chrome(headless)を起動すると、`Failed to create socket directory` / `Failed to create a ProcessSingleton` で落ちる(#74 が 3 回止まった原因)。実機で確かめると、`TMPDIR` を `/tmp/claude-501` のような短い書ける場所に替えても落ちた。Chrome は起動のたびにプロセスの単一化(ProcessSingleton)のソケットの置き場所を作るが、`TMPDIR` を見ていない(OS の一時ディレクトリ `/var/folders/…` を使っている)見込みで、サンドボックスがそこへの書き込みを止める(原因までは特定できていない)。Chrome にはこれを切る設定が無い。Playwright の `chromium-headless-shell` は ProcessSingleton を持たないので動く見込みがあるが、取得に `cdn.playwright.dev` を許す必要があり、取得先の許可を広げることになる。書ける場所と通信を広げて「動くかもしれない」に賭けるより、描画だけをサーバの外に出す形にした。
 - サンドボックスが使えない環境(macOS・Linux 以外、Linux で bubblewrap が無いなど)では、どの起動もエラーで止まる。
 
 ## 検討した別案

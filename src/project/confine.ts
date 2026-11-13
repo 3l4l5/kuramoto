@@ -5,6 +5,7 @@ import { DATABASE_URL_ENV } from "../db/env.js";
 import type { Role } from "../domain/roles.js";
 import type { Confinement } from "../harness/types.js";
 import { kuramotoHome } from "../hq.js";
+import { DESIGN_DIR } from "./design.js";
 import type { Project } from "./project.js";
 import type { PreparedWorkspace } from "./workspace.js";
 
@@ -120,6 +121,7 @@ export async function confinementFor(p: Project, ws: PreparedWorkspace, role: Ro
     // 設定 sandbox_strict_sockets を 1 にすると、ソケットを閉じる(ブラウザでの確かめ・e2e は動かなくなる)
     allowLocalSockets: await p.setting("sandbox_strict_sockets") !== "1",
     // mise は知らない場所の設定ファイルを信用しないので、作業場所の設定を信用させる(node などの版を選べるように)
-    env: { MISE_TRUSTED_CONFIG_PATHS: ws.path, MISE_YES: "1" },
+    // 合意した試作(HTML・お手本の画像)の場所。e2e などが読む(ADR-0034)
+    env: { MISE_TRUSTED_CONFIG_PATHS: ws.path, MISE_YES: "1", KURAMOTO_DESIGN_DIR: join(ws.path, DESIGN_DIR) },
   };
 }
