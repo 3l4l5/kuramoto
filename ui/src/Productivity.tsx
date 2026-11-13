@@ -4,10 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { api, type ProductivityView } from "./api";
 import { usd } from "./format";
 import { Btn } from "./ui";
-import { KINDS, KIND_SHAPE, KindChip } from "./kind";
+import { KINDS, KIND_SHAPE } from "./kind";
 
 /**
- * 開発生産性(docs/design.md 8 章)。トークン・金額・PR・手戻り・人間に助けを求めた数を、記録から数えて見せる。
+ * 開発生産性(docs/design.md 8 章、企画の試作 metrics に合わせた並び)。トークン・金額・PR・手戻り・人間に助けを求めた数を、記録から数えて見せる。
  * グラフは指標ごとに 1 つ(1 系列なので凡例は置かず、題で名前を示す)。色はデジタル庁デザインシステムの key(青)。
  */
 export const useProductivity = (id: number) => useQuery({ queryKey: ["productivity", id], queryFn: () => api<ProductivityView>("GET", `/projects/${id}/productivity`) });
@@ -17,7 +17,8 @@ const int = (v: number) => String(Math.round(v));
 
 type View = "flow" | "trend" | "cost" | "tickets" | "members";
 type Mode = "graph" | "table";
-const VIEW_LABEL: Record<View, string> = { flow: "流れ", trend: "日ごとの推移", cost: "金額の内訳", tickets: "チケットごと", members: "メンバー" };
+// 試作(metrics)の並び: 日ごとの推移 / 金額の内訳 / チケットごと。流れとメンバーは試作に無いが、機能として残すので、そのあとに並べる
+const VIEW_LABEL: Record<View, string> = { trend: "日ごとの推移", cost: "金額の内訳", tickets: "チケットごと", flow: "流れ", members: "メンバー" };
 
 /** かかった時間(ミリ秒)を、分・時間・日で短く。 */
 const span = (ms: number | null) => {
@@ -26,70 +27,116 @@ const span = (ms: number | null) => {
   const m = ms / 60_000;
   return m < 60 ? `${Math.round(m)} 分` : m < 60 * 48 ? `${(m / 60).toFixed(1)} 時間` : `${(m / 60 / 24).toFixed(1)} 日`;
 };
+/** チケットごとの表の「かかった時間」: 3h 20m / 1h 05m / 40m。 */
+const hm = (ms: number) => {
+  const min = Math.round(ms / 60_000);
+  return min < 60 ? `${min}m` : `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, "0")}m`;
+};
 /** 1 時間ごとの目盛り: 「14時」(0 時だけ日付も)。 */
 const hourTick = (l: string) => (l.endsWith(" 00時") ? l.slice(5, 10) : l.slice(11));
 const pct = (v: number | null) => (v == null ? "—" : `${Math.round(v * 100)}%`);
 
-export function ProductivityPage({ id }: { id: number }) {
+/** 合計の題の「この N 日」: 最初の記録の日から今日まで(記録が無ければ日数は出さない)。 */
+const periodDays = (first: string | undefined) => {
+  if (!first) return null;
+  const [y, m, d] = first.split("-").map(Number) as [number, number, number];
+  const now = new Date();
+  return Math.max(1, Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - new Date(y, m - 1, d).getTime()) / 86_400_000) + 1);
+};
+
+/** 画面の右上(ヘッダー)の指標: フロー効率と編成の版・完成 1 件あたりのトークン・判断の回数。 */
+export function MetricsKpi({ id }: { id: number }) {
   const { data } = useProductivity(id);
-  const [view, setView] = useState<View>("flow");
-  const [mode, setMode] = useState<Mode>("graph");
-  if (!data) return <section aria-label="生産性" />;
+  if (!data) return null;
   const t = data.totals;
   return (
+    <div className="kpi" role="group" aria-label="主な指標">
+      <span>
+        フロー効率{t.formationVersion != null && ` · 編成 v${t.formationVersion}`}
+        <b>{pct(data.flow.flowEfficiency)}</b>
+      </span>
+      <span>
+        完成 1 件あたり<b>{t.tokensPerCompleted == null ? "—" : tok(t.tokensPerCompleted)}</b>
+      </span>
+      <span>
+        判断の回数<b>{t.decisionsPerTicket == null ? "—" : `${t.decisionsPerTicket.toFixed(1)} / 件`}</b>
+      </span>
+    </div>
+  );
+}
+
+export function ProductivityPage({ id }: { id: number }) {
+  const { data } = useProductivity(id);
+  const [view, setView] = useState<View>("tickets");
+  const [mode, setMode] = useState<Mode>("graph");
+  const [kind, setKind] = useState("all"); // チケットごとの表の、種類の絞り込み(R17)
+  if (!data) return <section aria-label="生産性" />;
+  const t = data.totals;
+  const days = periodDays(data.daily[0]?.day);
+  return (
     <section className="prod" aria-label="生産性">
-      <div>
-        <h2>開発生産性</h2>
-        <p className="hint">エージェントの起動・PR・レビュー・判断の記録から数えています(企画スタジオの担当の分も含みます)。</p>
-      </div>
-
-      <div className="tiles" role="list" aria-label="合計">
-        <Tile label="消費トークン" value={tok(t.tokens)} note={`入力 ${tok(t.inputTokens)} · 出力 ${tok(t.outputTokens)} · キャッシュ ${tok(t.cacheReadTokens)}`} />
-        <Tile label="使った金額" value={usd(t.costUsd)} note={`うち企画スタジオ ${usd(t.planningCostUsd)} · 起動 ${t.runs} 回`} />
-        <Tile label="PR" value={`${t.prs}`} note={`merge した ${t.merged}`} />
-        <Tile label="完成したチケット" value={`${t.completed}`} note={`1 件あたり ${usd(t.costPerCompletedUsd)} · ${t.tokensPerCompleted == null ? "—" : tok(t.tokensPerCompleted)} トークン`} />
-        <Tile label="手戻り" value={`${t.rework.total}`} note={`差し戻し ${t.rework.changes} · 衝突 ${t.rework.conflicts} · エラーでやり直し ${t.rework.retries}`} />
-        <Tile label="人間に助けを求めた" value={`${t.help.total}`} note={`判断カード ${t.help.decisions} · 企画の未決 ${t.help.planAsks}`} />
-        <Tile label="ルール違反" value={`${t.ruleViolations.total}`} note={`うち自動で直した ${t.ruleViolations.autofixed}`} />
-      </div>
-
-      <div className="viewbar">
-        <div className="sectabs" role="tablist" aria-label="指標の見方">
-          {(Object.keys(VIEW_LABEL) as View[]).map((v) => (
-            <button type="button" role="tab" key={v} aria-selected={view === v} onClick={() => setView(v)}>
-              {VIEW_LABEL[v]}
-            </button>
-          ))}
+      <h2 className="sr-only">生産性</h2>
+      <section className="panel" aria-label="合計の指標">
+        <p className="sub">合計{days != null && ` · この ${days} 日`}</p>
+        <div className="tiles" role="list" aria-label="合計">
+          <Tile label="トークン" value={tok(t.tokens)} />
+          <Tile label="金額" value={usd(t.costUsd)} />
+          <Tile label="PR / 完成" value={`${t.prs} / ${t.completed}`} />
+          <Tile label="手戻り" value={`${t.rework.total}`} />
+          <Tile label="人に助けを求めた" value={`${t.help.total}`} />
+          <Tile label="ルール違反" value={`${t.ruleViolations.total}`} note={`うち自動で直した ${t.ruleViolations.autofixed}`} fresh />
+          <Tile label="質問(島どうし)" value={`${t.questions.islands}`} />
+          <Tile label="経路が無くリーダーへ" value={`${t.questions.noRoute}`} />
         </div>
-        <div className="mode" role="group" aria-label="表示">
-          <Btn kind={mode === "graph" ? "solid-fill" : "outline"} size="sm" aria-pressed={mode === "graph"} onClick={() => setMode("graph")}>
-            グラフ
-          </Btn>
-          <Btn kind={mode === "table" ? "solid-fill" : "outline"} size="sm" aria-pressed={mode === "table"} onClick={() => setMode("table")}>
-            表
-          </Btn>
-        </div>
-      </div>
+      </section>
 
-      <div role="tabpanel" aria-label={VIEW_LABEL[view]}>
-        {view === "flow" && <Flow data={data} mode={mode} />}
-        {view === "members" && <Members data={data} />}
-        {view === "trend" && <Trend data={data} mode={mode} />}
-        {view === "cost" && <Cost data={data} mode={mode} />}
-        {view === "tickets" && <Tickets data={data} mode={mode} />}
-      </div>
+      {/* どの表示にしても、この図は残る(R16) */}
+      <section className="panel" aria-label="フロー効率の推移">
+        <EfficiencyTrend data={data} />
+      </section>
+
+      <section className="panel wide" aria-label="指標の中身">
+        <div className="bar">
+          <div className="sectabs" role="tablist" aria-label="指標の見方">
+            {(Object.keys(VIEW_LABEL) as View[]).map((v) => (
+              <button type="button" role="tab" key={v} aria-selected={view === v} onClick={() => setView(v)}>
+                {VIEW_LABEL[v]}
+              </button>
+            ))}
+          </div>
+          {view === "tickets" ? (
+            <TicketKindFilter kind={kind} onChange={setKind} />
+          ) : (
+            <div className="mode" role="group" aria-label="表示">
+              <Btn kind={mode === "graph" ? "solid-fill" : "outline"} size="sm" aria-pressed={mode === "graph"} onClick={() => setMode("graph")}>
+                グラフ
+              </Btn>
+              <Btn kind={mode === "table" ? "solid-fill" : "outline"} size="sm" aria-pressed={mode === "table"} onClick={() => setMode("table")}>
+                表
+              </Btn>
+            </div>
+          )}
+        </div>
+        <div role="tabpanel" aria-label={VIEW_LABEL[view]}>
+          {view === "flow" && <Flow data={data} mode={mode} />}
+          {view === "members" && <Members data={data} />}
+          {view === "trend" && <Trend data={data} mode={mode} />}
+          {view === "cost" && <Cost data={data} mode={mode} />}
+          {view === "tickets" && <Tickets data={data} kind={kind} />}
+        </div>
+      </section>
     </section>
   );
 }
 
 const STAGE: Record<string, string> = { dev: "開発", review: "レビュー", sec: "セキュリティ", qa: "QA", decision: "判断待ち", merge: "merge 待ち", done: "完了", dropped: "取りやめ" };
 
-function Tile({ label, value, note }: { label: string; value: string; note: string }) {
+function Tile({ label, value, note, fresh }: { label: string; value: string; note?: string; fresh?: boolean }) {
   return (
-    <div className="tile" role="listitem" aria-label={label}>
+    <div className={`tile${fresh ? " fresh" : ""}`} role="listitem" aria-label={label}>
       <div className="l">{label}</div>
       <div className="v">{value}</div>
-      <div className="n">{note}</div>
+      {note && <div className="n">{note}</div>}
     </div>
   );
 }
@@ -158,6 +205,7 @@ function BarChart({ title, rows, fmt, tick = (l) => l.slice(5) }: { title: strin
  */
 const CHANGED_LABEL: Record<string, string> = { routes: "連絡経路", flows: "流れ", units: "島" };
 function EfficiencyTrend({ data }: { data: ProductivityView }) {
+  const [picked, setPicked] = useState<number | null>(null); // 押した札の版
   const rows = data.flow.efficiencyDaily;
   const marks = data.flow.formationMarks;
   const days = [...new Set([...rows.map((r) => r.day), ...marks.map((m) => m.day)])].sort();
@@ -186,21 +234,39 @@ function EfficiencyTrend({ data }: { data: ProductivityView }) {
   const y = (v: number) => T + (1 - v / top) * (H - T - B);
   return (
     <figure className="chart" aria-label="フロー効率の推移と編成を変えた日">
-      <figcaption>
-        <span>フロー効率の推移 · 編成を変えた日</span>
-      </figcaption>
+      <figcaption className="sub">フロー効率の推移 · 編成を変えた日</figcaption>
       <div className="plot">
-        <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`フロー効率の推移: ${rows.map((r) => `${r.day} ${Math.round(r.value * 100)}%`).join("、") || "まだありません"}`}>
+        {/* 札は押せるボタンなので、svg には role="img" を付けない(img の子は支援技術から見えない)。数字の要約は別の文に持たせる */}
+        <p className="sr-only">フロー効率の推移: {rows.map((r) => `${r.day} ${Math.round(r.value * 100)}%`).join("、") || "まだありません"}</p>
+        <svg viewBox={`0 0 ${W} ${H}`}>
           <line x1={L} x2={W - R} y1={H - B} y2={H - B} className="axis" />
           <line x1={L} x2={W - R} y1={y(top)} y2={y(top)} className="grid" />
+          <line x1={L} x2={W - R} y1={y(top / 2)} y2={y(top / 2)} className="grid" />
           <text x={0} y={H - B + 4} className="tick">0%</text>
+          <text x={0} y={y(top / 2) + 4} className="tick">{Math.round((top / 2) * 100)}%</text>
           <text x={0} y={y(top) + 4} className="tick">{Math.round(top * 100)}%</text>
           {rows.length > 1 && <polyline fill="none" className="line" stroke="var(--dev)" strokeWidth={2} points={rows.map((r) => `${x(r.day)},${y(r.value)}`).join(" ")} />}
-          {rows.map((r) => <circle key={r.day} cx={x(r.day)} cy={y(r.value)} r={3} fill="var(--dev)" />)}
+          {rows.length > 0 && <circle cx={x(rows.at(-1)!.day)} cy={y(rows.at(-1)!.value)} r={4} fill="var(--dev)" />}
           {cards.map(({ m, text, w, left, lane }) => (
-            <g key={m.version} className="mark" data-version={m.version} data-lane={lane}>
+            <g
+              key={m.version}
+              className="mark"
+              data-version={m.version}
+              data-lane={lane}
+              role="button"
+              tabIndex={0}
+              aria-pressed={picked === m.version}
+              aria-label={`${text} の変えたことを${picked === m.version ? "閉じる" : "見る"}`}
+              onClick={() => setPicked(picked === m.version ? null : m.version)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setPicked(picked === m.version ? null : m.version);
+                }
+              }}
+            >
               <line x1={x(m.day)} x2={x(m.day)} y1={laneY(lane) + CARD_H} y2={H - B} stroke="var(--lead)" strokeDasharray="4 3" />
-              <rect x={left} y={laneY(lane)} width={w} height={CARD_H} rx={6} fill="var(--lead-soft)" />
+              <rect x={left} y={laneY(lane)} width={w} height={CARD_H} rx={6} fill="var(--lead-soft)" stroke={picked === m.version ? "var(--lead)" : "none"} />
               <text x={left + 6} y={laneY(lane) + 14} style={{ fill: "var(--lead)", fontSize: "var(--fs-xs)" }}>{text}</text>
             </g>
           ))}
@@ -208,7 +274,17 @@ function EfficiencyTrend({ data }: { data: ProductivityView }) {
           <text x={W - R} y={H - 8} textAnchor="end" className="tick">{days.at(-1)!.slice(5)}</text>
         </svg>
       </div>
-      <p className="hint">{marks.length > 0 ? "縦の点線は、編成の版が上がった日です。札に、何を変えたか(連絡経路 / 流れ / 島)を出します。" : "編成を変えた日はまだありません。編成の版が上がると、その日に縦の点線が入ります。"}</p>
+      {(() => {
+        const mark = marks.find((m) => m.version === picked);
+        if (mark)
+          return (
+            <div className="markdetail" role="status">
+              <b>v{mark.version} で変えたこと</b>
+              <ul>{mark.detail.map((d) => <li key={d}>{d}</li>)}</ul>
+            </div>
+          );
+        return <p className="hint">{marks.length > 0 ? "札を押すと、その版で変えたこと(例: 開発 ↔ レビューを「質問・相談できる」に)が出る" : "編成を変えた日はまだありません。編成の版が上がると、その日に縦の点線と札が入ります。"}</p>;
+      })()}
     </figure>
   );
 }
@@ -331,86 +407,93 @@ function Cost({ data, mode }: P) {
   );
 }
 
-function Tickets({ data, mode }: P) {
-  // 種類で絞り込む(R17)
-  const [kind, setKind] = useState("all");
-  const rows = kind === "all" ? data.tickets : data.tickets.filter((x) => x.kind === kind);
-  if (data.tickets.length === 0) return <p className="hint">まだチケットがありません。</p>;
-  const bar = (
-    <div className="kindfilter-row">
+/** 種類の絞り込み(R17)。試作の並び: 「種類」の字・全部・● 機能 …。 */
+function TicketKindFilter({ kind, onChange }: { kind: string; onChange: (k: string) => void }) {
+  return (
+    <div className="types">
       <span>種類</span>
       <Segmented
         label="種類で絞り込み"
+        className="pills"
         value={kind}
-        onChange={setKind}
+        onChange={onChange}
         options={[{ value: "all", label: "全部" }, ...KINDS.map((k) => ({ value: k.key as string, label: `${KIND_SHAPE[k.key]} ${k.label}` }))]}
       />
-      <span className="hint">{rows.length} 件</span>
     </div>
   );
-  if (mode === "graph")
-    return (
-      <>
-        {bar}
-        <p className="hint">{rows.length === 0 ? "この種類のチケットはまだありません。" : "チケットごとの金額(多い順)。"}</p>
-        {rows.length > 0 && <CostBars
-          rows={[...rows].sort((a, b) => b.costUsd - a.costUsd).map((x) => ({ key: String(x.id), label: `#${x.number} ${x.title}`, costUsd: x.costUsd, tokens: x.tokens, runs: x.runs }))}
-          total={rows.reduce((s, x) => s + x.costUsd, 0)}
-          label="チケットごとの金額"
-        />}
-      </>
-    );
+}
+
+/** チケットの状態(試作の札): 工程の名前。完了は「完成」、ルール違反で止まっているときは「止まっている」。 */
+const TICKET_STATE: Record<string, { label: string; tone: "default" | "ok" | "warn" | "danger" | "neutral" }> = {
+  dev: { label: "開発", tone: "default" },
+  review: { label: "レビュー", tone: "default" },
+  sec: { label: "セキュリティ", tone: "default" },
+  qa: { label: "QA", tone: "default" },
+  decision: { label: "判断待ち", tone: "warn" },
+  merge: { label: "merge 待ち", tone: "ok" },
+  done: { label: "完成", tone: "ok" },
+  dropped: { label: "取りやめ", tone: "neutral" },
+};
+
+/** チケットごと(試作の表: 番号・種類・チケット・トークン・金額・往復・ルール違反・かかった時間・状態)。 */
+function Tickets({ data, kind }: { data: ProductivityView; kind: string }) {
+  if (data.tickets.length === 0) return <p className="hint">まだチケットがありません。</p>;
+  const rows = kind === "all" ? data.tickets : data.tickets.filter((x) => x.kind === kind);
+  if (rows.length === 0) return <p className="hint">この種類のチケットはまだありません。</p>;
   return (
     <div className="tablewrap">
-      {bar}
       <table className="tickets" aria-label="チケットごとの指標">
         <thead>
           <tr>
-            <th>チケット</th>
+            <th>番号</th>
             <th>種類</th>
-            <th>状態</th>
-            <th>金額</th>
+            <th>チケット</th>
             <th>トークン</th>
-            <th>起動</th>
-            <th>PR</th>
-            <th>差し戻し</th>
-            <th>衝突</th>
-            <th>やり直し</th>
+            <th>金額</th>
+            <th>往復</th>
             <th>ルール違反</th>
-            <th>助けを求めた</th>
+            <th>かかった時間</th>
+            <th>状態</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((x) => (
-            <tr key={x.id}>
-              <th>
-                #{x.number} {x.title}
-              </th>
-              <td>
-                <KindChip kind={x.kind} label={KINDS.find((k) => k.key === x.kind)?.label ?? x.kind} />
-              </td>
-              <td>{STAGE[x.stage] ?? x.stage}</td>
-              <td>{usd(x.costUsd)}</td>
-              <td>{tok(x.tokens)}</td>
-              <td>{x.runs}</td>
-              <td>{x.prs}</td>
-              <td>{x.rounds}</td>
-              <td>{x.conflicts}</td>
-              <td>{x.retries}</td>
-              <td>
-                {x.violations === 0 ? (
-                  "—"
-                ) : (
-                  <span className="viol">
-                    {x.autofixed > 0 && <Chip tone="ok">{x.autofixed} · 自動で直した</Chip>}
-                    {x.reviewed > 0 && <Chip tone="warn">{x.reviewed} · レビューで指摘</Chip>}
-                    {x.blocked > 0 && <Chip tone="danger">{x.blocked} · 直すまで止める</Chip>}
+          {rows.map((x) => {
+            // 状態の札: ルール違反で止まっている > 予算切れ > 工程の名前
+            const state = x.stopped
+              ? { label: "止まっている", tone: "danger" as const }
+              : x.budgetStopped
+                ? { label: "予算切れ", tone: "warn" as const }
+                : (TICKET_STATE[x.stage] ?? { label: x.stage, tone: "neutral" as const });
+            return (
+              <tr key={x.id}>
+                <td className="id">#{x.number}</td>
+                <td>
+                  <span className="kindname" title={`種類: ${KINDS.find((k) => k.key === x.kind)?.label ?? x.kind}`}>
+                    <span aria-hidden="true">{KIND_SHAPE[x.kind] ?? "●"}</span> {KINDS.find((k) => k.key === x.kind)?.label ?? x.kind}
                   </span>
-                )}
-              </td>
-              <td>{x.help}</td>
-            </tr>
-          ))}
+                </td>
+                <th>{x.title}</th>
+                <td>{tok(x.tokens)}</td>
+                <td>{usd(x.costUsd)}</td>
+                <td>{x.rounds}</td>
+                <td>
+                  {x.violations === 0 ? (
+                    "—"
+                  ) : (
+                    <span className="viol">
+                      {x.autofixed > 0 && <Chip tone="ok">{x.autofixed} · 自動で直した</Chip>}
+                      {x.reviewed > 0 && <Chip tone="warn">{x.reviewed} · レビューで指摘</Chip>}
+                      {x.blocked > 0 && <Chip tone="danger">{x.blocked} · 直すまで止める</Chip>}
+                    </span>
+                  )}
+                </td>
+                <td>{hm(x.activeMs)}</td>
+                <td>
+                  <Chip tone={state.tone}>{state.label}</Chip>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -456,7 +539,6 @@ function Flow({ data, mode }: P) {
         <Tile label="あなたを待った時間" value={span(f.ownerWait.totalMs)} note={`判断カード ${f.ownerWait.count} 枚(いま待っている ${f.ownerWait.pending} 枚) · 1 枚あたり中央値 ${span(f.ownerWait.median)}`} />
       </div>
 
-      <EfficiencyTrend data={data} />
       <p className="hint">直近 48 時間を 1 時間ずつ。片付いたのは merge・取りやめ・すでに入っていたもの、未完了は各時間の終わりの数です。</p>
       {mode === "graph" ? (
         <div className="charts">

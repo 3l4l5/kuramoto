@@ -6,7 +6,7 @@ import { NewProject } from "./NewProject";
 import { ProjectPage } from "./Project";
 import { TicketPage } from "./Ticket";
 import { Studio } from "./studio/Studio";
-import { ProductivityPage } from "./Productivity";
+import { MetricsKpi, ProductivityPage } from "./Productivity";
 import { SettingsPage } from "./Settings";
 import { pct, usd } from "./format";
 import { DRAWER_LABEL, useDrawerState, type Drawer } from "./Team";
@@ -62,6 +62,7 @@ export function App() {
           </div>
         )}
         <div className="spacer" />
+        {route.name === "metrics" && <MetricsKpi id={route.id} />}
         {(route.name === "project" || route.name === "ticket") && (
           <>
             <OfficeStatus id={route.id} />
