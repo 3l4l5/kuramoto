@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, post, type TeamView } from "./api";
 import { useAct } from "./hooks";
-import { MAX_MEMBERS_PER_UNIT, MAX_UNITS, pipelineOf, validateFormation, type FormationSpec, type UnitSpec } from "../../src/domain/formation";
+import { MAX_MEMBERS_PER_UNIT, type FormationSpec, type UnitSpec } from "../../src/domain/formation";
 import { EFFORTS, MODELS, ROLE_LABEL, WORK_ROLES, type WorkRole } from "../../src/domain/roles";
 import { Btn } from "./ui";
 import { LeadChat } from "./LeadChat";
+import { FormationDrawer } from "./Formation";
 import { Checkbox, Input, Select, Textarea } from "./ds";
 import { BudgetInput } from "./BudgetInput";
 
@@ -20,6 +21,7 @@ export const useTeam = (id: number) => useQuery({ queryKey: ["team", id], queryF
 
 export function TeamDrawer({ id, drawer, close }: { id: number; drawer: Drawer; close: () => void }) {
   const { data } = useTeam(id);
+  if (drawer === "formation") return data ? <FormationDrawer id={id} t={data} close={close} /> : null;
   return (
     <aside className="drawer" aria-label={DRAWER_LABEL[drawer]}>
       <header>
@@ -29,7 +31,7 @@ export function TeamDrawer({ id, drawer, close }: { id: number; drawer: Drawer; 
         </Btn>
       </header>
       <div className="pol">
-        {drawer === "lead" ? <LeadChat id={id} /> : !data ? null : drawer === "formation" ? <FormationEditor id={id} t={data} /> : <PolicyEditor id={id} t={data} />}
+        {drawer === "lead" ? <LeadChat id={id} /> : !data ? null : <PolicyEditor id={id} t={data} />}
       </div>
     </aside>
   );
@@ -43,80 +45,8 @@ export const toSpec = (v: Version): FormationSpec => ({
   units: v.units.map((u) => ({ ...u, roles: [...u.roles], repos: [...(u.repos ?? [])], model: u.model ?? null, effort: u.effort ?? null, focus: u.focus ?? null, budgetUsd: u.budgetUsd ?? null })),
 });
 
-function FormationEditor({ id, t }: { id: number; t: TeamView }) {
-  const act = useAct();
-  const current = t.formation.versions.find((v) => v.version === t.formation.current)!;
-  const [draft, setDraft] = useState<FormationSpec>(() => toSpec(current));
-  // 他の場所で版が上がったら、下書きを今の版に合わせ直す
-  useEffect(() => {
-    setDraft(toSpec(current));
-  }, [current.version]); // eslint-disable-line react-hooks/exhaustive-deps
-  const errors = validateFormation(draft, t.repos);
-  const changed = JSON.stringify(draft) !== JSON.stringify(toSpec(current));
-  const setUnit = (i: number, patch: Partial<UnitSpec>) => setDraft({ ...draft, units: draft.units.map((u, j) => (j === i ? { ...u, ...patch } : u)) });
-
-  const apply = () => act(() => post<{ version: number }>(`/projects/${id}/formation`, draft), (r) => `編成 v${r.version} を適用しました`);
-
-  return (
-    <>
-      <p className="hint">島ごとに、持つ役割と人数を決めます。同じ役割を複数の島に持たせると、手の空いている島が取ります。島に受け持つリポジトリを決めると、そのリポジトリのチケットだけを取ります(開発をフロントと API に分けるなど)。工程は持っている役割から「開発 → レビュー → セキュリティ → QA → merge 待ち」の順に組み立てます。適用すると版が上がり、席替えが起きます。</p>
-      {draft.units.map((u, i) => (
-        <div className="knobs unit" key={i}>
-          <UnitFields u={u} i={i} repos={t.repos} set={(patch) => setUnit(i, patch)} remove={draft.units.length > 1 ? () => setDraft({ ...draft, units: draft.units.filter((_, j) => j !== i) }) : undefined} />
-          {i < (t.formation.versions.find((v) => v.version === t.formation.current)?.units.length ?? 0) && t.formation.members[current.units[i]?.name ?? ""] && (
-            <div className="hint">
-              今いるメンバー: {t.formation.members[current.units[i]!.name]!.map((m) => `${m.name}${m.helper ? "(応援)" : ""}`).join("、") || "なし"}
-            </div>
-          )}
-        </div>
-      ))}
-      {draft.units.length < MAX_UNITS && (
-        <Btn kind="outline" size="sm" onClick={() => setDraft({ ...draft, units: [...draft.units, newUnit(draft)] })}>
-          + 島を足す({MAX_UNITS} つまで)
-        </Btn>
-      )}
-      <div>
-        <label className="h" htmlFor="pull">
-          仕事の取り方
-        </label>
-        <Select id="pull" size="sm" className="w-full" value={draft.pull} onChange={(e) => setDraft({ ...draft, pull: e.target.value as FormationSpec["pull"] })}>
-          <option value="down">下流優先(仕掛かりを先に片付ける)</option>
-          <option value="start">着手優先(新しいチケットを先に取る)</option>
-        </Select>
-      </div>
-      <div className="preview">
-        工程: {pipelineOf(draft).map((r) => ROLE_LABEL[r]).join(" → ")}
-        {pipelineOf(draft).length ? " → merge 待ち" : ""}
-      </div>
-      {errors.length > 0 && (
-        <ul className="errors" aria-label="編成の問題">
-          {errors.map((e) => (
-            <li key={e}>{e}</li>
-          ))}
-        </ul>
-      )}
-      <div className="save">
-        <Btn kind="solid-fill" size="sm" disabled={errors.length > 0 || !changed} onClick={apply}>
-          編成 v{t.formation.versions.length + 1} を適用
-        </Btn>
-        {changed && (
-          <Btn kind="text" size="sm" onClick={() => setDraft(toSpec(current))}>
-            変更を捨てる
-          </Btn>
-        )}
-      </div>
-      <History
-        title="編成の版"
-        items={[...t.formation.versions].reverse().map((v) => ({
-          key: v.version,
-          label: `v${v.version}${v.version === t.formation.current ? "(今)" : ""}`,
-          detail: `${v.units.map((u) => `${u.name}: ${u.roles.map((r) => ROLE_LABEL[r]).join("・") || "役割なし"} ×${u.maxMembers}${u.repos?.length ? `(${u.repos.join("・")})` : ""}${u.model ? ` ${MODELS[u.model as keyof typeof MODELS]?.label ?? u.model}` : ""}${u.effort ? `/${u.effort}` : ""}`).join(" / ")} · ${v.pull === "down" ? "下流優先" : "着手優先"}`,
-          load: v.version === t.formation.current ? undefined : () => setDraft(toSpec(v)),
-        }))}
-      />
-    </>
-  );
-}
+/** 流れ・経路まで含めた版の中身(編成の引き出しの下書き)。 */
+export const toFullSpec = (v: Version): FormationSpec => ({ ...toSpec(v), flows: structuredClone(v.flows ?? {}), routes: structuredClone(v.routes ?? []) });
 
 /** 新しい島の既定値。名前は「島 n」で空いているもの。 */
 export function newUnit(f: FormationSpec): UnitSpec {
@@ -223,7 +153,7 @@ function Knob({ id, label, unit, min, max, value, onChange }: { id: string; labe
   );
 }
 
-function History({ title, items }: { title: string; items: { key: number; label: string; detail: string; load?: () => void }[] }) {
+export function History({ title, items }: { title: string; items: { key: number; label: string; detail: string; load?: () => void }[] }) {
   return (
     <details className="history">
       <summary>

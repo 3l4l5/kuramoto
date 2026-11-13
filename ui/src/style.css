@@ -835,3 +835,51 @@ body { background: var(--surface); }
 /* 企画スタジオのチャット: 質問か、直してほしいか */
 .askmode { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 14px 6px; font-size: var(--fs-md); }
 .askmode label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+
+/* ---- 編成の引き出し(島 / 連絡経路 / 流れ の 3 タブ) ---- */
+.drawer.formation { overflow: hidden; }
+.drawer.formation > .ds-drawer { border: 0; border-radius: 0; box-shadow: none; }
+.drawer.formation .ds-drawer__title { font-size: var(--fs-lg); }
+.drawer.formation .pol { padding: 0; }
+.drawer.formation .ds-drawer__body { display: flex; flex-direction: column; gap: var(--sp-5); }
+.drawer.formation .ds-drawer__foot .msg { flex: 1; font-size: var(--fs-sm); color: var(--muted); }
+.drawer.formation .ds-drawer__foot .msg.bad { color: var(--danger-ink); }
+.drawer.formation .pair { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--muted); font-weight: var(--fw-regular); }
+.drawer.formation .ds-list__meta { display: inline-flex; align-items: center; }
+.drawer.wide { flex-basis: 840px; max-width: 840px; }
+.layout:has(.drawer.wide) .main { flex-basis: 300px; }
+.flowtab { display: flex; gap: var(--sp-4); align-items: flex-start; }
+.flowtab .kinds { width: 220px; flex: none; }
+.flowtab .kindname { display: flex; flex-direction: column; gap: var(--sp-1); }
+.flowtab .kindname span { font-size: var(--fs-sm); font-weight: var(--fw-regular); color: var(--muted); }
+.flowmain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-5); }
+.flowhead { display: flex; align-items: center; gap: var(--sp-2); }
+.flowhead b { flex: 1; font-size: var(--fs-lg); }
+.diagram { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg); padding: var(--sp-4) var(--sp-3); display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+.diagram .dg { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.diagram .ar { color: var(--muted); font-size: var(--fs-md); }
+.diagram .n { display: inline-flex; align-items: center; gap: var(--sp-1); height: var(--h-control-sm); padding: 0 var(--sp-3); border-radius: var(--r-md); font-size: var(--fs-md); font-weight: var(--fw-medium); border: 1px solid; }
+.diagram .n.d { border-color: var(--dev); background: var(--dev-soft); color: var(--dev); }
+.diagram .n.r { border-color: var(--review); background: var(--review-soft); color: var(--review-ink); }
+.diagram .n.s { border-color: var(--warn); background: var(--warn-soft); color: var(--warn-ink); }
+.diagram .n.q { border-color: var(--design); background: var(--design-soft); color: var(--design); }
+.diagram .n.m { border-color: var(--ok); background: var(--ok-soft); color: var(--ok); }
+.diagram .n.pre { border-style: dashed; background: var(--surface); }
+.diagram .n.skip { border-style: dashed; border-color: var(--line-strong); background: var(--surface); color: var(--muted); text-decoration: line-through; }
+.diagram .n small { font-size: var(--fs-xs); color: var(--muted); font-weight: var(--fw-regular); }
+.stagename { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.stagename .no { width: var(--sp-5); font-family: var(--f-mono); font-size: var(--fs-xs); font-weight: var(--fw-regular); color: var(--muted); }
+.stagename small { font-size: var(--fs-sm); font-weight: var(--fw-regular); color: var(--muted); }
+.stagectl { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.stagectl .mv { display: inline-flex; gap: var(--sp-1); }
+.stagectl .mv .ds-btn { width: var(--h-control-sm); padding: 0; font-size: var(--fs-xs); }
+.stagectl .fixed { font-size: var(--fs-sm); color: var(--muted); }
+.ds-list__item[aria-disabled="true"] .stagectl .fixed { color: var(--muted); }
+@media (max-width: 700px) {
+  .drawer.formation { position: fixed; inset: 0; z-index: 30; max-width: none; border-radius: 0; overflow: auto; }
+  .drawer.formation > .ds-drawer { min-height: 100%; }
+  .drawer.formation .ds-drawer__foot { position: sticky; bottom: 0; background: var(--surface); flex-wrap: wrap; }
+  .flowtab { flex-direction: column; }
+  .flowtab .kinds { width: 100%; }
+  .drawer.formation .ds-list__item { flex-wrap: wrap; }
+}
