@@ -277,16 +277,17 @@ export class Project {
 
   // ---- チケットへの責任者のメモ ----
 
-  addNote(ticketId: number, body: string, who = "owner"): void {
+  /** kind: 'note'(責任者・リーダーのメモ)/ 'member'(メンバーと話して伝えたこと)。 */
+  addNote(ticketId: number, body: string, who = "owner", kind: "note" | "member" = "note"): void {
     const text = body.trim();
     if (!text) throw new Error("メモがありません");
     this.ticket(ticketId);
-    run(this.db, "INSERT INTO ticket_notes (ticket_id, who, body, at) VALUES (?, ?, ?, ?)", [ticketId, who, text, this.now()]);
-    this.event(who, "note_added", ticketId, {});
+    run(this.db, "INSERT INTO ticket_notes (ticket_id, who, body, at, kind) VALUES (?, ?, ?, ?, ?)", [ticketId, who, text, this.now(), kind]);
+    this.event(who, "note_added", ticketId, kind === "member" ? { kind } : {});
   }
 
-  notes(ticketId: number): { id: number; who: string; body: string; at: string }[] {
-    return all(this.db, "SELECT id, who, body, at FROM ticket_notes WHERE ticket_id = ? ORDER BY id", [ticketId]);
+  notes(ticketId: number): { id: number; who: string; body: string; at: string; kind: string }[] {
+    return all(this.db, "SELECT id, who, body, at, kind FROM ticket_notes WHERE ticket_id = ? ORDER BY id", [ticketId]);
   }
 
   editTicket(ticketId: number, input: { title: string; body: string }): void {

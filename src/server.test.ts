@@ -74,6 +74,35 @@ describe("ローカルサーバー", () => {
     expect(app.hq.project(created.id).status).toBe("running");
   });
 
+  it("メンバーの今していること・話す欄の API。話しかけると、終業中でも返事が来る", async () => {
+    const { call, app } = await boot();
+    const { json: created } = await call("POST", "/api/projects", { name: "会話", repos: [{ fullName: "acme/shop", role: "API" }] });
+    const base = `/api/projects/${created.id}`;
+    const p = app.project(created.id);
+    p.fillSeats();
+    const idle = p.membersOfUnit(p.currentFormation().units[0]!.id)[0]!;
+    // まだチケットを持っていないメンバーには話せない
+    expect((await call("GET", `${base}/members/${idle.id}/now`)).json).toMatchObject({ state: "idle", ticket: null, last: null });
+    expect((await call("POST", `${base}/members/${idle.id}/chat`, { body: "やあ" })).json.error).toMatch(/まだチケットを受け持っていない/);
+
+    // 1 枚進めてから終業する(終業中でも会話は取り出される)
+    await call("POST", `${base}/tickets`, { title: "CSV" });
+    await call("POST", `${base}/run`, { running: true });
+    for (let i = 0; i < 50 && app.projectView(created.id).mergeOrder.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+    await call("POST", `${base}/run`, { running: false });
+    const ticket = p.tickets()[0]!;
+    const memberId = ticket.owner_member_id!;
+    expect((await call("GET", `${base}/members/${memberId}/now`)).json).toMatchObject({ state: "idle", ticket: { number: ticket.number, title: "CSV" }, last: { number: ticket.number } });
+
+    const posted = (await call("POST", `${base}/members/${memberId}/chat`, { body: "いまどう?" })).json;
+    expect(posted.messages.map((m: { who: string }) => m.who)).toEqual(["owner"]);
+    for (let i = 0; i < 50 && (await call("GET", `${base}/members/${memberId}/chat`)).json.messages.every((m: { who: string }) => m.who !== "member"); i++) await new Promise((r) => setTimeout(r, 20));
+    const chat = (await call("GET", `${base}/members/${memberId}/chat`)).json;
+    expect(chat.messages.map((m: { who: string }) => m.who)).toEqual(["owner", "member", "system"]);
+    expect(chat.work).toBeNull();
+    expect(chat.now.member.id).toBe(memberId);
+  });
+
   it("既存のリポジトリの続きから作ると、GitHub の途中の仕事を取ってきて、担当に現状を読ませる(ADR-0030)", async () => {
     const { call, app } = await boot();
     const { json: created } = await call("POST", "/api/projects", { name: "続き", repos: [{ fullName: "acme/shop", role: "API" }], mode: "existing", issueLabel: "" });
