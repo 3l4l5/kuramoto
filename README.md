@@ -36,12 +36,16 @@ database:
   url: mysql://kuramoto@db.example.com:3306/kuramoto   # パスワードはここに書かず、passwordFile か KURAMOTO_DATABASE_URL で渡す
   passwordFile: ~/.kuramoto/mysql.env                  # 読むのは MYSQL_PASSWORD の 1 行だけ(root のパスワードは読まない。任意)
   tls:
-    ca: /etc/ssl/certs/db-ca.pem                       # TLS の CA のファイル(任意)
+    ca: /etc/ssl/certs/db-ca.pem                       # TLS の CA のファイル(外の DB では必須。手元 127.0.0.1 だけは省ける)
 ```
 
 - 環境変数 `KURAMOTO_DATABASE_URL`(`mysql://ユーザー:パスワード@ホスト/データベース名`)があれば、ファイルの `database.url` と `type` より優先して MySQL を使います。
 - 読めない・知らない `type`・知らない項目・MySQL なのに接続先が無い、というときは、どの項目(何行目)がおかしいかを出して起動しません。SQLite に黙って戻すことはしません。
-- MySQL への接続はまだ作っていません。今は `type: mysql` にすると、設定を確かめたうえで起動を止めます。
+- MySQL のときは、起動時に繋いで(mysql2 のプール)、スキーマの版を最新にします。届かなければ理由(接続を断られた・パスワードが違う・証明書が確かめられない、など)を出して起動しません。外の DB は TLS 必須で、`tls.ca` が無いと起動しません。
+- 動いている間に MySQL から切れたら、受信箱の見回りとエージェントの起動を止めて待ち、画面の上に「DB に繋がらない」と出します。繋がり直したら自動で再開します(動いている起動の終わりは待ちます)。
+- 初めて MySQL に繋いだときに SQLite のプロジェクトが残っていれば、「移りません。企画は設計書で移せます」と 1 行出します。
+- `KURAMOTO_DATABASE_URL` は、エージェントの閉じ込めの中(シェル・チームの CI)には渡しません。
+- いまの範囲: MySQL に繋ぐ・版を流す・切断を見張るところまでです。本部とプロジェクトの読み書きの本体(Project・workflow など)は、まだ SQLite の同期の書き方なので、MySQL へ移すのは続きのチケットです(ADR-0041)。
 
 ## コードの地図
 

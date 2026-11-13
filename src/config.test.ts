@@ -233,11 +233,14 @@ describe("設定ファイル", () => {
     expect(lines).toHaveLength(1);
   });
 
-  it("起動時: mysql はまだ接続できないので、1 行出したうえで起動しない", () => {
+  it("起動時: mysql でも、設定を読んで 1 行出す(接続は startDatabase が別に行う)", () => {
     const path = join(tmp(), "config.yaml");
     writeFileSync(path, "database:\n  type: mysql\n  url: mysql://u:pw@h/db\n", { mode: 0o600 });
     const lines: string[] = [];
-    expect(() => loadStartupConfig((l) => lines.push(l), path, {})).toThrow(ConfigError);
+    const c = loadStartupConfig((l) => lines.push(l), path, {});
+    expect(c.database).toEqual({ type: "mysql", url: "mysql://u:pw@h/db" });
+    expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("MySQL h / db");
+    expect(lines[0]).not.toContain("pw");
   });
 });

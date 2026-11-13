@@ -38,6 +38,8 @@ export type DispatcherDeps = {
   workspace: Workspace;
   /** false のあいだはチケットの仕事を取らない(企画スタジオの担当だけ動く)。省略時は常に取る。 */
   ticketsAllowed?: () => boolean;
+  /** false のあいだ(DB が切れている間)は、受信箱から取らず、エージェントも起動しない。省略時は常に動く(ADR-0041)。 */
+  dbUp?: () => boolean;
   /** リーダーの交通整理を使うか。使うと、新しいチケットは交通整理が済むまで、また先に終わらせるチケットが merge されるまで着手しない。 */
   triage?: boolean;
   /** 仕事が動いている間に受信箱を見直す間隔(ミリ秒)。既定は 5 秒。 */
@@ -170,10 +172,14 @@ export class Dispatcher {
     const maxRuns = opts.maxRuns ?? Infinity;
     const inflight = new Set<Promise<void>>();
     let started = 0;
+    const dbUp = () => this.deps.dbUp?.() ?? true;
     for (;;) {
-      await this.checkGithub();
-      await this.p.pdb.transaction(async () => this.housekeep());
-      while (inflight.size < limit() && started < maxRuns) {
+      // DB が切れている間は、何も取らず、housekeep も走らせない。動いている起動の終わりだけ待つ
+      if (dbUp()) {
+        await this.checkGithub();
+        await this.p.pdb.transaction(async () => this.housekeep());
+      }
+      while (dbUp() && inflight.size < limit() && started < maxRuns) {
         const job = await this.next();
         if (!job) break;
         started++;

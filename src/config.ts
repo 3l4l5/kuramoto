@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { isMap, LineCounter, parseDocument, type Document } from "yaml";
 import { z } from "zod";
+import { DATABASE_URL_ENV } from "./db/env.js";
 import { kuramotoHome } from "./hq.js";
 
 /**
@@ -29,7 +30,7 @@ export class ConfigError extends Error {
   }
 }
 
-export const DATABASE_URL_ENV = "KURAMOTO_DATABASE_URL";
+export { DATABASE_URL_ENV };
 /** passwordFile(mysql.env)から読むのはこの 1 行だけ。MYSQL_ROOT_PASSWORD など他の行は読まない */
 export const PASSWORD_KEY = "MYSQL_PASSWORD";
 
@@ -232,10 +233,6 @@ export function loadStartupConfig(
   if (c.file) {
     const warn = permissionWarning(c.file, statSync(c.file).mode);
     if (warn) log(warn);
-  }
-  if (c.database.type === "mysql") {
-    // MySQL への接続はまだ作っていない。SQLite に黙って戻さず、起動しない
-    throw new ConfigError("MySQL への接続はまだ使えません。database.type を sqlite にするか、設定を外してください");
   }
   return c;
 }

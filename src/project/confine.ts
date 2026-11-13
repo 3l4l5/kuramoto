@@ -1,6 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
+import { DATABASE_URL_ENV } from "../db/env.js";
 import type { Role } from "../domain/roles.js";
 import type { Confinement } from "../harness/types.js";
 import { kuramotoHome } from "../hq.js";
@@ -46,6 +47,8 @@ const HIDDEN_ENV = [
   "AWS_SESSION_TOKEN",
   "SSH_AUTH_SOCK",
   "DOCKER_HOST",
+  // MySQL の接続先(パスワードを含みうる)。閉じ込めの中へは渡さない(ADR-0041)
+  DATABASE_URL_ENV,
 ];
 
 /**

@@ -13,11 +13,13 @@ import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import type { Harness } from "./harness/types.js";
 import { GhCli, type GitHub } from "./github/github.js";
 import { ConfigError, loadStartupConfig } from "./config.js";
+import { startDatabaseOrExit } from "./db/startup.js";
 import { currentWorkspaceId, Hq, kuramotoHome, workDirFor, type ProjectRecord } from "./hq.js";
 import { Dispatcher } from "./project/dispatcher.js";
 import { recoverStale } from "./project/inbox.js";
 import { autoMerge, autoMergeEnabled, ownerMerge, suggestedMergeOrder, type TeamCiHook } from "./project/merge.js";
 import { patrolMinutes, setPatrolMinutes, startPatrol } from "./project/patrol.js";
+import type { DbHealth, DbHealthState } from "./db/mysql-health.js";
 import { ciBlockAction, ciBlocked, githubDown } from "./project/outage.js";
 import { fetchGithubSnapshot, markExisting } from "./project/onboard.js";
 import { runTeamCi, SandboxRunner, teamCiEnabled, type CommandRunner } from "./project/team-ci.js";
@@ -87,6 +89,11 @@ export type ServerDeps = {
    * 合言葉は URL の ?token= で一度渡すと Cookie に入り、以後はそれで通る。この PC 自身(localhost)からは合言葉なしで使える。
    */
   publicToken?: string;
+  /**
+   * MySQL への接続の見張り(ADR-0041)。切れている間は、受信箱の見回りとエージェントの起動を止めて待ち、
+   * 繋がり直したら再開する。画面にも出す。SQLite のときは無い。
+   */
+  dbHealth?: DbHealth;
 };
 
 /**
@@ -115,6 +122,24 @@ export class KuramotoServer {
     this.mergePollMs = deps.mergePollMs ?? MERGE_POLL_MS;
     this.workspaceFor = deps.workspaceFor ?? ((d) => new GitWorkspace(workDirFor(d)));
     this.checkRunner = deps.checkRunner ?? new SandboxRunner();
+    // DB が繋がり直したら、待たせていた受信箱をすぐ見直す
+    this.unwatchDb = deps.dbHealth?.onChange((s) => {
+      if (s.up) for (const id of this.runners.keys()) this.poke(id);
+    });
+    deps.dbHealth?.start();
+  }
+
+  private readonly unwatchDb: (() => void) | undefined;
+
+  /** DB に繋がっているか。SQLite(見張りなし)のときは常に true。 */
+  dbUp(): boolean {
+    return this.deps.dbHealth?.isUp() ?? true;
+  }
+
+  /** 画面に出す DB の状態。切れているときだけ、いつから・どんなエラーか。 */
+  dbDown(): Exclude<DbHealthState, { up: true }> | null {
+    const s = this.deps.dbHealth?.current();
+    return s && !s.up ? s : null;
   }
 
   get hq(): Hq {
@@ -216,11 +241,12 @@ export class KuramotoServer {
       ticketsAllowed: () => this.running.has(id),
       triage: true,
       github: this.github,
+      dbUp: () => this.dbUp(),
     });
     // チームが自動で merge する(ADR-0022)。始業中だけ。merge できたら、待っていた後のチケットが動けるように受信箱を見直す
     let merging = false;
     const merge = async (): Promise<void> => {
-      if (merging || !this.running.has(id) || !autoMergeEnabled(p)) return;
+      if (merging || !this.running.has(id) || !this.dbUp() || !autoMergeEnabled(p)) return;
       merging = true;
       try {
         if (await autoMerge(p, this.github, { teamCi })) this.poke(id);
@@ -240,6 +266,8 @@ export class KuramotoServer {
     };
     let again = false;
     const tick = async (): Promise<void> => {
+      // DB に繋がらない間は、受信箱を見回らない(繋がり直したら onChange が起こす。取りこぼしても次の見回りで再開する)
+      if (!this.dbUp()) return;
       if (r.busy) {
         again = true; // 見回り中に呼ばれたら、終わってからもう一度見る
         return;
@@ -292,6 +320,7 @@ export class KuramotoServer {
   async tick(id: number): Promise<void> {
     const r = this.runners.get(id);
     if (!r) return;
+    if (!this.dbUp()) return;
     while (r.busy) await new Promise((res) => setTimeout(res, 5));
     r.busy = true;
     try {
@@ -302,6 +331,8 @@ export class KuramotoServer {
   }
 
   close(): void {
+    this.unwatchDb?.();
+    this.deps.dbHealth?.stop();
     for (const r of this.runners.values()) {
       clearInterval(r.timer);
       clearInterval(r.mergeTimer);
@@ -717,6 +748,8 @@ export class KuramotoServer {
       autoMerge: autoMergeEnabled(p),
       // GitHub に入れない(認証切れ)とき: いつから・どんなエラーか(ADR-0027)
       githubDown: githubDown(p),
+      // MySQL に繋がらない(切れた)とき: いつから・どんなエラーか(ADR-0041)。繋がっていれば null
+      dbDown: this.dbDown(),
       // CI のジョブが始まらない(請求・上限など)リポジトリ。merge だけ止まっている
       ciBlocked: ciBlocked(p).map((b) => ({ ...b, action: ciBlockAction(b.notes) })),
       events: p.events(30),
@@ -880,18 +913,21 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 
 // 直接起動したとき
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  let config;
   try {
-    loadStartupConfig();
+    config = loadStartupConfig();
   } catch (e) {
     if (!(e instanceof ConfigError)) throw e;
     console.error(e.message);
     process.exit(1);
   }
+  // MySQL のときは、繋いで版を最新にする。届かなければ理由を出して起動しない
+  const database = await startDatabaseOrExit(config, console.log);
   const port = Number(process.env.KURAMOTO_PORT ?? 4300);
   const open = process.env.KURAMOTO_PUBLIC === "1";
   const token = open ? publicToken() : undefined;
   // 入口で今のワークスペースを決め、本部へ渡す
-  const app = new KuramotoServer({ hq: new Hq(undefined, undefined, currentWorkspaceId()), ...(token ? { publicToken: token } : {}) });
+  const app = new KuramotoServer({ hq: new Hq(undefined, undefined, currentWorkspaceId()), ...(token ? { publicToken: token } : {}), ...(database.health ? { dbHealth: database.health } : {}) });
   await app.resume();
   const server = createServer((req, res) => void app.handle(req, res));
   server.listen(port, open ? "0.0.0.0" : "127.0.0.1", () => {
@@ -903,7 +939,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   });
   const shutdown = () => {
     app.close();
-    server.close(() => process.exit(0));
+    void database.close().finally(() => server.close(() => process.exit(0)));
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);

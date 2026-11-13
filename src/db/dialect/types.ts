@@ -13,10 +13,10 @@ import type {
 /**
  * DB の方言ごとに書き方が変わるところを 1 か所に集める。
  * クエリを書く側は、方言の名前(json_extract・ON CONFLICT・RETURNING など)を直接書かず、ここを通す。
- * いまの実装は SQLite だけ(./sqlite.ts)。
+ * 実装は SQLite(./sqlite.ts)と MySQL(./mysql.ts)。どちらを使うかは、接続(Conn.dialect)が持つ。
  */
 export interface DialectHelpers {
-  readonly name: "sqlite";
+  readonly name: "sqlite" | "mysql";
 
   /** JSON を入れた列から値を取り出す。path は "baseCi" や "a.b" のようにドット区切り(先頭の $ は付けない)。 */
   jsonExtract<T = unknown>(column: Expression<unknown> | string, path: string): RawBuilder<T>;
@@ -33,7 +33,9 @@ export interface DialectHelpers {
 
   /**
    * 受信箱から 1 通を取り出す。候補(id だけを選ぶ SELECT。並び順と LIMIT 1 を含む)の先頭を、
-   * 他の取り出しと重ならないよう 1 文で pending → claimed にして、その行を返す。無ければ undefined。
+   * 他の取り出しと重ならないよう pending → claimed にして、その行を返す。無ければ undefined。
+   * SQLite は 1 文の UPDATE ... RETURNING。MySQL は 1 つのトランザクション(専用の接続)の中で
+   * SELECT ... FOR UPDATE SKIP LOCKED → UPDATE(status = 'pending' も見て、更新した件数で取れたかを決める)。
    */
   claimMessage<DB extends { messages: unknown }>(
     db: Kysely<DB>,
