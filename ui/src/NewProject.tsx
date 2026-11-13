@@ -2,8 +2,7 @@ import { useState } from "react";
 import { post } from "./api";
 import { go, useAct, useToast } from "./hooks";
 import { Btn } from "./ui";
-import { Input } from "./dads/Input";
-import { Select } from "./dads/Select";
+import { Input, Select } from "./ds";
 
 const REPO_ROLES = ["フロント", "API", "インフラ", "その他"];
 const repoOk = (r: string) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r);
@@ -43,7 +42,7 @@ export function NewProject() {
           <label className="h" htmlFor="np-name">
             名前
           </label>
-          <Input type="text" id="np-name" blockSize="md" aria-describedby="np-name-hint" value={name} onChange={(e) => setName(e.target.value)} className="w-full" />
+          <Input type="text" id="np-name"aria-describedby="np-name-hint" value={name} onChange={(e) => setName(e.target.value)} className="w-full" />
           <div id="np-name-hint" className="hint">例: acme 予約サイト</div>
         </div>
         <div>
@@ -55,8 +54,8 @@ export function NewProject() {
                 <label className="sr" htmlFor={`np-r${i}`}>
                   リポジトリ {i + 1}
                 </label>
-                <Input type="text" id={`np-r${i}`} blockSize="md" isError={!!x.r && !repoOk(x.r)} value={x.r} onChange={(e) => set(i, { r: e.target.value.trim() })} className="w-full font-mono" />
-                <Select aria-label="役割" blockSize="md" value={x.role} onChange={(e) => set(i, { role: e.target.value })}>
+                <Input type="text" id={`np-r${i}`} invalid={!!x.r && !repoOk(x.r)} value={x.r} onChange={(e) => set(i, { r: e.target.value.trim() })} className="w-full font-mono" />
+                <Select aria-label="役割"value={x.role} onChange={(e) => set(i, { role: e.target.value })}>
                   {REPO_ROLES.map((r) => (
                     <option key={r}>{r}</option>
                   ))}
@@ -76,7 +75,7 @@ export function NewProject() {
         </div>
         <fieldset className="runmode">
           <legend className="h">始め方</legend>
-          <Select aria-label="始め方" blockSize="md" value={mode} onChange={(e) => setMode(e.target.value as "new" | "existing")}>
+          <Select aria-label="始め方"value={mode} onChange={(e) => setMode(e.target.value as "new" | "existing")}>
             <option value="new">新しく作る(企画担当が要件を聞くところから)</option>
             <option value="existing">既存のリポジトリの続きから</option>
           </Select>
@@ -88,7 +87,7 @@ export function NewProject() {
               <label className="h" htmlFor="np-label" style={{ marginTop: 8 }}>
                 チケットにする Issue のラベル
               </label>
-              <Input type="text" id="np-label" blockSize="md" value={label} onChange={(e) => setLabel(e.target.value)} className="font-mono" />
+              <Input type="text" id="np-label"value={label} onChange={(e) => setLabel(e.target.value)} className="font-mono" />
               <div className="hint">このラベルの付いた開いている Issue だけを拾います。空にすると、開いている Issue をすべて拾います。</div>
             </>
           )}
