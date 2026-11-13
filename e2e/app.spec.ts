@@ -621,3 +621,83 @@ test("オフィスの床から島を足し、設定を変え、外せる。キ�
     await page.getByRole("dialog", { name: "QA の島 の設定" }).getByRole("button", { name: "この島を外す" }).click();
     await expect(floor.getByRole("region", { name: "島 QA の島" })).toHaveCount(0);
 });
+
+test("チケットの種類: 詳細で変えられ、ボードは種類の流れの順に列が並び、ツリーと生産性にも出て絞り込める", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await createProject(page, "種類", "acme/kinds");
+  const id = page.url().match(/#\/p\/(\d+)/)![1];
+  const write = { "x-kuramoto": "1" };
+  // バグ修正は QA の申し送りから始める流れ。ほかの種類は既定の流れ
+  const f = await page.request.post(`/api/projects/${id}/formation`, {
+    headers: write,
+    data: { pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300 }, { name: "QA", roles: ["qa"], maxMembers: 2, summonAt: 2, idleSec: 300 }], flows: { bugfix: ["qa", "dev"] } },
+  });
+  expect(f.ok()).toBe(true);
+  expect((await page.request.post(`/api/projects/${id}/tickets`, { headers: write, data: { title: "落ちるのを直す", kind: "bugfix" } })).ok()).toBe(true);
+  expect((await page.request.post(`/api/projects/${id}/tickets`, { headers: write, data: { title: "新しい画面を足す" } })).ok()).toBe(true);
+  await page.goto(`/#/p/${id}`);
+  await page.getByRole("group", { name: "プロジェクトの画面" }).getByRole("button", { name: "オフィス" }).click();
+  await page.getByRole("group", { name: "オフィスの見方" }).getByRole("button", { name: "ボード" }).click();
+  const board = page.getByRole("region", { name: "ボード" });
+  const heads = board.locator(".board .col > h3");
+
+  await test.step("絞り込まないときは既定の流れの順で、カードに種類のチップが出る", async () => {
+    await expect(heads).toHaveText(["未着手1", "開発中(直し含む)0", "QA1", "判断待ち0", "merge 待ち0", "完了0"]);
+    await expect(board.locator(".card", { hasText: "落ちるのを直す" })).toContainText("バグ修正");
+    await expect(board.locator(".card", { hasText: "新しい画面を足す" })).toContainText("機能");
+  });
+
+  await test.step("バグ修正で絞ると、その種類の流れの順に列が並び、開発より前の列には申し送りの札が付く", async () => {
+    await board.getByRole("radiogroup", { name: "種類で絞り込み" }).getByRole("radio", { name: "バグ修正" }).click();
+    await expect(heads).toHaveText(["QA1", "未着手0", "開発中(直し含む)0", "判断待ち0", "merge 待ち0", "完了0"]);
+    const pre = board.getByLabel("QA(申し送り)");
+    await expect(pre).toContainText("申し送り・差し戻し無し");
+    await expect(pre).toContainText("落ちるのを直す");
+    await expect(board).not.toContainText("新しい画面を足す");
+    await expect(board.locator(".kindnote")).toHaveText("バグ修正の流れの順に並べています(QA → 開発 → merge 待ち)");
+    await shot(page, "board-kind");
+  });
+
+  await test.step("ツリーにも種類の形と、開発より前の工程の「申し送り」の札が出る", async () => {
+    await page.getByRole("group", { name: "オフィスの見方" }).getByRole("button", { name: "ツリー" }).click();
+    const node = page.locator(".tr-node", { hasText: "落ちるのを直す" });
+    await expect(node).toContainText("バグ修正");
+    await expect(node.locator(".tr-pre")).toHaveText("申し送り");
+    await expect(page.locator(".tr-node", { hasText: "新しい画面を足す" }).locator(".tr-pre")).toHaveCount(0);
+    await expect(page.getByLabel("凡例")).toContainText("●機能 ▲バグ修正 ■リファクタ ◆ドキュメント");
+  });
+
+  await test.step("詳細で、種類のチップと、その種類の流れが見え、責任者が種類を変えられる", async () => {
+    await page.getByRole("group", { name: "オフィスの見方" }).getByRole("button", { name: "ボード" }).click();
+    await board.getByRole("radiogroup", { name: "種類で絞り込み" }).getByRole("radio", { name: "すべて" }).click();
+    await board.getByRole("button", { name: "落ちるのを直す" }).click();
+    const dialog = page.getByRole("dialog", { name: /チケット #\d/ });
+    await expect(dialog.locator("header")).toContainText("バグ修正");
+    const kindFlow = dialog.getByLabel("バグ修正の流れ");
+    await expect(kindFlow).toHaveText("バグ修正の流れ: QA 申し送り → 開発 → merge 待ち");
+    const seg = dialog.getByRole("radiogroup", { name: "チケットの種類" });
+    await expect(seg.getByRole("radio", { name: "バグ修正" })).toHaveAttribute("aria-checked", "true");
+    await expect(seg.getByRole("radio")).toHaveCount(4);
+    await seg.getByRole("radio", { name: "ドキュメント" }).click();
+    await expect(seg.getByRole("radio", { name: "ドキュメント" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("status", { name: "お知らせ" })).toContainText("種類を「ドキュメント」に変えました");
+    await expect(dialog.locator("header")).toContainText("ドキュメント");
+    await expect(dialog.locator(".kindchanged")).toHaveText("バグ修正 → ドキュメントに変えました。次の工程からドキュメントの流れで進みます。");
+    await expect(dialog.getByRole("region", { name: "やりとり" })).toContainText("種類を「バグ修正」から「ドキュメント」に変えました");
+    await shot(page, "ticket-kind");
+    await dialog.getByRole("button", { name: "閉じる" }).click();
+  });
+
+  await test.step("生産性のチケットごとの表に種類の列が出て、種類で絞り込める", async () => {
+    await page.getByRole("group", { name: "プロジェクトの画面" }).getByRole("button", { name: "生産性" }).click();
+    await page.getByRole("tab", { name: "チケットごと" }).click();
+    await page.getByRole("group", { name: "表示" }).getByRole("button", { name: "表" }).click();
+    const table = page.getByRole("table", { name: "チケットごとの指標" });
+    await expect(table.getByRole("columnheader", { name: "種類" })).toBeVisible();
+    await expect(table.locator("tbody tr")).toHaveCount(2);
+    await page.getByRole("radiogroup", { name: "種類で絞り込み" }).getByRole("radio", { name: "◆ ドキュメント" }).click();
+    await expect(table.locator("tbody tr")).toHaveCount(1);
+    await expect(table).toContainText("落ちるのを直す");
+    await expect(table).not.toContainText("新しい画面を足す");
+  });
+});

@@ -6,8 +6,8 @@ import { networkInterfaces } from "node:os";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { all, get } from "./db/sqlite.js";
-import { pipelineOf } from "./domain/formation.js";
-import type { TicketKind } from "./domain/flow.js";
+import { isPreDev, pipelineOf } from "./domain/formation.js";
+import { KIND_LABEL, TICKET_KINDS, type TicketKind } from "./domain/flow.js";
 import { ROLE_LABEL } from "./domain/roles.js";
 import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import type { Harness } from "./harness/types.js";
@@ -612,6 +612,10 @@ export class KuramotoServer {
         jiraKey: t.jira_key,
         title: t.title,
         stage: t.stage,
+        // 種類(R17)。preDev: 開発より前の確認(申し送りだけを残す工程)にいる
+        kind: t.kind,
+        kindLabel: KIND_LABEL[t.kind as TicketKind] ?? t.kind,
+        preDev: !t.dev_done && isPreDev(pipelineOf(formation, t.kind), t.stage as never),
         rounds: t.rounds,
         started: started.has(t.id) || !!w,
         owner: t.owner_member_id ? members.get(t.owner_member_id) : null,
@@ -654,6 +658,19 @@ export class KuramotoServer {
       running: this.running.has(id),
       repos: p.repos(),
       stages: pipelineOf(formation).map((r) => ({ key: r, label: ROLE_LABEL[r] })),
+      // 種類ごとの流れ(ボードを種類で絞ったときの列の順)。開発より前の工程は preDev(申し送りだけの工程)
+      kinds: TICKET_KINDS.map((k) => {
+        const pipeline = pipelineOf(formation, k);
+        return {
+          key: k,
+          label: KIND_LABEL[k],
+          stages: pipeline.map((r) => ({ key: r, label: ROLE_LABEL[r], preDev: isPreDev(pipeline, r) })),
+          // 編成にはあるが、この種類の流れでは省く工程(ボードの「セキュリティは省略」)
+          omitted: pipelineOf(formation).concat(TICKET_KINDS.flatMap((o) => pipelineOf(formation, o))).filter((r, i, a) => a.indexOf(r) === i && !pipeline.includes(r)).map((r) => ROLE_LABEL[r]),
+        };
+      }),
+      // 工程の名前(流れに無い工程にいるチケットの列にも名前を付けるため)
+      roleLabels: ROLE_LABEL as Record<string, string>,
       formation: { version: formation.version, units: formation.units.map((u) => ({ name: u.name, roles: u.roles, max: u.max_members, repos: u.repos, model: u.model, effort: u.effort, members: p.membersOfUnit(u.id).map((m) => m.name) })) },
       tickets,
       decisions,

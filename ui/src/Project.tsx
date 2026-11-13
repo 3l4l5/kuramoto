@@ -3,7 +3,8 @@ import { post, type ProjectView } from "./api";
 import { TicketTree } from "./Tree";
 import { areaWaitText, droppedText, hhmm, kfmt, pct, stalledText, timeLeft, unblockText, usd, waitText } from "./format";
 import { duration, go, useAct, useNow, useProject } from "./hooks";
-import { Chip } from "./ds";
+import { Chip, Segmented } from "./ds";
+import { KINDS, KindChip, PRE_DEV_LABEL } from "./kind";
 import { TeamDrawer, type Drawer } from "./Team";
 import { OfficeFloor } from "./Office";
 import { TicketLink, TicketProvider } from "./Ticket";
@@ -333,27 +334,52 @@ function MergeCard({ pid, t, order, auto }: { pid: number; t: Ticket; order: num
 
 function Board({ d }: { d: ProjectView }) {
   const now = useNow();
+  // 種類で絞る(R17)。絞ると、その種類の流れの順に列が並ぶ。絞らないときは既定の流れの順
+  const [kind, setKind] = useState<string>("all");
+  const kindInfo = kind === "all" ? null : d.kinds.find((k) => k.key === kind);
+  const shown = kind === "all" ? d.tickets : d.tickets.filter((t) => t.kind === kind);
+  const flow: { key: string; label: string; preDev: boolean }[] = kind === "all" ? d.stages.map((s) => ({ ...s, preDev: false })) : (d.kinds.find((k) => k.key === kind)?.stages ?? []);
+  // 流れに無い工程にいるチケット(流れを変えた直後など)も見失わないよう、流れの後ろに足す
+  const extra = [...new Set(shown.map((t) => t.stage))].filter((s) => !["decision", "merge", "done", "dropped"].includes(s) && !flow.some((f) => f.key === s));
   // 開発の工程は、まだ誰も手を付けていない「未着手」と、取りかかった・直しに戻った「開発中」に分ける
-  const cols: [string, string][] = [
-    ...d.stages.flatMap((s): [string, string][] => (s.key === "dev" ? [["todo", "未着手"], ["dev", "開発中(直し含む)"]] : [[s.key, s.label]])),
-    ["decision", "判断待ち"],
-    ["merge", "merge 待ち"],
-    ["done", "完了"],
+  const cols: [string, string, boolean][] = [
+    ...[...flow, ...extra.map((key) => ({ key, label: d.roleLabels[key] ?? key, preDev: false }))].flatMap((s): [string, string, boolean][] =>
+      s.key === "dev" ? [["todo", "未着手", false], ["dev", "開発中(直し含む)", false]] : [[s.key, s.label, s.preDev]],
+    ),
+    ["decision", "判断待ち", false],
+    ["merge", "merge 待ち", false],
+    ["done", "完了", false],
     // 取りやめたチケットは消さずに、誰が・なぜ取りやめたかと一緒に並べる(あるときだけ)
-    ...(d.tickets.some((t) => t.stage === "dropped") ? [["dropped", "取りやめ"] as [string, string]] : []),
+    ...(shown.some((t) => t.stage === "dropped") ? [["dropped", "取りやめ", false] as [string, string, boolean]] : []),
   ];
   const colOf = (t: ProjectView["tickets"][number]) => (t.stage === "dev" && !t.started ? "todo" : t.stage);
   return (
     <div className="board-wrap">
+      <div className="kindbar">
+        <Segmented
+          label="種類で絞り込み"
+          className="kindfilter"
+          value={kind}
+          onChange={setKind}
+          options={[{ value: "all", label: "すべて" }, ...KINDS.map((k) => ({ value: k.key as string, label: k.label }))]}
+        />
+        {kindInfo && (
+          <span className="kindnote">
+            {kindInfo.label}の流れの順に並べています({[...flow.map((f) => f.label), "merge 待ち"].join(" → ")}
+            {kindInfo.omitted.length > 0 ? `。${kindInfo.omitted.join("・")}は省略` : ""})
+          </span>
+        )}
+      </div>
       <div className="board" style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(170px, 1fr))` }}>
-        {cols.map(([k, label]) => {
-          const list = d.tickets.filter((t) => colOf(t) === k);
+        {cols.map(([k, label, pre]) => {
+          const list = shown.filter((t) => colOf(t) === k);
           return (
-            <div className="col" key={k}>
+            <div className={`col${pre ? " pre" : ""}`} key={k} aria-label={pre ? `${label}(${PRE_DEV_LABEL})` : undefined}>
               <h3>
                 {label}
                 <span>{list.length}</span>
               </h3>
+              {pre && <span className="premark">{PRE_DEV_LABEL}・差し戻し無し</span>}
               {list.map((t) => {
                 const wk = t.worker?.work;
                 const quiet = wk ? Math.max(0, Math.round((now - Date.parse(wk.lastActivityAt)) / 1000)) : 0;
@@ -367,9 +393,12 @@ function Board({ d }: { d: ProjectView }) {
                       <span>{t.conflict ? <span className="cf">衝突</span> : t.rounds ? `往復 ${t.rounds}` : ""}</span>
                     </span>
                     <TicketLink id={t.id}>{t.title}</TicketLink>
+                    <span className="chips">
+                      <KindChip kind={t.kind} label={t.kindLabel} />
+                      {t.ruleBlocked.length > 0 && <Chip tone="danger">ルール違反で止まっている</Chip>}
+                    </span>
                     {t.ruleBlocked.length > 0 && (
                       <>
-                        <Chip tone="danger">ルール違反で止まっている</Chip>
                         <span className="who drop">「{t.ruleBlocked.join("」「")}」を直すまで進めません</span>
                       </>
                     )}
