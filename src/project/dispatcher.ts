@@ -637,7 +637,7 @@ export class Dispatcher {
     });
 
     if (error) {
-      say(p, payload.stage, "system", `${member.name} の起動がエラーで止まりました: ${error}`);
+      await say(p, payload.stage, "system", `${member.name} の起動がエラーで止まりました: ${error}`);
       await this.failed(msg, null, error);
       return;
     }
