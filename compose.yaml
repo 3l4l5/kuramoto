@@ -1,0 +1,67 @@
+# Kuramoto の DB(MySQL)。手順は docs/mysql.md。
+#
+#   docker volume create kuramoto-mysql   # 初回だけ(下の external ボリューム)
+#   docker compose up -d
+#
+# どちらも 127.0.0.1 にだけ公開する(0.0.0.0 には出さない)。
+name: kuramoto
+
+services:
+  # 手元の本番用 MySQL。パスワードは ~/.kuramoto/mysql.env(0600)から読み、このファイルにも .env にも置かない。
+  # mysql.env に書くもの: MYSQL_ROOT_PASSWORD / MYSQL_DATABASE / MYSQL_USER / MYSQL_PASSWORD
+  # (MYSQL_USER は MYSQL_DATABASE にだけ全権限を持つ。他の database には触れない)
+  mysql:
+    image: mysql:8.4
+    container_name: kuramoto-mysql
+    restart: unless-stopped
+    env_file:
+      - ${HOME}/.kuramoto/mysql.env
+    environment:
+      TZ: UTC
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_bin
+      - --default-time-zone=+00:00
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - kuramoto-mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysqladmin ping -h 127.0.0.1 -uroot --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # テスト用の MySQL。tmpfs に置くので止めると中身は消える。パスワードはテスト専用なのでここに書いてよい。
+  mysql-test:
+    image: mysql:8.4
+    container_name: kuramoto-mysql-test
+    restart: unless-stopped
+    environment:
+      TZ: UTC
+      MYSQL_ROOT_PASSWORD: kuramoto-test-root
+      MYSQL_DATABASE: kuramoto_test
+      MYSQL_USER: kuramoto_test
+      MYSQL_PASSWORD: kuramoto-test
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_bin
+      - --default-time-zone=+00:00
+      - --skip-log-bin
+    ports:
+      - "127.0.0.1:3307:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_ROOT_PASSWORD\" mysqladmin ping -h 127.0.0.1 -uroot --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  # compose down -v でも消えないよう、外で作った名前付きボリュームを使う。
+  kuramoto-mysql:
+    external: true
+    name: kuramoto-mysql
