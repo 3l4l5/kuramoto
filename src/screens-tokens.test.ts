@@ -57,6 +57,13 @@ describe("既存の画面をトークンにそろえる", () => {
     expect(style).not.toMatch(/var\(--(floor|table|table-edge|laptop|route|f-display)\)/);
   });
 
+  it("どこにも定義が無く、使う要素も無かった .laptop / --glow の規則は消えている(作業中の光は .of-laptop が --art-laptop-on で出す)", () => {
+    expect(style).not.toMatch(/--glow/);
+    expect(style).not.toMatch(/(^|\n)\.laptop\b/);
+    for (const f of files) expect(read(f), f).not.toMatch(/--glow|["'`]laptop["'`]/);
+    expect(style).toMatch(/\.of-working \.of-avatar \.of-laptop \{ fill: var\(--art-laptop-on\)/);
+  });
+
   it("ピルだった要素は --r-pill のまま。アーキテクトの服は開発の青と別の色", () => {
     for (const sel of [".pill", ".inbox .cnt", ".eff", ".proj .state", ".sectabs .cnt"]) {
       expect(style, sel).toMatch(new RegExp(`\\n${sel.replace(".", "\\.")} \\{[^}]*border-radius: var\\(--r-pill\\)`));
