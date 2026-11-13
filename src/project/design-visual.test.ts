@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { ManualClock } from "../clock.js";
 import { FakeHarness, fixedAll, withResolutions } from "../harness/fake.js";
 import { ticketView } from "./ticket.js";
-import { compareImages, FileDesignStore, playwrightRenderer, referenceImage, type Renderer } from "./design-visual.js";
+import { compareImages, FileDesignStore, isLocalUrl, playwrightRenderer, referenceImage, type Renderer, type UrlRenderer } from "./design-visual.js";
 import { Dispatcher } from "./dispatcher.js";
 import { agreeBlocker, putArtifact, putScreen, upsertRequirement, type DesignSystem } from "./planning.js";
 import { planningTools } from "./planning-agent.js";
@@ -102,6 +102,52 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
       rmSync(ws, { recursive: true, force: true });
       rmSync(storeDir, { recursive: true, force: true });
     }
+  });
+
+  it("担当はサンドボックスの中でブラウザを動かせないので、render_page でサーバに描かせる(アプリの URL と試作の HTML を、390px と 1280px で)", async () => {
+    const ws = mkdtempSync(join(tmpdir(), "kuramoto-ws-"));
+    try {
+      const p = await Project.open(":memory:", new ManualClock());
+      await p.addRepo("acme/shop", "API");
+      await createTicket(p, { title: "一覧" });
+      const rendered: string[] = [];
+      const html: Renderer = async (h, w) => (rendered.push(`html ${w} ${h}`), png(w, 10, [255, 255, 255]));
+      const url: UrlRenderer = async (u, w) => (rendered.push(`url ${w} ${u}`), png(w, 10, [0, 0, 255]));
+      const replies: string[] = [];
+      const harness = new FakeHarness(async (req, call) => {
+        if (!req.tools.some((x) => x.name === "submit_pr")) return void (await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] })));
+        mkdirSync(join(ws, ".kuramoto/design"), { recursive: true });
+        writeFileSync(join(ws, ".kuramoto/design/list.html"), "<h1>試作</h1>");
+        replies.push(String(await call("render_page", { target: "http://localhost:5173/", width: 1280, name: "app" })));
+        replies.push(String(await call("render_page", { target: "http://127.0.0.1:5173/memos", width: 390, name: "app" })));
+        replies.push(String(await call("render_page", { target: ".kuramoto/design/list.html", width: 390, name: "../list" })));
+        replies.push(String(await call("render_page", { target: "https://example.com/", width: 390, name: "ext" })));
+        replies.push(String(await call("render_page", { target: "file:///etc/passwd", width: 390, name: "ext" })));
+        replies.push(String(await call("render_page", { target: "../outside.html", width: 390, name: "x" })));
+        replies.push(String(await call("render_page", { target: ".kuramoto/design/none.html", width: 390, name: "x" })));
+        await call("submit_pr", { summary: "", responses: fixedAll(req.prompt) });
+      });
+      const workspace = new StaticWorkspace(ws);
+      await new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace, renderer: html, urlRenderer: url }).drain();
+      expect(harness.calls[0]!.tools.map((x) => x.name)).toContain("render_page");
+      expect(rendered).toEqual(["url 1280 http://localhost:5173/", "url 390 http://127.0.0.1:5173/memos", "html 390 <h1>試作</h1>"]);
+      expect(replies[0]).toContain(".kuramoto/design/shots/app-1280.png");
+      expect(replies[2]).toContain(".kuramoto/design/shots/___list-390.png");
+      // この機械の外の URL・file:・作業場所の外・無いファイルは描かない
+      expect(replies[3]).toContain("この機械の中");
+      expect(replies[4]).toContain("この機械の中");
+      expect(replies[5]).toContain("見つかりません");
+      expect(replies[6]).toContain("見つかりません");
+      expect(workspace.designs.map((d) => d.file)).toEqual([".kuramoto/design/shots/app-1280.png", ".kuramoto/design/shots/app-390.png", ".kuramoto/design/shots/___list-390.png"]);
+      expect(PNG.sync.read(workspace.designs[1]!.data as Buffer).width).toBe(390);
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+    }
+  });
+
+  it("描いてよい URL は、この機械の中の http(s) だけ", () => {
+    for (const ok of ["http://localhost:5173/", "https://127.0.0.1:8443/x?y=1", "http://[::1]:3000/"]) expect(isLocalUrl(ok)).toBe(true);
+    for (const ng of ["https://example.com/", "http://localhost.evil.com/", "http://127.0.0.1.evil.com/", "file:///etc/passwd", "ftp://localhost/", "javascript:alert(1)", "localhost:5173", ""]) expect(isLocalUrl(ng)).toBe(false);
   });
 
   it("画面デザインの段階は、デザインシステムが無いと合意できない。引き渡しでは土台のチケットを先に並べられる", async () => {

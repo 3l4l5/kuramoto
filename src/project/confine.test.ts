@@ -36,6 +36,8 @@ describe("作業場所への閉じ込め", () => {
     expect(review!.confine!.writable.some((w) => w.endsWith("/.local/state/mise"))).toBe(true);
     expect(review!.confine!.allowLocalSockets).toBe(true);
     expect(review!.confine!.env).toMatchObject({ MISE_TRUSTED_CONFIG_PATHS: "/tmp/ws" });
+    // 合意した試作の場所を渡す(e2e などが読む)。認証情報の場所は隠したまま
+    expect(dev!.confine!.env).toMatchObject({ KURAMOTO_DESIGN_DIR: "/tmp/ws/.kuramoto/design" });
     expect(review!.confine!.hiddenEnv).toEqual(expect.arrayContaining(["SSH_AUTH_SOCK", "DOCKER_HOST"]));
     expect(review!.confine!.hidden.some((h) => h.endsWith("/.docker"))).toBe(true);
     // シェルの読み込みも作業場所に絞られるので、git の本体・ツールチェーン・git の設定を名指しで開ける。隠す場所は開けない

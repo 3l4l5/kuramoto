@@ -38,18 +38,49 @@ export type Renderer = (html: string, width: number) => Promise<Buffer>;
 export const DEVICE_WIDTH = { phone: 390, desktop: 1280 } as const;
 const DEVICE_HEIGHT = { phone: 844, desktop: 800 } as const;
 
-/** 手元の Chrome(無ければ Playwright の Chromium)で描く。 */
-export const playwrightRenderer: Renderer = async (html, width) => {
+/** ブラウザを開き、決まった幅でページ全体を撮る。手元の Chrome(無ければ Playwright の Chromium)を使う。 */
+async function shoot(width: number, open: (page: import("@playwright/test").Page) => Promise<void>): Promise<Buffer> {
   const { chromium } = await import("@playwright/test");
   const browser = await chromium.launch({ channel: "chrome" }).catch(() => chromium.launch());
   try {
     const page = await browser.newPage({ viewport: { width, height: width === DEVICE_WIDTH.phone ? DEVICE_HEIGHT.phone : DEVICE_HEIGHT.desktop }, deviceScaleFactor: 1 });
-    await page.setContent(html, { waitUntil: "load" });
+    await open(page);
     return await page.screenshot({ fullPage: true });
   } finally {
     await browser.close();
   }
-};
+}
+
+/** 手元の Chrome(無ければ Playwright の Chromium)で描く。 */
+export const playwrightRenderer: Renderer = (html, width) => shoot(width, (page) => page.setContent(html, { waitUntil: "load" }));
+
+/** URL を、決まった幅のブラウザで描いた画像(ページ全体)。担当の作業場所では描けないので、サーバの側で描く(ADR-0034)。 */
+export type UrlRenderer = (url: string, width: number) => Promise<Buffer>;
+
+/** 描いてよい URL(http か https で、この機械の中。担当の作業場所で動かした開発サーバーだけを想定する)。 */
+export function isLocalUrl(raw: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  return (u.protocol === "http:" || u.protocol === "https:") && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+}
+
+/**
+ * ローカルの URL を描く。ページが読みに行く先もこの機械の中だけにする(外へは出さない)。
+ * 画面が落ち着く(通信が止まる)まで少し待つ。待ちきれなくても、その時点の画面を撮る。
+ */
+export const playwrightUrlRenderer: UrlRenderer = (url, width) =>
+  shoot(width, async (page) => {
+    await page.route("**/*", (route) => {
+      const u = route.request().url();
+      return u.startsWith("data:") || u.startsWith("blob:") || isLocalUrl(u) ? route.continue() : route.abort();
+    });
+    await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+    await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
+  });
 
 export type DesignImage = { id: number; ticket_id: number | null; screen_key: string; kind: "reference" | "actual" | "diff"; store_key: string; width: number; height: number; diff_ratio: number | null; created_at: string };
 
