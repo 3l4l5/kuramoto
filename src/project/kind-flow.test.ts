@@ -9,6 +9,7 @@ import { leadChatTools } from "./leadchat.js";
 import { Project } from "./project.js";
 import { ticketView } from "./ticket.js";
 import { StaticWorkspace } from "./workspace.js";
+import { claimNext } from "./inbox.js";
 import { createTicket, setTicketKind } from "./workflow.js";
 
 const REPO = "acme/shop";
@@ -191,6 +192,33 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
     expect(p.ticket(t.id).dev_done).toBe(1);
     expect(trail(p, t.id)).toEqual(["dev", "review", "sec"]);
     void d;
+  });
+
+  it("開発より前の工程を待っている間にその島を外して版を上げても、開発へ進む(開発を飛ばさない)", async () => {
+    // 例 1: [qa, dev, review] で QA の島を外す → 今の流れは [dev, review]。merge 待ちに飛ばない
+    const a = setup({ bugfix: ["qa", "dev", "review"] });
+    const t1 = mk(a.p, "bugfix");
+    a.p.saveFormation({ pull: "down", units: [unit("開発", ["dev"]), unit("レビュー", ["review"]), unit("セキュリティ", ["sec"])] });
+    await a.d.drain();
+    expect(trail(a.p, t1.id)).toEqual(["dev", "review"]);
+    expect(a.p.ticket(t1.id).stage).toBe("merge");
+
+    // 例 2: [review, dev, qa] でレビューの島を外す → 開発へ進み、PR が無いのに通常の QA が先に動かない
+    const b = setup({ feature: ["review", "dev", "qa"] });
+    const t2 = mk(b.p);
+    b.p.saveFormation({ pull: "down", units: [unit("開発", ["dev"]), unit("QA", ["qa"])] });
+    await b.d.drain();
+    expect(trail(b.p, t2.id)).toEqual(["dev", "qa"]);
+    expect(b.p.handoffs(t2.id)).toEqual([]);
+  });
+
+  it("開発より前の確認も、リーダーの交通整理を待ってから動く", () => {
+    const { p } = setup({ bugfix: ["qa", "dev"] });
+    const t = mk(p, "bugfix");
+    expect(p.db.prepare("SELECT triaged FROM tickets WHERE id = ?").get(t.id)).toEqual({ triaged: 0 });
+    expect(claimNext(p, { triage: true })).toBeUndefined();
+    p.db.prepare("UPDATE tickets SET triaged = 1 WHERE id = ?").run(t.id);
+    expect(claimNext(p, { triage: true })).toMatchObject({ kind: "qa" });
   });
 
   it("リーダーが create_ticket で 4 種類から 1 つを付ける", () => {

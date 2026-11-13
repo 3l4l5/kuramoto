@@ -93,7 +93,7 @@ export function claimNext(p: Project, opts: { exclude?: number[]; planningOnly?:
          ${opts.noPlan ? "AND m.kind <> 'plan'" : ""}
          ${
            opts.triage
-             ? `AND NOT (m.kind = 'implement' AND EXISTS (SELECT 1 FROM tickets t WHERE t.id = m.ticket_id AND t.triaged = 0))
+             ? `AND NOT ((m.kind = 'implement' OR json_extract(m.payload, '$.preDev') = 1) AND EXISTS (SELECT 1 FROM tickets t WHERE t.id = m.ticket_id AND t.triaged = 0))
          AND NOT (m.kind = 'implement' AND EXISTS (SELECT 1 FROM ticket_deps d JOIN tickets b ON b.id = d.depends_on WHERE d.ticket_id = m.ticket_id AND b.stage NOT IN ('done','dropped')))
          AND NOT (m.kind = 'implement' AND NOT EXISTS (SELECT 1 FROM runs r0 WHERE r0.ticket_id = m.ticket_id AND r0.role = 'dev') AND ${AREA_BUSY_SQL.replace("%T", "m.ticket_id")})`
              : ""

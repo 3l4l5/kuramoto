@@ -239,10 +239,12 @@ export class Dispatcher {
     const units = p.unitsForRole(role, repo);
     if (!units.length) {
       // 編成が変わってこの工程が無くなった。工程を飛ばす。
+      // 開発より前の工程(preDev)なら、飛ばしたあとも開発へ進む(今の流れで工程が開発より後ろに見えても、開発を飛ばさない)
       if (ticket && role !== "dev") {
+        const preDev = (JSON.parse(msg.payload) as { preDev?: boolean }).preDev === true;
         tx(p.db, () => {
           complete(p, msg.id);
-          advance(p, ticket, role);
+          advance(p, ticket, role, { preDev });
         });
         return "handled";
       }
