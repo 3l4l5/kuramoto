@@ -1,4 +1,3 @@
-import { get } from "../db/sqlite.js";
 import type { Role } from "../domain/roles.js";
 import { designSystem, designSystemCss, requirements, screens, type DesignSystem } from "./planning.js";
 import type { Project, TicketRow } from "./project.js";
@@ -16,8 +15,8 @@ export type DesignFile = { key: string; name: string; device: "phone" | "desktop
 
 /** チケットに関わる画面の試作。 */
 export function designFor(p: Project, ticket: TicketRow): DesignFile[] {
-  const refs = JSON.parse(get<{ plan_refs: string }>(p.db, "SELECT plan_refs FROM tickets WHERE id = ?", [ticket.id])?.plan_refs || "{}") as { screens?: string[]; requirement?: string | null };
-  const req = refs.requirement ?? requirements(p).find((r) => r.id === get<{ requirement_item_id: number | null }>(p.db, "SELECT requirement_item_id FROM tickets WHERE id = ?", [ticket.id])?.requirement_item_id)?.code;
+  const refs = JSON.parse(ticket.plan_refs || "{}") as { screens?: string[]; requirement?: string | null };
+  const req = refs.requirement ?? requirements(p).find((r) => r.id === (ticket as TicketRow & { requirement_item_id?: number | null }).requirement_item_id)?.code;
   const linked = new Set(refs.screens ?? []);
   // デザインシステムの土台のチケットは、カタログに全部の画面を並べるので、全部の試作を渡す
   const all = isDesignSystemTicket(p, ticket);
@@ -33,7 +32,7 @@ export function designFor(p: Project, ticket: TicketRow): DesignFile[] {
 }
 
 export function isDesignSystemTicket(p: Project, ticket: TicketRow): boolean {
-  return !!(JSON.parse(get<{ plan_refs: string }>(p.db, "SELECT plan_refs FROM tickets WHERE id = ?", [ticket.id])?.plan_refs || "{}") as { designSystem?: boolean }).designSystem;
+  return !!(JSON.parse(ticket.plan_refs || "{}") as { designSystem?: boolean }).designSystem;
 }
 
 /** デザインシステムの見本(トークンの CSS・部品を並べた HTML・元の JSON)。 */

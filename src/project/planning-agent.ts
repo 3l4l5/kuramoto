@@ -1,6 +1,6 @@
 import { speechNote } from "../domain/cast.js";
 import { z } from "zod";
-import { get, run } from "../db/sqlite.js";
+import { inScope } from "../db/count.js";
 import type { Role } from "../domain/roles.js";
 import { castName } from "../domain/cast.js";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
@@ -382,7 +382,7 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
             design_system: z.boolean().optional().describe("デザインシステムの土台(トークン・共通の部品・カタログ)を作るチケットなら true"),
             after: z.array(z.number().int()).optional().describe("先に merge されている必要があるチケットの番号(画面を作るチケットは、デザインシステムの土台のチケットを書く)"),
           },
-          handler: (a) => {
+          handler: async (a) => {
             const repos = p.repos().map((r) => r.full_name);
             if (a.repo && !repos.includes(a.repo)) return `登録されていないリポジトリです。使えるのは ${repos.join(", ")}`;
             const item = a.requirement ? requirements(p).find((r) => r.code === a.requirement) : undefined;
@@ -398,7 +398,7 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
             });
             for (const n of a.after ?? []) {
               const dep = p.tickets().find((x) => x.number === n);
-              if (dep) run(p.db, "INSERT OR IGNORE INTO ticket_deps (ticket_id, depends_on) VALUES (?, ?)", [t.id, dep.id]);
+              if (dep) await addDependency(p, t.id, dep.id);
             }
             if (a.issue) markIssueTicketed(p, a.repo ?? repos[0]!, a.issue);
             return `#${t.number} を作りました。`;
@@ -480,9 +480,17 @@ function snapshot(p: Project, stage: Stage | "handoff"): string {
   return JSON.stringify(data, null, 1);
 }
 
+/** チケットの依存を 1 本足す(あれば何もしない。読んでから書くので、トランザクションの中で)。 */
+async function addDependency(p: Project, ticketId: number, dependsOn: number): Promise<void> {
+  await p.pdb.transaction(async () => {
+    const has = await inScope(p.pdb, "ticket_deps").where("ticket_id", "=", ticketId).where("depends_on", "=", dependsOn).executeTakeFirst();
+    if (!has) await p.pdb.insert("ticket_deps", { ticket_id: ticketId, depends_on: dependsOn }).execute();
+  });
+}
+
 export function planningPrompt(p: Project, payload: PlanPayload, opts: { fresh?: boolean } = {}): string {
   const where = payload.stage === "handoff" ? "チームへの引き渡し" : `段階「${STAGE_LABEL[payload.stage]}」(${payload.stage})`;
-  const name = get<{ value: string }>(p.db, "SELECT value FROM settings WHERE key = 'project_name'")?.value ?? "";
+  const name = p.setting("project_name") ?? "";
   const events = payload.events.map((e) => (e.type === "chat" ? `責任者: ${e.text}` : e.type === "question" ? `責任者の質問: ${e.text}` : `[${e.type}] ${e.text}`)).join("\n");
   const ask = onlyQuestions(payload.events);
   return `プロジェクト「${name}」の企画スタジオ、${where}です。
