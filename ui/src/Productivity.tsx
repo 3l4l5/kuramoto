@@ -1,10 +1,10 @@
-import { Chip, Select } from "./ds";
+import { Chip, Segmented } from "./ds";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type ProductivityView } from "./api";
 import { usd } from "./format";
 import { Btn } from "./ui";
-import { KINDS, KindChip } from "./kind";
+import { KINDS, KIND_SHAPE, KindChip } from "./kind";
 
 /**
  * 開発生産性(docs/design.md 8 章)。トークン・金額・PR・手戻り・人間に助けを求めた数を、記録から数えて見せる。
@@ -277,15 +277,13 @@ function Tickets({ data, mode }: P) {
   if (data.tickets.length === 0) return <p className="hint">まだチケットがありません。</p>;
   const bar = (
     <div className="kindfilter-row">
-      <label htmlFor="pt-kind">種類で絞り込み</label>
-      <Select id="pt-kind" size="sm" value={kind} onChange={(e) => setKind(e.target.value)}>
-        <option value="all">すべて</option>
-        {KINDS.map((k) => (
-          <option key={k.key} value={k.key}>
-            {k.label}
-          </option>
-        ))}
-      </Select>
+      <span>種類</span>
+      <Segmented
+        label="種類で絞り込み"
+        value={kind}
+        onChange={setKind}
+        options={[{ value: "all", label: "全部" }, ...KINDS.map((k) => ({ value: k.key as string, label: `${KIND_SHAPE[k.key]} ${k.label}` }))]}
+      />
       <span className="hint">{rows.length} 件</span>
     </div>
   );

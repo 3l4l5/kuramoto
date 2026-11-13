@@ -107,6 +107,8 @@ describe("ローカルサーバー", () => {
       label: "バグ修正",
       stages: [{ key: "qa", label: "QA", preDev: true }, { key: "dev", label: "開発", preDev: false }],
     });
+    expect(view.roleLabels.qa).toBe("QA");
+    expect(view.kinds.find((k: { key: string }) => k.key === "bugfix").omitted).toEqual([]);
     expect(view.kinds.find((k: { key: string }) => k.key === "feature").stages.every((s: { preDev: boolean }) => !s.preDev)).toBe(true);
     const row = (id: number) => view.tickets.find((t: { id: number }) => t.id === id);
     expect(row(bug.id)).toMatchObject({ kind: "bugfix", kindLabel: "バグ修正", stage: "qa", preDev: true });

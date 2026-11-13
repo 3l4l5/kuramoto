@@ -570,6 +570,7 @@ test("チケットの種類: 詳細で変えられ、ボードは種類の流れ
     await expect(pre).toContainText("申し送り・差し戻し無し");
     await expect(pre).toContainText("落ちるのを直す");
     await expect(board).not.toContainText("新しい画面を足す");
+    await expect(board.locator(".kindnote")).toHaveText("バグ修正の流れの順に並べています(QA → 開発 → merge 待ち)");
     await shot(page, "board-kind");
   });
 
@@ -579,6 +580,7 @@ test("チケットの種類: 詳細で変えられ、ボードは種類の流れ
     await expect(node).toContainText("バグ修正");
     await expect(node.locator(".tr-pre")).toHaveText("申し送り");
     await expect(page.locator(".tr-node", { hasText: "新しい画面を足す" }).locator(".tr-pre")).toHaveCount(0);
+    await expect(page.getByLabel("凡例")).toContainText("●機能 ▲バグ修正 ■リファクタ ◆ドキュメント");
   });
 
   await test.step("詳細で、種類のチップと、その種類の流れが見え、責任者が種類を変えられる", async () => {
@@ -592,6 +594,7 @@ test("チケットの種類: 詳細で変えられ、ボードは種類の流れ
     await dialog.getByLabel("チケットの種類").selectOption("docs");
     await expect(page.getByRole("status", { name: "お知らせ" })).toContainText("種類を「ドキュメント」に変えました");
     await expect(dialog.locator("header")).toContainText("ドキュメント");
+    await expect(dialog.locator(".kindchanged")).toHaveText("バグ修正 → ドキュメントに変えました。次の工程からドキュメントの流れで進みます。");
     await expect(dialog.getByRole("region", { name: "やりとり" })).toContainText("種類を「バグ修正」から「ドキュメント」に変えました");
     await shot(page, "ticket-kind");
     await dialog.getByRole("button", { name: "閉じる" }).click();
@@ -604,7 +607,7 @@ test("チケットの種類: 詳細で変えられ、ボードは種類の流れ
     const table = page.getByRole("table", { name: "チケットごとの指標" });
     await expect(table.getByRole("columnheader", { name: "種類" })).toBeVisible();
     await expect(table.locator("tbody tr")).toHaveCount(2);
-    await page.getByLabel("種類で絞り込み").selectOption("docs");
+    await page.getByRole("radiogroup", { name: "種類で絞り込み" }).getByRole("radio", { name: "◆ ドキュメント" }).click();
     await expect(table.locator("tbody tr")).toHaveCount(1);
     await expect(table).toContainText("落ちるのを直す");
     await expect(table).not.toContainText("新しい画面を足す");

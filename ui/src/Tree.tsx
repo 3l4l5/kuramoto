@@ -111,6 +111,10 @@ export function TicketTree({ d }: { d: ProjectView }) {
           <p className="hint">ありません</p>
         )}
       </section>
+      <p className="tr-legend" aria-label="凡例">
+        <span>●機能 ▲バグ修正 ■リファクタ ◆ドキュメント</span>
+        <span>点線の工程 = 開発より前({PRE_DEV_LABEL}・差し戻し無し)</span>
+      </p>
     </div>
   );
 }

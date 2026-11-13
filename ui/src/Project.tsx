@@ -336,13 +336,14 @@ function Board({ d }: { d: ProjectView }) {
   const now = useNow();
   // 種類で絞る(R17)。絞ると、その種類の流れの順に列が並ぶ。絞らないときは既定の流れの順
   const [kind, setKind] = useState<string>("all");
+  const kindInfo = kind === "all" ? null : d.kinds.find((k) => k.key === kind);
   const shown = kind === "all" ? d.tickets : d.tickets.filter((t) => t.kind === kind);
   const flow: { key: string; label: string; preDev: boolean }[] = kind === "all" ? d.stages.map((s) => ({ ...s, preDev: false })) : (d.kinds.find((k) => k.key === kind)?.stages ?? []);
   // 流れに無い工程にいるチケット(流れを変えた直後など)も見失わないよう、流れの後ろに足す
   const extra = [...new Set(shown.map((t) => t.stage))].filter((s) => !["decision", "merge", "done", "dropped"].includes(s) && !flow.some((f) => f.key === s));
   // 開発の工程は、まだ誰も手を付けていない「未着手」と、取りかかった・直しに戻った「開発中」に分ける
   const cols: [string, string, boolean][] = [
-    ...[...flow, ...extra.map((key) => ({ key, label: d.stages.find((s) => s.key === key)?.label ?? key, preDev: false }))].flatMap((s): [string, string, boolean][] =>
+    ...[...flow, ...extra.map((key) => ({ key, label: d.roleLabels[key] ?? key, preDev: false }))].flatMap((s): [string, string, boolean][] =>
       s.key === "dev" ? [["todo", "未着手", false], ["dev", "開発中(直し含む)", false]] : [[s.key, s.label, s.preDev]],
     ),
     ["decision", "判断待ち", false],
@@ -354,13 +355,21 @@ function Board({ d }: { d: ProjectView }) {
   const colOf = (t: ProjectView["tickets"][number]) => (t.stage === "dev" && !t.started ? "todo" : t.stage);
   return (
     <div className="board-wrap">
-      <Segmented
-        label="種類で絞り込み"
-        className="kindfilter"
-        value={kind}
-        onChange={setKind}
-        options={[{ value: "all", label: "すべて" }, ...KINDS.map((k) => ({ value: k.key as string, label: k.label }))]}
-      />
+      <div className="kindbar">
+        <Segmented
+          label="種類で絞り込み"
+          className="kindfilter"
+          value={kind}
+          onChange={setKind}
+          options={[{ value: "all", label: "すべて" }, ...KINDS.map((k) => ({ value: k.key as string, label: k.label }))]}
+        />
+        {kindInfo && (
+          <span className="kindnote">
+            {kindInfo.label}の流れの順に並べています({[...flow.map((f) => f.label), "merge 待ち"].join(" → ")}
+            {kindInfo.omitted.length > 0 ? `。${kindInfo.omitted.join("・")}は省略` : ""})
+          </span>
+        )}
+      </div>
       <div className="board" style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(170px, 1fr))` }}>
         {cols.map(([k, label, pre]) => {
           const list = shown.filter((t) => colOf(t) === k);

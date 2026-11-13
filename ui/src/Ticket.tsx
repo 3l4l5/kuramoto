@@ -230,8 +230,14 @@ function Details({ projectId, t }: { projectId: number; t: TicketView }) {
 /** チケットの種類。責任者が変えられる。変えると、次の工程から変えた先の流れで進む。 */
 function KindSelect({ projectId, t }: { projectId: number; t: TicketView }) {
   const act = useAct();
-  const change = (kind: string) =>
-    act(() => post(`/projects/${projectId}/tickets/${t.id}/kind`, { kind }), `種類を「${KINDS.find((k) => k.key === kind)?.label ?? kind}」に変えました。次の工程から、その種類の流れで進みます`);
+  // 変えた直後は、画面にとどまる説明を出す(トーストは消えるため)
+  const [changed, setChanged] = useState<{ from: string; to: string } | null>(null);
+  const change = async (kind: string) => {
+    const from = t.kindLabel;
+    const to = KINDS.find((k) => k.key === kind)?.label ?? kind;
+    const r = await act(() => post(`/projects/${projectId}/tickets/${t.id}/kind`, { kind }), `種類を「${to}」に変えました。次の工程から、その種類の流れで進みます`);
+    if (r) setChanged({ from, to });
+  };
   return (
     <div className="kindsel">
       <label className="sr" htmlFor="tk-kind">
@@ -253,6 +259,11 @@ function KindSelect({ projectId, t }: { projectId: number; t: TicketView }) {
           </span>
         ))}
       </div>
+      {changed && (
+        <div className="kindchanged" role="note">
+          {changed.from} → {changed.to}に変えました。次の工程から{changed.to}の流れで進みます。
+        </div>
+      )}
     </div>
   );
 }
