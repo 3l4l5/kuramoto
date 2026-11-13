@@ -865,13 +865,20 @@ body { background: var(--surface); }
 .stagectl .mv .ds-btn { width: var(--h-control-sm); padding: 0; font-size: var(--fs-xs); }
 .stagectl .fixed { font-size: var(--fs-sm); color: var(--muted); }
 .ds-list__item[aria-disabled="true"] .stagectl .fixed { color: var(--muted); }
+/* スマホ(幅 390px、未決 #21): 引き出し(編成・チームの方針)は全画面。保存ボタンは下に固定 */
 @media (max-width: 700px) {
-  .drawer.formation { position: fixed; inset: 0; z-index: 30; max-width: none; border-radius: 0; overflow: auto; }
-  .drawer.formation > .ds-drawer { min-height: 100%; }
-  .drawer.formation .ds-drawer__foot { position: sticky; bottom: 0; background: var(--surface); flex-wrap: wrap; }
-  .flowtab { flex-direction: column; }
-  .flowtab .kinds { width: 100%; }
-  .drawer.formation .ds-list__item { flex-wrap: wrap; }
+  aside.drawer { position: fixed; inset: 0; z-index: 30; flex: none; max-width: none; border-radius: 0; overflow: auto; }
+  aside.drawer > .ds-drawer { min-height: 100%; border: 0; border-radius: 0; box-shadow: none; }
+  aside.drawer .ds-drawer__foot { position: sticky; bottom: 0; background: var(--surface); flex-wrap: wrap; }
+  aside.drawer .ds-drawer__tabs { overflow-x: auto; }
+  .drawer.wide, .drawer--wide { flex-basis: auto; max-width: none; }
+  .flowtab { flex-direction: column; align-self: stretch; }
+  .flowtab .kinds, .flowmain { width: 100%; }
+  aside.drawer .ds-list__item { flex-wrap: wrap; }
+  aside.drawer .history li span { flex-basis: 100%; }
+  .drawer .unitmodel { grid-template-columns: 1fr; }
+  .drawer .cmp { display: block; overflow-x: auto; }
+  .roletabs { flex-wrap: wrap; }
 }
 
 /* チームの方針の「開発ルール」(R15)。部品は ds/、ここは並べ方だけ */
@@ -930,6 +937,7 @@ body { background: var(--surface); }
 .officefloor .of-islands { display: flex; align-items: stretch; gap: var(--sp-5); padding: 88px 0 var(--sp-4); min-width: max-content; }
 .officefloor .of-st { display: contents; }
 .officefloor .of-strands { display: none; }
+.officefloor .of-strandhead { display: none; }
 .officefloor .of-st > section { position: relative; z-index: 1; flex: 1 1 200px; min-width: 200px; }
 /* 駅の下の帯(136px)に、種類ごとの路線を通す。RouteMap の BAND と同じ高さ */
 .officefloor .of-st > .of-island, .officefloor .of-st > .of-desk, .officefloor .of-st > .of-shelf { padding-bottom: 136px; }
@@ -1016,8 +1024,54 @@ body { background: var(--surface); }
   .officefloor .of-strand::before { content: ""; position: absolute; top: 0; bottom: 0; left: 10px; width: 3px; background: var(--line-strong); opacity: .5; }
   .officefloor .of-stopnum { position: relative; width: 18px; height: 18px; border-radius: 50%; background: var(--surface); border: 2px solid var(--line-strong); font-family: var(--f-mono); font-size: var(--fs-xs); line-height: 14px; text-align: center; color: var(--muted); }
   .officefloor .of-map[data-kind="all"] .of-strand::before, .officefloor .of-map[data-kind="feature"] .of-strand:nth-child(1)::before, .officefloor .of-map[data-kind="bugfix"] .of-strand:nth-child(2)::before, .officefloor .of-map[data-kind="refactor"] .of-strand:nth-child(3)::before, .officefloor .of-map[data-kind="docs"] .of-strand:nth-child(4)::before { background: var(--ink); opacity: 1; }
+  .officefloor .of-strandhead { display: flex; padding-bottom: var(--sp-1); }
+  .officefloor .of-strandhead span { width: 22px; text-align: center; font-size: var(--fs-sm); color: var(--line-strong); }
+  .officefloor .of-map[data-kind="all"] .of-strandhead span, .officefloor .of-map[data-kind="feature"] .of-strandhead span:nth-child(1), .officefloor .of-map[data-kind="bugfix"] .of-strandhead span:nth-child(2), .officefloor .of-map[data-kind="refactor"] .of-strandhead span:nth-child(3), .officefloor .of-map[data-kind="docs"] .of-strandhead span:nth-child(4) { color: var(--ink); font-weight: var(--fw-bold); }
+  .officefloor .of-stopnum { flex: none; }
+  .officefloor .of-seats { flex-wrap: wrap; justify-content: flex-start; }
+  .officefloor .of-shelf li { flex-wrap: wrap; }
   .officefloor .of-side { flex-direction: column; align-items: stretch; margin-top: 0; }
   .officefloor .of-side > section { flex: 1 1 auto; }
   .officefloor .of-legend { margin: 0; border-radius: var(--r-md); }
   .officefloor .of-drawer { position: fixed; left: 0; right: 0; top: auto; bottom: 0; width: auto; height: 70vh; border-radius: var(--r-lg) var(--r-lg) 0 0; z-index: 50; }
+}
+
+/* スマホ(幅 390px): 開発ルールは「一覧 → 押すと編集」の 2 画面。保存ボタンは下に固定 */
+.rules .rules__back { display: none; align-self: flex-start; }
+@media (max-width: 700px) {
+  .rules { min-height: 0; }
+  .rules__side { width: 100%; border-right: 0; }
+  .rules__form { flex: 1 0 100%; min-width: 0; }
+  .rules[data-phone-view="list"] .rules__form, .rules[data-phone-view="edit"] .rules__side { display: none; }
+  .rules .rules__back { display: inline-flex; }
+  .rules__foot { position: sticky; bottom: 0; background: var(--surface); flex-wrap: wrap; z-index: 1; }
+  .rules__foot .rules__note { flex-basis: 100%; }
+  .rules .ds-list__item { flex-wrap: wrap; }
+  .rules__field .ds-seg { max-width: 100%; overflow-x: auto; }
+}
+
+/* スマホ(幅 390px): 共通のヘッダー・画面の切り替え・企画スタジオ・生産性・設定が横にはみ出さないようにする */
+@media (max-width: 700px) {
+  .app { padding-block: 12px 24px; gap: 12px; }
+  .bar { gap: 8px 10px; }
+  .tabs { display: flex; width: 100%; }
+  .tabs > * { flex: 1 1 0; min-width: 0; padding-inline: var(--sp-1); }
+  .ds-seg { max-width: 100%; overflow-x: auto; }
+  .ds-seg__opt { flex: none; white-space: nowrap; padding: 0 var(--sp-2); }
+  .officefloor .of-filter .ds-seg { flex: 1; min-width: 0; }
+  .form .rrow { grid-template-columns: 1fr; }
+  .form { max-width: none; }
+  .desk { width: 100%; max-width: 488px; height: auto; aspect-ratio: 1.6; }
+  .desk iframe { transform: scale(.25); }
+  .req .talk, .strio { flex-basis: 100%; max-width: none; }
+  .toast { max-width: calc(100vw - 2 * var(--sp-4)); }
+  .panel, .gate, .item, .tbl { min-width: 0; }
+  .tablewrap, .flowwrap { max-width: 100%; }
+  .ticketdialog .cols, .peopledialog .pd-cols { grid-template-columns: minmax(0, 1fr); }
+  .ticketdialog dl, .peopledialog .pd-facts { grid-template-columns: 80px minmax(0, 1fr); }
+  .tr-node { min-width: 0; }
+  .tree .tr-flat { grid-template-columns: minmax(0, 1fr); }
+  .tree ul ul { margin-left: 8px; padding-left: 10px; }
+  .tree ul ul > li::before { left: -10px; width: 8px; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

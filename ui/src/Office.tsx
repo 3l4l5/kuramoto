@@ -60,6 +60,12 @@ export function OfficeFloor({ id }: { id: number }) {
         </div>
         <RouteMap data={data} kind={kind}>
           <div className="of-islands">
+            {/* スマホだけ: 縦線の上に、種類の形を並べる(選んだ種類が濃くなる) */}
+            <div className="of-strandhead" aria-hidden="true">
+              {KINDS.map((k) => (
+                <span key={k.key}>{KIND_SHAPE[k.key]}</span>
+              ))}
+            </div>
             <Station loc="lead" data={data} stopsOf={stopsOf}>
               <Desk onMember={open(false)} title="受け口" label="リーダー" who={data.lead} running={data.running} waitingFor="判断・チャットを待っています" loc="lead" note={data.lead.decisions.length ? `判断待ち ${data.lead.decisions.length} 件(#${data.lead.decisions.join("、#")})` : "判断待ちはありません"} />
             </Station>
@@ -124,7 +130,10 @@ export function OfficeFloor({ id }: { id: number }) {
   );
 }
 
-/** 駅。スマホでは左に縦の路線(丸の中の数字が停車の順番、丸が無ければ通過)を出す。パソコンでは何も足さない。 */
+/**
+ * 駅。スマホでは左に縦の路線を出す(パソコンでは何も足さない)。丸の中の数字は停車の順番で、受け口を 0 として数える
+ * (受け口には丸を置かない)。丸が無い駅は、その種類の流れが省く駅。
+ */
 function Station({ loc, data, stopsOf, children }: { loc: string; data: OfficeView; stopsOf: (l: OfficeView["lines"][number]) => string[]; children: React.ReactNode }) {
   return (
     <div className="of-st">
@@ -134,7 +143,7 @@ function Station({ loc, data, stopsOf, children }: { loc: string; data: OfficeVi
           const at = l ? stopsOf(l).indexOf(loc) : -1;
           return (
             <i key={k.key} className="of-strand" data-k={k.key}>
-              {at >= 0 && <b className="of-stopnum">{at + 1}</b>}
+              {at > 0 && <b className="of-stopnum">{at}</b>}
             </i>
           );
         })}

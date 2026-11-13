@@ -44,6 +44,8 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
   const { data } = useDevRules(id);
   const act = useAct();
   const [selected, setSelected] = useState<number | null>(null);
+  // スマホでは「一覧 → 押すと編集」の 2 画面に分ける(パソコンでは左に一覧・右に編集を並べるので、この値は見た目に効かない)
+  const [phoneView, setPhoneView] = useState<"list" | "edit">(draft ? "edit" : "list");
   const [confirming, setConfirming] = useState(false);
   /** 保存していない下書きがあるまま移ろうとしたときの行き先(確かめるまで下書きは捨てない)。"add" は空のルールを足すフォーム */
   const [leaving, setLeaving] = useState<number | "add" | null>(null);
@@ -59,17 +61,20 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
     setConfirming(false);
     setLeaving(null);
     setSelected(id);
+    setPhoneView(id === null ? "list" : "edit");
   };
   const openAdd = () => {
     setConfirming(false);
     setLeaving(null);
     setDraft(adding ? draft : EMPTY);
+    setPhoneView("edit");
   };
   /** 一覧や「足す」で別へ移る。直している途中なら、捨ててよいか確かめてから(足すフォームの途中から「足す」を押しても、そのまま残す) */
   const go = (to: number | "add") => {
     if (to === "add") return adding ? undefined : unsaved ? setLeaving("add") : openAdd();
     if (!unsaved) return select(to);
     setLeaving(to === current?.id ? null : to);
+    setPhoneView("edit");
   };
   const proceed = () => (leaving === "add" ? openAdd() : select(leaving));
   const write = (path: string, body: unknown, message: (r: DevRulesView) => string, then?: (r: DevRulesView) => void) =>
@@ -100,7 +105,7 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
     );
 
   return (
-    <div className="rules" role="tabpanel" aria-label="開発ルール">
+    <div className="rules" role="tabpanel" aria-label="開発ルール" data-phone-view={phoneView}>
       <div className="rules__side">
         <div>
           <SectionHeading>
@@ -153,6 +158,9 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
         </div>
       </div>
       <div className="rules__form">
+        <Button className="rules__back" variant="text" size="sm" onClick={() => setPhoneView("list")}>
+          ← ルールの一覧
+        </Button>
         {leaving !== null && (
           <div className="rules__confirm" role="alert">
             <span className="rules__hint">保存していない変更があります。捨てて移ると、直した内容は戻りません。</span>
