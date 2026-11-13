@@ -11,7 +11,7 @@ export function WorkSwitch({ id, running, showState = true }: { id: number; runn
     <span className={`workswitch${running ? " on" : ""}`}>
       {showState && (
         <span className="state" aria-hidden="true">
-          {running ? "稼働中" : "終業中"}
+          {running ? "始業中" : "終業中"}
         </span>
       )}
       <Switch label="稼働" checked={running} title={running ? "切ると終業します" : "入れると始業します"} onChange={toggle}>

@@ -164,7 +164,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expect(devIsland.getByRole("button", { name: /#\d 実装中/ }).first()).toBeVisible();
     await expect(devIsland).toContainText("src/export.ts を書いています");
     await shot(page, "office-working");
-    await expect(page.getByRole("banner").getByText("稼働中")).toBeVisible();
+    await expect(page.getByRole("banner").getByText("始業中")).toBeVisible();
     // merge 待ちの棚に並ぶ。自動 merge なので、あなたの対応には merge の依頼を出さず、チームが merge すると案内する(ADR-0022)
     const shelf = floor.getByRole("region", { name: "merge 待ちの棚" });
     await expect(shelf.getByRole("button", { name: /を merge$/ })).toHaveCount(2, { timeout: 30_000 });
@@ -379,7 +379,9 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await drawer.getByLabel("この島で重視すること").nth(2).fill("小さく速く");
     await drawer.getByRole("button", { name: "保存して v2 にする" }).click();
     await expect(page.getByRole("status", { name: "お知らせ" })).toHaveText("編成 v2 を適用しました");
-    await page.getByRole("group", { name: "オフィスの見方" }).getByRole("button", { name: "ボード" }).click();
+    // 共通ヘッダーに、編成の版の札と、オフィス/ボード/ツリーの切り替えがある(パソコンの幅)
+    await expect(page.getByRole("banner").getByText("編成 v2")).toBeVisible();
+    await page.getByRole("banner").getByRole("group", { name: "オフィスの見方" }).getByRole("button", { name: "ボード" }).click();
     await expect(page.getByRole("region", { name: "ボード" }).getByRole("heading", { name: /セキュリティ/ })).toBeVisible();
     // 開発は「未着手」と「開発中」に分かれている
     await expect(page.getByRole("region", { name: "ボード" }).getByRole("heading", { name: /^未着手/ })).toBeVisible();
@@ -775,7 +777,6 @@ test("チケットの種類: 詳細で変えられ、ボードは種類の流れ
   expect((await page.request.post(`/api/projects/${id}/tickets`, { headers: write, data: { title: "落ちるのを直す", kind: "bugfix" } })).ok()).toBe(true);
   expect((await page.request.post(`/api/projects/${id}/tickets`, { headers: write, data: { title: "新しい画面を足す" } })).ok()).toBe(true);
   await page.goto(`/#/p/${id}`);
-  await page.getByRole("group", { name: "プロジェクトの画面" }).getByRole("button", { name: "オフィス" }).click();
   await page.getByRole("group", { name: "オフィスの見方" }).getByRole("button", { name: "ボード" }).click();
   const board = page.getByRole("region", { name: "ボード" });
   const heads = board.locator(".board .col > h3");

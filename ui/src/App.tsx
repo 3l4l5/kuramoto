@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { post } from "./api";
 import { Home } from "./Home";
-import { go, useAct, useDbStatus, useProject, useRoute, useStudio } from "./hooks";
+import { go, useDbStatus, useProject, useRoute, useStudio } from "./hooks";
 import { NewProject } from "./NewProject";
 import { ProjectPage } from "./Project";
 import { TicketPage } from "./Ticket";
@@ -11,8 +11,10 @@ import { SettingsPage } from "./Settings";
 import { pct, usd } from "./format";
 import { DRAWER_LABEL, useDrawerState, type Drawer } from "./Team";
 import { Btn } from "./ui";
+import { Chip } from "./ds";
 import { PhoneBar } from "./PhoneBar";
 import { WorkSwitch } from "./WorkSwitch";
+import { OfficeViewSwitch } from "./OfficeViewSwitch";
 import { clearRequestedTab, useFormationUi } from "./formationUi";
 
 export function App() {
@@ -28,6 +30,16 @@ export function App() {
   useEffect(() => {
     if (!guard.confirming && drawer !== "formation") clearRequestedTab();
   }, [guard.confirming, drawer]);
+  // オフィス(と、その中のチケット)では、オフィス/ボード/ツリーの切り替えが画面の切り替えの代わりに出るので、「オフィス」のボタンは重ねない
+  const inOffice = route.name === "project" || route.name === "ticket";
+  const screens: [string, string, string, boolean][] = inProject
+    ? [
+        ["studio", "企画スタジオ", `#/p/${route.id}/studio`, route.name === "studio"],
+        ...(inOffice ? [] : [["office", "オフィス", `#/p/${route.id}`, false] as [string, string, string, boolean]]),
+        ["metrics", "生産性", `#/p/${route.id}/metrics`, route.name === "metrics"],
+        ["settings", "設定", `#/p/${route.id}/settings`, route.name === "settings"],
+      ]
+    : [];
   return (
     <div className="app" data-route={route.name}>
       <header className="bar dads-bar">
@@ -45,20 +57,14 @@ export function App() {
             </>
           )}
         </nav>
+        {inOffice && <OfficeViewSwitch className="tabs viewtabs" home={route.name === "ticket" ? `#/p/${route.id}` : undefined} />}
         {inProject && (
-          <div className="tabs" role="group" aria-label="プロジェクトの画面">
-            <Btn kind={route.name === "studio" ? "solid-fill" : "outline"} size="sm" aria-pressed={route.name === "studio"} onClick={() => go(`#/p/${route.id}/studio`)}>
-              企画スタジオ
-            </Btn>
-            <Btn kind={route.name === "project" || route.name === "ticket" ? "solid-fill" : "outline"} size="sm" aria-pressed={route.name === "project" || route.name === "ticket"} onClick={() => go(`#/p/${route.id}`)}>
-              オフィス
-            </Btn>
-            <Btn kind={route.name === "metrics" ? "solid-fill" : "outline"} size="sm" aria-pressed={route.name === "metrics"} onClick={() => go(`#/p/${route.id}/metrics`)}>
-              生産性
-            </Btn>
-            <Btn kind={route.name === "settings" ? "solid-fill" : "outline"} size="sm" aria-pressed={route.name === "settings"} onClick={() => go(`#/p/${route.id}/settings`)}>
-              設定
-            </Btn>
+          <div className="tabs screens" role="group" aria-label="プロジェクトの画面">
+            {screens.map(([key, label, hash, on]) => (
+              <Btn key={key} kind={inOffice ? "text" : on ? "solid-fill" : "outline"} size="sm" aria-pressed={on} onClick={() => go(hash)}>
+                {label}
+              </Btn>
+            ))}
           </div>
         )}
         <div className="spacer" />
@@ -116,14 +122,15 @@ function ProjectName({ id }: { id: number }) {
   );
 }
 
-/** オフィスの右上: 指標と、始業 / 終業。 */
+/** オフィスの右上: 編成の版の札と、始業 / 終業。 */
 function OfficeStatus({ id }: { id: number }) {
   const { data } = useProject(id);
-  const act = useAct();
   if (!data) return null;
-  const m = data.metrics;
   return (
     <>
+      <Chip tone="version" className="verchip" title="いま使っている編成の版">
+        編成 v{data.formation.version}
+      </Chip>
       <WorkSwitch id={id} running={data.running} />
     </>
   );
