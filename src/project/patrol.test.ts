@@ -281,7 +281,7 @@ describe("リーダーの見回り(ADR-0026)", () => {
       expect(await detectDeadlocks(p)).toEqual([]);
     });
 
-    it("見回りで、待たれている merge 待ちの PR を取り直し、外で merge 済みなら done にする(自動 merge を切って、GitHub から直接 merge した形)", async () => {
+    it("見回りで、merge 待ちの PR を取り直し、外で merge 済みなら done にする(自動 merge を切って、GitHub から直接 merge した形。待たれていないものも)", async () => {
       const { p, clock, make } = setup();
       p.setSetting("auto_merge", "0");
       const base = await make("土台");
@@ -293,29 +293,61 @@ describe("リーダーの見回り(ADR-0026)", () => {
       addPr(p, lone.id, 55, "OPEN");
       wait(p, next.id, base.id);
       const asked: number[] = [];
-      let state: PrStatus["state"] = "OPEN";
+      let merged: number[] = [];
       const gh: GitHub = {
-        prStatus: async (_repo, n): Promise<PrStatus> => (asked.push(n), { state: n === 54 ? state : "MERGED", mergeable: "UNKNOWN", ci: "none" }),
+        prStatus: async (_repo, n): Promise<PrStatus> => (asked.push(n), { state: merged.includes(n) ? "MERGED" : "OPEN", mergeable: "UNKNOWN", ci: "none" }),
         merge: async () => {
           throw new Error("merge は呼ばない");
         },
         comment: async () => "c",
       };
-      // まだ OPEN: 何も変えない。待たれていない lone は問い合わせない
+      // まだ OPEN: 何も変えない。待たれている 54 を先に問い合わせる
       expect(await refreshMergedWaits(p, gh)).toBe(0);
-      expect(asked).toEqual([54]);
+      expect(asked).toEqual([54, 55]);
       expect(p.ticket(base.id).stage).toBe("merge");
       // 見回りの間隔の間は、もう問い合わせない
-      state = "MERGED";
+      merged = [54, 55];
       expect(await refreshMergedWaits(p, gh)).toBe(0);
-      expect(asked).toEqual([54]);
+      expect(asked).toEqual([54, 55]);
       // 間隔が過ぎて、外で merge されていたら done にし、待っていたチケットが解ける
       clock.advance(5 * 60_000);
-      expect(await refreshMergedWaits(p, gh)).toBe(1);
+      expect(await refreshMergedWaits(p, gh)).toBe(2);
       expect(p.ticket(base.id).stage).toBe("done");
-      expect(p.ticket(lone.id).stage).toBe("merge");
+      expect(p.ticket(lone.id).stage).toBe("done");
       expect(await blockers(p, next.id)).toEqual([]);
       expect(await detectDeadlocks(p)).toEqual([]);
+    });
+
+    it("見回りの PR の取り直しは、1 回に patrol_pr_check_max 件まで。待たれているものを先に、上限を超えても 1 周で全部回る", async () => {
+      const { p, clock, make } = setup();
+      p.setSetting("patrol_pr_check_max", "3");
+      // 待たれている 5 件(PR 70〜74)と、待たれていない 2 件(PR 80, 81)
+      const ts = [];
+      for (let i = 0; i < 7; i++) {
+        const t = await make(`t${i}`);
+        setStage(p, t.id, "merge");
+        addPr(p, t.id, i < 5 ? 70 + i : 80 + (i - 5), "OPEN");
+        ts.push(t);
+      }
+      for (let i = 0; i < 5; i++) wait(p, (await make(`続き${i}`)).id, ts[i]!.id);
+      const asked: number[] = [];
+      const gh: GitHub = {
+        prStatus: async (_repo, n): Promise<PrStatus> => (asked.push(n), { state: "OPEN", mergeable: "UNKNOWN", ci: "none" }),
+        merge: async () => "m",
+        comment: async () => "c",
+      } as unknown as GitHub;
+      const round = async (): Promise<number[]> => {
+        asked.length = 0;
+        await refreshMergedWaits(p, gh);
+        clock.advance(5 * 60_000);
+        return [...asked].sort((a, b) => a - b);
+      };
+      const rounds = [await round(), await round(), await round()];
+      for (const r of rounds) expect(r).toHaveLength(3);
+      // 待たれているもの 5 件は、3 回(5 ÷ 席 2 を切り上げ)で全部回り、待たれていないものにも毎回 1 席が回る
+      expect(new Set(rounds.flat().filter((n) => n < 80))).toEqual(new Set([70, 71, 72, 73, 74]));
+      expect(rounds.flat().some((n) => n === 80)).toBe(true);
+      expect(rounds.flat().some((n) => n === 81)).toBe(true);
     });
 
     it("見回りの PR の取り直しは、GitHub に入れない間は何もせず、問い合わせの失敗では止まらない・見回りを止めていれば動かない", async () => {
