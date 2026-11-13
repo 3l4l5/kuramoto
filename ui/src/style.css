@@ -517,6 +517,11 @@ body { background: var(--surface); }
 .dads-bar .crumb [aria-current="page"] { text-decoration: none; color: var(--ink); font-weight: 700; }
 .dads-bar .tabs { display: inline-flex; gap: 4px; padding: 0; border: 0; background: transparent; }
 .dads-bar .eff { font-size: var(--fs-base); color: var(--muted); }
+/* 共通ヘッダーの、オフィス/ボード/ツリーの切り替え(試作どおり、名前のすぐ右の枠つきの切り替え)。ほかの画面への行き先は、そのとなりに文字だけで置く */
+.dads-bar .viewtabs { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+.dads-bar .screens { gap: 0; }
+.dads-bar .screens .ds-btn { padding-inline: var(--sp-2); }
+.dads-bar:has(.viewtabs) { column-gap: var(--sp-2); }
 
 .hint { font-size: var(--fs-base); color: var(--muted); }
 .form .rrow { align-items: center; }
@@ -1166,7 +1171,8 @@ body { background: var(--surface); }
 
 /* ---- 見方の切り替え(オフィス / ボード / ツリー)。パソコンでは右寄せの並び ---- */
 .viewhead { display: flex; align-items: center; gap: var(--sp-2); }
-.viewsw { display: flex; gap: var(--sp-1); margin-left: auto; }
+/* パソコンの幅では、オフィス/ボード/ツリーの切り替えは共通ヘッダー(.viewtabs)に出す。枠の上のは、スマホの幅だけ */
+.viewsw { display: none; gap: var(--sp-1); margin-left: auto; }
 .stagetabs, .tk-tabs, .phonebar, .phonemenu, .tk-phone, .tk-short, .tk-kindsheet { display: none; }
 /* 共通ヘッダーの引き出しのボタン: 包みは並びに影響させず、親(.bar)の gap でそのまま並べる */
 .drawerbtns { display: contents; }
@@ -1178,6 +1184,7 @@ body { background: var(--surface); }
   /* 上の行は「Kuramoto / プロジェクト名 / 稼働の状態」だけ。画面の切り替えと引き出しは、下のタブとメニューへ移す */
   .bar .tabs, .bar .drawerbtns, .bar .spacer, .bar .crumb .sep:first-of-type, .bar .crumb > .ds-btn:first-child { display: none; }
   .app[data-route="home"] .bar .crumb > .ds-btn:first-child { display: inline-flex; }
+  .bar .verchip { display: none; }
   .bar .workswitch { margin-left: auto; }
   .bar .workswitch .state { color: var(--ok); }
 
@@ -1213,7 +1220,7 @@ body { background: var(--surface); }
   /* ボード: 工程を上のタブ(件数つき、横にすべる)にして、1 列ずつ見る */
   .officepanel { background: none; border: 0; padding: 0; }
   .viewhead h2 { display: none; }
-  .viewsw { flex: 1; margin-left: 0; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+  .viewsw { display: flex; flex: 1; margin-left: 0; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
   .viewsw > .ds-btn { flex: 1 1 0; min-width: 0; }
   .board-wrap { overflow-x: visible; }
   .kindbar .kindnote { display: none; }

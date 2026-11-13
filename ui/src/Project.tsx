@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
-import { setPhoneNav, usePhoneNav, type OfficeView } from "./phoneNav";
+import { usePhoneNav } from "./phoneNav";
+import { OFFICE_VIEWS, OfficeViewSwitch } from "./OfficeViewSwitch";
 import { post, type ProjectView } from "./api";
 import { TicketTree } from "./Tree";
 import { areaWaitText, droppedText, hhmm, kfmt, pct, stalledText, timeLeft, unblockText, usd, waitText } from "./format";
@@ -80,19 +81,11 @@ function Office({ id, data }: { id: number; data: ProjectView }) {
 function FloorOrBoard({ id, data }: { id: number; data: ProjectView }) {
   // チケットの画面から「← ボードに戻る」で戻ったとき、見ていたオフィス/ボード/ツリーのままにする(phoneNav が画面の外で持つ)
   const { view } = usePhoneNav();
-  const setView = (v: OfficeView) => setPhoneNav({ view: v });
-  const VIEWS = { floor: "オフィス", board: "ボード", tree: "ツリー" } as const;
   return (
-    <section className="panel officepanel" aria-label={VIEWS[view]}>
+    <section className="panel officepanel" aria-label={OFFICE_VIEWS[view]}>
       <div className="viewhead">
-        <h2>{VIEWS[view]}</h2>
-        <div role="group" aria-label="オフィスの見方" className="viewsw">
-          {(Object.keys(VIEWS) as (keyof typeof VIEWS)[]).map((v) => (
-            <Btn key={v} kind={view === v ? "solid-fill" : "outline"} size="sm" aria-pressed={view === v} onClick={() => setView(v)}>
-              {VIEWS[v]}
-            </Btn>
-          ))}
-        </div>
+        <h2>{OFFICE_VIEWS[view]}</h2>
+        <OfficeViewSwitch className="viewsw" />
       </div>
       {view === "floor" ? <OfficeFloor id={id} /> : view === "board" ? <Board d={data} /> : <TicketTree d={data} />}
     </section>
