@@ -86,9 +86,17 @@ export function withRoute(routes: readonly RouteSpec[] | undefined, a: string, b
   return normalizeRoutes([...(routes ?? []), { from: a, to: b, mode }]);
 }
 
-/** 島の名前が変わったとき、経路の端も付け替える。 */
-export function renameInRoutes(routes: readonly RouteSpec[] | undefined, from: string, to: string): RouteSpec[] {
-  return (routes ?? []).map((r) => ({ ...r, from: r.from === from ? to : r.from, to: r.to === from ? to : r.to }));
+/**
+ * 下書きの経路は、島の名前ではなく島の id(変わらない印)で持つ。名前を打っている途中で他の島と同じ名前になっても、
+ * 経路が混ざらない。保存と検証のときにだけ、id を今の名前に直す。端が lead / architect のものはそのまま。
+ * 下書きから外した島(id が無い)の経路は落とす。
+ */
+export function routesToNames(routes: readonly RouteSpec[] | undefined, ids: readonly string[], names: readonly string[]): RouteSpec[] {
+  const nameOf = (end: string): string | null => (ROUTE_FIXED.includes(end as (typeof ROUTE_FIXED)[number]) ? end : ids.includes(end) ? names[ids.indexOf(end)]! : null);
+  return (routes ?? []).flatMap((r) => {
+    const [from, to] = [nameOf(r.from), nameOf(r.to)];
+    return from !== null && to !== null ? [{ ...r, from, to }] : [];
+  });
 }
 
 // ---- 3 タブの「保存していない変更」 ----
@@ -98,13 +106,18 @@ export type ChangeCounts = { islands: number; routes: number; flows: number };
 const askPairs = (routes: readonly RouteSpec[] | undefined) =>
   new Set((routes ?? []).filter((r) => r.mode === "ask").map((r) => JSON.stringify([r.from, r.to].sort())));
 
-/** 今の版と下書きの違いを、タブごとの件数で数える。島: 変わった島・足した島・外した島と仕事の取り方。 */
-export function changeCounts(current: FormationSpec, draft: FormationSpec): ChangeCounts {
+/**
+ * 今の版と下書きの違いを、タブごとの件数で数える。島: 変わった島・足した島・外した島と仕事の取り方。
+ * ids: 下書きの島ごとの印(もとの島は今の版の名前)。島は印で突き合わせるので、先頭の島を外しても後ろの島は変わったと数えない。
+ * 経路は下書きも今の版も、この印(もとの島は名前)で持っている前提。
+ */
+export function changeCounts(current: FormationSpec, draft: FormationSpec, ids: readonly string[] = draft.units.map((u) => u.name)): ChangeCounts {
+  const before = new Map(current.units.map((u) => [u.name, u]));
   let islands = draft.pull !== current.pull ? 1 : 0;
   draft.units.forEach((u, i) => {
-    if (JSON.stringify(u) !== JSON.stringify(current.units[i])) islands++;
+    if (JSON.stringify(u) !== JSON.stringify(before.get(ids[i]!))) islands++;
   });
-  islands += Math.max(0, current.units.length - draft.units.length);
+  islands += current.units.filter((u) => !ids.includes(u.name)).length;
   const [a, b] = [askPairs(current.routes), askPairs(draft.routes)];
   const routes = [...a].filter((k) => !b.has(k)).length + [...b].filter((k) => !a.has(k)).length;
   const flows = FLOW_KEYS.filter((k) => JSON.stringify(current.flows?.[k]) !== JSON.stringify(draft.flows?.[k])).length;

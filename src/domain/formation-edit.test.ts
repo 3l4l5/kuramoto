@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changeCounts, changeSummary, flowDraftErrors, flowRows, moveStage, preDevStages, renameInRoutes, routeModeOf, routePairs, setStage, withFlow, withRoute } from "./formation-edit.js";
+import { changeCounts, changeSummary, flowDraftErrors, flowRows, moveStage, preDevStages, routeModeOf, routePairs, routesToNames, setStage, withFlow, withRoute } from "./formation-edit.js";
 import { DEFAULT_FORMATION } from "./formation.js";
 
 describe("流れの編集", () => {
@@ -46,8 +46,26 @@ describe("連絡経路の編集", () => {
     expect(routeModeOf(on, "レビュー", "開発")).toBe("ask");
     expect(withRoute(on, "レビュー", "開発", "none")).toEqual([]);
   });
-  it("島の名前を変えると経路の端も付け替わる", () => {
-    expect(renameInRoutes([{ from: "開発", to: "lead", mode: "ask" }], "開発", "開発 A")).toEqual([{ from: "開発 A", to: "lead", mode: "ask" }]);
+  it("経路は島の印で持ち、保存のときだけ名前に直す。名前の入力の途中で他の島と同じになっても混ざらない", () => {
+    const ids = ["島 1", "島 2"];
+    // 島 1 ↔ リーダー、島 2 ↔ レビュー(別の島)
+    const routes = [
+      { from: "島 1", to: "lead", mode: "ask" as const },
+      { from: "島 2", to: "島 3", mode: "ask" as const },
+    ];
+    // 「島 2」を「島 15」にしようとして、途中で「島 1」と打った
+    const mid = routesToNames(routes, ["島 1", "島 2", "島 3"], ["島 1", "島 1", "島 3"]);
+    expect(mid).toEqual([
+      { from: "島 1", to: "lead", mode: "ask" },
+      { from: "島 1", to: "島 3", mode: "ask" },
+    ]);
+    // 打ち終えれば、もとの組み合わせのまま新しい名前になる
+    expect(routesToNames(routes, ["島 1", "島 2", "島 3"], ["島 1", "島 15", "島 3"])).toEqual([
+      { from: "島 1", to: "lead", mode: "ask" },
+      { from: "島 15", to: "島 3", mode: "ask" },
+    ]);
+    // 外した島の経路は落ちる
+    expect(routesToNames(routes, ids, ["島 1", "島 2"])).toEqual([{ from: "島 1", to: "lead", mode: "ask" }]);
   });
 });
 
@@ -56,6 +74,16 @@ describe("保存していない変更の数", () => {
   it("変えていなければ 0", () => {
     expect(changeCounts(cur, structuredClone(cur))).toEqual({ islands: 0, routes: 0, flows: 0 });
     expect(changeSummary({ islands: 0, routes: 0, flows: 0 })).toBe("保存してない変更はありません");
+  });
+  it("先頭の島を外しても、変えていない島は変更と数えない。足した島・名前を変えた島は 1 つずつ", () => {
+    const four = { pull: "down" as const, units: ["a", "b", "c", "d"].map((name) => ({ name, roles: ["dev" as const], maxMembers: 2, summonAt: 2, idleSec: 300 })), routes: [], flows: {} };
+    const draft = structuredClone(four);
+    draft.units.shift();
+    expect(changeCounts(four, draft, ["b", "c", "d"])).toEqual({ islands: 1, routes: 0, flows: 0 });
+    draft.units[0]!.name = "b2";
+    expect(changeCounts(four, draft, ["b", "c", "d"]).islands).toBe(2);
+    draft.units.push({ ...draft.units[0]!, name: "e" });
+    expect(changeCounts(four, draft, ["b", "c", "d", "\u00011"]).islands).toBe(3);
   });
   it("タブごとに数え、帯の文にする", () => {
     const draft = structuredClone(cur);

@@ -6,7 +6,7 @@ import { Chip, Drawer, List, ListItem, Notice, Segmented, SectionHeading, Select
 import { History, newUnit, toFullSpec, UnitFields } from "./Team";
 import { MAX_UNITS, pipelineOf, validateFormation, type FormationSpec, type UnitSpec } from "../../src/domain/formation";
 import { KIND_LABEL, type Flow } from "../../src/domain/flow";
-import { routeErrors, routesAmong } from "../../src/domain/route";
+import { routeErrors } from "../../src/domain/route";
 import { validateFlows } from "../../src/domain/flow";
 import { MODELS, ROLE_LABEL, type WorkRole } from "../../src/domain/roles";
 import {
@@ -19,9 +19,9 @@ import {
   hasOwnFlow,
   moveStage,
   preDevStages,
-  renameInRoutes,
   routeModeOf,
   routePairs,
+  routesToNames,
   setStage,
   withFlow,
   withRoute,
@@ -37,42 +37,49 @@ const roleTone = (roles: WorkRole[]): ChipTone => (roles[0] === "review" ? "revi
 const FLOW_LABEL = (k: FlowKey) => (k === "default" ? "既定の流れ" : KIND_LABEL[k]);
 const arrow = (flow: readonly WorkRole[]) => flow.map((r) => ROLE_LABEL[r]).join("→");
 
+/** 下書き。ids は島ごとの変わらない印(もとの島は今の版の名前、足した島は新しい印)。経路の端はこの印で持つ。 */
+type Draft = { spec: FormationSpec; ids: string[] };
+const loadDraft = (v: TeamView["formation"]["versions"][number]): Draft => ({ spec: toFullSpec(v), ids: v.units.map((u) => u.name) });
+let newIsland = 0;
+
 export function FormationDrawer({ id, t, close }: { id: number; t: TeamView; close: () => void }) {
   const act = useAct();
   const currentV = t.formation.versions.find((v) => v.version === t.formation.current)!;
   const current = toFullSpec(currentV);
-  const [draft, setDraft] = useState<FormationSpec>(() => toFullSpec(currentV));
+  const [{ spec: draft, ids }, setState] = useState<Draft>(() => loadDraft(currentV));
   const [tab, setTab] = useState<Tab>("islands");
   const [asking, setAsking] = useState(false);
   // 他の場所で版が上がったら、下書きを今の版に合わせ直す
   useEffect(() => {
-    setDraft(toFullSpec(currentV));
+    setState(loadDraft(currentV));
   }, [currentV.version]); // eslint-disable-line react-hooks/exhaustive-deps
+  const setDraft = (f: FormationSpec | ((d: FormationSpec) => FormationSpec)) => setState((s) => ({ ...s, spec: typeof f === "function" ? f(s.spec) : f }));
 
-  const counts = changeCounts(current, draft);
+  // 検証と保存は、経路の端を今の島の名前に直した形で行う
+  const names = draft.units.map((u) => u.name);
+  const named: FormationSpec = { ...draft, routes: routesToNames(draft.routes, ids, names) };
+  const counts = changeCounts(current, draft, ids);
   const changed = counts.islands + counts.routes + counts.flows > 0;
-  const all = validateFormation(draft, t.repos);
+  const all = validateFormation(named, t.repos);
   const flowErrs = validateFlows(draft.flows);
-  const routeErrs = routeErrors(draft.routes, draft.units.map((u) => u.name));
+  const routeErrs = routeErrors(named.routes, names);
   const islandErrs = all.filter((e) => !flowErrs.includes(e) && !routeErrs.includes(e));
   const nextVersion = t.formation.versions.length + 1;
 
-  const setUnit = (i: number, patch: Partial<UnitSpec>) =>
-    setDraft((d) => ({
-      ...d,
-      units: d.units.map((u, j) => (j === i ? { ...u, ...patch } : u)),
-      // 島の名前を変えたら、経路の端も付け替える
-      routes: patch.name !== undefined ? renameInRoutes(d.routes, d.units[i]!.name, patch.name) : d.routes,
-    }));
+  const setUnit = (i: number, patch: Partial<UnitSpec>) => setDraft((d) => ({ ...d, units: d.units.map((u, j) => (j === i ? { ...u, ...patch } : u)) }));
+  const addUnit = () => setState((s) => ({ spec: { ...s.spec, units: [...s.spec.units, newUnit(s.spec)] }, ids: [...s.ids, `\u0001${++newIsland}`] }));
   const removeUnit = (i: number) =>
-    setDraft((d) => {
-      const units = d.units.filter((_, j) => j !== i);
-      return { ...d, units, routes: routesAmong(d.routes ?? [], units.map((u) => u.name)) };
+    setState((s) => {
+      const gone = s.ids[i]!;
+      return {
+        spec: { ...s.spec, units: s.spec.units.filter((_, j) => j !== i), routes: (s.spec.routes ?? []).filter((r) => r.from !== gone && r.to !== gone) },
+        ids: s.ids.filter((_, j) => j !== i),
+      };
     });
 
   const save = () =>
     act(
-      () => post<{ version: number }>(`/projects/${id}/formation`, { pull: draft.pull, units: draft.units, flows: draft.flows ?? {}, routes: draft.routes ?? [] }),
+      () => post<{ version: number }>(`/projects/${id}/formation`, { pull: named.pull, units: named.units, flows: named.flows ?? {}, routes: named.routes ?? [] }),
       (r) => `編成 v${r.version} を適用しました`,
     );
   const requestClose = () => (changed ? setAsking(true) : close());
@@ -112,7 +119,7 @@ export function FormationDrawer({ id, t, close }: { id: number; t: TeamView; clo
               </>
             ) : (
               <>
-                <Btn kind="text" size="md" disabled={!changed} onClick={() => setDraft(toFullSpec(currentV))}>
+                <Btn kind="text" size="md" disabled={!changed} onClick={() => setState(loadDraft(currentV))}>
                   元に戻す
                 </Btn>
                 <Btn kind="solid-fill" size="md" disabled={!changed || all.length > 0} onClick={save}>
@@ -123,8 +130,8 @@ export function FormationDrawer({ id, t, close }: { id: number; t: TeamView; clo
           </>
         }
       >
-        {tab === "islands" && <IslandsTab t={t} draft={draft} setDraft={setDraft} setUnit={setUnit} removeUnit={removeUnit} errors={islandErrs} currentV={currentV} />}
-        {tab === "routes" && <RoutesTab draft={draft} setDraft={setDraft} errors={routeErrs} />}
+        {tab === "islands" && <IslandsTab t={t} draft={draft} setDraft={setDraft} setUnit={setUnit} addUnit={addUnit} removeUnit={removeUnit} errors={islandErrs} currentV={currentV} load={(v) => setState(loadDraft(v))} />}
+        {tab === "routes" && <RoutesTab draft={draft} ids={ids} setDraft={setDraft} errors={routeErrs} />}
         {tab === "flows" && <FlowsTab draft={draft} current={current} setDraft={setDraft} />}
       </Drawer>
     </aside>
@@ -135,7 +142,7 @@ export function FormationDrawer({ id, t, close }: { id: number; t: TeamView; clo
 
 type TabProps = { draft: FormationSpec; setDraft: (f: FormationSpec | ((d: FormationSpec) => FormationSpec)) => void };
 
-function IslandsTab({ t, draft, setDraft, setUnit, removeUnit, errors, currentV }: TabProps & { t: TeamView; setUnit: (i: number, p: Partial<UnitSpec>) => void; removeUnit: (i: number) => void; errors: string[]; currentV: TeamView["formation"]["versions"][number] }) {
+function IslandsTab({ t, draft, setDraft, setUnit, addUnit, removeUnit, errors, currentV, load }: TabProps & { t: TeamView; setUnit: (i: number, p: Partial<UnitSpec>) => void; addUnit: () => void; removeUnit: (i: number) => void; load: (v: TeamView["formation"]["versions"][number]) => void; errors: string[]; currentV: TeamView["formation"]["versions"][number] }) {
   return (
     <div className="pol">
       <p className="hint">島ごとに、持つ役割と人数を決めます。同じ役割を複数の島に持たせると、手の空いている島が取ります。島に受け持つリポジトリを決めると、そのリポジトリのチケットだけを取ります(開発をフロントと API に分けるなど)。工程は持っている役割から、「流れ」タブで決めた順に組み立てます。保存すると版が上がり、席替えが起きます。</p>
@@ -148,7 +155,7 @@ function IslandsTab({ t, draft, setDraft, setUnit, removeUnit, errors, currentV 
         </div>
       ))}
       {draft.units.length < MAX_UNITS && (
-        <Btn kind="outline" size="sm" onClick={() => setDraft((d) => ({ ...d, units: [...d.units, newUnit(d)] }))}>
+        <Btn kind="outline" size="sm" onClick={addUnit}>
           + 島を足す({MAX_UNITS} つまで)
         </Btn>
       )}
@@ -178,7 +185,7 @@ function IslandsTab({ t, draft, setDraft, setUnit, removeUnit, errors, currentV 
           key: v.version,
           label: `v${v.version}${v.version === t.formation.current ? "(今)" : ""}`,
           detail: `${v.units.map((u) => `${u.name}: ${u.roles.map((r) => ROLE_LABEL[r]).join("・") || "役割なし"} ×${u.maxMembers}${u.repos?.length ? `(${u.repos.join("・")})` : ""}${u.model ? ` ${MODELS[u.model as keyof typeof MODELS]?.label ?? u.model}` : ""}${u.effort ? `/${u.effort}` : ""}`).join(" / ")} · ${v.pull === "down" ? "下流優先" : "着手優先"}`,
-          load: v.version === t.formation.current ? undefined : () => setDraft(toFullSpec(v)),
+          load: v.version === t.formation.current ? undefined : () => load(v),
         }))}
       />
     </div>
@@ -187,15 +194,16 @@ function IslandsTab({ t, draft, setDraft, setUnit, removeUnit, errors, currentV 
 
 // ---- 連絡経路(R16) ----
 
-function RoutesTab({ draft, setDraft, errors }: TabProps & { errors: string[] }) {
-  const islands = draft.units.map((u) => u.name);
-  const tone = (name: string): ChipTone => roleToneOf(draft, name);
-  const pairs = routePairs(islands);
+function RoutesTab({ draft, ids, setDraft, errors }: TabProps & { ids: string[]; errors: string[] }) {
+  // 経路の端は島の印(ids)。表に出す名前は、いまの下書きの名前
+  const nameOf = (end: string) => (end === "lead" ? "リーダー" : end === "architect" ? "アーキテクト" : (draft.units[ids.indexOf(end)]?.name ?? end));
+  const tone = (end: string): ChipTone => roleTone(draft.units[ids.indexOf(end)]?.roles ?? []);
+  const pairs = routePairs(ids);
   const chipOf = (n: string) =>
-    n === "lead" ? <Chip tone="lead">リーダー</Chip> : n === "architect" ? <Chip tone="lead">アーキテクト</Chip> : <Chip tone={tone(n)}>{n}</Chip>;
+    n === "lead" ? <Chip tone="lead">リーダー</Chip> : n === "architect" ? <Chip tone="lead">アーキテクト</Chip> : <Chip tone={tone(n)}>{nameOf(n)}</Chip>;
   const row = (p: { a: string; b: string }) => {
     const mode = routeModeOf(draft.routes, p.a, p.b);
-    const name = `${p.a} と ${p.b === "lead" ? "リーダー" : p.b === "architect" ? "アーキテクト" : p.b}`;
+    const name = `${nameOf(p.a)} と ${nameOf(p.b)}`;
     return (
       <ListItem
         key={`${p.a}|${p.b}`}
@@ -243,8 +251,6 @@ function RoutesTab({ draft, setDraft, errors }: TabProps & { errors: string[] })
   );
 }
 
-const roleToneOf = (f: FormationSpec, name: string): ChipTone => roleTone(f.units.find((u) => u.name === name)?.roles ?? []);
-
 // ---- 流れ(R17) ----
 
 const NODE: Record<WorkRole, string> = { dev: "d", review: "r", sec: "s", qa: "q" };
@@ -260,7 +266,9 @@ function FlowsTab({ draft, current, setDraft }: TabProps & { current: FormationS
   const metaOf = (k: FlowKey) => {
     if (k === "default") return arrow(effectiveFlow(flows, "default"));
     if (!hasOwnFlow(flows, k)) return "既定の流れを使う";
-    return JSON.stringify(flows[k]) !== JSON.stringify(current.flows?.[k]) ? "専用の流れ(変更あり)" : "専用の流れ";
+    if (JSON.stringify(flows[k]) !== JSON.stringify(current.flows?.[k])) return "専用の流れ(変更あり)";
+    const skipped = flowRows(flows[k]!).filter((r) => !r.on).map((r) => ROLE_LABEL[r.role]);
+    return skipped.length ? `専用の流れ(${skipped.join("・")} 省略)` : "専用の流れ";
   };
   const rows = flowRows(flow);
   const includedCount = flow.length;
@@ -379,7 +387,7 @@ function FlowsTab({ draft, current, setDraft }: TabProps & { current: FormationS
             </div>
           </>
         )}
-        <p className="hint">開発はどの位置にも置けますが、省けません。開発より前に置いたレビュー・セキュリティ・QA は申し送りだけを残し、開発より後に置いたものはいつもどおり差分を確かめます。開発が無い・merge 待ちの前に工程が 1 つも無いときは、理由が出て保存できません。保存すると、このあと工程を進むチケットから新しい流れで動きます。</p>
+        <p className="hint">{`開発はどの位置にも置けますが、省けません。開発より前に置いたレビュー・セキュリティ・QA は申し送りだけを残し、開発より後に置いたものはいつもどおり差分を確かめます。開発が無い・merge 待ちの前に工程が 1 つも無いときは、理由が出て保存できません。保存すると、このあと工程を進む${key === "default" ? "(種類の流れを持たない)" : FLOW_LABEL(key)}のチケットから新しい流れで動きます。`}</p>
       </div>
     </div>
   );
