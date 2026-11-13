@@ -194,14 +194,14 @@ export function UnitFields({ u, i, repos, set, remove }: { u: UnitSpec; i: numbe
             </div>
           </div>
           <div>
-            <label className="h" htmlFor={`unit-focus-${i}`} style={{ fontSize: 14, marginBottom: 2 }}>
+            <label className="h" htmlFor={`unit-focus-${i}`} style={{ fontSize: "var(--fs-base)", marginBottom: 2 }}>
               この島で重視すること
             </label>
             <Textarea id={`unit-focus-${i}`} rows={2} className="w-full" value={u.focus ?? ""} onChange={(e) => set({ focus: e.target.value || null })} />
             <div className="hint">役割の方針の「重視すること」に足して、この島のメンバーが読みます。</div>
           </div>
           <div>
-            <label className="h" htmlFor={`unit-budget-${i}`} style={{ fontSize: 14, marginBottom: 2 }}>
+            <label className="h" htmlFor={`unit-budget-${i}`} style={{ fontSize: "var(--fs-base)", marginBottom: 2 }}>
               この島の予算(ドル)
             </label>
             <BudgetInput id={`unit-budget-${i}`} name={`${u.name || `島 ${i + 1}`}の予算`} size="sm" value={u.budgetUsd ?? null} onChange={(v) => set({ budgetUsd: v })} />

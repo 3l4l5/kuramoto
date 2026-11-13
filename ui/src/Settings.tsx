@@ -62,7 +62,7 @@ export function SettingsPage({ id }: { id: number }) {
     <section aria-label="プロジェクトの設定">
       <div className="form">
         <div>
-          <h2 style={{ margin: 0, fontSize: 24 }}>プロジェクトの設定</h2>
+          <h2 style={{ margin: 0, fontSize: "var(--fs-xl)" }}>プロジェクトの設定</h2>
           <p className="hint" style={{ margin: "4px 0 0" }}>
             名前とリポジトリを変えられます。PR や作業の記録があるリポジトリと、編成の島が受け持っているリポジトリは外せません。
           </p>
