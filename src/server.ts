@@ -589,9 +589,9 @@ export class KuramotoServer {
   async hqView() {
     const recs = await this.hq.projects();
     for (const rec of recs) await this.open(rec.id);
-    const projects = recs.map((rec) => {
+    const projects = await Promise.all(recs.map(async (rec) => {
       const p = this.project(rec.id);
-      const m = metrics(p);
+      const m = await metrics(p);
       const stages = STAGES.map((s) => ({ key: s, done: stageDone(p, s) }));
       return {
         id: rec.id,
@@ -606,7 +606,7 @@ export class KuramotoServer {
         working: get<{ n: number }>(p.db, "SELECT COUNT(*) AS n FROM runs WHERE ended_at IS NULL")?.n ?? 0,
         metrics: m,
       };
-    });
+    }));
     const queue = recs.flatMap((rec) => {
       const p = this.project(rec.id);
       return [
@@ -720,7 +720,7 @@ export class KuramotoServer {
       // CI のジョブが始まらない(請求・上限など)リポジトリ。merge だけ止まっている
       ciBlocked: ciBlocked(p).map((b) => ({ ...b, action: ciBlockAction(b.notes) })),
       events: p.events(30),
-      metrics: metrics(p),
+      metrics: await metrics(p),
       spentUsd: get<{ s: number | null }>(p.db, "SELECT SUM(cost_usd) AS s FROM runs")?.s ?? 0,
     };
   }

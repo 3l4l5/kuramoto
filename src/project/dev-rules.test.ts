@@ -217,7 +217,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
     expect(rows[0]!.run_id).not.toBeNull();
     expect(rows[0]!.detail).toContain("PR タイトル");
 
-    expect(productivity(p).totals.ruleViolations).toEqual({ total: 1, autofixed: 1 });
+    expect((await productivity(p)).totals.ruleViolations).toEqual({ total: 1, autofixed: 1 });
     expect(ticketView(p, t.id).timeline.find((x) => x.type === "rule")).toMatchObject({ rule: "Jira 番号をそろえる", handled: "autofixed" });
     expect(devRulesView(p).rules[0]).toMatchObject({ violations: 1, autofixed: 1 });
   });
@@ -240,7 +240,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
     expect(all<{ resolved_at: string | null }>(p.db, "SELECT resolved_at FROM rule_violations")[0]!.resolved_at).not.toBeNull();
     expect(p.ticket(t.id).stage).toBe("merge");
     // 自動で直したのではない
-    expect(productivity(p).totals.ruleViolations).toEqual({ total: 1, autofixed: 0 });
+    expect((await productivity(p)).totals.ruleViolations).toEqual({ total: 1, autofixed: 0 });
   });
 
   it("直すまで進めない: PR は出るが、直るまで次の工程に進まず持ち主に戻る", async () => {
@@ -292,7 +292,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
     expect(order).toContain("review");
     expect(all<{ category: string }>(p.db, "SELECT category FROM findings").map((f) => f.category)).toEqual(["dev-rule"]);
     expect(p.ticket(t.id).stage).toBe("merge");
-    expect(productivity(p).totals.ruleViolations).toEqual({ total: 1, autofixed: 0 });
+    expect((await productivity(p)).totals.ruleViolations).toEqual({ total: 1, autofixed: 0 });
   });
 
   it("ブランチ名だけに効く「自動で直す」ルールは、戻さずに、レビューで指摘に回す", async () => {

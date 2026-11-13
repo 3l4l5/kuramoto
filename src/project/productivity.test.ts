@@ -9,7 +9,7 @@ import { createTicket, dropTicket } from "./workflow.js";
 const H = 3_600_000;
 
 describe("生産性: 流れとメンバー(ADR-0029)", () => {
-  it("時間あたりの merge・入った数と片付いた数・リードタイム・どこから入ったか・仕掛かりを数える", () => {
+  it("時間あたりの merge・入った数と片付いた数・リードタイム・どこから入ったか・仕掛かりを数える", async () => {
     const clock = new ManualClock(new Date("2026-11-12T00:00:00Z"));
     const p = new Project(":memory:", clock);
     p.addRepo("acme/shop", "API");
@@ -38,7 +38,7 @@ describe("生産性: 流れとメンバー(ADR-0029)", () => {
     const c = createTicket(p, { title: "C", planRefs: { splitFrom: a.number } });
     dropTicket(p, c.id, { by: "lead", reason: "いらなくなった" });
 
-    const f = productivity(p).flow;
+    const f = (await productivity(p)).flow;
     expect(f.throughput).toMatchObject({ mergedLast24h: 1, createdLast24h: 3, closedLast24h: 2, netLast24h: 1 });
     expect(f.throughput.activeHours).toBe(1);
     expect(f.throughput.mergedPerActiveHour).toBe(1);
@@ -62,14 +62,14 @@ describe("生産性: 流れとメンバー(ADR-0029)", () => {
     expect(last).toMatchObject({ merged: 1, created: 1, closed: 2, open: 1 });
     expect(f.hourly.reduce((s, x) => s + x.created, 0)).toBe(3);
 
-    const m = productivity(p).members;
+    const m = (await productivity(p)).members;
     expect(m.list).toMatchObject([{ runs: 1, costUsd: 0.5, merged: 0 }]);
     expect(m.roles).toMatchObject([{ role: "dev", runs: 1, median: 30 * 60_000, errorRate: 0 }]);
   });
 });
 
 describe("生産性: ルール違反(R15)", () => {
-  it("合計に加え、チケットごとの違反の数とうち自動で直した数が出る", () => {
+  it("合計に加え、チケットごとの違反の数とうち自動で直した数が出る", async () => {
     const p = new Project(":memory:", new ManualClock(new Date("2026-11-12T00:00:00Z")));
     p.addRepo("acme/shop", "API");
     const a = createTicket(p, { title: "A" });
@@ -82,7 +82,7 @@ describe("生産性: ルール違反(R15)", () => {
     add(fix.id, a.id, "autofixed");
     add(block.id, a.id, "blocked");
 
-    const v = productivity(p);
+    const v = (await productivity(p));
     expect(v.totals.ruleViolations).toEqual({ total: 3, autofixed: 2 });
     const row = (id: number) => v.tickets.find((t) => t.id === id)!;
     expect(row(a.id)).toMatchObject({ violations: 3, autofixed: 2, reviewed: 0, blocked: 1 });

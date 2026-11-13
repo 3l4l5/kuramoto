@@ -87,7 +87,7 @@ describe("連絡経路の保存(R16)", () => {
     expect(p.currentFormation().version).toBe(base);
   });
 
-  it("経路を変えた版が、効率のグラフの印として返る(版の差から拾う)", () => {
+  it("経路を変えた版が、効率のグラフの印として返る(版の差から拾う)", async () => {
     const p = new Project(":memory:", new ManualClock());
     p.addRepo("acme/shop", "API");
     p.saveFormation({ pull: "down", units: UNITS }); // 最初に決めた版(島の設定を変えた印は付く)
@@ -96,14 +96,14 @@ describe("連絡経路の保存(R16)", () => {
     p.saveFormation({ pull: "down", units: UNITS, routes: ROUTES }); // b+2: 何も変わらない保存は印にしない
     p.saveFormation({ pull: "down", units: UNITS, flows: { default: ["dev", "qa"] } }); // b+3: 流れ(経路は引き継ぎ)
     p.saveFormation({ pull: "down", units: [unit("開発", ["dev"], 3), ...UNITS.slice(1)], flows: { default: ["dev", "qa"] }, routes: [] }); // b+4: 島と経路
-    const marks = formationMarks(p).filter((m) => m.version > b);
+    const marks = (await formationMarks(p)).filter((m) => m.version > b);
     expect(marks.map((m) => [m.version - b, m.changed])).toEqual([
       [1, ["routes"]],
       [3, ["flows"]],
       [4, ["routes", "units"]],
     ]);
     expect(marks[0]).toMatchObject({ day: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
-    expect(productivity(p).flow.formationMarks.filter((m) => m.version > b).map((m) => m.version - b)).toEqual([1, 3, 4]);
+    expect((await productivity(p)).flow.formationMarks.filter((m) => m.version > b).map((m) => m.version - b)).toEqual([1, 3, 4]);
   });
 });
 

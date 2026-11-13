@@ -60,7 +60,7 @@ async function main(argv: string[]): Promise<void> {
       case "status": {
         const p = await hq.openProject(Number(sub));
         for (const t of p.tickets()) console.log(`#${t.number}\t${t.stage}\t往復 ${t.rounds}\t${t.title}`);
-        console.log(JSON.stringify(metrics(p), null, 2));
+        console.log(JSON.stringify(await metrics(p), null, 2));
         p.close();
         return;
       }
