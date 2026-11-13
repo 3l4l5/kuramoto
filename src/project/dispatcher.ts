@@ -2,7 +2,7 @@ import { FIXED_CAST, speechNote } from "../domain/cast.js";
 import { mustAnswer, mustResolve } from "./review.js";
 import { all, get, isUniqueViolation, run, tx } from "../db/sqlite.js";
 import { WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
-import type { Harness, HarnessResult } from "../harness/types.js";
+import type { Harness, HarnessResult, HarnessUsage } from "../harness/types.js";
 import { claimNext, complete, fail, pendingCount, release, send, type MessageKind, type MessageRow } from "./inbox.js";
 import type { MemberRow, Project, TicketRow } from "./project.js";
 import { PRE_DEV_NOTE, promptFor, systemPromptFor } from "./prompts.js";
@@ -19,11 +19,13 @@ import { compareScreenTools } from "./design-tools.js";
 import { referenceImage, type DesignStore, type Renderer } from "./design-visual.js";
 import { designSystem } from "./planning.js";
 import { canResume, noteSession } from "./sessions.js";
+import { agentJudge, checkBeforePr } from "./dev-rules.js";
 import { runTeamCi, teamCiEnabled, type CommandRunner } from "./team-ci.js";
 import { confinementFor } from "./confine.js";
 import { afterPlanningRun, planningPrompt, planningSystemPrompt, planningTools, type PlanPayload } from "./planning-agent.js";
 import { checkStudioLoop, onlyQuestions, say, studioPaused } from "./planning.js";
 import { progressRecorder } from "./progress.js";
+import { finishMemberChat, isFinishedTicket, memberChatPrompt, memberChatSystem, memberChatTools, unreadForMember } from "./member-chat.js";
 import { giveUpTriage, markTriaged, requestTriage, triagePrompt, triageTools, untriaged } from "./triage.js";
 import { LEAD_CHAT_SYSTEM, leadChatPrompt, leadChatTools, leadReply, markOwnerMessagesRead, unreadOwnerMessages } from "./leadchat.js";
 import { dropGithubCiTickets, githubCheckDue, githubDown, githubStillDown, isGithubAuthError, markGithubDown, markGithubUp } from "./outage.js";
@@ -195,6 +197,16 @@ export class Dispatcher {
 
   private assign(msg: MessageRow): Job | "wait" | "handled" {
     const p = this.p;
+    // メンバーとの会話は、宛先のメンバーがそのまま受ける(チケットも島の席も見ない)
+    if (msg.kind === "member_chat") {
+      const m = msg.to_member_id === null ? undefined : p.member(msg.to_member_id);
+      if (!m || m.left_at !== null) {
+        complete(p, msg.id);
+        return "handled";
+      }
+      const busy = get(p.db, "SELECT 1 AS x FROM runs WHERE member_id = ? AND ended_at IS NULL", [m.id]);
+      return busy ? "wait" : { msg, role: msg.to_role, ticket: null, member: m };
+    }
     const ticket = msg.ticket_id === null ? null : p.ticket(msg.ticket_id);
     if (ticket && (ticket.stage === "dropped" || ticket.stage === "done")) {
       complete(p, msg.id);
@@ -307,6 +319,7 @@ export class Dispatcher {
     if (job.msg.kind === "triage") return this.executeLeadChat(job, "triage");
     if (job.msg.kind === "patrol") return this.executeLeadChat(job, "patrol");
     if (job.msg.kind === "unstick") return this.executeUnstick(job);
+    if (job.msg.kind === "member_chat") return this.executeMemberChat(job);
     const p = this.p;
     const { msg, member, role, ticket } = job;
     const policy = p.policy(role);
@@ -353,6 +366,8 @@ export class Dispatcher {
 
     const started = p.clock.now().getTime();
     const report: RunReport = {};
+    // 開発ルールの「AI が読む」確かめに使った分(submit_pr の中で動く)。この起動の使用量に足す
+    const judged: HarnessUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costUsd: 0 };
     let result: HarnessResult | undefined;
     let error: string | undefined;
     try {
@@ -396,6 +411,26 @@ export class Dispatcher {
           mustResolve: ["review", "sec", "qa"].includes(msg.kind) && !preDev ? mustResolve(p, ticket.id, msg.kind).map((t) => t.id) : [],
           checkReady: () => this.deps.workspace.checkReady(ws.path, ws.base),
           checkLanded: (commit) => this.deps.workspace.landed(ws.path, ws.base, commit),
+          // PR を出す前に、有効な開発ルールを確かめる(形式はコードで、AI が読むものだけエージェントで。ADR-0011)
+          ...(role === "dev"
+            ? {
+                checkRules: (draft: { title?: string; body?: string; summary: string }) =>
+                  checkBeforePr(p, {
+                    ticket,
+                    runId,
+                    branch,
+                    draft,
+                    defaultTitle: defaultPrTitle(ticket),
+                    changes: async () => (await this.deps.workspace.changes?.(ws.path, ws.base)) ?? { commits: [], files: [], code: "" },
+                    judge: agentJudge(p, harness, ws.path, (u) => {
+                      judged.inputTokens += u.inputTokens;
+                      judged.outputTokens += u.outputTokens;
+                      judged.cacheReadTokens += u.cacheReadTokens;
+                      judged.costUsd += u.costUsd;
+                    }),
+                  }),
+              }
+            : {}),
           // ノンストップでは、戻せる判断はリーダーが決める(戻せない判断だけ責任者へ)
           ...(msg.kind === "decide" ? { escalateAllowed: !nonstop(p) || !decision(p, Number(JSON.parse(msg.payload).decision_id)).reversible } : {}),
           }),
@@ -416,7 +451,7 @@ export class Dispatcher {
           path: ws.path,
           branch,
           base: ws.base,
-          title: d.title ?? `${ticket.jira_key ? `${ticket.jira_key} ` : ""}${ticket.title}`,
+          title: d.title ?? defaultPrTitle(ticket),
           body: `${d.body ?? d.summary}\n\n---\nKuramoto のチケット #${ticket.number}${issueOf(p, ticket) ? `\nCloses #${issueOf(p, ticket)}` : ""}`,
         });
         // 承認済みのチケットが(衝突・CI などで)戻ってきたなら、承認のあとに自分で足した変更があるかを数える
@@ -445,10 +480,10 @@ export class Dispatcher {
       const u = result?.usage;
       run(p.db, "UPDATE runs SET ended_at = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cost_usd = ?, outcome = ?, error = ?, summary = ? WHERE id = ?", [
         p.now(),
-        u?.inputTokens ?? 0,
-        u?.outputTokens ?? 0,
-        u?.cacheReadTokens ?? 0,
-        u?.costUsd ?? 0,
+        (u?.inputTokens ?? 0) + judged.inputTokens,
+        (u?.outputTokens ?? 0) + judged.outputTokens,
+        (u?.cacheReadTokens ?? 0) + judged.cacheReadTokens,
+        (u?.costUsd ?? 0) + judged.costUsd,
         error ? "error" : (result?.status ?? "error"),
         error ?? null,
         (report.pr?.summary || report.draft?.summary || result?.finalText || "").trim() || null,
@@ -678,6 +713,103 @@ export class Dispatcher {
     });
   }
 
+  /**
+   * メンバーとの会話: 責任者のメッセージに、そのメンバーが今のチケットのセッションで答える。
+   * チケットの起動ではないので runs.ticket_id は空にし(1 チケット 1 起動を邪魔しない)、about_ticket_id にひも付ける。
+   * 道具は「リーダーに回す」だけ。コードは読めるが書き換えない。
+   */
+  private async executeMemberChat(job: Job): Promise<void> {
+    const p = this.p;
+    const { msg, member, role } = job;
+    const unread = unreadForMember(p, member.id);
+    // 返事をする相手のチケット(最初の未読のもの)。ほかのチケットのものは、このあと続けて起こす
+    const ticketId = unread[0]?.ticketId ?? null;
+    const batch = unread.filter((m) => m.ticketId === ticketId);
+    if (ticketId === null || !batch.length) {
+      complete(p, msg.id);
+      return;
+    }
+    const ticket = p.ticket(ticketId);
+    const policy = p.policy(role);
+    const use = p.modelFor(member, policy);
+    const formation = p.currentFormation();
+    const unit = formation.units.find((u) => u.id === member.unit_id);
+    const harness = this.deps.harnesses[policy.harness];
+    const repo = ticketRepo(p, ticket);
+    if (!harness || !repo) {
+      this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
+      return;
+    }
+    const session = get<{ id: number; harness_session_id: string }>(p.db, "SELECT id, harness_session_id FROM sessions WHERE member_id = ? AND ticket_id = ? AND repo_id = ?", [member.id, ticket.id, repo.id]);
+    const resumeId = session && canResume(p, session.harness_session_id) ? session.harness_session_id : undefined;
+    // 終わったチケット(ブランチが消えていることがある)では、チケットのブランチを取り出さず、既定のブランチで答える
+    const finished = isFinishedTicket(ticket);
+    const branch = finished ? "" : devBranch(p, ticket, repo.id);
+    const runId = run(
+      p.db,
+      "INSERT INTO runs (message_id, ticket_id, about_ticket_id, member_id, role, session_id, policy_id, formation_id, started_at, model, effort, unit_name) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [msg.id, ticket.id, member.id, role, resumeId ? session!.id : null, policy.id, formation.id, p.now(), use.model, use.effort, use.unitName],
+    ).lastId;
+    p.event(member.name, "member_chat_started", ticket.id, { model: use.model });
+    const done: { handedOver?: boolean } = {};
+    let result: HarnessResult | undefined;
+    let error: string | undefined;
+    try {
+      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: ticket.number, role, memberName: member.name, branch });
+      result = await harness.run({
+        cwd: ws.path,
+        confine: confinementFor(p, ws, role),
+        systemPrompt: memberChatSystem(p, member, { name: use.unitName, focus: use.unitFocus }, finished) + speechNote(member.name),
+        prompt: memberChatPrompt(p, member, ticket, batch),
+        model: use.model,
+        effort: use.effort,
+        ...(resumeId ? { resumeSessionId: resumeId } : {}),
+        tools: memberChatTools(p, member, ticket, done),
+        allowedTools: ["Read", "Glob", "Grep"],
+        maxBudgetUsd: this.runBudget(unit ? unitLeftUsd(p, unit) : Infinity),
+        onProgress: progressRecorder(p, runId),
+      });
+      if (result.status !== "ok" && result.status !== "budget") error = result.error ?? "ハーネスがエラーで終わりました";
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+    tx(p.db, () => {
+      const u = result?.usage;
+      run(p.db, "UPDATE runs SET ended_at = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cost_usd = ?, outcome = ?, error = ?, summary = ? WHERE id = ?", [
+        p.now(),
+        u?.inputTokens ?? 0,
+        u?.outputTokens ?? 0,
+        u?.cacheReadTokens ?? 0,
+        u?.costUsd ?? 0,
+        error ? "error" : (result?.status ?? "error"),
+        error ?? null,
+        result?.finalText?.trim() || null,
+        runId,
+      ]);
+      // 同じ会話の続きとして覚える(このあと同じチケットの仕事を始めるときも、ここから続ける)
+      if (result?.sessionId) {
+        run(
+          p.db,
+          `INSERT INTO sessions (member_id, ticket_id, repo_id, harness, harness_session_id, branch, created_at, last_used_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(member_id, ticket_id, repo_id) DO UPDATE SET harness_session_id = excluded.harness_session_id, last_used_at = excluded.last_used_at`,
+          [member.id, ticket.id, repo.id, harness.name, result.sessionId, role === "dev" && branch ? branch : null, p.now(), p.now()],
+        );
+        noteSession(p, result.sessionId, resumeId);
+      }
+    });
+    if (error) {
+      run(p.db, "INSERT INTO member_messages (member_id, ticket_id, who, body, at) VALUES (?, ?, 'system', ?, ?)", [member.id, ticket.id, `${member.name} の返事がエラーで止まりました: ${error}`, p.now()]);
+      this.failed(msg, null, error);
+      return;
+    }
+    tx(p.db, () => {
+      complete(p, msg.id);
+      finishMemberChat(p, member, batch, result?.finalText ?? "", !!done.handedOver);
+      p.event(member.name, "member_chat_finished", ticket.id, { handedOver: !!done.handedOver });
+    });
+  }
+
   private failed(msg: MessageRow, ticket: TicketRow | null, error: string): void {
     const p = this.p;
     tx(p.db, () => {
@@ -839,6 +971,11 @@ function devBranch(p: Project, t: TicketRow, repoId: number): string {
   if (existing) return existing.branch;
   const pr = get<{ head: string }>(p.db, "SELECT head FROM pull_requests WHERE ticket_id = ? AND repo_id = ?", [t.id, repoId]);
   return pr?.head ?? `kuramoto/${t.jira_key ?? t.number}`;
+}
+
+/** PR のタイトルの既定(Jira の番号があれば先頭に付ける)。 */
+function defaultPrTitle(t: TicketRow): string {
+  return `${t.jira_key ? `${t.jira_key} ` : ""}${t.title}`;
 }
 
 function prNumber(p: Project, ticketId: number, repoId: number): { prNumber?: number } {

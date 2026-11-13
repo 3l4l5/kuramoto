@@ -34,8 +34,8 @@ export function NewProject() {
     <section aria-label="プロジェクトを作る">
       <div className="form">
         <div>
-          <h2 style={{ margin: 0, fontFamily: "var(--f-display)", fontSize: 18 }}>プロジェクトを作る</h2>
-          <p className="lead-in" style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: 13 }}>
+          <h2 style={{ margin: 0, fontFamily: "var(--f-body)", fontSize: "var(--fs-lg)" }}>プロジェクトを作る</h2>
+          <p className="lead-in" style={{ margin: "4px 0 0", color: "var(--muted)", fontSize: "var(--fs-md)" }}>
             1 つのプロジェクトに 1 つのチームが付きます。プロダクトを構成するリポジトリをまとめて登録してください。
           </p>
         </div>

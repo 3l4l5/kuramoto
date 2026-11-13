@@ -1,0 +1,132 @@
+/* デザインシステムのトークン。値は企画で合意したトークン表(design-system.json / tokens.css)と同じ。
+   色・文字・余白・角丸・影・高さはこの変数だけを使う。Tailwind からも同じ変数を参照する(ui/tailwind.config.cjs)。 */
+:root {
+  --bg: #f2f2f2; /* 画面の地・沈んだ面・押せないボタンの地(gray-50) */
+  --surface: #ffffff; /* 引き出し・パネル・副ボタン(白) */
+  --ink: #333333; /* 本文の文字(gray-800) */
+  --muted: #666666; /* 補足・ラベル・小見出し・押せない文字(gray-600) */
+  --line: #cccccc; /* 枠線・一覧の区切り線(gray-200) */
+  --line-strong: #b3b3b3; /* 机・棚の縁、点線の経路、スイッチのオフ(gray-300) */
+  --floor-line: #e6e6e6; /* オフィスの床の方眼の線(gray-100) */
+  --action: #333333; /* 主ボタンの地・副ボタンの枠と字(gray-800。--ink と同じ値だが役割を分ける) */
+  --action-hover: #1a1a1a; /* 主ボタンのホバー(gray-900) */
+  --dev: #0031d8; /* 開発の島・リンク・選んでいる印(タブの下線・選んだ行の帯・チェック)(key-900) */
+  --dev-hover: #00118f; /* リンクのホバー(key-1000) */
+  --dev-soft: #e8f1fe; /* 選んだ行の地・開発の淡色・開発の島の敷物(key-50) */
+  --review: #c74700; /* レビューの島・工程の枠と印(orange-800) */
+  --review-ink: #a83c00; /* --review-soft の上の字(比 約 5.6) */
+  --review-soft: #ffeee2; /* レビューの淡色・敷物 */
+  --lead: #8843e1; /* リーダー・未読の数(purple-700) */
+  --lead-soft: #f1eafa; /* リーダーの淡色・敷物 */
+  --design: #c50ac0; /* デザイン・QA の島(magenta-800) */
+  --design-soft: #ffeefb; /* デザインの淡色・敷物 */
+  --ok: #197a4b; /* 完了・有効・merge(success-2) */
+  --ok-soft: #e6f5ec; /* 完了の淡色 */
+  --warn: #927200; /* 注意の枠・帯・印(warning-yellow-2) */
+  --warn-ink: #7a5f00; /* --warn-soft の上の字(比 約 5.5) */
+  --warn-soft: #fbf5e0; /* 注意の淡色 */
+  --danger: #ec0000; /* エラーの枠・帯・入力欄の枠(error-1) */
+  --danger-ink: #ce0000; /* エラーの字・--danger-soft の上の字・消すリンク(error-2、比 約 5.2) */
+  --danger-soft: #fdeeee; /* エラーの淡色 */
+  --focus: #ffd43d; /* フォーカスの輪の外側(yellow-300) */
+  --art-wood: #e9cfa9; /* 絵: 机・棚の天板(明るい側) */
+  --art-wood-dark: #dcbb8e; /* 絵: 机・棚の天板(暗い側) */
+  --art-wood-edge: #b88d5d; /* 絵: 机・棚の縁と下の影 */
+  --art-outline: #3b2c3a; /* 絵: 吹き出し・アバターの輪郭・濃い髪 */
+  --art-skin: #f3cfb3; /* 絵: アバターの肌 */
+  --art-hair: #8a5a3c; /* 絵: アバターの明るい髪 */
+  --art-leaf: #5aa469; /* 絵: 植物の葉 */
+  --art-pot: #d9825b; /* 絵: 植木鉢 */
+  --art-mug: #e98aa0; /* 絵: マグの縁 */
+  --art-note: #fff4c2; /* 絵: 付箋・手すきの吹き出しの地 */
+  --art-zz: #8aa0d8; /* 絵: 終業中の zz */
+  --art-laptop: #9aa3b2; /* 絵: ノート PC(ふだん) */
+  --art-laptop-idle: #b9c4d6; /* 絵: 手すきのメンバーの服 */
+  --art-laptop-on: #7fb8f0; /* 絵: ノート PC(作業中) */
+  --art-floor: #f7efe3; /* 絵: オフィスの床 */
+  --art-wall: #efe3d0; /* 絵: オフィスの壁 */
+  --art-wall-edge: #e2d2b8; /* 絵: 壁の下の線 */
+  --art-window: #cfe6f7; /* 絵: 窓 */
+  --art-island-edge: #eadcc6; /* 絵: 島・棚・完了の山の縁 */
+  --art-wood-rim: #c9a273; /* 絵: 机の天板の縁 */
+  --art-paper-ink: #5a4026; /* 絵: 机の上の書類の字 */
+  --art-leaf-1: #6cbf73; /* 絵: 植物の葉(明るい) */
+  --art-leaf-2: #57a862; /* 絵: 植物の葉(ふつう) */
+  --art-leaf-3: #7ccc82; /* 絵: 植物の葉(淡い) */
+  --art-seat: #d8c5a8; /* 絵: 空席の輪郭 */
+  --art-add-edge: #d3bb98; /* 絵: 島を足す枠 */
+  --art-add-edge-hover: #b89466; /* 絵: 島を足す枠(ホバー) */
+  --art-add-ink: #8a6a44; /* 絵: 島を足す枠の字 */
+  --art-hair-seina: #f1e2b3; /* 絵: 星南の髪 */
+  --art-hair-hiro: #c7cfe0; /* 絵: 広の髪 */
+  --art-hair-saki: #e2643f; /* 絵: 咲季の髪 */
+  --art-hair-sumika: #f3bf5a; /* 絵: 清夏の髪 */
+  --art-hair-temari: #33406e; /* 絵: 手毬の髪 */
+  --art-hair-kotone: #f4d270; /* 絵: ことねの髪 */
+  --art-hair-mao: #8c3340; /* 絵: 麻央の髪 */
+  --art-hair-lilja: #ecebf3; /* 絵: リーリヤの髪 */
+  --art-hair-china: #f0a356; /* 絵: 千奈の髪 */
+  --art-hair-rinami: #d98ea1; /* 絵: 莉波の髪 */
+  --art-hair-ume: #e86a42; /* 絵: 佑芽の髪 */
+  --art-hair-misuzu: #9aa8dc; /* 絵: 美鈴の髪 */
+  --art-hair-haruka: #8d5b3c; /* 絵: 春香の髪 */
+  --art-hair-chihaya: #3b5fa8; /* 絵: 千早の髪 */
+  --art-hair-miki: #f5d576; /* 絵: 美希の髪 */
+  --art-hair-uzuki: #7c4b2b; /* 絵: 卯月の髪 */
+  --art-hair-rin: #3a2a2e; /* 絵: 凛の髪 */
+  --art-hair-mio: #9b6b3c; /* 絵: 未央の髪 */
+  --art-hair-miku: #a8683a; /* 絵: 未来の髪 */
+  --art-hair-shizuka: #232634; /* 絵: 静香の髪 */
+  --art-hair-tsubasa: #a5703f; /* 絵: 翼の髪 */
+  --art-hair-mano: #c99c8e; /* 絵: 真乃の髪 */
+  --art-ribbon-1: #f5c542; /* 絵: リボン */
+  --art-ribbon-2: #ef7a9a; /* 絵: リボン */
+  --art-ribbon-3: #7fb2e5; /* 絵: リボン */
+  --art-ribbon-4: #e5527a; /* 絵: リボン */
+  --art-ribbon-5: #e5455b; /* 絵: リボン */
+  --art-ribbon-6: #f2a541; /* 絵: リボン */
+  --art-hair-default: #6b5545; /* 絵: 髪(名前が決まっていない人) */
+  --art-face: #fde3cf; /* 絵: アバターの顔 */
+  --art-eye-closed: #4a3a3a; /* 絵: 眠っている目 */
+  --art-blush: #f7a9b4; /* 絵: ほっぺ */
+  --art-mouth: #c0606e; /* 絵: 口 */
+  --art-shade: #000000; /* 絵: 髪の影を作るときに混ぜる色 */
+  --art-role-arch: #008da6; /* 絵: アーキテクトの服(開発の青とは別の青緑) */
+  --f-body: 'Noto Sans JP', -apple-system, 'Hiragino Sans', sans-serif; /* 本文・見出し */
+  --f-mono: 'Noto Sans Mono', ui-monospace, monospace; /* チケット番号・版・数値 */
+  --fs-xs: 11px; /* 番号・版・図の中の字・吹き出し */
+  --fs-sm: 12px; /* 補足・ヒント・チップ・節の小見出し */
+  --fs-md: 13px; /* 表・一覧の行・切り替え */
+  --fs-base: 14px; /* 本文・ボタン・入力欄・タブ */
+  --fs-lg: 16px; /* 引き出し・パネルの見出し */
+  --fs-xl: 22px; /* ロゴ・合計の数字 */
+  --fw-regular: 400; /* 本文 */
+  --fw-medium: 500; /* 切り替え・チップ */
+  --fw-bold: 700; /* 見出し・ボタン・小見出し */
+  --lh-body: 1.55; /* 本文の行の高さ */
+  --lh-tight: 1.35; /* 見出し・一覧の行・図の中 */
+  --sp-1: 4px; /* 文字と印の間・切り替えの外枠の内側 */
+  --sp-2: 8px; /* 部品の中の間・チップどうし */
+  --sp-3: 12px; /* 部品どうしの間・行の内側(横) */
+  --sp-4: 16px; /* 引き出し・パネルの内側・画面の外側 */
+  --sp-5: 24px; /* 節どうしの間 */
+  --r-sm: 6px; /* チップ・小さなボタン */
+  --r-md: 8px; /* ボタン・入力欄・一覧の枠・知らせ */
+  --r-lg: 12px; /* 引き出し・パネル・切り替えの外枠・机・敷物・吹き出し */
+  --r-pill: 999px; /* ピル・スイッチ */
+  --shadow: 0 2px 8px 1px rgba(0,0,0,.1); /* 引き出し・吹き出し・選んだ切り替え(elevation-1) */
+  --shadow-desk: 0 5px 0 -1px #b88d5d; /* 絵: 机・棚の厚み(--art-wood-edge の影) */
+  --h-control: 36px; /* ボタン・入力欄・選択の高さ(DADS の sm) */
+  --h-control-sm: 28px; /* 行の中の小さなボタン・切り替えの中のボタン・閉じるボタン */
+  --h-tab: 40px; /* 引き出しのタブの高さ */
+  --h-chip: 24px; /* チップの高さ */
+  --switch-w: 36px; /* スイッチの幅 */
+  --switch-h: 20px; /* スイッチの高さ(つまみは --switch-h − 4px) */
+  --motion: 1.1s cubic-bezier(.45,.05,.55,.95); /* 絵の動き(書類が飛ぶ・封筒が行き来する)の長さと緩急 */
+}
+
+/* 動きを減らす設定のときは、絵の動き(書類が飛ぶ・封筒が行き来する)を止める */
+@media (prefers-reduced-motion: reduce) {
+  :root { --motion: 0s linear; }
+  .ds-art, .ds-art * { animation: none !important; transition: none !important; }
+}

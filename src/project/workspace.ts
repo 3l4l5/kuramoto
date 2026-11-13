@@ -11,7 +11,7 @@ export type WorkspaceRequest = {
   ticketNumber: number;
   role: Role;
   memberName: string;
-  /** 開発のブランチ。レビュー側はこのブランチを読むだけ。 */
+  /** 開発のブランチ。レビュー側はこのブランチを読むだけ。空なら既定のブランチ(終わったチケットの話をするときなど。ブランチは消えていてもよい)。 */
   branch: string;
 };
 
@@ -42,6 +42,8 @@ export interface Workspace {
   prepare(req: WorkspaceRequest): Promise<PreparedWorkspace>;
   /** 報告を受けてよい状態か(コミットし忘れ・コミットが無いなど)。問題があればその理由。 */
   checkReady(path: string, base: string): Promise<string | undefined>;
+  /** 開発ルールで確かめる、このブランチの変更(コミットの 1 行目・変更したファイル・足した行)。 */
+  changes?(path: string, base: string): Promise<import("./dev-rules.js").RuleChanges>;
   /** ブランチを push し、PR が無ければ作る。 */
   publish(req: PublishRequest): Promise<{ number: number; head: string; sha?: string }>;
   /**
@@ -76,6 +78,7 @@ export type CheckWorkspace = PreparedWorkspace & { sha: string; baseSha: string;
  * データの置き場所(DB)とは分ける(ADR-0020。データの置き場所はエージェントに丸ごと読ませない)。
  * - 開発: worktrees/<番号>-dev に、チケットのブランチで作る(持ち主が直すときも同じ場所)
  * - それ以外: worktrees/<番号>-<役割> に、ブランチを読むだけの detached で作る
+ * - ブランチなし(終わったチケットの会話など): 役割によらず worktrees/<番号>-chat に、既定のブランチを読むだけの detached で作る
  */
 export class GitWorkspace implements Workspace {
   constructor(private readonly workDir: string) {}
@@ -104,19 +107,25 @@ export class GitWorkspace implements Workspace {
   private async preparePath(req: WorkspaceRequest): Promise<string> {
     // 企画の担当は、既定のブランチを読むだけの場所で動く
     const base = await this.ensureClone(req.repo);
-    const path = join(this.workDir, "worktrees", req.ticketNumber === 0 ? `plan-${req.role}` : `${req.ticketNumber}-${req.role === "dev" ? "dev" : req.role}`);
+    // ブランチを使わない(終わったチケットの会話など)ときは、どの役割でも専用の読むだけの場所(<番号>-chat)を使う。
+    // 開発の作業場所(<番号>-dev)には触らない: 取り下げを戻したときに、前の作業がそのまま残っていなければならない
+    const name = req.ticketNumber === 0 ? `plan-${req.role}` : req.branch ? `${req.ticketNumber}-${req.role === "dev" ? "dev" : req.role}` : `${req.ticketNumber}-chat`;
+    const path = join(this.workDir, "worktrees", name);
     if (existsSync(path)) {
       if (req.role !== "dev" && req.branch) await this.checkoutBranch(path, req.branch);
-      else if (!req.branch) await git(path, "checkout", "--detach", `origin/${await defaultBranch(base)}`);
+      // 読むだけの場所なので、前の起動の残りがあっても捨てて既定のブランチに合わせる
+      else if (!req.branch) await git(path, "checkout", "--detach", "--force", `origin/${await defaultBranch(base)}`);
       return realpathSync(path);
     }
-    if (req.role === "dev") {
+    if (!req.branch) {
+      await git(base, "worktree", "add", "--detach", path, `origin/${await defaultBranch(base)}`);
+    } else if (req.role === "dev") {
       const remoteHasBranch = await git(base, "ls-remote", "--heads", "origin", req.branch).then((o) => o.trim() !== "");
       const start = remoteHasBranch ? `origin/${req.branch}` : `origin/${await defaultBranch(base)}`;
       await git(base, "worktree", "add", "-B", req.branch, path, start);
     } else {
       await git(base, "worktree", "add", "--detach", path, `origin/${await defaultBranch(base)}`);
-      if (req.branch) await this.checkoutBranch(path, req.branch);
+      await this.checkoutBranch(path, req.branch);
     }
     return realpathSync(path);
   }
@@ -127,6 +136,15 @@ export class GitWorkspace implements Workspace {
     const ahead = Number((await git(path, "rev-list", "--count", `origin/${base}..HEAD`)).trim());
     if (!ahead) return `origin/${base} から進んだコミットがありません。変更をコミットしてから呼び直してください。`;
     return undefined;
+  }
+
+  async changes(path: string, base: string): Promise<{ commits: string[]; files: string[]; code: string }> {
+    const lines = (s: string) => s.split("\n").filter(Boolean);
+    const commits = lines(await git(path, "log", "--no-merges", "--format=%s", `origin/${base}..HEAD`));
+    const files = lines(await git(path, "diff", "--name-only", `origin/${base}...HEAD`));
+    const diff = await git(path, "diff", "-U0", `origin/${base}...HEAD`).catch(() => "");
+    const code = diff.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join("\n");
+    return { commits, files, code: code.slice(0, 200_000) };
   }
 
   async ownCommits(path: string, base: string, since: string): Promise<number | null> {
@@ -255,7 +273,7 @@ export class StaticWorkspace implements Workspace {
   readonly published: PublishRequest[] = [];
   constructor(
     private readonly path: string,
-    private readonly opts: { prNumber?: (req: PublishRequest) => number; ready?: (path: string) => string | undefined; landed?: (commit: string) => string | undefined; ownCommits?: (since: string) => number | null; publishError?: () => string | undefined; github?: () => string | undefined; baseSha?: () => string } = {},
+    private readonly opts: { prNumber?: (req: PublishRequest) => number; ready?: (path: string) => string | undefined; landed?: (commit: string) => string | undefined; ownCommits?: (since: string) => number | null; publishError?: () => string | undefined; github?: () => string | undefined; baseSha?: () => string; changes?: () => { commits?: string[]; files?: string[]; code?: string } } = {},
   ) {}
   /** テスト用: チームの CI の場所は、決まった場所に PR のコミット(sha-<push の回数>)と main を合わせたものとする。 */
   async prepareCheck(): Promise<CheckWorkspace> {
@@ -274,6 +292,11 @@ export class StaticWorkspace implements Workspace {
   }
   async prepare(): Promise<PreparedWorkspace> {
     return { path: this.path, base: "main", gitDir: join(this.path, ".git") };
+  }
+  /** テスト用: 決めた変更を返す(決めなければ空)。 */
+  async changes(): Promise<{ commits: string[]; files: string[]; code: string }> {
+    const c = this.opts.changes?.() ?? {};
+    return { commits: c.commits ?? [], files: c.files ?? [], code: c.code ?? "" };
   }
   async checkReady(path: string): Promise<string | undefined> {
     return this.opts.ready?.(path);

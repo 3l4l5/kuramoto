@@ -30,11 +30,13 @@ import { exportDesignDoc } from "./project/export.js";
 import { extractTransfer, restoreTransfer } from "./project/transfer.js";
 import { runWork } from "./project/progress.js";
 import { saveFormationInput, savePolicyInput, teamView } from "./project/team.js";
+import { addDevRule, devRulesView, setDevRuleEnabled } from "./project/dev-rules.js";
 import { productivity } from "./project/productivity.js";
 import { officeView } from "./project/office.js";
 import { memberView, unitView, type MemberView, type UnitView } from "./project/people.js";
 import { ticketView } from "./project/ticket.js";
 import { leadChatView, sayToLead } from "./project/leadchat.js";
+import { memberChatView, memberNow, sayToMember } from "./project/member-chat.js";
 import { areaWait, blockers, dependsOn, mergeBlockers, mergeUnblocks } from "./project/triage.js";
 import { budgetView, projectBudgetUsd, projectSpentUsd, setProjectBudget } from "./project/budget.js";
 import type { Project } from "./project/project.js";
@@ -404,7 +406,32 @@ export class KuramotoServer {
     }
     if (b === "team" && method === "GET") return teamView(p);
     if (b === "productivity" && method === "GET") return productivity(p);
+    if (b === "dev-rules" && !c && method === "GET") return devRulesView(p);
+    if (b === "dev-rules" && !c && method === "POST") {
+      addDevRule(p, {
+        ...(typeof body.template === "string" ? { template: body.template } : {}),
+        ...(typeof body.name === "string" ? { name: body.name } : {}),
+        ...(typeof body.body === "string" ? { body: body.body } : {}),
+        ...(Array.isArray(body.appliesTo) ? { appliesTo: body.appliesTo as never } : {}),
+        ...(typeof body.check === "string" ? { check: body.check as never } : {}),
+        ...(typeof body.pattern === "string" ? { pattern: body.pattern } : {}),
+        ...(typeof body.onFail === "string" ? { onFail: body.onFail as never } : {}),
+      });
+      return devRulesView(p);
+    }
+    if (b === "dev-rules" && c && parts[4] === "enabled" && method === "POST") {
+      setDevRuleEnabled(p, Number(c), body.enabled === true);
+      return devRulesView(p);
+    }
     if (b === "office" && method === "GET") return { ...officeView(p), running: this.running.has(id) };
+    // メンバーの今していること・話す欄(オフィスでメンバーを押して開く引き出し)
+    if (b === "members" && c && parts[4] === "now" && method === "GET") return memberNow(p, Number(c));
+    if (b === "members" && c && parts[4] === "chat" && method === "GET") return memberChatView(p, Number(c));
+    if (b === "members" && c && parts[4] === "chat" && method === "POST") {
+      sayToMember(p, Number(c), String(body.body ?? ""));
+      this.poke(id);
+      return memberChatView(p, Number(c));
+    }
     if (b === "members" && c && method === "GET") return memberView(p, Number(c));
     if (b === "units" && c && method === "GET") return unitView(p, Number(c), officeView(p));
     if (b === "lead-chat" && method === "GET") return leadChatView(p);
@@ -706,6 +733,7 @@ export type OfficeView = ReturnType<typeof officeView> & { running: boolean };
 export type { MemberView, UnitView };
 export type TicketView = ReturnType<typeof ticketView>;
 export type LeadChatView = ReturnType<typeof leadChatView>;
+export type { MemberChatView, MemberNow } from "./project/member-chat.js";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",

@@ -3,7 +3,6 @@ import { go, useAct, useHq } from "./hooks";
 import { STAGE_NAME, usd } from "./format";
 import { Btn } from "./ui";
 import { WorkSwitch } from "./WorkSwitch";
-import { buttonBaseStyle, buttonSizeStyle, buttonVariantStyle } from "./dads/Button";
 
 const KIND: Record<string, [string, string]> = { decide: ["判断", "var(--warn)"], merge: ["merge", "var(--ok)"], plan: ["企画", "var(--design)"] };
 
@@ -20,12 +19,12 @@ export function Home() {
       </div>
       <section className="agg" aria-label="全プロジェクトのあなたの対応">
         <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-          <h2 style={{ fontSize: 16 }}>あなたの対応(全プロジェクト)</h2>
-          <span className="sub" style={{ fontSize: 12, color: "var(--muted)" }}>
+          <h2 style={{ fontSize: "var(--fs-lg)" }}>あなたの対応(全プロジェクト)</h2>
+          <span className="sub" style={{ fontSize: "var(--fs-sm)", color: "var(--muted)" }}>
             判断 {count("decide")} · merge {count("merge")} · 企画 {count("plan")}
           </span>
         </div>
-        {data.queue.length === 0 && <div style={{ fontSize: 13, color: "var(--muted)", padding: "4px 2px" }}>今あなたが対応することはありません。</div>}
+        {data.queue.length === 0 && <div style={{ fontSize: "var(--fs-md)", color: "var(--muted)", padding: "4px 2px" }}>今あなたが対応することはありません。</div>}
         {data.queue.map((x, i) => (
           <div className="rowi" key={i}>
             <span className="k" style={{ background: KIND[x.kind]![1] }}>
@@ -67,7 +66,7 @@ function ImportButton() {
     if (r) go(`#/p/${r.id}/studio`);
   };
   return (
-    <label className={`importbtn ${buttonBaseStyle} ${buttonSizeStyle.md} ${buttonVariantStyle.outline} cursor-pointer`}>
+    <label className="importbtn ds-btn ds-btn--secondary">
       設計書から復元
       <input type="file" accept=".md,text/markdown" aria-label="設計書から復元" onChange={(e) => void restore(e.target.files?.[0]).finally(() => (e.target.value = ""))} />
     </label>
@@ -118,7 +117,7 @@ function ProjectCard({ p }: { p: HqView["projects"][number] }) {
           <div className="v">{p.metrics.completed}</div>
         </div>
       </div>
-      <div style={{ fontSize: 12, color: "var(--muted)" }}>
+      <div style={{ fontSize: "var(--fs-sm)", color: "var(--muted)" }}>
         {handed
           ? `進行中のチケット ${p.open} 件 · 作業中 ${p.working} 人${neck ? ` · ボトルネック: ${neck.stage}(待ち ${neck.waiting})` : ""}`
           : `企画スタジオで「${STAGE_NAME[p.planning.current ?? ""] ?? "チームに渡す"}」を決めています。終わるとリーダーがチケットに分けます`}

@@ -5,6 +5,8 @@
  */
 module.exports = {
   content: { relative: true, files: ["./index.html", "./src/**/*.{ts,tsx}"] },
-  theme: { extend: {} },
+  // デザインシステムのトークン(ui/src/ds/tokens.css の CSS 変数)を Tailwind からも使えるようにする。
+  // 既存の画面の見た目を変えないよう、Tailwind の既定の名前(rounded-md など)は上書きせず ds- を付ける。
+  theme: { extend: require("./src/ds/tailwind-tokens.cjs") },
   plugins: [require("@digital-go-jp/tailwind-theme-plugin")],
 };

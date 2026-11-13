@@ -11,7 +11,7 @@ import type { MemberRow, Project, TicketRow } from "./project.js";
  * バーチャルオフィス(docs/design.md 6.3)に描く中身。島・席・メンバーの今の仕事・待ちの書類・merge 待ちの棚を、記録から組み立てる。
  */
 
-export const KIND_LABEL: Record<string, string> = { implement: "実装", fix: "直し", answer: "続き", review: "レビュー", sec: "セキュリティ確認", qa: "QA", decide: "判断", plan: "企画", chat: "チャットの返事", triage: "交通整理", unstick: "詰まりの調査" };
+export const KIND_LABEL: Record<string, string> = { implement: "実装", fix: "直し", answer: "続き", review: "レビュー", sec: "セキュリティ確認", qa: "QA", decide: "判断", plan: "企画", chat: "チャットの返事", triage: "交通整理", unstick: "詰まりの調査", member_chat: "メンバーとの会話" };
 
 type Work = {
   ticket: number | null;
@@ -28,7 +28,7 @@ type Work = {
 export function workOf(p: Project, member: MemberRow): Work | null {
   const r = get<{ id: number; ticket_id: number | null; role: string; model: string | null; kind: string }>(
     p.db,
-    "SELECT r.id, r.ticket_id, r.role, r.model, m.kind FROM runs r JOIN messages m ON m.id = r.message_id WHERE r.member_id = ? AND r.ended_at IS NULL ORDER BY r.id DESC LIMIT 1",
+    "SELECT r.id, COALESCE(r.ticket_id, r.about_ticket_id) AS ticket_id, r.role, r.model, m.kind FROM runs r JOIN messages m ON m.id = r.message_id WHERE r.member_id = ? AND r.ended_at IS NULL ORDER BY r.id DESC LIMIT 1",
     [member.id],
   );
   if (!r) return null;

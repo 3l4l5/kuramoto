@@ -1,5 +1,6 @@
 import { all, get } from "../db/sqlite.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
+import { violationTotals } from "./dev-rules.js";
 import type { Project } from "./project.js";
 
 /**
@@ -42,6 +43,8 @@ export function productivity(p: Project) {
     tokensPerCompleted: completed ? (usage?.tokens ?? 0) / completed : null,
     rework: { total: changes + conflicts + retries, changes, conflicts, retries },
     help: { total: decisions + planAsks, decisions, planAsks },
+    // 開発ルールに反した件数と、うち持ち主が自動で直した件数(R15)
+    ruleViolations: violationTotals(p),
   };
 
   // ---- 日ごと(サーバーの時刻の日付で区切る) ----

@@ -31,7 +31,7 @@ const delegateText = (c: Cast, stage: string): string =>
     infra: `アーキテクトの${c.architect}が、既にある環境を確かめたうえで、動かす場所・環境とデプロイ・運用・費用を決めて版を作ります。あなたには決めた内容と月額の見積もりを報告します。`,
     model: `アーキテクトの${c.architect}が、アーキテクチャスタイル・ドメインモデル・データ設計(表・列・マイグレーション)を決めて版を作ります。あなたには決めた内容を報告します。`,
   })[stage] ?? "";
-const muted = { color: "var(--muted)", fontSize: 13 } as const;
+const muted = { color: "var(--muted)", fontSize: "var(--fs-md)" } as const;
 
 /** 段階ごとの作業の場。 */
 export function StageWork(props: Props) {
@@ -91,7 +91,7 @@ export function StageWork(props: Props) {
         )}
       </header>
       {s.mode === "agree" && s.agreeBlocker && !agreed && !/中身がありません/.test(s.agreeBlocker) && (
-        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: -8 }}>合意するには: {s.agreeBlocker}</div>
+        <div style={{ fontSize: "var(--fs-sm)", color: "var(--muted)", marginTop: -8 }}>合意するには: {s.agreeBlocker}</div>
       )}
       {/* あなたに答えてほしい未決は、中身より上に出す */}
       <Issues d={d} pid={pid} stage={s.key} show="open" />
@@ -162,12 +162,12 @@ function ModeBar({ s, cast, ask, setAsk, setMode }: { s: Stage; cast: Cast; ask:
     );
   return (
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-      <span style={{ fontSize: 12, color: "var(--muted)", alignSelf: "center" }}>進め方:</span>
+      <span style={{ fontSize: "var(--fs-sm)", color: "var(--muted)", alignSelf: "center" }}>進め方:</span>
       <Btn kind="outline" size="sm" onClick={() => setAsk(`${s.key}:delegate`)}>
         お任せにする
       </Btn>
       {s.key === "req" ? (
-        <span style={{ fontSize: 12, color: "var(--muted)", alignSelf: "center" }}>(要件は省けません)</span>
+        <span style={{ fontSize: "var(--fs-sm)", color: "var(--muted)", alignSelf: "center" }}>(要件は省けません)</span>
       ) : (
         <Btn kind="outline" size="sm" onClick={() => setAsk(`${s.key}:skip`)}>
           この段階を省く
@@ -209,7 +209,7 @@ function Issues({ d, pid, stage, show }: { d: StudioView; pid: number; stage: st
         </div>
       ))}
       {closed.length > 0 && (
-        <details style={{ fontSize: 13 }}>
+        <details style={{ fontSize: "var(--fs-md)" }}>
           <summary style={{ cursor: "pointer", color: "var(--muted)" }}>決まったこと({closed.length})</summary>
           <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>
             {closed.map((o) => (
@@ -252,7 +252,7 @@ function Req({ d }: { d: StudioView }) {
   return (
     <>
       {b && (
-        <div style={{ display: "grid", gridTemplateColumns: "96px 1fr", gap: "4px 10px", fontSize: 13 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "96px 1fr", gap: "4px 10px", fontSize: "var(--fs-md)" }}>
           <b>目的</b>
           <span>{b.purpose}</span>
           <b>使う人</b>
@@ -334,16 +334,16 @@ function Screens({ d, pid, ui, setUi }: Props) {
           </Btn>
         ))}
       </div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 12, color: "var(--muted)" }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: "var(--fs-sm)", color: "var(--muted)" }}>
         要件: {sc.requirements.join("、") || "なし"}
         <Btn kind="outline" size="sm" style={{ marginLeft: "auto" }} disabled={!canComment} onClick={() => setUi({ commentMode: !ui.commentMode, pin: null })}>
           {ui.commentMode ? "コメントをやめて試作を触る" : "コメントを付ける"}
         </Btn>
       </div>
       {ui.commentMode ? (
-        <div style={{ fontSize: 12, color: "var(--design)" }}>{multi ? "選んだ案" : "試作"}の上を押すと、その場所にコメントを付けられます。</div>
+        <div style={{ fontSize: "var(--fs-sm)", color: "var(--design)" }}>{multi ? "選んだ案" : "試作"}の上を押すと、その場所にコメントを付けられます。</div>
       ) : (
-        !canComment && <div style={{ fontSize: 12, color: "var(--muted)" }}>案を選ぶと、その案にコメントを付けられます。</div>
+        !canComment && <div style={{ fontSize: "var(--fs-sm)", color: "var(--muted)" }}>案を選ぶと、その案にコメントを付けられます。</div>
       )}
       <div className="variants">
         {sc.variants.map((v) => {
@@ -386,7 +386,7 @@ function Screens({ d, pid, ui, setUi }: Props) {
                   />
                 )}
               </div>
-              {v.note && <div style={{ fontSize: 12, color: "var(--muted)", maxWidth: 300 }}>{v.note}</div>}
+              {v.note && <div style={{ fontSize: "var(--fs-sm)", color: "var(--muted)", maxWidth: 300 }}>{v.note}</div>}
             </div>
           );
         })}
@@ -428,7 +428,7 @@ function Screens({ d, pid, ui, setUi }: Props) {
           >
             {sc.agreed ? "この画面は合意済み" : "この画面に合意する"}
           </Btn>
-          <span style={{ fontSize: 12, color: "var(--muted)" }}>{multi && !sc.chosen ? "案を 1 つ選んでください" : openPins.length ? "対応待ちのコメントがあります" : ""}</span>
+          <span style={{ fontSize: "var(--fs-sm)", color: "var(--muted)" }}>{multi && !sc.chosen ? "案を 1 つ選んでください" : openPins.length ? "対応待ちのコメントがあります" : ""}</span>
         </div>
       )}
     </>
@@ -443,12 +443,12 @@ function Infra({ d }: { d: StudioView }) {
   const total = f.cost.monthly.reduce((s, x) => s + x.usd, 0);
   const sec = (title: string, inner: React.ReactNode) => (
     <div>
-      <b style={{ fontSize: 13 }}>{title}</b>
+      <b style={{ fontSize: "var(--fs-md)" }}>{title}</b>
       {inner}
     </div>
   );
   const dl = (rows: [string, string][]) => (
-    <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: "4px 10px", fontSize: 13, marginTop: 4 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: "4px 10px", fontSize: "var(--fs-md)", marginTop: 4 }}>
       {rows
         .filter((r) => r[1])
         .map((r) => (
@@ -458,12 +458,12 @@ function Infra({ d }: { d: StudioView }) {
   );
   return (
     <>
-      <div style={{ fontSize: 14 }}>{f.hosting.summary}</div>
-      {f.hosting.reuse.length > 0 && <div style={{ fontSize: 12, color: "var(--muted)" }}>既にあって使うもの: {f.hosting.reuse.join("、")}</div>}
+      <div style={{ fontSize: "var(--fs-base)" }}>{f.hosting.summary}</div>
+      {f.hosting.reuse.length > 0 && <div style={{ fontSize: "var(--fs-sm)", color: "var(--muted)" }}>既にあって使うもの: {f.hosting.reuse.join("、")}</div>}
       <InfraSvg infra={f} />
       {sec(
         "構成",
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, marginTop: 4 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--fs-md)", marginTop: 4 }}>
           <thead>
             <tr style={{ textAlign: "left", color: "var(--muted)" }}>
               <th>名前</th>
@@ -482,7 +482,7 @@ function Infra({ d }: { d: StudioView }) {
                 <td>{c.kind}</td>
                 <td>{c.service}</td>
                 <td>{c.purpose}</td>
-                <td>{c.isNew ? <span style={{ color: "var(--dev)", fontSize: 11 }}>新規</span> : <span style={{ color: "var(--muted)", fontSize: 11 }}>既存</span>}</td>
+                <td>{c.isNew ? <span style={{ color: "var(--dev)", fontSize: "var(--fs-xs)" }}>新規</span> : <span style={{ color: "var(--muted)", fontSize: "var(--fs-xs)" }}>既存</span>}</td>
               </tr>
             ))}
           </tbody>
@@ -491,7 +491,7 @@ function Infra({ d }: { d: StudioView }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,320px),1fr))", gap: 14 }}>
         {sec(
           "環境",
-          <ul style={{ margin: "4px 0 0", paddingLeft: 20, fontSize: 13 }}>
+          <ul style={{ margin: "4px 0 0", paddingLeft: 20, fontSize: "var(--fs-md)" }}>
             {f.environments.map((e) => (
               <li key={e.name}>
                 <b>{e.name}</b> — {e.purpose}
@@ -508,7 +508,7 @@ function Infra({ d }: { d: StudioView }) {
               ["秘密情報", f.deploy.secrets],
             ])}
             {f.deploy.steps.length > 0 && (
-              <ol style={{ margin: "6px 0 0", paddingLeft: 20, fontSize: 13 }}>
+              <ol style={{ margin: "6px 0 0", paddingLeft: 20, fontSize: "var(--fs-md)" }}>
                 {f.deploy.steps.map((x, i) => (
                   <li key={i}>{x}</li>
                 ))}
@@ -528,12 +528,12 @@ function Infra({ d }: { d: StudioView }) {
         {sec(
           "費用と規模(月額の見積もり)",
           <>
-            <ul style={{ margin: "4px 0 0", paddingLeft: 20, fontSize: 12.5, color: "var(--muted)" }}>
+            <ul style={{ margin: "4px 0 0", paddingLeft: 20, fontSize: "var(--fs-md)", color: "var(--muted)" }}>
               {f.cost.assumptions.map((x, i) => (
                 <li key={i}>{x}</li>
               ))}
             </ul>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, marginTop: 6 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--fs-md)", marginTop: 6 }}>
               <tbody>
                 {f.cost.monthly.map((x, i) => (
                   <tr key={i} style={{ borderTop: "1px solid var(--line)" }}>
@@ -622,11 +622,11 @@ function ArchitectureView({ a }: { a: NonNullable<StudioView["architecture"]> })
   return (
     <div className="arch">
       <div>
-        <div style={{ fontSize: 12, color: "var(--muted)" }}>アーキテクチャスタイル</div>
-        <div style={{ fontSize: 16, fontWeight: 700 }}>{a.style.name}</div>
-        <div style={{ fontSize: 13 }}>{a.style.why}</div>
+        <div style={{ fontSize: "var(--fs-sm)", color: "var(--muted)" }}>アーキテクチャスタイル</div>
+        <div style={{ fontSize: "var(--fs-lg)", fontWeight: 700 }}>{a.style.name}</div>
+        <div style={{ fontSize: "var(--fs-md)" }}>{a.style.why}</div>
         {a.style.alternatives.length > 0 && (
-          <ul style={{ margin: "6px 0 0", paddingLeft: 20, fontSize: 12.5, color: "var(--muted)" }}>
+          <ul style={{ margin: "6px 0 0", paddingLeft: 20, fontSize: "var(--fs-md)", color: "var(--muted)" }}>
             {a.style.alternatives.map((x, i) => (
               <li key={i}>
                 選ばなかった案: <b>{x.name}</b> — {x.whyNot}
@@ -636,7 +636,7 @@ function ArchitectureView({ a }: { a: NonNullable<StudioView["architecture"]> })
         )}
       </div>
       {a.modules.length > 0 && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--fs-md)" }}>
           <thead>
             <tr style={{ textAlign: "left", color: "var(--muted)" }}>
               <th>モジュール</th>
@@ -657,9 +657,9 @@ function ArchitectureView({ a }: { a: NonNullable<StudioView["architecture"]> })
           </tbody>
         </table>
       )}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,280px),1fr))", gap: 12, fontSize: 13 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,280px),1fr))", gap: 12, fontSize: "var(--fs-md)" }}>
         <div>
-          <b style={{ fontSize: 13 }}>守る原則</b>
+          <b style={{ fontSize: "var(--fs-md)" }}>守る原則</b>
           <ul style={{ margin: "4px 0 0", paddingLeft: 20 }}>
             {a.principles.map((x, i) => (
               <li key={i}>{x}</li>
@@ -667,7 +667,7 @@ function ArchitectureView({ a }: { a: NonNullable<StudioView["architecture"]> })
           </ul>
         </div>
         <div>
-          <b style={{ fontSize: 13 }}>API とフロント</b>
+          <b style={{ fontSize: "var(--fs-md)" }}>API とフロント</b>
           <div style={{ display: "grid", gridTemplateColumns: "80px 1fr", gap: "4px 10px", marginTop: 4 }}>
             <FragmentPair k="API" v={`${a.api.style}${a.api.notes ? `(${a.api.notes})` : ""}`} />
             <FragmentPair k="描画" v={a.frontend.rendering} />
@@ -676,7 +676,7 @@ function ArchitectureView({ a }: { a: NonNullable<StudioView["architecture"]> })
         </div>
       </div>
       {a.stack.length > 0 && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--fs-md)" }}>
           <thead>
             <tr style={{ textAlign: "left", color: "var(--muted)" }}>
               <th>領域</th>
@@ -705,8 +705,8 @@ function DomainView({ m }: { m: NonNullable<StudioView["domain"]> }) {
   const list = (title: string, xs: string[]) =>
     xs.length > 0 && (
       <div key={title}>
-        <b style={{ fontSize: 13 }}>{title}</b>
-        <ul style={{ margin: "4px 0 0", paddingLeft: 20, fontSize: 13 }}>
+        <b style={{ fontSize: "var(--fs-md)" }}>{title}</b>
+        <ul style={{ margin: "4px 0 0", paddingLeft: 20, fontSize: "var(--fs-md)" }}>
           {xs.map((x, i) => (
             <li key={i}>{x}</li>
           ))}
@@ -724,11 +724,11 @@ function DomainView({ m }: { m: NonNullable<StudioView["domain"]> }) {
         {list("境界", m.boundaries)}
       </div>
       <div>
-        <b style={{ fontSize: 13 }}>作る / 既存を使う / 作らない</b>
-        <ul style={{ margin: "4px 0 0", paddingLeft: 20, fontSize: 13 }}>
+        <b style={{ fontSize: "var(--fs-md)" }}>作る / 既存を使う / 作らない</b>
+        <ul style={{ margin: "4px 0 0", paddingLeft: 20, fontSize: "var(--fs-md)" }}>
           {m.build.map((x, i) => (
             <li key={i}>
-              <b style={{ fontSize: 11, padding: "0 6px", borderRadius: 4, marginRight: 6, color: "var(--surface)", background: BUILD[x.decision]![1] }}>{BUILD[x.decision]![0]}</b>
+              <b style={{ fontSize: "var(--fs-xs)", padding: "0 6px", borderRadius: "var(--r-sm)", marginRight: 6, color: "var(--surface)", background: BUILD[x.decision]![1] }}>{BUILD[x.decision]![0]}</b>
               {x.feature}
               {x.note ? ` — ${x.note}` : ""}
             </li>

@@ -33,7 +33,8 @@ npm run dev:ui       # 画面を作るとき: Vite の開発サーバー(http://
 # ~/.kuramoto/config.yaml(chmod 600 にしてください。本人以外が読めると注意が出ます)
 database:
   type: mysql                # sqlite(既定)か mysql
-  url: mysql://kuramoto@db.example.com:3306/kuramoto   # パスワードはここに書かず、KURAMOTO_DATABASE_URL で渡すのがおすすめ
+  url: mysql://kuramoto@db.example.com:3306/kuramoto   # パスワードはここに書かず、passwordFile か KURAMOTO_DATABASE_URL で渡す
+  passwordFile: ~/.kuramoto/mysql.env                  # 読むのは MYSQL_PASSWORD の 1 行だけ(root のパスワードは読まない。任意)
   tls:
     ca: /etc/ssl/certs/db-ca.pem                       # TLS の CA のファイル(任意)
 ```
@@ -66,5 +67,6 @@ database:
 |---|---|
 | [docs/design.md](docs/design.md) | 設計書。全体構成・役割・仕事の流れ・画面・つまみ・指標・データ設計 |
 | [docs/adr/](docs/adr/) | 判断の記録(1 件ずつ、背景・決定・結果・検討した別案) |
+| [docs/mysql.md](docs/mysql.md) | 手元の MySQL(`compose.yaml`)の立て方・バックアップ・戻し方・DB の切り替え |
 | [docs/mock.md](docs/mock.md) | mock の動かし方と、シミュレーションに置いた仮の値 |
 | [mock/index.html](mock/index.html) | mock 本体。ブラウザで開けば動く |

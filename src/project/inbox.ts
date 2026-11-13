@@ -16,8 +16,9 @@ import type { Project } from "./project.js";
  * - triage: リーダーの交通整理(チケットの順番と担当を決める)。チケットを持たない
  * - unstick: 詰まったチケットの手助けをリーダーへ(原因を調べ、やり直させるか保留する)
  * - patrol: リーダーの定期の見回り(重複と、回り続けているチケットに手を打つ)。チケットを持たない
+ * - member_chat: 責任者からメンバーへの話しかけ。宛先はそのメンバー。チケットは持たない(チケットの 1 チケット 1 起動を邪魔しない。ひも付けは payload)
  */
-export type MessageKind = "implement" | "fix" | "review" | "sec" | "qa" | "decide" | "answer" | "plan" | "chat" | "triage" | "unstick" | "patrol";
+export type MessageKind = "implement" | "fix" | "review" | "sec" | "qa" | "decide" | "answer" | "plan" | "chat" | "triage" | "unstick" | "patrol" | "member_chat";
 
 export type MessageRow = {
   id: number;
@@ -52,8 +53,8 @@ export function send(
  * - 着手優先: 新しい実装を先に取る。開発の中では直しを新しい実装より先にする(docs/design.md 5.2)
  */
 const ORDER: Record<Pull, MessageKind[]> = {
-  down: ["chat", "triage", "patrol", "plan", "unstick", "answer", "decide", "qa", "sec", "review", "fix", "implement"],
-  start: ["chat", "triage", "patrol", "plan", "unstick", "answer", "decide", "fix", "implement", "review", "sec", "qa"],
+  down: ["member_chat", "chat", "triage", "patrol", "plan", "unstick", "answer", "decide", "qa", "sec", "review", "fix", "implement"],
+  start: ["member_chat", "chat", "triage", "patrol", "plan", "unstick", "answer", "decide", "fix", "implement", "review", "sec", "qa"],
 };
 
 function orderSql(pull: Pull): string {
@@ -88,7 +89,8 @@ export function claimNext(p: Project, opts: { exclude?: number[]; planningOnly?:
        SELECT m.id FROM messages m
        WHERE m.status = 'pending' AND m.available_at <= ?
          AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id = m.ticket_id AND r.ended_at IS NULL)
-         AND NOT (m.ticket_id IS NULL AND EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id IS NULL AND r.role = m.to_role AND r.ended_at IS NULL))
+         AND NOT (m.ticket_id IS NULL AND m.kind <> 'member_chat' AND EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id IS NULL AND r.role = m.to_role AND r.ended_at IS NULL))
+         AND NOT (m.kind = 'member_chat' AND EXISTS (SELECT 1 FROM runs r WHERE r.member_id = m.to_member_id AND r.ended_at IS NULL))
          ${opts.planningOnly ? "AND m.ticket_id IS NULL" : ""}
          ${opts.noPlan ? "AND m.kind <> 'plan'" : ""}
          ${

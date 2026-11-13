@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { isMap, LineCounter, parseDocument, type Document } from "yaml";
 import { z } from "zod";
@@ -29,6 +30,8 @@ export class ConfigError extends Error {
 }
 
 export const DATABASE_URL_ENV = "KURAMOTO_DATABASE_URL";
+/** passwordFile(mysql.env)から読むのはこの 1 行だけ。MYSQL_ROOT_PASSWORD など他の行は読まない */
+export const PASSWORD_KEY = "MYSQL_PASSWORD";
 
 export function configPath(home: string = kuramotoHome()): string {
   return join(home, "config.yaml");
@@ -45,6 +48,7 @@ const fileSchema = z
       .object({
         type: z.enum(["sqlite", "mysql"], { error: (i) => `知らない type です: ${JSON.stringify(i.input)}(sqlite か mysql)` }).optional(),
         url: z.string().optional(),
+        passwordFile: z.string().min(1, "パスワードのファイルのパスがありません").optional(),
         tls: z.object({ ca: z.string().min(1, "CA のファイルのパスがありません") }).strict().optional(),
       })
       .strict()
@@ -71,7 +75,12 @@ export function loadConfig(path: string = configPath(), env: NodeJS.ProcessEnv =
 }
 
 /** 設定ファイルの中身から設定を組み立てる。text が undefined ならファイルが無いとみなす。 */
-export function loadConfigText(text: string | undefined, path: string, env: NodeJS.ProcessEnv = {}): KuramotoConfig {
+export function loadConfigText(
+  text: string | undefined,
+  path: string,
+  env: NodeJS.ProcessEnv = {},
+  readPasswordFile: (file: string) => string = (file) => readFileSync(file, "utf8"),
+): KuramotoConfig {
   const file = text === undefined ? {} : parseFile(text, path);
   const envUrl = env[DATABASE_URL_ENV]?.trim() || undefined;
   const db = file.database ?? {};
@@ -83,6 +92,7 @@ export function loadConfigText(text: string | undefined, path: string, env: Node
 
   if (type === "sqlite") {
     if (db.url !== undefined) throw new ConfigError(`${where("url")}: SQLite では url は使いません(MySQL なら type: mysql にしてください)`);
+    if (db.passwordFile !== undefined) throw new ConfigError(`${where("passwordFile")}: SQLite では passwordFile は使いません`);
     if (db.tls !== undefined) throw new ConfigError(`${where("tls")}: SQLite では tls は使いません`);
     return { file: text === undefined ? undefined : path, database: { type: "sqlite" }, databaseUrlFromEnv: false };
   }
@@ -91,11 +101,60 @@ export function loadConfigText(text: string | undefined, path: string, env: Node
     const msg = url === undefined ? `MySQL の接続先がありません(database.url か ${DATABASE_URL_ENV} に書いてください)` : checked.error.issues[0]!.message;
     throw new ConfigError(`${where("url")}: ${msg}`);
   }
+  const withPassword = db.passwordFile === undefined ? checked.data : addPassword(checked.data, db.passwordFile, where("passwordFile"), where("url"), readPasswordFile);
   return {
     file: text === undefined ? undefined : path,
-    database: { type: "mysql", url: checked.data, ...(db.tls ? { tls: { ca: db.tls.ca } } : {}) },
+    database: { type: "mysql", url: withPassword, ...(db.tls ? { tls: { ca: db.tls.ca } } : {}) },
     databaseUrlFromEnv: Boolean(envUrl),
   };
+}
+
+/**
+ * passwordFile(mysql.env の形式)から MYSQL_PASSWORD の 1 行だけを読み、接続先に足す。
+ * MYSQL_ROOT_PASSWORD など他の行は読まない。エラーの文にパスワードは含めない。
+ */
+function addPassword(
+  urlText: string,
+  passwordFile: string,
+  passwordWhere: string,
+  urlWhere: string,
+  read: (file: string) => string,
+): string {
+  const url = new URL(urlText);
+  if (url.password !== "") throw new ConfigError(`${passwordWhere}: ${urlWhere} にもパスワードが書いてあります。どちらか一方にしてください`);
+  const file = passwordFile === "~" || passwordFile.startsWith("~/") ? join(homedir(), passwordFile.slice(1)) : passwordFile;
+  let content: string;
+  try {
+    content = read(file);
+  } catch (e) {
+    throw new ConfigError(`${passwordWhere}: ${file} を読めません: ${(e as Error).message}`);
+  }
+  const password = parseEnvValue(content, PASSWORD_KEY);
+  if (!password) throw new ConfigError(`${passwordWhere}: ${file} に ${PASSWORD_KEY} の行がありません(空でない値を書いてください)`);
+  // URL の setter は % をエンコードしないので、自分でエンコードする(読む側が decodeURIComponent でもとに戻せるように)
+  url.password = encodeURIComponent(password);
+  return url.toString();
+}
+
+/** 引用符で囲んだ値は中身だけ(後ろのコメントは捨てる)。囲んでいない値は、docker compose の env_file と同じく「空白 + #」から後ろをコメントとする。 */
+function unquote(v: string): string {
+  const q = v[0];
+  if (q === '"' || q === "'") {
+    const end = v.indexOf(q, 1);
+    if (end > 0 && (end === v.length - 1 || /^\s+#/.test(v.slice(end + 1)))) return v.slice(1, end);
+  }
+  return v.replace(/(^|\s+)#.*$/, "");
+}
+
+/** KEY=VALUE の行から key の値だけを取り出す(# のコメント・空行・export・前後の引用符を許す)。後の行が優先。 */
+function parseEnvValue(content: string, key: string): string | undefined {
+  let value: string | undefined;
+  for (const raw of content.split(/\r?\n/)) {
+    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(raw);
+    if (!m || m[1] !== key) continue;
+    value = unquote(m[2]!.trim());
+  }
+  return value;
 }
 
 function parseFile(text: string, path: string): FileConfig {

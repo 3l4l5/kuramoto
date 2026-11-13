@@ -38,8 +38,8 @@ export function Studio({ id }: { id: number }) {
     <section aria-label="企画スタジオ">
       <div className="studio">
         <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-          <h2 style={{ margin: 0, fontFamily: "var(--f-display)", fontSize: 18 }}>{data.project.name} · 企画スタジオ</h2>
-          <span style={{ fontSize: 12, color: "var(--muted)" }}>段階ごとに合意した版を残し、すべて終わったらチームに渡します</span>
+          <h2 style={{ margin: 0, fontFamily: "var(--f-body)", fontSize: "var(--fs-lg)" }}>{data.project.name} · 企画スタジオ</h2>
+          <span style={{ fontSize: "var(--fs-sm)", color: "var(--muted)" }}>段階ごとに合意した版を残し、すべて終わったらチームに渡します</span>
           <LinkBtn kind="outline" size="sm" className="exportbtn" href={`/api/projects/${id}/studio/export`} download>
             設計書をエクスポート(Markdown)
           </LinkBtn>
@@ -122,7 +122,7 @@ function Chat({ d, pid, stage }: { d: StudioView; pid: number; stage: string }) 
   return (
     <section className="strio" aria-label="企画の 3 人との会話">
       <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--line)" }}>
-        <b style={{ fontFamily: "var(--f-display)" }}>
+        <b style={{ fontFamily: "var(--f-body)" }}>
           企画 {d.cast.planner} · デザイナー {d.cast.designer} · アーキテクト {d.cast.architect}
         </b>
       </div>
@@ -143,7 +143,7 @@ function Chat({ d, pid, stage }: { d: StudioView; pid: number; stage: string }) 
         )}
         {work && <WorkBox w={work} who={ownerOf(d.cast, stage)} />}
         {d.progress[stage] && <RecentRuns p={d.progress[stage]!} limit={d.loopLimit} />}
-        {!list.length && !work && <div style={{ color: "var(--muted)", fontSize: 12 }}>{stage === "handoff" ? "" : "まだ会話はありません。"}</div>}
+        {!list.length && !work && <div style={{ color: "var(--muted)", fontSize: "var(--fs-sm)" }}>{stage === "handoff" ? "" : "まだ会話はありません。"}</div>}
       </div>
       <div id="st-in-hint" className="hint compose-hint">
         {stage === "handoff" ? `${d.cast.lead}(リーダー)に` : `${ownerOf(d.cast, stage)}に(この段階について)`}

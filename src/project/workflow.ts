@@ -10,6 +10,7 @@ import type { Project, TicketRow } from "./project.js";
 import type { Finding, Followup, Question, RunReport } from "./tools.js";
 import { comment, lastReviewer, mustResolve, setStatus, threadText } from "./review.js";
 import { teamCiFindings } from "./team-ci.js";
+import { openViolations, markListed, reviewFindingsFor } from "./dev-rules.js";
 
 /**
  * ノンストップで進めるか(ADR-0022)。設定 nonstop が "0" でなければ、戻せる判断はチームで決め、責任者には報告だけする。
@@ -139,7 +140,7 @@ export function applyReport(p: Project, ctx: { msg: MessageRow; runId: number; m
       case "implement":
       case "fix":
       case "answer":
-        return applyDev(p, ticket, ctx.memberId, report, JSON.parse(msg.payload) as { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string });
+        return applyDev(p, ticket, ctx.memberId, report, JSON.parse(msg.payload) as { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string; rules?: unknown });
       case "review":
       case "sec":
       case "qa":
@@ -165,7 +166,7 @@ function applyHandoff(p: Project, ticket: TicketRow, role: WorkRole, report: Run
   return undefined;
 }
 
-function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunReport, payload: { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string } = {}): string | undefined {
+function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunReport, payload: { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string; rules?: unknown } = {}): string | undefined {
   if (ticket.owner_member_id === null) {
     run(p.db, "UPDATE tickets SET owner_member_id = ? WHERE id = ?", [memberId, ticket.id]);
     ticket = p.ticket(ticket.id);
@@ -182,6 +183,8 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
   // CI が落ちたコミットのまま出し直しても、同じように落ちて戻ってくるだけ(ADR-0027)。失敗として扱い、続けばリーダーが手助けする
   if (payload.ci && payload.sha && report.pr.sha === payload.sha)
     return `CI が落ちたコミット(${payload.sha.slice(0, 7)})から何も変わっていません。渡したログから原因を直すか、git merge origin/main で main を取り込んでから出し直してください`;
+  if (payload.rules && payload.sha && report.pr.sha === payload.sha)
+    return `開発ルールに反したコミット(${payload.sha.slice(0, 7)})から何も変わっていません。ルールを守るように直してから出し直してください`;
   const repo = p.repos().find((r) => r.full_name === report.pr!.repo);
   if (!repo) return `登録されていないリポジトリです: ${report.pr.repo}`;
   run(
@@ -199,6 +202,15 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
   for (const r of report.responses ?? []) {
     comment(p, r.findingId, { memberId, role: "dev" }, r.action, r.comment);
     setStatus(p, r.findingId, r.action === "fixed" ? "addressed" : "disputed");
+  }
+  // 「直すまで進めない」開発ルール(R15)に反したまま。PR は出したが、次の工程には進めず、持ち主に戻す
+  const blocked = openViolations(p, ticket.id, "blocked");
+  if (blocked.length) {
+    p.event("system", "rule_blocked", ticket.id, { rules: blocked.map((v) => v.name) });
+    enterStage(p, ticket, "dev", {
+      payload: { rules: blocked.map((v) => ({ name: v.name, body: v.body, detail: v.detail })), ...(report.pr.sha ? { sha: report.pr.sha } : {}), ...(payload.from ? { from: payload.from } : {}) },
+    });
+    return undefined;
   }
   // チームの CI が落ちた(ADR-0028)。レビューに回さず、出力を付けてその場で持ち主に戻す
   if (report.teamCi && !report.teamCi.ok) {
@@ -251,7 +263,12 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
 
 function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: number, report: RunReport): string | undefined {
   if (!report.review) return "submit_review が呼ばれませんでした";
-  const { findings, resolutions } = report.review;
+  const { resolutions } = report.review;
+  // 「レビューで指摘」の開発ルール(R15)の違反は、最初の確認の工程が、まだ指摘にしていないものを指摘に足す
+  const first = pipelineOf(p.currentFormation()).find((r) => r !== "dev");
+  const ruleFindings = role === first ? reviewFindingsFor(p, ticket.id) : [];
+  for (const f of ruleFindings) markListed(p, f.violationId);
+  const findings: Finding[] = [...report.review.findings, ...ruleFindings.map(({ violationId: _, ...f }) => f)];
   const reviewer = get<{ member_id: number }>(p.db, "SELECT member_id FROM runs WHERE id = ?", [runId])!.member_id;
   const who = { memberId: reviewer, role };
   const round = ticket.rounds + 1;

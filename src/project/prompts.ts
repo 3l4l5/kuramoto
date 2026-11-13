@@ -1,4 +1,5 @@
 import { configuredCommands, teamCiEnabled } from "./team-ci.js";
+import { rulesNote } from "./dev-rules.js";
 import { speechNote } from "../domain/cast.js";
 import { mustAnswer, mustResolve, openNits, threadText } from "./review.js";
 import { ROLE_LABEL, type Role } from "../domain/roles.js";
@@ -86,12 +87,16 @@ export function promptFor(p: Project, msg: MessageRow, ticket: TicketRow | null,
     : "";
   switch (msg.kind) {
     case "implement":
-      return `${head}\n\nこのチケットを実装してください。リポジトリは ${ctx.repo}、ブランチは ${ctx.branch}(作業場所で取り出し済み)です。終わったら変更をコミットし、submit_pr で報告してください(PR のタイトルと本文も渡せます)。push と PR の作成は Kuramoto が行います。${teamCiNote(p, ctx.repo)}`;
+      return `${head}\n\nこのチケットを実装してください。リポジトリは ${ctx.repo}、ブランチは ${ctx.branch}(作業場所で取り出し済み)です。終わったら変更をコミットし、submit_pr で報告してください(PR のタイトルと本文も渡せます)。push と PR の作成は Kuramoto が行います。${teamCiNote(p, ctx.repo)}${rulesNote(p)}`;
     case "fix": {
       // CI の失敗など、スレッドにならない指示
       const extra = ((payload.findings as { severity: string; body: string }[] | undefined) ?? []).map((f) => `- [${f.severity}] ${f.body}`).join("\n");
       if (payload.conflict) {
         return `${head}\n\nあなたが出した PR #${ctx.prNumber ?? "?"} について。merge 待ちの間に ${base} が進み、衝突しました(原因: ${String(payload.cause ?? "不明")})。${base} は取得済みです。git merge ${base} で衝突を解いてコミットしてください。\n直したら submit_pr で報告してください(push は Kuramoto が行います)。`;
+      }
+      if (Array.isArray(payload.rules)) {
+        const rules = payload.rules as { name: string; body: string; detail: string }[];
+        return `${head}\n\nあなたが出した PR #${ctx.prNumber ?? "?"}(リポジトリは ${ctx.repo}、ブランチは ${ctx.branch})は、次の開発ルールに反したままです。直すまで次の工程(レビューなど)には進めません。\n${rules.map((r) => `- 「${r.name}」: ${r.detail}(守ること: ${r.body})`).join("\n")}\n\nルールを守るように直し、コミットして submit_pr で報告してください。何も変えずに出し直しても、同じように戻ってきます。${rulesNote(p)}`;
       }
       const must = ticket ? mustAnswer(p, ticket.id) : [];
       const nits = ticket ? openNits(p, ticket.id) : [];
@@ -168,6 +173,7 @@ ${how}`;
     case "triage":
     case "unstick":
     case "patrol":
+    case "member_chat":
       return "";
     case "decide": {
       const d = decision(p, Number(payload.decision_id));
