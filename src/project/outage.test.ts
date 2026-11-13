@@ -161,6 +161,7 @@ describe("CI が落ちたとき(ADR-0027)", () => {
     const fixers = (await p.tickets()).filter((t) => t.title.startsWith("main の CI を直す"));
     expect(fixers.map((t) => t.title)).toEqual(["main の CI を直す(test)"]);
     expect(fixers[0]!.body).toContain("secret DB_URL is not set");
+    expect(fixers[0]!.kind).toBe("bugfix"); // main の CI を直すのはバグ修正の流れ
   });
 
   it("ジョブが始まってもいない(請求・上限など)なら、持ち主にも main の CI を直すチケットにも回さず、1 回だけ知らせて待ち、動き出したら再開する", async () => {

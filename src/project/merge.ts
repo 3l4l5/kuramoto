@@ -195,6 +195,7 @@ async function ensureBaseCiTicket(p: Project, from: TicketRow, pr: PrRow, detail
   return await createTicket(p, {
     title: `${detail.base} の CI を直す(${checks.join("・")})`,
     body: `${detail.base} の最新のコミットで、CI の ${checks.map((c) => `「${c}」`).join("・")} が落ちています。このままでは、どの PR も CI が通らず merge できません(最初に見つけたのは #${from.number} の PR #${pr.number})。\n\n受け入れ条件: ${detail.base} で落ちている確認が通ること。原因がワークフローの設定・秘密情報など、コードの外にあるなら、そう分かった時点で報告すること。\n\n${logs}`,
+    kind: "bugfix",
     planRefs: { repo: pr.full_name, baseCi: pr.full_name },
   });
 }
