@@ -96,6 +96,20 @@ describe("デザインを合わせる(ADR-0033)", () => {
       expect((await designFor(p, all!)).map((d) => d.key).sort()).toEqual(["list", "settings"]);
     });
 
+    it("切り出したチケットは、親の種類(バグ修正など)を引き継ぐ。見回りの split・split_and_retry のどちらも", async () => {
+      const p = await setup();
+      const bug = await createTicket(p, { title: "直す", kind: "bugfix" });
+      const doc = await createTicket(p, { title: "書く", kind: "docs" });
+      await patrolTools(p).find((t) => t.name === "split")!.handler({ number: bug.number, tickets: [{ title: "見回りの子", body: "b" }], advice: "a" } as never);
+      await unstickTools(p, doc, stuck, {}).find((t) => t.name === "split_and_retry")!.handler({ tickets: [{ title: "unstick の子", body: "b" }], advice: "絞る" } as never);
+      const kinds = Object.fromEntries((await p.tickets()).map((t) => [t.title, t.kind]));
+      expect(kinds).toMatchObject({ 直す: "bugfix", 見回りの子: "bugfix", 書く: "docs", "unstick の子": "docs" });
+      // 親が feature なら、これまでどおり feature
+      const feat = await createTicket(p, { title: "作る" });
+      await patrolTools(p).find((t) => t.name === "split")!.handler({ number: feat.number, tickets: [{ title: "機能の子", body: "b" }], advice: "a" } as never);
+      expect((await p.tickets()).find((t) => t.title === "機能の子")!.kind).toBe("feature");
+    });
+
     it("リーダーのチャットの create_ticket でも all_screens を指定できる", async () => {
       const p = await setup();
       await leadChatTools(p).find((t) => t.name === "create_ticket")!.handler({ title: "全画面", body: "b", all_screens: true } as never);
