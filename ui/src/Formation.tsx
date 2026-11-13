@@ -60,6 +60,8 @@ export function FormationDrawer({ id, t, close }: { id: number; t: TeamView; clo
     if (t) setTab(t);
   }, [req.seq]);
   const [asking, setAsking] = useState(false);
+  // 島タブで右に出して編集している島(一覧で選ぶ)。タブを行き来しても保つ
+  const [sel, setSel] = useState(0);
   // 他の場所で版が上がったら、下書きを今の版に合わせ直す
   useEffect(() => {
     setState(loadDraft(currentV));
@@ -84,8 +86,12 @@ export function FormationDrawer({ id, t, close }: { id: number; t: TeamView; clo
   const nextVersion = t.formation.versions.length + 1;
 
   const setUnit = (i: number, patch: Partial<UnitSpec>) => setDraft((d) => ({ ...d, units: d.units.map((u, j) => (j === i ? { ...u, ...patch } : u)) }));
-  const addUnit = () => setState((s) => ({ spec: { ...s.spec, units: [...s.spec.units, newUnit(s.spec)] }, ids: [...s.ids, `\u0001${++newIsland}`] }));
-  const removeUnit = (i: number) =>
+  const addUnit = () => {
+    setSel(draft.units.length);
+    setState((s) => ({ spec: { ...s.spec, units: [...s.spec.units, newUnit(s.spec)] }, ids: [...s.ids, `\u0001${++newIsland}`] }));
+  };
+  const removeUnit = (i: number) => {
+    setSel(Math.max(0, i - 1));
     setState((s) => {
       const gone = s.ids[i]!;
       return {
@@ -93,6 +99,7 @@ export function FormationDrawer({ id, t, close }: { id: number; t: TeamView; clo
         ids: s.ids.filter((_, j) => j !== i),
       };
     });
+  };
 
   const save = () =>
     act(
@@ -108,7 +115,7 @@ export function FormationDrawer({ id, t, close }: { id: number; t: TeamView; clo
       : changeSummary(counts);
 
   return (
-    <aside className={`drawer formation${tab === "flows" ? " wide" : ""}`} aria-label="編成">
+    <aside className={`drawer formation${tab === "flows" ? " wide" : tab === "islands" ? " mid" : ""}`} aria-label="編成">
       <Drawer
         title="編成"
         version={`v${t.formation.current}`}
@@ -147,7 +154,7 @@ export function FormationDrawer({ id, t, close }: { id: number; t: TeamView; clo
           </>
         }
       >
-        {tab === "islands" && <IslandsTab t={t} draft={draft} setDraft={setDraft} setUnit={setUnit} addUnit={addUnit} removeUnit={removeUnit} errors={islandErrs} currentV={currentV} load={(v) => setState(loadDraft(v))} />}
+        {tab === "islands" && <IslandsTab t={t} current={current} ids={ids} sel={Math.min(sel, draft.units.length - 1)} setSel={setSel} draft={draft} setDraft={setDraft} setUnit={setUnit} addUnit={addUnit} removeUnit={removeUnit} errors={islandErrs} currentV={currentV} load={(v) => setState(loadDraft(v))} />}
         {tab === "routes" && <RoutesTab draft={draft} ids={ids} setDraft={setDraft} errors={routeErrs} />}
         {tab === "flows" && <FlowsTab draft={draft} current={current} setDraft={setDraft} />}
       </Drawer>
@@ -159,52 +166,95 @@ export function FormationDrawer({ id, t, close }: { id: number; t: TeamView; clo
 
 type TabProps = { draft: FormationSpec; setDraft: (f: FormationSpec | ((d: FormationSpec) => FormationSpec)) => void };
 
-function IslandsTab({ t, draft, setDraft, setUnit, addUnit, removeUnit, errors, currentV, load }: TabProps & { t: TeamView; setUnit: (i: number, p: Partial<UnitSpec>) => void; addUnit: () => void; removeUnit: (i: number) => void; load: (v: TeamView["formation"]["versions"][number]) => void; errors: string[]; currentV: TeamView["formation"]["versions"][number] }) {
+type Version = TeamView["formation"]["versions"][number];
+type IslandsProps = TabProps & {
+  t: TeamView;
+  current: FormationSpec;
+  ids: string[];
+  sel: number;
+  setSel: (i: number) => void;
+  setUnit: (i: number, p: Partial<UnitSpec>) => void;
+  addUnit: () => void;
+  removeUnit: (i: number) => void;
+  load: (v: Version) => void;
+  errors: string[];
+  currentV: Version;
+};
+
+/** 左に島の一覧、右に選んだ島の編集。仕事の取り方・工程・版の履歴は編成全体のことなので、右の下にまとめる。 */
+function IslandsTab({ t, current, ids, sel, setSel, draft, setDraft, setUnit, addUnit, removeUnit, errors, currentV, load }: IslandsProps) {
+  const u = draft.units[sel]!;
+  const before = new Map(current.units.map((x) => [x.name, x]));
+  const state = (x: UnitSpec, i: number) => {
+    const old = before.get(ids[i]!);
+    return !old ? "追加" : JSON.stringify(old) !== JSON.stringify(x) ? "変更" : null;
+  };
+  const members = t.formation.members[currentV.units[sel]?.name ?? ""];
   return (
-    <div className="pol">
-      <p className="hint">島ごとに、持つ役割と人数を決めます。同じ役割を複数の島に持たせると、手の空いている島が取ります。島に受け持つリポジトリを決めると、そのリポジトリのチケットだけを取ります(開発をフロントと API に分けるなど)。工程は持っている役割から、「流れ」タブで決めた順に組み立てます。保存すると版が上がり、席替えが起きます。</p>
-      {draft.units.map((u, i) => (
-        <div className="knobs unit" key={i}>
-          <UnitFields u={u} i={i} repos={t.repos} set={(patch) => setUnit(i, patch)} remove={draft.units.length > 1 ? () => removeUnit(i) : undefined} />
-          {t.formation.members[currentV.units[i]?.name ?? ""] && (
-            <div className="hint">今いるメンバー: {t.formation.members[currentV.units[i]!.name]!.map((m) => `${m.name}${m.helper ? "(応援)" : ""}`).join("、") || "なし"}</div>
-          )}
+    <div className="islandtab">
+      <aside className="islands">
+        <SectionHeading>{`島 ${draft.units.length} / ${MAX_UNITS}`}</SectionHeading>
+        <List label="島の一覧">
+          {draft.units.map((x, i) => {
+            const mark = state(x, i);
+            return (
+              <ListItem
+                key={ids[i]}
+                selected={i === sel}
+                onClick={() => setSel(i)}
+                title={
+                  <span className="islandname">
+                    <span className={`dot ${roleTone(x.roles)}`} aria-hidden="true" />
+                    <b>{x.name || `島 ${i + 1}`}</b>
+                  </span>
+                }
+                meta={mark ? <span className="islandmark">{mark}</span> : undefined}
+              />
+            );
+          })}
+        </List>
+        {draft.units.length < MAX_UNITS && (
+          <Btn kind="text" size="sm" onClick={addUnit}>
+            + 島を足す({MAX_UNITS} つまで)
+          </Btn>
+        )}
+      </aside>
+      <div className="islandmain pol">
+        <p className="hint">島ごとに、持つ役割と人数を決めます。同じ役割を複数の島に持たせると、手の空いている島が取ります。島に受け持つリポジトリを決めると、そのリポジトリのチケットだけを取ります(開発をフロントと API に分けるなど)。工程は持っている役割から、「流れ」タブで決めた順に組み立てます。保存すると版が上がり、席替えが起きます。</p>
+        <div className="knobs unit" key={ids[sel]}>
+          <UnitFields u={u} i={sel} repos={t.repos} set={(patch) => setUnit(sel, patch)} remove={draft.units.length > 1 ? () => removeUnit(sel) : undefined} />
+          {members && <div className="hint">今いるメンバー: {members.map((m) => `${m.name}${m.helper ? "(応援)" : ""}`).join("、") || "なし"}</div>}
         </div>
-      ))}
-      {draft.units.length < MAX_UNITS && (
-        <Btn kind="outline" size="sm" onClick={addUnit}>
-          + 島を足す({MAX_UNITS} つまで)
-        </Btn>
-      )}
-      <div>
-        <label className="h" htmlFor="pull">
-          仕事の取り方
-        </label>
-        <Select id="pull" size="sm" className="w-full" value={draft.pull} onChange={(e) => setDraft((d) => ({ ...d, pull: e.target.value as FormationSpec["pull"] }))}>
-          <option value="down">下流優先(仕掛かりを先に片付ける)</option>
-          <option value="start">着手優先(新しいチケットを先に取る)</option>
-        </Select>
+        <div>
+          <label className="h" htmlFor="pull">
+            仕事の取り方
+          </label>
+          <Select id="pull" size="sm" className="w-full" value={draft.pull} onChange={(e) => setDraft((d) => ({ ...d, pull: e.target.value as FormationSpec["pull"] }))}>
+            <option value="down">下流優先(仕掛かりを先に片付ける)</option>
+            <option value="start">着手優先(新しいチケットを先に取る)</option>
+          </Select>
+        </div>
+        <div className="preview">
+          工程: {pipelineOf(draft).map((r) => ROLE_LABEL[r]).join(" → ")}
+          {pipelineOf(draft).length ? " → merge 待ち" : ""}
+        </div>
+        {errors.length > 0 && (
+          <ul className="errors" aria-label="編成の問題">
+            {errors.map((e) => (
+              <li key={e}>{e}</li>
+            ))}
+          </ul>
+        )}
+        <History
+          title="編成の版"
+          items={[...t.formation.versions].reverse().map((v) => ({
+            key: v.version,
+            label: `v${v.version}${v.version === t.formation.current ? "(今)" : ""}`,
+            detail: `${v.units.map((x) => `${x.name}: ${x.roles.map((r) => ROLE_LABEL[r]).join("・") || "役割なし"} ×${x.maxMembers}${x.repos?.length ? `(${x.repos.join("・")})` : ""}${x.model ? ` ${MODELS[x.model as keyof typeof MODELS]?.label ?? x.model}` : ""}${x.effort ? `/${x.effort}` : ""}`).join(" / ")} · ${v.pull === "down" ? "下流優先" : "着手優先"}`,
+            load: v.version === t.formation.current ? undefined : () => load(v),
+          }))}
+        />
       </div>
-      <div className="preview">
-        工程: {pipelineOf(draft).map((r) => ROLE_LABEL[r]).join(" → ")}
-        {pipelineOf(draft).length ? " → merge 待ち" : ""}
-      </div>
-      {errors.length > 0 && (
-        <ul className="errors" aria-label="編成の問題">
-          {errors.map((e) => (
-            <li key={e}>{e}</li>
-          ))}
-        </ul>
-      )}
-      <History
-        title="編成の版"
-        items={[...t.formation.versions].reverse().map((v) => ({
-          key: v.version,
-          label: `v${v.version}${v.version === t.formation.current ? "(今)" : ""}`,
-          detail: `${v.units.map((u) => `${u.name}: ${u.roles.map((r) => ROLE_LABEL[r]).join("・") || "役割なし"} ×${u.maxMembers}${u.repos?.length ? `(${u.repos.join("・")})` : ""}${u.model ? ` ${MODELS[u.model as keyof typeof MODELS]?.label ?? u.model}` : ""}${u.effort ? `/${u.effort}` : ""}`).join(" / ")} · ${v.pull === "down" ? "下流優先" : "着手優先"}`,
-          load: v.version === t.formation.current ? undefined : () => load(v),
-        }))}
-      />
     </div>
   );
 }

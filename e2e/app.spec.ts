@@ -361,10 +361,16 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await page.getByRole("button", { name: "編成", exact: true }).click();
     const drawer = page.getByRole("complementary", { name: "編成" });
     await expect(drawer.locator(".preview")).toHaveText("工程: 開発 → レビュー → merge 待ち");
+    // 島タブは左の一覧で島を選ぶと、右にその島の編集が出る(1 つずつ)
+    await expect(drawer.getByRole("list", { name: "島の一覧" }).getByRole("listitem")).toHaveCount(2);
+    await expect(drawer.getByRole("group", { name: "島 2 の役割" })).toHaveCount(0);
+    await drawer.getByRole("list", { name: "島の一覧" }).getByText("レビューの島").click();
     await drawer.getByRole("group", { name: "島 2 の役割" }).getByText("セキュリティ").click();
+    await expect(drawer.getByRole("list", { name: "島の一覧" }).getByRole("listitem").nth(1)).toContainText("変更");
     await expect(drawer.locator(".preview")).toHaveText("工程: 開発 → レビュー → セキュリティ → merge 待ち");
     await shot(page, "team-formation");
     // 開発を外すと、理由が出て適用できない
+    await drawer.getByRole("list", { name: "島の一覧" }).getByText("開発の島").click();
     await drawer.getByRole("group", { name: "島 1 の役割" }).getByText("開発").click();
     await expect(drawer.getByRole("list", { name: "編成の問題" })).toContainText("開発の役割は必須です");
     await expect(drawer.getByRole("button", { name: "保存して v2 にする" })).toBeDisabled();
@@ -374,9 +380,9 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(drawer.getByRole("list", { name: "編成の問題" })).toContainText("島 3: 役割がありません");
     await drawer.getByRole("group", { name: "島 3 の役割" }).getByText("開発").click();
     // 島 3 だけ Haiku 5.5 / low で動かす(ほかの島は役割の方針どおり)
-    await drawer.getByLabel("モデル").nth(2).selectOption({ label: "Haiku 5.5" });
-    await drawer.getByLabel("考える深さ").nth(2).selectOption("low");
-    await drawer.getByLabel("この島で重視すること").nth(2).fill("小さく速く");
+    await drawer.getByLabel("モデル").selectOption({ label: "Haiku 5.5" });
+    await drawer.getByLabel("考える深さ").selectOption("low");
+    await drawer.getByLabel("この島で重視すること").fill("小さく速く");
     await drawer.getByRole("button", { name: "保存して v2 にする" }).click();
     await expect(page.getByRole("status", { name: "お知らせ" })).toHaveText("編成 v2 を適用しました");
     // 共通ヘッダーに、編成の版の札と、オフィス/ボード/ツリーの切り替えがある(パソコンの幅)
