@@ -1,4 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
+import type { AddressInfo } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -139,6 +141,24 @@ describe("チームの CI(ADR-0028)", () => {
       await r.close();
     } finally {
       delete process.env.GH_TOKEN;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it.skipIf(process.platform !== "darwin")("閉じ込めの中から 127.0.0.1 のポート(mysql-test の 3307 と同じ作り)に届く。ソケットを閉じた設定(sandbox_strict_sockets)では届かない", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kuramoto-srt-"));
+    const server = createServer((c) => c.end());
+    await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const base: Confinement = { readable: [], writable: [], hidden: [], allowedDomains: ["registry.npmjs.org"], hiddenEnv: [], allowLocalSockets: true, env: {} };
+      const r = new SandboxRunner();
+      const probe = `/usr/bin/nc -z -w 3 127.0.0.1 ${port} && echo REACHED`;
+      expect((await r.run(probe, dir, base, 60_000)).output).toContain("REACHED");
+      expect((await r.run(probe, dir, { ...base, allowLocalSockets: false }, 60_000)).output).not.toContain("REACHED");
+      await r.close();
+    } finally {
+      server.close();
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);

@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p ui/tsconfig.json",
-    "test": "vitest run",
+    "test": "tsx scripts/run-tests.ts",
     "dev": "tsx src/cli.ts",
     "start": "vite build && tsx src/server.ts",
     "start:public": "vite build && KURAMOTO_PUBLIC=1 tsx src/server.ts",

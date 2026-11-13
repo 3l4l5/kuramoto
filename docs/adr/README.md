@@ -45,3 +45,4 @@ Kuramoto の設計で下した判断を 1 件ずつ残します。状態は「�
 | [0039](0039-async-scoped-db.md) | 本部・入口・受信箱・ディスパッチャを、Kysely とスコープつきの口に移す | 提案 |
 | [0040](0040-project-id-guard.md) | project_id の見張りと、同期の書き込みの見張り | 提案 |
 | [0041](0041-mysql-adapter.md) | MySQL のアダプタ(mysql2・TLS・受信箱の取り出し・切れたときの待ち) | 提案 |
+| [0042](0042-test-sqlite-and-mysql.md) | npm test は SQLite と MySQL の両方を流し、チームの CI で止める | 提案 |

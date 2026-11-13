@@ -14,8 +14,11 @@ services:
     image: mysql:8.4
     container_name: kuramoto-mysql
     restart: unless-stopped
+    # required: false: mysql.env が無い環境(CI)でも、`docker compose up -d mysql-test` がプロジェクトの読み込みで失敗しないように。
+    # (mysql.env が無いまま mysql を立てると、パスワードが無くてコンテナが起動しない)
     env_file:
-      - ${HOME}/.kuramoto/mysql.env
+      - path: ${HOME}/.kuramoto/mysql.env
+        required: false
     environment:
       TZ: UTC
     command:

@@ -17,7 +17,7 @@ import { MYSQL_MIGRATIONS } from "./mysql-schema.js";
 import { connectTest, MYSQL_TEST_URL, resetDatabase } from "./mysql-test-support.js";
 
 /**
- * MySQL のアダプタを、mysql-test(127.0.0.1:3307)の実機で確かめる試験。繋がらないときは飛ばす。
+ * MySQL のアダプタを、mysql-test(127.0.0.1:3307)の実機で確かめる試験。npm test の SQLite の回では飛ばし、MySQL の回では繋がらなければ落とす(ADR-0042)。
  * 受信箱(取り出し・完了・失敗・やり直し・取りこぼしの回復)を MySQL の上で流し、切断と再接続を確かめる。
  * (ディスパッチャとエージェントの起動は、まだ SQLite の Project の上でしか動かない。移し終えたら、ここに足す)
  */
