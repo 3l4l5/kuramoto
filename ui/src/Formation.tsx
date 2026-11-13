@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { setDraftRoutes, takeRequestedTab, useFormationUi } from "./formationUi";
 import { post, type TeamView } from "./api";
 import { useAct } from "./hooks";
 import { Btn } from "./ui";
@@ -48,6 +49,12 @@ export function FormationDrawer({ id, t, close }: { id: number; t: TeamView; clo
   const current = toFullSpec(currentV);
   const [{ spec: draft, ids }, setState] = useState<Draft>(() => loadDraft(currentV));
   const [tab, setTab] = useState<Tab>("islands");
+  const req = useFormationUi().request;
+  // 床の凡例の「経路を変える」「流れを変える」から開かれたら、そのタブに切り替える
+  useEffect(() => {
+    const t = takeRequestedTab();
+    if (t) setTab(t);
+  }, [req.seq]);
   const [asking, setAsking] = useState(false);
   // 他の場所で版が上がったら、下書きを今の版に合わせ直す
   useEffect(() => {
@@ -63,6 +70,12 @@ export function FormationDrawer({ id, t, close }: { id: number; t: TeamView; clo
   const all = validateFormation(named, t.repos);
   const flowErrs = validateFlows(draft.flows);
   const routeErrs = routeErrors(named.routes, names);
+  // 連絡経路タブを開いている間は、保存前の案をオフィスの床に重ねる(閉じる・ほかのタブでは消す)
+  const askJson = JSON.stringify((named.routes ?? []).filter((r) => r.mode === "ask").map((r) => ({ a: r.from, b: r.to })));
+  useEffect(() => {
+    setDraftRoutes(tab === "routes" ? JSON.parse(askJson) : null);
+  }, [tab, askJson]);
+  useEffect(() => () => setDraftRoutes(null), []);
   const islandErrs = all.filter((e) => !flowErrs.includes(e) && !routeErrs.includes(e));
   const nextVersion = t.formation.versions.length + 1;
 

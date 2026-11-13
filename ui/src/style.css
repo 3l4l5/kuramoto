@@ -927,10 +927,12 @@ body { background: var(--surface); }
 .officefloor { min-height: 720px; }
 .officefloor .of-filter { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-4) var(--sp-4) 0; font-size: var(--fs-sm); color: var(--muted); }
 .officefloor .of-map { position: relative; overflow-x: auto; padding: 0 var(--sp-4); }
-.officefloor .of-islands { display: flex; align-items: stretch; gap: var(--sp-5); padding: 88px 0 116px; min-width: max-content; }
+.officefloor .of-islands { display: flex; align-items: stretch; gap: var(--sp-5); padding: 88px 0 var(--sp-4); min-width: max-content; }
 .officefloor .of-st { display: contents; }
 .officefloor .of-strands { display: none; }
-.officefloor .of-st > section { position: relative; z-index: 3; flex: 1 1 200px; min-width: 200px; }
+.officefloor .of-st > section { position: relative; z-index: 1; flex: 1 1 200px; min-width: 200px; }
+/* 駅の下の帯(136px)に、種類ごとの路線を通す。RouteMap の BAND と同じ高さ */
+.officefloor .of-st > .of-island, .officefloor .of-st > .of-desk, .officefloor .of-st > .of-shelf { padding-bottom: 136px; }
 .officefloor .of-st > .of-desk, .officefloor .of-st > .of-shelf { flex: 0 0 180px; min-width: 0; }
 .officefloor .of-island { background: var(--c-soft); border: 2px solid var(--c); }
 .officefloor .of-tone-dev { --c: var(--dev); --c-soft: var(--dev-soft); }
@@ -944,10 +946,14 @@ body { background: var(--surface); }
 .officefloor .of-seats.of-bottom { min-height: 96px; }
 .officefloor .of-addisland { align-self: center; flex: 0 0 140px; }
 .officefloor .of-rails { position: absolute; left: 0; top: 0; z-index: 2; pointer-events: none; overflow: visible; }
-.officefloor .of-track { fill: none; stroke: var(--art-outline); stroke-width: 8; stroke-linecap: round; }
+.officefloor .of-track { fill: none; stroke: var(--art-outline); stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; }
 .officefloor .of-sleepers { fill: none; stroke: var(--surface); stroke-width: 2; stroke-dasharray: 2 10; stroke-linecap: round; }
 .officefloor .of-stop { fill: var(--surface); stroke: var(--art-outline); stroke-width: 3; }
 .officefloor .of-stop-pre { stroke-dasharray: 3 3; }
+.officefloor .of-turnlabel { fill: var(--muted); font-size: var(--fs-xs); }
+.officefloor .of-tk { position: absolute; z-index: 4; display: inline-flex; align-items: center; gap: var(--sp-1); height: var(--h-chip); padding: 0 var(--sp-2); border-radius: var(--r-sm); background: var(--surface); border: 1px solid var(--art-outline); box-shadow: var(--shadow); font-family: var(--f-mono); font-size: var(--fs-xs); pointer-events: none; }
+.officefloor .of-tk-dim { opacity: .35; }
+.officefloor .of-legend-links { margin-left: auto; display: inline-flex; gap: var(--sp-2); }
 .officefloor .of-linelabel { fill: var(--ink); font-size: var(--fs-xs); font-weight: var(--fw-bold); }
 .officefloor .of-line-dim { opacity: .3; }
 .officefloor .of-route { fill: none; stroke: var(--dev); stroke-width: 3; stroke-dasharray: 8 6; stroke-linecap: round; }
@@ -1000,7 +1006,8 @@ body { background: var(--surface); }
   .officefloor .of-filter { flex-wrap: wrap; }
   .officefloor .of-map { padding: 0 var(--sp-4); overflow-x: visible; }
   .officefloor .of-islands { flex-direction: column; gap: 0; padding: var(--sp-3) 0; min-width: 0; }
-  .officefloor .of-rails, .officefloor .of-env { display: none; }
+  .officefloor .of-rails, .officefloor .of-env, .officefloor .of-tk { display: none; }
+  .officefloor .of-st > .of-island, .officefloor .of-st > .of-desk, .officefloor .of-st > .of-shelf { padding-bottom: 10px; }
   .officefloor .of-st { display: flex; align-items: stretch; }
   .officefloor .of-st > section { flex: 1 1 auto; min-width: 0; margin: var(--sp-1) 0 var(--sp-1) var(--sp-2); }
   .officefloor .of-st > .of-desk, .officefloor .of-st > .of-shelf { flex: 1 1 auto; }

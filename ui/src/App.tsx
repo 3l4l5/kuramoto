@@ -11,6 +11,7 @@ import { DRAWER_LABEL, type Drawer } from "./Team";
 import { useEffect, useState } from "react";
 import { Btn } from "./ui";
 import { WorkSwitch } from "./WorkSwitch";
+import { useFormationUi } from "./formationUi";
 
 export function App() {
   const route = useRoute();
@@ -19,6 +20,11 @@ export function App() {
   useEffect(() => {
     setDrawer(null);
   }, [route.name]);
+  // 床の凡例の「経路を変える」「流れを変える」で、編成の引き出しを開く
+  const seq = useFormationUi().request.seq;
+  useEffect(() => {
+    if (seq > 0) setDrawer("formation");
+  }, [seq]);
   return (
     <div className="app">
       <header className="bar dads-bar">

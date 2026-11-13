@@ -4,6 +4,7 @@ import type { UnitSpec } from "../domain/formation.js";
 import { officeView } from "./office.js";
 import { efficiencyDaily } from "./productivity.js";
 import { Project } from "./project.js";
+import { createTicket } from "./workflow.js";
 
 const unit = (name: string, roles: UnitSpec["roles"]): UnitSpec => ({ name, roles, maxMembers: 2, summonAt: 2, idleSec: 300 });
 const UNITS = [unit("開発", ["dev"]), unit("レビュー", ["review"]), unit("QA", ["qa"])];
@@ -40,6 +41,17 @@ describe("オフィスの路線図(R16・R17)", () => {
     const pairs = v.routes.map((r) => [r.a, r.b].sort().join("|"));
     expect(pairs.sort()).toEqual([[id("開発"), id("レビュー")], [id("QA"), "lead"], [id("開発"), "arch"]].map((x) => [...x].sort().join("|")).sort());
     expect(v.asks).toEqual([]);
+  });
+});
+
+describe("路線の上の札", () => {
+  it("開いているチケットは、その種類と居場所(where)で返る。完了したものは返さない", () => {
+    const p = setup({ bugfix: ["qa", "dev"] });
+    const t = createTicket(p, { title: "ずれる", kind: "bugfix" });
+    const v = officeView(p);
+    expect(v.ticketKinds[t.number]).toBe("bugfix");
+    // 開発より前の QA から始まるので、居場所は QA の島
+    expect(v.where[t.number]).toBe(`unit:${v.units.find((u) => u.name === "QA")!.id}`);
   });
 });
 

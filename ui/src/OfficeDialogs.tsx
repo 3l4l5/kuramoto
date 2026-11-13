@@ -5,7 +5,6 @@ import { duration, useNow } from "./hooks";
 import { Btn } from "./ui";
 import { hhmm, usd } from "./format";
 import { TicketLink } from "./Ticket";
-import { Avatar } from "./Avatar";
 
 /**
  * オフィスの「様子」のモーダル。席の下には名前と短い状態だけを出し、
@@ -71,86 +70,6 @@ function Runs({ runs, showMember }: { runs: Run[]; showMember?: boolean }) {
         </li>
       ))}
     </ol>
-  );
-}
-
-/** メンバー 1 人の様子。 */
-export function MemberDialog({ projectId, memberId, close }: { projectId: number; memberId: number; close: () => void }) {
-  const { data } = useQuery({ queryKey: ["member", projectId, memberId], queryFn: () => api<MemberView>("GET", `/projects/${projectId}/members/${memberId}`), refetchInterval: 2000 });
-  const now = useNow();
-  const w = data?.work;
-  return (
-    <Modal label={data ? `${data.name} の様子` : "メンバーの様子"} title={data ? `${data.name} の様子` : "読み込んでいます…"} close={close}>
-      {data && (
-        <div className="pd-cols">
-          <section aria-label="今の仕事">
-            <div className="pd-who">
-              <Avatar name={data.name} asleep={!w} />
-              <div>
-                <b>{data.name}</b>
-                {data.helper && <span className="of-helper">応援</span>}
-                <div className="hint">
-                  {data.unit ?? "島に属さない担当"} · 来た時刻 {hhmm(data.joinedAt)}
-                  {data.leftAt ? ` · 帰った時刻 ${hhmm(data.leftAt)}` : ""}
-                </div>
-              </div>
-            </div>
-            <h3>今していること</h3>
-            {w ? (
-              <>
-                <p>
-                  {w.ticket ? `#${w.ticket} ${w.title ?? ""} の` : ""}
-                  {w.kind}({w.role}・{w.model})· 経過 {duration(Math.max(0, Math.round((now - Date.parse(w.startedAt)) / 1000)))}
-                  {w.live ? ` · ${w.live}` : ""}
-                </p>
-                <ol className="pd-steps" aria-label="途中経過">
-                  {w.steps.map((s, i) => (
-                    <li key={i}>
-                      <span className="pd-when">{hhmm(s.at)}</span> <span className="pd-kind">{s.kind}</span> {s.text}
-                    </li>
-                  ))}
-                </ol>
-              </>
-            ) : (
-              <p className="hint">手すきです</p>
-            )}
-            {data.queued.length > 0 && (
-              <>
-                <h3>次に頼まれている仕事</h3>
-                <ul>
-                  {data.queued.map((q, i) => (
-                    <li key={i}>
-                      #{q.number} {q.title}({q.kind})
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            <h3>受け持ちのチケット</h3>
-            {data.owned.length ? (
-              <ul className="pd-owned">
-                {data.owned.map((t) => (
-                  <li key={t.id}>
-                    <TicketLink id={t.id}>
-                      #{t.number} {t.title}
-                    </TicketLink>{" "}
-                    <span className="hint">{STAGE[t.stage] ?? t.stage}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="hint">ありません</p>
-            )}
-          </section>
-          <section aria-label="これまでの仕事">
-            <h3>
-              これまでの仕事 <span className="hint">{data.totals.runs} 回 · うち終わった {data.totals.ok} 回 · {usd(data.totals.costUsd)}</span>
-            </h3>
-            <Runs runs={data.history} />
-          </section>
-        </div>
-      )}
-    </Modal>
   );
 }
 

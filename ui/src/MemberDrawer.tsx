@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, post, type MemberChatView, type MemberNow } from "./api";
 import { Avatar } from "./Avatar";
-import { Button, Chip, Input } from "./ds";
+import { Button, Chip, Input, type ChipTone } from "./ds";
 import { useNow } from "./hooks";
 import { hhmm, kfmt } from "./format";
 import { KIND_SHAPE, KINDS } from "./kind";
@@ -16,6 +16,8 @@ import { TicketLink } from "./Ticket";
  */
 
 const STAGE: Record<string, string> = { dev: "開発", review: "レビュー", sec: "セキュリティ", qa: "QA", decision: "判断待ち", merge: "merge 待ち", done: "完了", dropped: "取りやめ" };
+/** 種類のチップの色(バグ修正は warn、機能は dev の色)。試作 office.html に合わせる */
+const KIND_TONE: Record<string, ChipTone> = { feature: "default", bugfix: "warn", refactor: "review", docs: "design" };
 const STATE_LABEL: Record<MemberNow["state"], string> = { working: "作業中", chatting: "会話中", idle: "手すき" };
 
 export function MemberDrawer({ projectId, memberId, canChat, close }: { projectId: number; memberId: number; canChat: boolean; close: () => void }) {
@@ -68,7 +70,7 @@ export function MemberDrawer({ projectId, memberId, canChat, close }: { projectI
           <h2>{name}</h2>
           <span>{[now?.member.unit, now?.doing?.model, now ? STATE_LABEL[now.state] : null].filter(Boolean).join("・")}</span>
         </div>
-        {now && <Chip tone={now.state === "idle" ? "default" : "review"}>{STATE_LABEL[now.state]}</Chip>}
+        {now && <Chip tone={now.state === "idle" ? "neutral" : "default"}>{STATE_LABEL[now.state]}</Chip>}
         <button type="button" className="of-x" aria-label="閉じる" onClick={close}>
           ×
         </button>
@@ -81,7 +83,7 @@ export function MemberDrawer({ projectId, memberId, canChat, close }: { projectI
               <div className="of-now-t">
                 <span className="mono">#{t.number}</span>
                 <b>{t.title}</b>
-                <Chip tone="neutral">
+                <Chip tone={KIND_TONE[nowKind(now)] ?? "default"}>
                   <span aria-hidden="true">{KIND_SHAPE[nowKind(now)] ?? "●"}</span> {kindLabel}
                 </Chip>
               </div>

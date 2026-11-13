@@ -143,9 +143,14 @@ export function officeView(p: Project) {
     "SELECT m.unit_id, q.to_target FROM ticket_questions q JOIN members m ON m.id = q.from_member_id WHERE q.answered_at IS NULL AND q.routed_to_lead = 0 AND m.unit_id IS NOT NULL",
   ).flatMap((q) => (ends.has(q.to_target) ? [{ a: `unit:${q.unit_id}`, b: ends.get(q.to_target)! }] : []));
 
+  // 路線の上に置く札: 開いているチケットの種類(where の居場所と合わせて、その種類の路線の、いまの駅に置く)
+  const ticketKinds: Record<number, string> = {};
+  for (const t of tickets.values()) if (where[t.number] && where[t.number] !== "done") ticketKinds[t.number] = t.kind;
+
   return {
     lines,
     routes,
+    ticketKinds,
     asks,
     units,
     lead: { ...fixed("lead"), decisions: decisions.map((t) => t.number) },
