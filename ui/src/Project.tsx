@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from "react";
+import { setPhoneNav, usePhoneNav, type OfficeView } from "./phoneNav";
 import { post, type ProjectView } from "./api";
 import { TicketTree } from "./Tree";
 import { areaWaitText, droppedText, hhmm, kfmt, pct, stalledText, timeLeft, unblockText, usd, waitText } from "./format";
 import { duration, go, useAct, useNow, useProject } from "./hooks";
 import { Chip, Segmented } from "./ds";
-import { KINDS, KindChip, PRE_DEV_LABEL } from "./kind";
+import { KINDS, KIND_SHAPE, KindChip, PRE_DEV_LABEL } from "./kind";
 import { TeamDrawer, type Drawer, type RuleGuard } from "./Team";
 import { OfficeFloor } from "./Office";
 import { TicketLink, TicketProvider } from "./Ticket";
@@ -38,8 +39,9 @@ export function ProjectPage({ id, drawer, closeDrawer, guard }: { id: number; dr
 }
 
 function Office({ id, data }: { id: number; data: ProjectView }) {
+  const { tab } = usePhoneNav();
   return (
-    <section className="pview" aria-label="プロジェクト">
+    <section className="pview" aria-label="プロジェクト" data-phone-tab={tab}>
       {!data.project.handed && (
         <div className="panel" style={{ borderColor: "var(--design)", background: "var(--design-soft)" }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -75,21 +77,16 @@ function Office({ id, data }: { id: number; data: ProjectView }) {
 
 // ---- オフィスの床 / ボード ----
 
-/** チケットの画面から「← ボードに戻る」で戻ったとき、見ていたオフィス/ボード/ツリーのままにする。 */
-let lastView: "floor" | "board" | "tree" = "floor";
-
 function FloorOrBoard({ id, data }: { id: number; data: ProjectView }) {
-  const [view, setViewState] = useState<"floor" | "board" | "tree">(lastView);
-  const setView = (v: "floor" | "board" | "tree") => {
-    lastView = v;
-    setViewState(v);
-  };
+  // チケットの画面から「← ボードに戻る」で戻ったとき、見ていたオフィス/ボード/ツリーのままにする(phoneNav が画面の外で持つ)
+  const { view } = usePhoneNav();
+  const setView = (v: OfficeView) => setPhoneNav({ view: v });
   const VIEWS = { floor: "オフィス", board: "ボード", tree: "ツリー" } as const;
   return (
-    <section className="panel" aria-label={VIEWS[view]}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <section className="panel officepanel" aria-label={VIEWS[view]}>
+      <div className="viewhead">
         <h2>{VIEWS[view]}</h2>
-        <div role="group" aria-label="オフィスの見方" style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+        <div role="group" aria-label="オフィスの見方" className="viewsw">
           {(Object.keys(VIEWS) as (keyof typeof VIEWS)[]).map((v) => (
             <Btn key={v} kind={view === v ? "solid-fill" : "outline"} size="sm" aria-pressed={view === v} onClick={() => setView(v)}>
               {VIEWS[v]}
@@ -138,7 +135,7 @@ function Inbox({ d }: { d: ProjectView }) {
       )}
       {items.length ? (
         <div className="items">
-          {shown.map((x) => (x.kind === "decide" ? <DecisionCard key={`d${x.d.id}`} pid={d.project.id} d={x.d} /> : <MergeCard key={`m${x.t.id}`} pid={d.project.id} t={x.t} order={x.order} auto={d.autoMerge} />))}
+          {shown.map((x) => (x.kind === "decide" ? <DecisionCard key={`d${x.d.id}`} pid={d.project.id} d={x.d} tk={byId.get(x.d.ticket.id)} roleLabels={d.roleLabels} /> : <MergeCard key={`m${x.t.id}`} pid={d.project.id} t={x.t} order={x.order} auto={d.autoMerge} />))}
         </div>
       ) : (
         <div className="empty">
@@ -158,25 +155,35 @@ function PrLink({ pr }: { pr: Pr }) {
   );
 }
 
-function DecisionCard({ pid, d }: { pid: number; d: Decision }) {
+const DECISION_STAGE: Record<string, string> = { decision: "判断待ち", merge: "merge 待ち" };
+
+/**
+ * 判断カード。上の段に「判断」の札・#番号・種類・工程・期限、題名(問い)の下に選択肢のラジオ(推奨の札つき)、
+ * その下に「理由」「間違えると」と PR へのリンク、最後に幅いっぱいの「この答えで決める」ボタン 1 つ(phone-home の順)。
+ * 選ぶだけでは決まらず、ボタンで決める。試作に無い「推奨 / 返事が無いと」と、答え・指示の欄は、スマホの幅では畳んでおく。
+ */
+function DecisionCard({ pid, d, tk, roleLabels }: { pid: number; d: Decision; tk: Ticket | undefined; roleLabels: Record<string, string> }) {
   const act = useAct();
   const now = useNow();
   const [note, setNote] = useState("");
+  const [choice, setChoice] = useState(d.recommended);
+  // 畳むのはスマホの幅だけ。パソコンの幅では、今までどおり開いて見せる
+  const [more, setMore] = useState(() => !window.matchMedia("(max-width: 700px)").matches);
   const lines = d.question.split("\n");
   const q = lines.pop();
   const where = lines.join(" ");
   const t = d.ticket;
+  const name = `dc-choice-${d.id}`;
   return (
     <article className="item decide">
       <div className="top">
         <span className="kind">判断</span>
-        <span className="where">
-          <TicketLink id={t.id}>
-            #{t.number} {t.title}
-          </TicketLink>
-          {t.owner ? ` · 持ち主 ${t.owner}` : ""}
-          {where ? ` · ${where}` : ""}
-        </span>
+        <TicketLink id={t.id}>#{t.number}</TicketLink>
+        {tk && (
+          <span className="where">
+            <span aria-hidden="true">{KIND_SHAPE[tk.kind] ?? "●"}</span> {tk.kindLabel} · {roleLabels[tk.stage] ?? DECISION_STAGE[tk.stage] ?? tk.stage}
+          </span>
+        )}
         <span className="due">{timeLeft(d.deadline, now)}</span>
       </div>
       <div className="q">{q}</div>
@@ -186,44 +193,67 @@ function DecisionCard({ pid, d }: { pid: number; d: Decision }) {
           <p style={{ whiteSpace: "pre-wrap" }}>{d.leadNote}</p>
         </div>
       )}
-      <dl>
-        <dt>推奨</dt>
-        <dd>
-          {d.options[d.recommended]}。{d.why}
-        </dd>
-        <dt>{d.impact.startsWith("- 指摘") || d.impact.startsWith("[") ? "残っている指摘" : "間違えると"}</dt>
-        <dd style={{ whiteSpace: "pre-wrap" }}>
-          {d.impact}({d.reversible ? "戻せる" : <b>戻せない</b>})
-        </dd>
-        <dt>返事が無いと</dt>
-        <dd>{d.deadline ? "期限が来たら推奨で進みます" : "あなたが選ぶまで止まっています"}</dd>
-      </dl>
-      <div className="answer">
-        <label className="h" htmlFor={`dc-note-${d.id}`} style={{ fontSize: "var(--fs-base)" }}>
-          答え・指示(任意。チケットのメモになり、次に動く担当が読みます)
-        </label>
-        <Textarea id={`dc-note-${d.id}`} rows={d.leadNote ? 4 : 2} className="w-full" value={note} onChange={(e) => setNote(e.target.value)} />
-      </div>
-      <div className="choices">
+      <div className="opts" role="radiogroup" aria-label="選択肢">
         {d.options.map((o, i) => (
-          <Btn
-            key={i}
-            size="sm"
-            kind={i === d.recommended ? "solid-fill" : "outline"}
-            onClick={() => act(() => post(`/projects/${pid}/decisions/${d.id}`, { choice: i, note }), note.trim() ? "答えました。書いた答えはチケットのメモとして担当に伝わります" : "答えました。持ち主に伝えます")}
-          >
-            {o}
-            {i === d.recommended && <small>(推奨)</small>}
-          </Btn>
+          <label key={i} className={`opt${i === choice ? " sel" : ""}`}>
+            <input type="radio" name={name} checked={i === choice} onChange={() => setChoice(i)} />
+            <span className="radio" aria-hidden="true" />
+            <span>
+              {o}
+              {i === d.recommended && <span className="rec">推奨</span>}
+            </span>
+          </label>
         ))}
       </div>
-      {d.pr && (
-        <div className="links">
-          <span>
-            証拠: <PrLink pr={d.pr} />
-          </span>
+      <div className="meta">
+        <p>
+          <b>理由</b>: {d.why}
+        </p>
+        <p style={{ whiteSpace: "pre-wrap" }}>
+          <b>{d.impact.startsWith("- 指摘") || d.impact.startsWith("[") ? "残っている指摘" : "間違えると"}</b>: {d.impact}({d.reversible ? "戻せる" : <b>戻せない</b>})
+        </p>
+        {d.pr && (
+          <p>
+            <PrLink pr={d.pr} />
+          </p>
+        )}
+      </div>
+      <details className="more" open={more} onToggle={(e) => setMore(e.currentTarget.open)}>
+        <summary>くわしく(返事が無いとき・答えや指示を書く)</summary>
+        <dl>
+          <dt>推奨</dt>
+          <dd>
+            {d.options[d.recommended]}。{d.why}
+          </dd>
+          <dt>返事が無いと</dt>
+          <dd>{d.deadline ? "期限が来たら推奨で進みます" : "あなたが選ぶまで止まっています"}</dd>
+          {(t.owner || where) && (
+            <>
+              <dt>この判断は</dt>
+              <dd>
+                {t.title}
+                {t.owner ? ` · 持ち主 ${t.owner}` : ""}
+                {where ? ` · ${where}` : ""}
+              </dd>
+            </>
+          )}
+        </dl>
+        <div className="answer">
+          <label className="h" htmlFor={`dc-note-${d.id}`} style={{ fontSize: "var(--fs-base)" }}>
+            答え・指示(任意。チケットのメモになり、次に動く担当が読みます)
+          </label>
+          <Textarea id={`dc-note-${d.id}`} rows={d.leadNote ? 4 : 2} className="w-full" value={note} onChange={(e) => setNote(e.target.value)} />
         </div>
-      )}
+      </details>
+      <div className="choices">
+        <Btn
+          kind="solid-fill"
+          size="sm"
+          onClick={() => act(() => post(`/projects/${pid}/decisions/${d.id}`, { choice, note }), note.trim() ? "答えました。書いた答えはチケットのメモとして担当に伝わります" : "答えました。持ち主に伝えます")}
+        >
+          この答えで決める
+        </Btn>
+      </div>
     </article>
   );
 }
@@ -368,6 +398,9 @@ function Board({ d }: { d: ProjectView }) {
     ...(shown.some((t) => t.stage === "dropped") ? [["dropped", "取りやめ", false] as [string, string, boolean]] : []),
   ];
   const colOf = (t: ProjectView["tickets"][number]) => (t.stage === "dev" && !t.started ? "todo" : t.stage);
+  // スマホでは、工程を上のタブにして 1 列ずつ見る。選んだ工程が今の流れに無いとき(種類を変えたとき)は、最初にチケットのある工程にする
+  const [stage, setStage] = useState<string>("");
+  const cur = cols.some(([k]) => k === stage) ? stage : (cols.find(([k]) => shown.some((t) => colOf(t) === k))?.[0] ?? cols[0]![0]);
   return (
     <div className="board-wrap">
       <div className="kindbar">
@@ -385,11 +418,19 @@ function Board({ d }: { d: ProjectView }) {
           </span>
         )}
       </div>
+      <div className="stagetabs" role="tablist" aria-label="工程">
+        {cols.map(([k, label, pre]) => (
+          <button key={k} type="button" role="tab" aria-selected={k === cur} className={pre ? "pre" : undefined} onClick={() => setStage(k)}>
+            {label}
+            <sub>{shown.filter((t) => colOf(t) === k).length}</sub>
+          </button>
+        ))}
+      </div>
       <div className="board" style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(170px, 1fr))` }}>
         {cols.map(([k, label, pre]) => {
           const list = shown.filter((t) => colOf(t) === k);
           return (
-            <div className={`col${pre ? " pre" : ""}`} key={k} aria-label={pre ? `${label}(${PRE_DEV_LABEL})` : undefined}>
+            <div className={`col${pre ? " pre" : ""}`} key={k} data-cur={k === cur ? "" : undefined} aria-label={pre ? `${label}(${PRE_DEV_LABEL})` : undefined}>
               <h3>
                 {label}
                 <span>{list.length}</span>

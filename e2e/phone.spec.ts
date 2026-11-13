@@ -43,13 +43,18 @@ async function fits(page: Page, name: string) {
   }
 }
 
-const screens = (page: Page) => page.getByRole("group", { name: "プロジェクトの画面" });
+/** 下のタブ「対応 / オフィス / リーダー / メニュー」と、メニューのシート(スマホでは上の切り替えの代わり)。 */
+const bar = (page: Page) => page.getByRole("navigation", { name: "スマホの下のタブ" });
+async function menu(page: Page, name: string) {
+  await bar(page).getByRole("button", { name: "メニュー" }).click();
+  await page.getByRole("dialog", { name: "メニュー" }).getByRole("button", { name, exact: true }).click();
+}
 
 test("幅 390px: 全画面が横にはみ出さず、引き出しも全画面で開く", async ({ page }) => {
   await createProject(page, "スマホ", "acme/phone");
   await fits(page, "studio");
 
-  await screens(page).getByRole("button", { name: "オフィス" }).click();
+  await bar(page).getByRole("button", { name: "オフィス" }).click();
   const floor = page.getByRole("region", { name: "オフィスの床" });
   await expect(floor.getByRole("region", { name: /^島 / }).first()).toBeVisible();
   await fits(page, "office");
@@ -68,7 +73,7 @@ test("幅 390px: 全画面が横にはみ出さず、引き出しも全画面で
   await sheet.getByRole("button", { name: "閉じる" }).click();
 
   // 編成の 3 タブは、全画面の引き出し
-  await page.getByRole("button", { name: "編成", exact: true }).click();
+  await menu(page, "編成");
   const formation = page.getByRole("complementary", { name: "編成" });
   await expect(formation).toBeVisible();
   for (const [tab, name] of [["島", "formation-islands"], ["連絡経路", "formation-routes"], ["流れ", "formation-flow"]] as const) {
@@ -78,7 +83,7 @@ test("幅 390px: 全画面が横にはみ出さず、引き出しも全画面で
   await formation.getByRole("button", { name: "閉じる" }).click();
 
   // 開発ルール
-  await page.getByRole("button", { name: "チームの方針", exact: true }).click();
+  await menu(page, "チームの方針");
   const policy = page.getByRole("complementary", { name: "チームの方針" });
   await policy.getByRole("tab", { name: "開発ルール" }).click();
   await fits(page, "dev-rules");
@@ -119,10 +124,77 @@ test("幅 390px: 全画面が横にはみ出さず、引き出しも全画面で
   await page.getByRole("group", { name: "オフィスの見方" }).getByRole("button", { name: "ツリー" }).click();
   await fits(page, "tree");
 
-  await screens(page).getByRole("button", { name: "生産性" }).click();
+  await menu(page, "生産性");
   await expect(page.getByRole("heading", { name: /生産性/ }).first()).toBeVisible();
   await fits(page, "productivity");
-  await screens(page).getByRole("button", { name: "設定" }).click();
+  await menu(page, "設定");
   await expect(page.getByRole("heading", { name: /設定/ }).first()).toBeVisible();
   await fits(page, "settings");
+});
+
+test("幅 390px: 下のタブで あなたの対応 / オフィスを切り替え、ボードは工程のタブ、チケットは「やりとり / 中身」のタブで操作できる", async ({ page }) => {
+  await createProject(page, "スマホの画面", "acme/phone2");
+  const id = page.url().match(/#\/p\/(\d+)/)![1];
+  const write = { "x-kuramoto": "1" };
+  const f = await page.request.post(`/api/projects/${id}/formation`, {
+    headers: write,
+    data: { pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300 }, { name: "QA", roles: ["qa"], maxMembers: 2, summonAt: 2, idleSec: 300 }], flows: { bugfix: ["qa", "dev"] } },
+  });
+  expect(f.ok()).toBe(true);
+  expect((await page.request.post(`/api/projects/${id}/tickets`, { headers: write, data: { title: "落ちるのを直す", kind: "bugfix" } })).ok()).toBe(true);
+  expect((await page.request.post(`/api/projects/${id}/tickets`, { headers: write, data: { title: "新しい画面を足す" } })).ok()).toBe(true);
+  await page.goto(`/#/p/${id}`);
+
+  await test.step("最初は あなたの対応(スマホで開くと最初にこの画面)。上の画面の切り替えは無く、下のタブが出る", async () => {
+    await expect(page.getByRole("region", { name: "あなたの対応" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "オフィス" })).toBeHidden();
+    await expect(page.getByRole("group", { name: "プロジェクトの画面" })).toBeHidden();
+    await expect(bar(page).getByRole("button", { name: /^対応/ })).toHaveAttribute("aria-current", "page");
+    await fits(page, "phone-home");
+  });
+
+  await test.step("ボード: 工程のタブ(件数つき)で 1 列ずつ見る。種類で絞ると、その種類の流れの順にタブが並ぶ", async () => {
+    await bar(page).getByRole("button", { name: "オフィス" }).click();
+    await page.getByRole("group", { name: "オフィスの見方" }).getByRole("button", { name: "ボード" }).click();
+    const board = page.getByRole("region", { name: "ボード" });
+    const tabs = board.getByRole("tablist", { name: "工程" });
+    await expect(tabs.getByRole("tab")).toHaveText(["未着手1", "開発中(直し含む)0", "QA1", "判断待ち0", "merge 待ち0", "完了0"]);
+    // 今の工程の列だけが見える
+    await expect(board.locator(".card")).toHaveCount(1);
+    await board.getByRole("radiogroup", { name: "種類で絞り込み" }).getByRole("radio", { name: "バグ修正" }).click();
+    await expect(tabs.getByRole("tab").first()).toHaveText("QA1");
+    await expect(tabs.getByRole("tab").first()).toHaveAttribute("aria-selected", "true");
+    await expect(board.locator(".card", { hasText: "落ちるのを直す" })).toBeVisible();
+    await fits(page, "phone-board");
+  });
+
+  await test.step("チケットの詳細: やりとりが先、「中身」のタブで中身。メモの欄は下に固定され、予算もそこで変えられる", async () => {
+    await page.getByRole("button", { name: "落ちるのを直す" }).click();
+    const tk = page.getByRole("region", { name: /^チケット #/ });
+    await expect(tk.getByRole("tab", { name: "やりとり" })).toHaveAttribute("aria-selected", "true");
+    await expect(tk.getByRole("region", { name: "やりとり" })).toBeVisible();
+    await expect(tk.getByRole("region", { name: "チケットの中身" })).toBeHidden();
+    const memo = tk.getByLabel("メモを残す", { exact: true }).first();
+    const box = (await memo.boundingBox())!;
+    expect(box.y + box.height).toBeGreaterThan(700);
+    await fits(page, "phone-ticket");
+    // 帯の種類のチップを押すと、種類を選べる(金額・要件・PR のチップも帯に出る)
+    await expect(tk.getByRole("button", { name: /^種類: バグ修正/ })).toBeVisible();
+    await expect(tk.locator(".tk-phone")).toContainText("$");
+    await tk.getByRole("button", { name: /^種類: バグ修正/ }).click();
+    await expect(tk.locator(".tk-kindsheet").getByRole("radiogroup", { name: "チケットの種類" })).toBeVisible();
+    await tk.locator(".tk-kindsheet").getByRole("radio", { name: "機能" }).click();
+    await expect(tk.locator(".tk-kindsheet")).toBeHidden();
+    await expect(tk.getByRole("button", { name: /^種類: 機能/ })).toBeVisible();
+    await tk.getByRole("tab", { name: "中身" }).click();
+    await expect(tk.getByRole("region", { name: "チケットの中身" })).toBeVisible();
+    await expect(tk.getByRole("region", { name: "やりとり" })).toBeHidden();
+    await expect(tk.getByRole("radiogroup", { name: "チケットの種類" })).toBeVisible();
+    await tk.getByRole("button", { name: "予算を変える" }).click();
+    await expect(tk.getByRole("button", { name: "決める" })).toBeVisible();
+    await fits(page, "phone-ticket-details");
+    // ボードへ戻ると、見ていた工程・オフィスのタブのまま
+    await tk.getByRole("button", { name: "‹ ボード" }).click();
+    await expect(page.getByRole("region", { name: "ボード" })).toBeVisible();
+  });
 });

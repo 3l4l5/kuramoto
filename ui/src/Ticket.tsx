@@ -6,7 +6,8 @@ import { BudgetInput, budgetOk } from "./BudgetInput";
 import { duration, go, useAct } from "./hooks";
 import { Btn } from "./ui";
 import { Chip, Input, Segmented, Textarea, type ChipTone } from "./ds";
-import { KINDS, KindChip, PRE_DEV_LABEL } from "./kind";
+import { KINDS, KIND_SHAPE, KindChip, PRE_DEV_LABEL } from "./kind";
+import { setPhoneNav } from "./phoneNav";
 import { TeamDrawer, type Drawer, type RuleGuard } from "./Team";
 
 /**
@@ -59,10 +60,23 @@ export function TicketPage({ id, ticketId, drawer, closeDrawer, guard }: { id: n
 }
 
 function TicketScreen({ projectId, ticketId }: { projectId: number; ticketId: number }) {
+  // スマホでは、パソコンの 2 列(中身 / やりとり)を 1 列にして、上のタブで切り替える。よく見るやりとりを先にする
+  const [tab, setTab] = useState<"timeline" | "details">("timeline");
+  // スマホの帯の種類のチップを押すと、種類を選ぶ欄が開く(中身のタブの種類の欄と同じ部品)
+  const [kindOpen, setKindOpen] = useState(false);
   const { data, error } = useQuery({ queryKey: ["ticket", projectId, ticketId], queryFn: () => api<TicketView>("GET", `/projects/${projectId}/tickets/${ticketId}`), refetchInterval: 3000 });
   const back = (
-    <Btn kind="text" size="sm" className="back" onClick={() => go(`#/p/${projectId}`)}>
-      ← ボードに戻る
+    <Btn
+      kind="text"
+      size="sm"
+      className="back"
+      onClick={() => {
+        setPhoneNav({ tab: "office" });
+        go(`#/p/${projectId}`);
+      }}
+    >
+      <span className="tk-long">← ボードに戻る</span>
+      <span className="tk-short">‹ ボード</span>
     </Btn>
   );
   if (!data)
@@ -76,16 +90,37 @@ function TicketScreen({ projectId, ticketId }: { projectId: number; ticketId: nu
     <section className="ticketpage" aria-label={`チケット #${data.number}`}>
       <header className="tk-band">
         {back}
-        <h2>
-          <span className="num">#{data.number}</span>
-          {data.jiraKey ? ` · ${data.jiraKey}` : ""} {data.title}
-        </h2>
+        <span className="num">
+          #{data.number}
+          {data.jiraKey ? ` · ${data.jiraKey}` : ""}
+        </span>
+        <h2>{data.title}</h2>
         <Chip tone={data.stage === "done" ? "ok" : data.stage === "decision" ? "warn" : "default"}>{STAGE[data.stage] ?? data.stage}</Chip>
-        <KindChip kind={data.kind} label={data.kindLabel} />
+        <span className="tk-desk">
+          <KindChip kind={data.kind} label={data.kindLabel} />
+        </span>
         <span className="rounds">往復 {data.rounds}</span>
+        {/* スマホの帯: 種類(押すと変えられる)・金額・要件・PR をチップで出す。パソコンでは左の中身に出ているので隠す */}
+        <span className="tk-phone">
+          <button type="button" className="tk-kindbtn" aria-expanded={kindOpen} aria-label={`種類: ${data.kindLabel}(押して変える)`} onClick={() => setKindOpen(!kindOpen)}>
+            <span aria-hidden="true">{KIND_SHAPE[data.kind] ?? "●"}</span> {data.kindLabel} ▾
+          </button>
+          <Chip tone="neutral">{data.budgetUsd === null ? usd(data.costUsd) : `${usd(data.costUsd)} / ${usd(data.budgetUsd)}`}</Chip>
+          {data.requirement && <Chip tone="neutral">{data.requirement.code}</Chip>}
+          {data.prs.map((pr) => (
+            <a key={pr.number} className="tk-prchip" href={`https://github.com/${pr.full_name}/pull/${pr.number}`} target="_blank" rel="noopener">
+              PR #{pr.number}
+            </a>
+          ))}
+        </span>
         {data.ruleBlocked.length > 0 && <Chip tone="danger">ルール違反で止まっている: {data.ruleBlocked.join("・")}</Chip>}
         {data.stage === "dropped" && <Reopen projectId={projectId} id={data.id} />}
       </header>
+      {kindOpen && (
+        <div className="tk-kindsheet">
+          <KindSelect projectId={projectId} t={data} onChanged={() => setKindOpen(false)} />
+        </div>
+      )}
       {data.dropped && (
         <div className="dropnote" role="note">
           {droppedText(data.dropped)}
@@ -93,7 +128,15 @@ function TicketScreen({ projectId, ticketId }: { projectId: number; ticketId: nu
         </div>
       )}
       {data.designCompare.length > 0 && <DesignCompare projectId={projectId} rows={data.designCompare} />}
-      <div className="cols">
+      <div className="tk-tabs" role="tablist" aria-label="チケットの見方">
+        <button type="button" role="tab" aria-selected={tab === "timeline"} onClick={() => setTab("timeline")}>
+          やりとり
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "details"} onClick={() => setTab("details")}>
+          中身
+        </button>
+      </div>
+      <div className="cols" data-tab={tab}>
         <Details projectId={projectId} t={data} />
         <Timeline projectId={projectId} t={data} />
       </div>
@@ -235,7 +278,7 @@ function Details({ projectId, t }: { projectId: number; t: TicketView }) {
 }
 
 /** チケットの種類。責任者が変えられる。変えると、次の工程から変えた先の流れで進む。 */
-function KindSelect({ projectId, t }: { projectId: number; t: TicketView }) {
+function KindSelect({ projectId, t, onChanged }: { projectId: number; t: TicketView; onChanged?: () => void }) {
   const act = useAct();
   // 変えた直後は、画面にとどまる説明を出す(トーストは消えるため)
   const [changed, setChanged] = useState<{ from: string; to: string } | null>(null);
@@ -243,7 +286,10 @@ function KindSelect({ projectId, t }: { projectId: number; t: TicketView }) {
     const from = t.kindLabel;
     const to = KINDS.find((k) => k.key === kind)?.label ?? kind;
     const r = await act(() => post(`/projects/${projectId}/tickets/${t.id}/kind`, { kind }), `種類を「${to}」に変えました。次の工程から、その種類の流れで進みます`);
-    if (r) setChanged({ from, to });
+    if (r) {
+      setChanged({ from, to });
+      onChanged?.();
+    }
   };
   return (
     <div className="kindsel">

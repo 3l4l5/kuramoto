@@ -11,6 +11,7 @@ import { SettingsPage } from "./Settings";
 import { pct, usd } from "./format";
 import { DRAWER_LABEL, useDrawerState, type Drawer } from "./Team";
 import { Btn } from "./ui";
+import { PhoneBar } from "./PhoneBar";
 import { WorkSwitch } from "./WorkSwitch";
 import { clearRequestedTab, useFormationUi } from "./formationUi";
 
@@ -28,7 +29,7 @@ export function App() {
     if (!guard.confirming && drawer !== "formation") clearRequestedTab();
   }, [guard.confirming, drawer]);
   return (
-    <div className="app">
+    <div className="app" data-route={route.name}>
       <header className="bar dads-bar">
         <div className="brand">
           <b>Kuramoto</b>
@@ -64,11 +65,13 @@ export function App() {
         {(route.name === "project" || route.name === "ticket") && (
           <>
             <OfficeStatus id={route.id} />
-            {(Object.keys(DRAWER_LABEL) as Drawer[]).map((k) => (
-              <Btn key={k} kind={drawer === k ? "solid-fill" : "outline"} size="sm" aria-expanded={drawer === k} onClick={() => moveTo(drawer === k ? null : k)}>
-                {DRAWER_LABEL[k]}
-              </Btn>
-            ))}
+            <span className="drawerbtns">
+              {(Object.keys(DRAWER_LABEL) as Drawer[]).map((k) => (
+                <Btn key={k} kind={drawer === k ? "solid-fill" : "outline"} size="sm" aria-expanded={drawer === k} onClick={() => moveTo(drawer === k ? null : k)}>
+                  {DRAWER_LABEL[k]}
+                </Btn>
+              ))}
+            </span>
           </>
         )}
       </header>
@@ -79,6 +82,7 @@ export function App() {
       {route.name === "studio" && <Studio id={route.id} />}
       {route.name === "metrics" && <ProductivityPage id={route.id} />}
       {route.name === "settings" && <SettingsPage id={route.id} />}
+      {inProject && route.name !== "ticket" && <PhoneBar id={route.id} drawer={drawer} moveTo={moveTo} />}
     </div>
   );
 }
