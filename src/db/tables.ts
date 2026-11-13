@@ -9,6 +9,7 @@ import type { Generated } from "kysely";
  * - 挿入のとき省いてよい列(INTEGER PRIMARY KEY・DEFAULT のある列)は Generated<...> で包む。
  * - JSON を入れる TEXT 列(payload・data・options・plan_refs など)も string のままにする。取り出しは dialect の jsonExtract を使う。
  * - 真偽は INTEGER の 0 / 1(number)。
+ * - project_id(版 20 で全部の表に足した列)は INTEGER NOT NULL DEFAULT 0 なので Generated<number>。
  * - 版を足したら(マイグレーションを増やしたら)ここも直す。直し忘れは tables.test.ts が落とす。
  */
 
@@ -17,12 +18,14 @@ import type { Generated } from "kysely";
 export interface HqLimitsTable {
   key: string;
   value: string;
+  workspace_id: Generated<number>;
 }
 
 export interface HqPolicyTemplatesTable {
   id: Generated<number>;
   role: string;
   body: string;
+  workspace_id: Generated<number>;
 }
 
 export interface HqProjectsTable {
@@ -31,6 +34,7 @@ export interface HqProjectsTable {
   data_dir: string;
   status: "planning" | "defining" | "starting" | "running" | "archived";
   created_at: string;
+  workspace_id: Generated<number>;
 }
 
 export interface HqReposTable {
@@ -40,11 +44,17 @@ export interface HqReposTable {
   role: string;
 }
 
+export interface HqWorkspacesTable {
+  id: Generated<number>;
+  name: string;
+}
+
 export interface HqDatabase {
   limits: HqLimitsTable;
   policy_templates: HqPolicyTemplatesTable;
   projects: HqProjectsTable;
   repos: HqReposTable;
+  workspaces: HqWorkspacesTable;
 }
 
 // ---- プロジェクト DB(PROJECT_MIGRATIONS) ----
@@ -56,6 +66,7 @@ export interface ConflictsTable {
   detected_at: string;
   resolution: "mechanical" | "logic" | "decision" | null;
   resolved_at: string | null;
+  project_id: Generated<number>;
 }
 
 export interface DecisionsTable {
@@ -74,6 +85,7 @@ export interface DecisionsTable {
   decided_at: string | null;
   gh_comment_id: string | null;
   lead_note: string | null;
+  project_id: Generated<number>;
 }
 
 export interface DesignImagesTable {
@@ -86,6 +98,7 @@ export interface DesignImagesTable {
   height: number;
   diff_ratio: number | null;
   created_at: string;
+  project_id: Generated<number>;
 }
 
 export interface DevRulesTable {
@@ -99,6 +112,7 @@ export interface DevRulesTable {
   enabled: Generated<number>;
   template: string | null;
   created_at: Generated<string>;
+  project_id: Generated<number>;
 }
 
 export interface EventsTable {
@@ -108,6 +122,7 @@ export interface EventsTable {
   type: string;
   ticket_id: number | null;
   data: Generated<string>;
+  project_id: Generated<number>;
 }
 
 export interface FindingCommentsTable {
@@ -118,6 +133,7 @@ export interface FindingCommentsTable {
   action: "raised" | "fixed" | "wontfix" | "resolved" | "accepted" | "reopened" | "ruled";
   body: Generated<string>;
   at: string;
+  project_id: Generated<number>;
 }
 
 export interface FindingsTable {
@@ -131,6 +147,7 @@ export interface FindingsTable {
   fingerprint: string;
   status: Generated<"open" | "addressed" | "disputed" | "fixed" | "recurred" | "wontfix">;
   blocking: Generated<number>;
+  project_id: Generated<number>;
 }
 
 export interface FormationsTable {
@@ -140,6 +157,7 @@ export interface FormationsTable {
   created_at: string;
   routes: Generated<string>;
   flows: Generated<string>;
+  project_id: Generated<number>;
 }
 
 export interface LeadMessagesTable {
@@ -147,6 +165,7 @@ export interface LeadMessagesTable {
   who: "owner" | "lead" | "system";
   body: string;
   at: string;
+  project_id: Generated<number>;
 }
 
 export interface MemberMessagesTable {
@@ -156,6 +175,7 @@ export interface MemberMessagesTable {
   who: string;
   body: string;
   at: string;
+  project_id: Generated<number>;
 }
 
 export interface MembersTable {
@@ -166,6 +186,7 @@ export interface MembersTable {
   is_base: Generated<number>;
   joined_at: string;
   left_at: string | null;
+  project_id: Generated<number>;
 }
 
 export interface MergesTable {
@@ -174,6 +195,7 @@ export interface MergesTable {
   result: "merged" | "conflict" | "blocked";
   checked: string;
   created_at: string;
+  project_id: Generated<number>;
 }
 
 export interface MessagesTable {
@@ -189,6 +211,7 @@ export interface MessagesTable {
   created_at: string;
   claimed_at: string | null;
   last_error: string | null;
+  project_id: Generated<number>;
 }
 
 export interface PlanArtifactsTable {
@@ -199,6 +222,7 @@ export interface PlanArtifactsTable {
   key: string;
   body: string;
   chosen: Generated<number>;
+  project_id: Generated<number>;
 }
 
 export interface PlanCommentsTable {
@@ -210,6 +234,7 @@ export interface PlanCommentsTable {
   resolved_in: number | null;
   variant: string | null;
   created_at: Generated<string>;
+  project_id: Generated<number>;
 }
 
 export interface PlanMessagesTable {
@@ -218,6 +243,7 @@ export interface PlanMessagesTable {
   who: string;
   body: string;
   at: string;
+  project_id: Generated<number>;
 }
 
 export interface PlanOpenItemsTable {
@@ -233,6 +259,7 @@ export interface PlanOpenItemsTable {
   created_at: Generated<string>;
   answered_at: string | null;
   withdrawn: string | null;
+  project_id: Generated<number>;
 }
 
 export interface PlanStagesTable {
@@ -240,6 +267,7 @@ export interface PlanStagesTable {
   mode: "agree" | "delegate" | "skip";
   version: number;
   agreed_version: number | null;
+  project_id: Generated<number>;
 }
 
 export interface PoliciesTable {
@@ -252,6 +280,7 @@ export interface PoliciesTable {
   options: Generated<string>;
   harness: Generated<string>;
   created_at: string;
+  project_id: Generated<number>;
 }
 
 export interface PullRequestsTable {
@@ -264,12 +293,14 @@ export interface PullRequestsTable {
   mergeable: string | null;
   ci: string | null;
   fetched_at: string | null;
+  project_id: Generated<number>;
 }
 
 export interface ReposTable {
   id: Generated<number>;
   full_name: string;
   role: string;
+  project_id: Generated<number>;
 }
 
 export interface RequirementItemsTable {
@@ -279,12 +310,14 @@ export interface RequirementItemsTable {
   acceptance: string;
   added_in: number;
   removed_in: number | null;
+  project_id: Generated<number>;
 }
 
 export interface RequirementsTable {
   id: Generated<number>;
   version: number;
   created_at: string;
+  project_id: Generated<number>;
 }
 
 export interface ReviewsTable {
@@ -295,6 +328,7 @@ export interface ReviewsTable {
   run_id: number;
   verdict: "approve" | "changes" | "escalate";
   created_at: string;
+  project_id: Generated<number>;
 }
 
 export interface RuleViolationsTable {
@@ -306,6 +340,7 @@ export interface RuleViolationsTable {
   detail: Generated<string>;
   run_id: number | null;
   resolved_at: string | null;
+  project_id: Generated<number>;
 }
 
 export interface RunStepsTable {
@@ -314,6 +349,7 @@ export interface RunStepsTable {
   at: string;
   kind: string;
   text: string;
+  project_id: Generated<number>;
 }
 
 export interface RunsTable {
@@ -340,6 +376,7 @@ export interface RunsTable {
   summary: string | null;
   unit_name: string | null;
   about_ticket_id: number | null;
+  project_id: Generated<number>;
 }
 
 export interface SessionsTable {
@@ -353,21 +390,25 @@ export interface SessionsTable {
   branch: string | null;
   created_at: string;
   last_used_at: string;
+  project_id: Generated<number>;
 }
 
 export interface SettingsTable {
   key: string;
   value: string;
+  project_id: Generated<number>;
 }
 
 export interface TicketAreasTable {
   ticket_id: number;
   area: string;
+  project_id: Generated<number>;
 }
 
 export interface TicketDepsTable {
   ticket_id: number;
   depends_on: number;
+  project_id: Generated<number>;
 }
 
 export interface TicketNotesTable {
@@ -377,6 +418,7 @@ export interface TicketNotesTable {
   body: string;
   at: string;
   kind: Generated<string>;
+  project_id: Generated<number>;
 }
 
 export interface TicketQuestionsTable {
@@ -390,6 +432,7 @@ export interface TicketQuestionsTable {
   answered_by_member_id: number | null;
   asked_at: string;
   answered_at: string | null;
+  project_id: Generated<number>;
 }
 
 export interface TicketsTable {
@@ -412,6 +455,7 @@ export interface TicketsTable {
   dropped_at: string | null;
   kind: Generated<string>;
   dev_done: Generated<number>;
+  project_id: Generated<number>;
 }
 
 export interface UnitsTable {
@@ -427,6 +471,7 @@ export interface UnitsTable {
   effort: string | null;
   focus: string | null;
   budget_usd: number | null;
+  project_id: Generated<number>;
 }
 
 export interface ProjectDatabase {

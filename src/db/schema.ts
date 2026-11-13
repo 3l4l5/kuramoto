@@ -1,4 +1,5 @@
 import type { Migration } from "./sqlite.js";
+import { dialect } from "./dialect/index.js";
 
 /**
  * 本部 DB(docs/design.md 9.1)。
@@ -20,6 +21,17 @@ CREATE TABLE repos (
 CREATE TABLE policy_templates (id INTEGER PRIMARY KEY, role TEXT NOT NULL, body TEXT NOT NULL);
 CREATE TABLE limits (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `,
+  // 2: ワークスペース(プロジェクトを束ねる単位)。id=1「既定」に今ある全部を入れる。
+  // 足すだけ(前の版のコードでも開ける)。列に REFERENCES は付けない(SQLite は、外部キーが有効だと既定値のある REFERENCES 列を足せない)。
+  (k) => [
+    k.schema.createTable("workspaces").addColumn("id", "integer", (c) => dialect.idColumn(c)).addColumn("name", "text", (c) => c.notNull()),
+    k.insertInto("workspaces").values({ id: 1, name: "既定" }),
+    ...["projects", "limits", "policy_templates"].map((t) =>
+      k.schema.alterTable(t).addColumn("workspace_id", "integer", (c) => c.notNull().defaultTo(1)),
+    ),
+    k.schema.createIndex("projects_workspace").on("projects").column("workspace_id"),
+    k.schema.createIndex("limits_workspace_key").unique().on("limits").columns(["workspace_id", "key"]),
+  ],
 ];
 
 /**
@@ -260,4 +272,62 @@ CREATE INDEX IF NOT EXISTS member_messages_member ON member_messages(member_id, 
 ALTER TABLE ticket_notes ADD COLUMN kind TEXT NOT NULL DEFAULT 'note';
 ALTER TABLE runs ADD COLUMN about_ticket_id INTEGER REFERENCES tickets(id);
 `,
+  // 20: プロジェクトの全部の表に project_id を足す(ADR-0037)。1 つのファイルに複数のプロジェクトを入れられるようにする下ごしらえ。
+  // 足すだけ(RENAME・削除・表の作り直しはしない。前の版のコードでも開ける)。
+  //  - 列は NOT NULL DEFAULT 0。今ある行は、実行器が渡すプロジェクトの id(ctx.projectId)で埋める。渡されなければ 0 のまま。
+  //  - 索引は project_id を先頭にする。前の版の索引・UNIQUE は消せないので残し、project_id 込みの索引を足す。
+  //  - 前の版のコードは project_id を書かない INSERT をする。DEFAULT 0 で通り、project_id 込みの UNIQUE にも収まる(同じ 0 の中で前と同じ決まり)。
+  (k, ctx) => [
+    ...PROJECT_ID_TABLES.map((t) => k.schema.alterTable(t).addColumn("project_id", "integer", (c) => c.notNull().defaultTo(0))),
+    ...(ctx.projectId === undefined ? [] : PROJECT_ID_TABLES.map((t) => k.updateTable(t).set({ project_id: ctx.projectId! }))),
+    ...PROJECT_ID_INDEXES.map(({ table, columns, unique }) => {
+      const name = [table, "project", ...columns].join("_");
+      const b = unique ? k.schema.createIndex(name).unique() : k.schema.createIndex(name);
+      return b.on(table).columns(["project_id", ...columns]);
+    }),
+  ],
+];
+
+/** 版 20 で project_id を足す表(プロジェクト DB の全部)。表を足すときは、その版で project_id も足す(schema.test.ts が確かめる)。 */
+export const PROJECT_ID_TABLES = [
+  "repos", "settings", "formations", "units", "policies", "dev_rules",
+  "plan_stages", "requirements", "requirement_items", "plan_artifacts", "plan_comments", "plan_open_items", "plan_messages",
+  "members", "tickets", "sessions", "pull_requests", "messages", "runs", "run_steps",
+  "reviews", "findings", "finding_comments", "rule_violations", "decisions", "merges", "conflicts",
+  "events", "ticket_notes", "lead_messages", "ticket_deps", "ticket_areas", "design_images", "ticket_questions", "member_messages",
+] as const;
+
+/**
+ * 版 20 で足す索引(列は project_id の後ろ。名前は <表>_project_<列>)。
+ *  - unique: 前の版の UNIQUE に project_id を足したもの(前の UNIQUE も残る)。
+ *  - 前の版にあった索引は、project_id を先頭にしたものを足す。
+ *  - どちらも無い表には (project_id) だけの索引を足す。
+ */
+type IndexSpec = { table: (typeof PROJECT_ID_TABLES)[number]; columns: string[]; unique?: boolean };
+const NAMED_INDEXES: IndexSpec[] = [
+  { table: "tickets", columns: ["number"], unique: true },
+  { table: "formations", columns: ["version"], unique: true },
+  { table: "policies", columns: ["role", "version"], unique: true },
+  { table: "settings", columns: ["key"], unique: true },
+  { table: "plan_stages", columns: ["stage"], unique: true },
+  { table: "requirements", columns: ["version"], unique: true },
+  { table: "repos", columns: ["full_name"], unique: true },
+  { table: "messages", columns: ["status", "available_at"] },
+  { table: "messages", columns: ["ticket_id", "kind", "status"] },
+  { table: "runs", columns: ["ticket_id", "role"] },
+  { table: "runs", columns: ["member_id"] },
+  { table: "run_steps", columns: ["run_id", "id"] },
+  { table: "events", columns: ["ticket_id", "type"] },
+  { table: "events", columns: ["type"] },
+  { table: "ticket_areas", columns: ["area"] },
+  { table: "ticket_deps", columns: ["depends_on"] },
+  { table: "reviews", columns: ["ticket_id"] },
+  { table: "decisions", columns: ["ticket_id"] },
+  { table: "design_images", columns: ["ticket_id", "screen_key"] },
+  { table: "ticket_questions", columns: ["ticket_id"] },
+  { table: "member_messages", columns: ["member_id", "id"] },
+];
+const PROJECT_ID_INDEXES: IndexSpec[] = [
+  ...NAMED_INDEXES,
+  ...PROJECT_ID_TABLES.filter((t) => !NAMED_INDEXES.some((i) => i.table === t)).map((table) => ({ table, columns: [] })),
 ];

@@ -44,7 +44,7 @@ describe("方言の助け(SQLite)", () => {
     await put("a", "1");
     await put("a", "2");
     await put("b", "3");
-    expect(await k.selectFrom("settings").selectAll().orderBy("key").execute()).toEqual([{ key: "a", value: "2" }, { key: "b", value: "3" }]);
+    expect(await k.selectFrom("settings").select(["key", "value"]).orderBy("key").execute()).toEqual([{ key: "a", value: "2" }, { key: "b", value: "3" }]);
   });
 
   it("upsert: 複数の列の衝突(sessions の member_id, ticket_id, repo_id)", async () => {

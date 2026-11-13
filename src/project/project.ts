@@ -77,8 +77,9 @@ export type FormationRow = { id: number; version: number; pull: Pull; units: Uni
 export class Project {
   readonly db: Db;
 
-  constructor(path: string, readonly clock: Clock = systemClock) {
-    this.db = openDb(path, PROJECT_MIGRATIONS);
+  /** projectId: 本部でのこのプロジェクトの id。マイグレーションが各表の project_id を埋めるのに使う。 */
+  constructor(path: string, readonly clock: Clock = systemClock, projectId?: number) {
+    this.db = openDb(path, PROJECT_MIGRATIONS, { projectId });
     this.seed();
     this.fillSeats();
   }

@@ -78,11 +78,11 @@ describe("版 19: R15〜R17 とメンバーとの会話", () => {
     expect(col("rule_violations", "resolved_at")).toMatchObject({ notnull: 0 });
     expect(col("ticket_notes", "kind")).toMatchObject({ dflt_value: "'note'", notnull: 1 });
     expect(col("runs", "about_ticket_id")).toMatchObject({ notnull: 0 });
-    expect(cols("ticket_questions").map((c) => c.name)).toEqual([
+    expect(cols("ticket_questions").map((c) => c.name).filter((n) => n !== "project_id")).toEqual([
       "id", "ticket_id", "from_member_id", "to_target", "body", "routed_to_lead", "answer", "answered_by_member_id", "asked_at", "answered_at",
     ]);
     expect(col("ticket_questions", "routed_to_lead")).toMatchObject({ dflt_value: "0", notnull: 1 });
-    expect(cols("member_messages").map((c) => c.name)).toEqual(["id", "member_id", "ticket_id", "who", "body", "at"]);
+    expect(cols("member_messages").map((c) => c.name).filter((n) => n !== "project_id")).toEqual(["id", "member_id", "ticket_id", "who", "body", "at"]);
 
     const fks = (t: string) => all<{ from: string; table: string }>(db, `PRAGMA foreign_key_list(${t})`).map((f) => `${f.from}->${f.table}`);
     expect(fks("rule_violations")).toContain("run_id->runs");
@@ -105,9 +105,9 @@ describe("版 19: R15〜R17 とメンバーとの会話", () => {
   it("前の版のコードと同じ書き方(新しい列を書かない INSERT・SELECT *)でも、版 19 の DB で動く", () => {
     const path = v18Db(() => {});
     openDb(path, PROJECT_MIGRATIONS).close();
-    // 前の版のコードは版 18 までしか知らない。版 19 の DB を開いてもマイグレーションは流れず、そのまま使える
+    // 前の版のコードは版 18 までしか知らない。新しい版の DB を開いてもマイグレーションは流れず、そのまま使える
     const db = openDb(path, BEFORE);
-    expect(get<{ user_version: number }>(db, "PRAGMA user_version")!.user_version).toBe(V19);
+    expect(get<{ user_version: number }>(db, "PRAGMA user_version")!.user_version).toBe(PROJECT_MIGRATIONS.length);
     seedBase(db);
     addTicket(db, 1, "dev");
     addRun(db, 1, "dev");
