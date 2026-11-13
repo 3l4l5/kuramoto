@@ -42,12 +42,12 @@ function trail(p: Project, ticketId: number): string[] {
   ).map((r) => r.role + ((JSON.parse(r.payload) as { preDev?: boolean }).preDev ? "*" : ""));
 }
 
-const mk = (p: Project, kind?: TicketKind) => createTicket(p, { title: "一覧が空のとき落ちる", body: "0 件のとき 500 になる", ...(kind ? { kind } : {}) });
+const mk = async (p: Project, kind?: TicketKind) => await createTicket(p, { title: "一覧が空のとき落ちる", body: "0 件のとき 500 になる", ...(kind ? { kind } : {}) });
 
 describe("種類ごとの流れで工程を進める(R17)", () => {
   it("流れが無ければ今までどおり 開発 → レビュー → セキュリティ → QA → merge 待ち", async () => {
     const { p, d } = setup();
-    const t = mk(p);
+    const t = await mk(p);
     expect(p.ticket(t.id).kind).toBe("feature");
     await d.drain();
     expect(trail(p, t.id)).toEqual(["dev", "review", "sec", "qa"]);
@@ -56,8 +56,8 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
 
   it("種類の流れがあればそれ、無ければ既定の流れ", async () => {
     const { p, d } = setup({ default: ["dev", "review", "qa"], refactor: ["dev", "review"] });
-    const a = mk(p, "refactor");
-    const b = mk(p, "docs");
+    const a = await mk(p, "refactor");
+    const b = await mk(p, "docs");
     await d.drain();
     expect(trail(p, a.id)).toEqual(["dev", "review"]);
     expect(trail(p, b.id)).toEqual(["dev", "review", "qa"]);
@@ -65,7 +65,7 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
 
   it("開発より前の QA: 受信箱は qa のまま preDev。申し送りを残し、差し戻しも往復も無く、開発のプロンプトに入る", async () => {
     const { p, d, harness } = setup({ bugfix: ["qa", "dev", "review"] });
-    const t = mk(p, "bugfix");
+    const t = await mk(p, "bugfix");
     // 作った時点で、最初の工程は QA(開発の仕事はまだ無い)
     expect(p.ticket(t.id).stage).toBe("qa");
     const msgs = all<{ kind: string; to_role: string; payload: string }>(p.db, "SELECT kind, to_role, payload FROM messages WHERE ticket_id = ?", [t.id]);
@@ -98,12 +98,12 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
     expect(harness.calls[2]!.prompt).toContain("git diff");
 
     // やりとりに申し送りが残る
-    expect(ticketView(p, t.id).timeline.some((i) => i.type === "handoff" && i.role === "QA")).toBe(true);
+    expect((await ticketView(p, t.id)).timeline.some((i) => i.type === "handoff" && i.role === "QA")).toBe(true);
   });
 
   it("開発より前に複数の工程があれば、その順に申し送りを残してから開発へ", async () => {
     const { p, d } = setup({ feature: ["sec", "qa", "dev", "review"] });
-    const t = mk(p);
+    const t = await mk(p);
     await d.drain();
     expect(trail(p, t.id)).toEqual(["sec*", "qa*", "dev", "review"]);
     expect(p.handoffs(t.id).map((h) => h.role)).toEqual(["sec", "qa"]);
@@ -111,14 +111,14 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
 
   it("省略した工程は飛ばす", async () => {
     const { p, d } = setup({ docs: ["dev", "qa"] });
-    const t = mk(p, "docs");
+    const t = await mk(p, "docs");
     await d.drain();
     expect(trail(p, t.id)).toEqual(["dev", "qa"]);
   });
 
   it("島が無い工程は飛ばす(開発より前でも)", async () => {
     const { p, d } = setup({ bugfix: ["qa", "dev", "review", "sec"] }, [unit("開発", ["dev"]), unit("レビュー", ["review"])]);
-    const t = mk(p, "bugfix");
+    const t = await mk(p, "bugfix");
     expect(p.ticket(t.id).stage).toBe("dev");
     await d.drain();
     expect(trail(p, t.id)).toEqual(["dev", "review"]);
@@ -126,32 +126,32 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
 
   it("種類を変えると、変えたことがやりとりに残り、今の工程はそのまま次の工程から新しい流れになる", async () => {
     const { p, d } = setup({ bugfix: ["dev"], feature: ["dev", "review", "qa"] });
-    const t = mk(p, "feature");
-    setTicketKind(p, t.id, "bugfix");
+    const t = await mk(p, "feature");
+    await setTicketKind(p, t.id, "bugfix");
     expect(p.ticket(t.id).stage).toBe("dev");
-    const item = ticketView(p, t.id).timeline.find((i) => i.type === "kind_change");
+    const item = (await ticketView(p, t.id)).timeline.find((i) => i.type === "kind_change");
     expect(item).toMatchObject({ from: "機能", to: "バグ修正", who: "あなた" });
-    expect(ticketView(p, t.id).kind).toBe("bugfix");
+    expect((await ticketView(p, t.id)).kind).toBe("bugfix");
     await d.drain();
     expect(trail(p, t.id)).toEqual(["dev"]);
-    expect(() => setTicketKind(p, t.id, "chore")).toThrow("知らないチケットの種類");
+    await expect(setTicketKind(p, t.id, "chore")).rejects.toThrow("知らないチケットの種類");
   });
 
   it("開発より前の工程にいるうちに種類を変えて流れで開発より後ろになっても、開発を飛ばさない", async () => {
     const { p, d } = setup({ bugfix: ["qa", "dev"], feature: ["dev", "review", "qa"] });
-    const t = mk(p, "bugfix");
-    setTicketKind(p, t.id, "feature");
+    const t = await mk(p, "bugfix");
+    await setTicketKind(p, t.id, "feature");
     await d.drain();
     expect(trail(p, t.id)).toEqual(["qa*", "dev", "review", "qa"]);
   });
 
   it("工程を進むたびに今の版の流れを読む(版を上げたあとの次の工程から変わる)", async () => {
     const { p, d } = setup({ feature: ["dev", "review", "sec", "qa"] });
-    const t = mk(p);
+    const t = await mk(p);
     await d.drain(); // 開発のあと、レビューまで進めるのは 1 回ずつ。全部通る
     expect(trail(p, t.id)).toEqual(["dev", "review", "sec", "qa"]);
 
-    const u = mk(p);
+    const u = await mk(p);
     // 開発が終わったところで、版を上げて流れを変える
     let bumped = false;
     const harness = new FakeHarness(async (req, call) => {
@@ -178,13 +178,13 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
 
   it("開発を通ったチケットは、種類を変えても開発より前へ戻らない", async () => {
     const { p, d } = setup({ feature: ["dev", "review"], bugfix: ["qa", "dev", "review", "sec"] });
-    const t = mk(p, "feature");
+    const t = await mk(p, "feature");
     let changed = false;
     const harness = new FakeHarness(async (req, call) => {
       await script(req, call);
       if (!changed && req.tools.some((x) => x.name === "submit_pr")) {
         changed = true;
-        setTicketKind(p, t.id, "bugfix");
+        await setTicketKind(p, t.id, "bugfix");
       }
     });
     const d2 = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp/ws", { prNumber: (r) => r.ticketNumber + 9 }) });
@@ -197,7 +197,7 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
   it("開発より前の工程を待っている間にその島を外して版を上げても、開発へ進む(開発を飛ばさない)", async () => {
     // 例 1: [qa, dev, review] で QA の島を外す → 今の流れは [dev, review]。merge 待ちに飛ばない
     const a = setup({ bugfix: ["qa", "dev", "review"] });
-    const t1 = mk(a.p, "bugfix");
+    const t1 = await mk(a.p, "bugfix");
     a.p.saveFormation({ pull: "down", units: [unit("開発", ["dev"]), unit("レビュー", ["review"]), unit("セキュリティ", ["sec"])] });
     await a.d.drain();
     expect(trail(a.p, t1.id)).toEqual(["dev", "review"]);
@@ -205,7 +205,7 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
 
     // 例 2: [review, dev, qa] でレビューの島を外す → 開発へ進み、PR が無いのに通常の QA が先に動かない
     const b = setup({ feature: ["review", "dev", "qa"] });
-    const t2 = mk(b.p);
+    const t2 = await mk(b.p);
     b.p.saveFormation({ pull: "down", units: [unit("開発", ["dev"]), unit("QA", ["qa"])] });
     await b.d.drain();
     expect(trail(b.p, t2.id)).toEqual(["dev", "qa"]);
@@ -215,7 +215,7 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
   it("入れ替えた順の流れで島を外しても、島のある工程を飛ばさない(流れの順で後ろの工程へ進む)", async () => {
     // feature の流れ [dev, qa, review] で、qa を待っている間に QA の島を外して版を上げる → review に進む(merge に行かない)
     const a = setup({ feature: ["dev", "qa", "review"] });
-    const t1 = mk(a.p);
+    const t1 = await mk(a.p);
     let bumped = false;
     const harness = new FakeHarness(async (req, call) => {
       await script(req, call);
@@ -231,7 +231,7 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
 
     // 開発より前でも同じ: [sec, qa, dev, review] で sec の島を外す → qa(申し送り)→ 開発 → レビュー
     const b = setup({ feature: ["sec", "qa", "dev", "review"] });
-    const t2 = mk(b.p);
+    const t2 = await mk(b.p);
     b.p.saveFormation({ pull: "down", units: [unit("開発", ["dev"]), unit("レビュー", ["review"]), unit("QA", ["qa"])] });
     await b.d.drain();
     expect(trail(b.p, t2.id)).toEqual(["qa*", "dev", "review"]);
@@ -239,7 +239,7 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
 
   it("開発より前の確認も、リーダーの交通整理を待ってから動く", async () => {
     const { p } = setup({ bugfix: ["qa", "dev"] });
-    const t = mk(p, "bugfix");
+    const t = await mk(p, "bugfix");
     expect(p.db.prepare("SELECT triaged FROM tickets WHERE id = ?").get(t.id)).toEqual({ triaged: 0 });
     expect(await claimNext(p, { triage: true })).toBeUndefined();
     p.db.prepare("UPDATE tickets SET triaged = 1 WHERE id = ?").run(t.id);
@@ -249,7 +249,7 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
   it("リーダーが create_ticket で 4 種類から 1 つを付ける", async () => {
     const { p } = setup({ bugfix: ["qa", "dev"] });
     const create = leadChatTools(p).find((x) => x.name === "create_ticket")!;
-    expect(create.handler({ title: "落ちる", body: "直す", kind: "bugfix" } as never)).toMatch(/作りました/);
+    expect(await create.handler({ title: "落ちる", body: "直す", kind: "bugfix" } as never)).toMatch(/作りました/);
     const t = p.tickets().at(-1)!;
     expect(t.kind).toBe("bugfix");
     expect(t.stage).toBe("qa");

@@ -140,7 +140,7 @@ export class Hq {
       try {
         out.push({
           project: rec,
-          decisions: pendingOwnerDecisions(p).length,
+          decisions: (await pendingOwnerDecisions(p)).length,
           merges: p.tickets().filter((t) => t.stage === "merge").length,
         });
       } finally {

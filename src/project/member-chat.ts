@@ -183,7 +183,7 @@ export type MemberNow = {
   events: { at: string; type: string; ticket: number | null }[];
 };
 
-export function memberNow(p: Project, memberId: number, steps = 8): MemberNow {
+export async function memberNow(p: Project, memberId: number, steps = 8): Promise<MemberNow> {
   const m = p.member(memberId);
   if (!m) throw new Error(`メンバー ${memberId} はいません`);
   const unit = m.unit_id === null ? null : get<{ name: string }>(p.db, "SELECT name FROM units WHERE id = ?", [m.unit_id]);
@@ -204,7 +204,7 @@ export function memberNow(p: Project, memberId: number, steps = 8): MemberNow {
   const t = ticketId ? p.ticket(ticketId) : null;
   const kindOf = get<{ kind: string }>(p.db, "SELECT kind FROM tickets WHERE id = ?", [ticketId ?? -1])?.kind ?? "feature";
   const tokens = t ? (get<{ n: number | null }>(p.db, "SELECT SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)) AS n FROM runs WHERE ticket_id = ?", [t.id])?.n ?? 0) : 0;
-  const w = open ? runWork(p, open.id, steps) : null;
+  const w = open ? await runWork(p, open.id, steps) : null;
   const stepRunId = open?.id ?? lastRun?.id;
   const stepRows = stepRunId ? all<{ at: string; kind: string; text: string }>(p.db, "SELECT at, kind, text FROM run_steps WHERE run_id = ? ORDER BY id DESC LIMIT ?", [stepRunId, steps]).reverse() : [];
   const elapsedMs = open ? Math.max(0, p.clock.now().getTime() - Date.parse(open.started_at)) : 0;
@@ -231,20 +231,20 @@ export function memberNow(p: Project, memberId: number, steps = 8): MemberNow {
 }
 
 /** 引き出しの「話す欄」: 会話の記録と、返事を待っている・書いている最中かどうか。 */
-export function memberChatView(p: Project, memberId: number) {
+export async function memberChatView(p: Project, memberId: number) {
   const m = chatMember(p, memberId);
   const pending = get<{ id: number; status: string }>(p.db, "SELECT id, status FROM messages WHERE kind = 'member_chat' AND to_member_id = ? AND status IN ('pending','claimed') ORDER BY id LIMIT 1", [m.id]);
   const open = pending
     ? get<{ id: number }>(p.db, "SELECT id FROM runs WHERE message_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1", [pending.id])
     : undefined;
-  const w = open ? runWork(p, open.id, 3) : null;
+  const w = open ? await runWork(p, open.id, 3) : null;
   return {
     member: { id: m.id, name: m.name },
-    now: memberNow(p, m.id),
+    now: await memberNow(p, m.id),
     messages: memberMessages(p, m.id),
     // typing: 返事を書いている最中(startedAt から数えられる)。queued: メンバーの今の仕事が終わるのを待っている
     work: w ? { state: "typing" as const, startedAt: w.startedAt, live: w.live } : pending ? { state: "queued" as const } : null,
   };
 }
 
-export type MemberChatView = ReturnType<typeof memberChatView>;
+export type MemberChatView = Awaited<ReturnType<typeof memberChatView>>;

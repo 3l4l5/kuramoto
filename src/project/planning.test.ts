@@ -134,14 +134,14 @@ describe("企画スタジオ", () => {
     expect(agreeBlocker(p, "req")).toMatch(/未決/);
     answerOpenItem(p, openItems(p, "req")[0]!.id, "作らない");
     await d.drain();
-    expect(studioView(p).requirements.find((r) => r.code === "R2")!.acceptance).toContain("変更は作らない");
+    expect((await studioView(p)).requirements.find((r) => r.code === "R2")!.acceptance).toContain("変更は作らない");
     // 次の段階は、前の段階を終えるまで始まらない
     expect(harness.calls.some((c) => c.tools.some((t) => t.name === "set_flow"))).toBe(false);
     agree(p, "req");
 
     // フロー: 要件の合意をきっかけにデザイナーが描く
     await d.drain();
-    expect(studioView(p).flow!.nodes).toHaveLength(2);
+    expect((await studioView(p)).flow!.nodes).toHaveLength(2);
     agree(p, "flow");
 
     // 画面: 2 案から選び、コメントを付けると直してくる
@@ -153,12 +153,12 @@ describe("企画スタジオ", () => {
     await d.drain();
     agreeScreen(p, "search");
     agreeScreen(p, "confirm");
-    expect(studioView(p).screens.find((s) => s.key === "search")!.variants[0]!.html).toBe("<p>A2</p>");
+    expect((await studioView(p)).screens.find((s) => s.key === "search")!.variants[0]!.html).toBe("<p>A2</p>");
     agree(p, "screen");
 
     // インフラ: 画面の合意をきっかけにアーキテクトが書く。画面の中身も渡されている。戻せない選択は未決に入る
     await d.drain();
-    expect(studioView(p).infra!.components).toHaveLength(3);
+    expect((await studioView(p)).infra!.components).toHaveLength(3);
     const infraCall = harness.calls.find((c) => c.tools.some((t) => t.name === "set_infra"))!;
     expect(infraCall.prompt).toContain('"screens"');
     expect(agreeBlocker(p, "infra")).toMatch(/未決/);
@@ -169,7 +169,7 @@ describe("企画スタジオ", () => {
 
     // アーキテクチャとデータ: インフラの合意をきっかけに、アーキテクチャスタイルから書く。戻せない判断は未決に入る
     await d.drain();
-    expect(studioView(p).architecture!.style.name).toBe("モジュラーモノリス");
+    expect((await studioView(p)).architecture!.style.name).toBe("モジュラーモノリス");
     expect(harness.calls.find((c) => c.tools.some((t) => t.name === "set_domain_model"))!.prompt).toContain('"infra"');
     expect(openItems(p, "model").filter((o) => o.answer === null)).toHaveLength(1);
     expect(handoffBlocker(p)).toMatch(/アーキテクチャとデータ/);
@@ -182,8 +182,8 @@ describe("企画スタジオ", () => {
     handoff(p);
     await d.drain();
     expect(p.tickets().map((t) => t.title)).toEqual(["予約の表を足す", "空き枠を探す画面"]);
-    expect(studioView(p).handoff.handed).toBe(true);
-    expect(studioView(p).tickets[1]!.refs).toMatchObject({ requirement: "R1", screens: ["search"], fromPlan: true });
+    expect((await studioView(p)).handoff.handed).toBe(true);
+    expect((await studioView(p)).tickets[1]!.refs).toMatchObject({ requirement: "R1", screens: ["search"], fromPlan: true });
     // チケットは開発の受信箱に入るが、オフィスを動かすまで取られない
     expect(harness.calls.some((c) => c.tools.some((t) => t.name === "submit_pr"))).toBe(false);
   });
@@ -225,7 +225,7 @@ describe("企画スタジオ", () => {
     agree(p, "flow");
     await d.drain();
     expect(harness.calls.some((c) => c.tools.some((t) => t.name === "upsert_screen"))).toBe(true);
-    expect(studioView(p).screens).toHaveLength(1);
+    expect((await studioView(p)).screens).toHaveLength(1);
   });
 
   it("合意した段階が後から下書きに戻っても、次の段階は止まらない(引き渡しには合意し直しが要る)", async () => {
@@ -242,7 +242,7 @@ describe("企画スタジオ", () => {
     await d.drain();
     agree(p, "flow");
     await d.drain();
-    expect(studioView(p).screens.length).toBeGreaterThan(0);
+    expect((await studioView(p)).screens.length).toBeGreaterThan(0);
     expect(handoffBlocker(p)).toMatch(/要件/);
   });
 
@@ -280,7 +280,7 @@ describe("企画スタジオ", () => {
     await d.drain();
     // フローと画面は省略、ドメインはお任せで仕上がっている
     expect(stageDone(p, "infra") && stageDone(p, "flow") && stageDone(p, "screen") && stageDone(p, "model")).toBe(true);
-    expect(studioView(p).stages.find((s) => s.key === "model")!.status).toBe("お任せ v1");
+    expect((await studioView(p)).stages.find((s) => s.key === "model")!.status).toBe("お任せ v1");
     expect(handoffBlocker(p)).toBeNull();
   });
 
@@ -323,6 +323,6 @@ describe("技術選定", () => {
     const sel = (choice: string) => ({ area: "DB", need: "", criteria: [], candidates: [{ name: "PostgreSQL", pros: "", cons: "" }, { name: "MySQL", pros: "", cons: "" }], choice, why: "", reversible: false });
     expect(await tool.handler({ ...base, selections: [sel("SQLite")] } as never)).toContain("選んだものが候補にありません: DB(SQLite)");
     expect(await tool.handler({ ...base, selections: [sel("PostgreSQL")] } as never)).toContain("アーキテクチャ v1 を書きました");
-    expect(studioView(p).architecture!.selections![0]!.choice).toBe("PostgreSQL");
+    expect((await studioView(p)).architecture!.selections![0]!.choice).toBe("PostgreSQL");
   });
 });

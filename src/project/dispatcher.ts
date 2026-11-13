@@ -1,6 +1,7 @@
 import { FIXED_CAST, speechNote } from "../domain/cast.js";
 import { mustAnswer, mustResolve } from "./review.js";
-import { all, get, isUniqueViolation, run, tx } from "../db/sqlite.js";
+import { isUniqueViolation } from "../db/sqlite.js";
+import { sql } from "kysely";
 import { WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
 import type { Harness, HarnessResult, HarnessUsage } from "../harness/types.js";
 import { dialect } from "../db/dialect/index.js";
@@ -73,17 +74,17 @@ export class Dispatcher {
   ) {}
 
   /** 期限切れの判断を片付け、島の席を最大人数ぶん埋めておく(メンバーはずっといる。ADR-0023)。 */
-  housekeep(): void {
-    expireDecisions(this.p);
+  async housekeep(): Promise<void> {
+    await expireDecisions(this.p);
     // 企画スタジオが同じところを回っていたら止める
     if (checkStudioLoop(this.p)) this.stopPlanning();
     // チームの CI を使うなら、GitHub Actions の CI のためのチケットは片付ける(ADR-0028)
-    if (teamCiEnabled(this.p)) dropGithubCiTickets(this.p);
+    if (teamCiEnabled(this.p)) await dropGithubCiTickets(this.p);
     // 始業中なら、新しいチケットの交通整理をリーダーに頼む
     if (this.deps.triage && (this.deps.ticketsAllowed?.() ?? true)) {
-      requestTriage(this.p);
+      await requestTriage(this.p);
       // 間隔ごとにボードを見回り、重複と回り続けているチケットに手を打つ(ADR-0026)
-      requestPatrol(this.p);
+      await requestPatrol(this.p);
     }
     this.p.fillSeats();
   }
@@ -101,7 +102,7 @@ export class Dispatcher {
       if (!msg) return null;
       const job = await this.assign(msg);
       if (job === "wait") {
-        release(this.p, msg.id, WAIT_MS);
+        await release(this.p, msg.id, WAIT_MS);
         released.push(msg.id);
         continue;
       }
@@ -217,15 +218,15 @@ export class Dispatcher {
       return "handled";
     }
     // リーダーの手助けはチケットの予算で止めない(詰まりを解くための仕事なので)
-    if (ticket && msg.kind !== "unstick" && ticketExhausted(p, ticket.id)) {
+    if (ticket && msg.kind !== "unstick" && (await ticketExhausted(p, ticket.id))) {
       await p.pdb.transaction(async () => {
         await complete(p, msg.id);
         // 同じチケットで予算の判断を待っているなら、重ねて聞かない
-        const waiting = get(p.db, "SELECT 1 AS x FROM decisions WHERE ticket_id = ? AND decided_at IS NULL AND options LIKE '%\"unlimited\"%'", [ticket.id]);
+        const waiting = await p.pdb.from("decisions").select("id").where("ticket_id", "=", ticket.id).where("decided_at", "is", null).where("options", "like", '%"unlimited"%').limit(1).executeTakeFirst();
         if (waiting) return;
         const resume = { toRole: msg.to_role, toMemberId: msg.to_member_id, kind: msg.kind, payload: JSON.parse(msg.payload) as Record<string, unknown> };
         // お金を使い足すかは責任者が決める。期限で勝手に決めない
-        raiseToOwner(
+        await raiseToOwner(
           p,
           ticket.id,
           {
@@ -251,7 +252,7 @@ export class Dispatcher {
     if (!isWorkRole(role)) return { msg, role, ticket, member: p.fixedMember(role) };
 
     // 同じ役割の島が複数あるときは、チケットのリポジトリを受け持つ島から選ぶ(ADR-0019)
-    const repo = ticket ? ticketRepo(p, ticket)?.full_name : undefined;
+    const repo = ticket ? (await ticketRepo(p, ticket))?.full_name : undefined;
     const units = p.unitsForRole(role, repo);
     if (!units.length) {
       // 編成が変わってこの工程が無くなった。工程を飛ばす。
@@ -283,11 +284,11 @@ export class Dispatcher {
       // 持ち主が席にいない(席替えで島を離れた)。呼び戻して席を増やすことはせず、島の手すきの人が引き継ぐ(ADR-0023)
       const free = affordable.flatMap((u) => p.membersOfUnit(u.id)).filter((x) => !busy.has(x.id) && (role === "dev" || x.id !== ticket?.owner_member_id));
       if (!free.length) return "wait";
-      const next = this.leastLoaded(free);
+      const next = await this.leastLoaded(free);
       await p.pdb.transaction(async () => {
         await p.pdb.update("messages", { to_member_id: next.id }).where("id", "=", msg.id).execute();
         if (ticket && role === "dev") {
-          run(p.db, "UPDATE tickets SET owner_member_id = ? WHERE id = ?", [next.id, ticket.id]);
+          await p.pdb.update("tickets", { owner_member_id: next.id }).where("id", "=", ticket.id).execute();
           p.addNote(ticket.id, `【引き継ぎ】持ち主だった ${m.name} が島を離れたので、${next.name} が引き継ぎます。今のブランチの続きから進めてください。`, "lead");
         }
         p.event(next.name, "took_over", ticket?.id ?? null, { from: m.name });
@@ -298,7 +299,7 @@ export class Dispatcher {
     // 兼任していても、自分が実装した PR は自分で確かめない。
     const eligibleOf = (unitId: number) => p.membersOfUnit(unitId).filter((m) => role === "dev" || m.id !== ticket?.owner_member_id);
     const free = affordable.flatMap((u) => eligibleOf(u.id)).filter((m) => !busy.has(m.id));
-    if (free.length) return { msg, role, ticket, member: this.leastLoaded(free) };
+    if (free.length) return { msg, role, ticket, member: await this.leastLoaded(free) };
 
     // 島のメンバーは最大人数ぶんずっといるので、応援は呼ばない。誰かの手が空くまで待つ
     return "wait";
@@ -324,7 +325,7 @@ export class Dispatcher {
     const busy = await this.busyMemberIds();
     const free = p.membersOfUnit(unit.id).filter((m) => !busy.has(m.id) && m.id !== q.from_member_id);
     if (!free.length) return "wait";
-    return { msg, role: unit.roles[0]!, ticket: null, member: this.leastLoaded(free) };
+    return { msg, role: unit.roles[0]!, ticket: null, member: await this.leastLoaded(free) };
   }
 
   /** 起動 1 回の予算。起動 1 回の上限・全体の残り・ほかに渡された残り(チケット・島)の小さい方。 */
@@ -335,18 +336,41 @@ export class Dispatcher {
   /** いま起動している(終わっていない)メンバーの id。 */
   private async busyMemberIds(): Promise<Set<number>> {
     const rows = await this.p.pdb.from("runs").select("member_id").where("ended_at", "is", null).execute();
-    return new Set(rows.map((r) => r.member_id));
+    // 起こしたが、まだ起動の行を書いていない人も、手すきとは見なさない(書くまでに DB を何度か待つので、その間に同じ人へ次の仕事を渡さない)
+    return new Set([...rows.map((r) => r.member_id), ...this.starting]);
   }
 
-  private leastLoaded(ms: MemberRow[]): MemberRow {
-    const load = (m: MemberRow) =>
-      get<{ n: number }>(this.p.db, "SELECT COUNT(*) AS n FROM tickets WHERE owner_member_id = ? AND stage NOT IN ('done','dropped','merge')", [m.id])?.n ?? 0;
+  private async leastLoaded(ms: MemberRow[]): Promise<MemberRow> {
+    // 持っているチケットの数を、まとめて 1 回で数える
+    const rows = await this.p.pdb
+      .from("tickets")
+      .clearSelect()
+      .select(["owner_member_id", (eb) => eb.fn.countAll<number>().as("n")])
+      .where("owner_member_id", "in", ms.map((m) => m.id))
+      .where("stage", "not in", ["done", "dropped", "merge"])
+      .groupBy("owner_member_id")
+      .execute();
+    const counts = new Map(rows.map((r) => [r.owner_member_id, Number(r.n)]));
+    const load = (m: MemberRow) => counts.get(m.id) ?? 0;
     return [...ms].sort((a, b) => load(a) - load(b) || b.is_base - a.is_base || a.id - b.id)[0]!;
   }
 
   // ---- 起こす ----
 
+  /** 起こしたが、まだ終わっていない人(起動の行を書く前から、手すきから外す)。 */
+  private readonly starting = new Set<number>();
+
   async execute(job: Job): Promise<void> {
+    const id = job.member.id;
+    this.starting.add(id);
+    try {
+      await this.executeJob(job);
+    } finally {
+      this.starting.delete(id);
+    }
+  }
+
+  private async executeJob(job: Job): Promise<void> {
     if (job.msg.kind === "plan") return this.executePlan(job);
     if (job.msg.kind === "chat") return this.executeLeadChat(job, "chat");
     if (job.msg.kind === "triage") return this.executeLeadChat(job, "triage");
@@ -362,7 +386,7 @@ export class Dispatcher {
     const formation = p.currentFormation();
     const unit = formation.units.find((u) => u.id === member.unit_id);
     const harness = this.deps.harnesses[policy.harness];
-    const repo = ticket ? ticketRepo(p, ticket) : undefined;
+    const repo = ticket ? await ticketRepo(p, ticket) : undefined;
     // 開発より前の確認(R17): 受信箱は review/sec/qa のまま、コードを見ずにチケットの中身を読んで申し送りを残す
     const preDev = ["review", "sec", "qa"].includes(msg.kind) && (JSON.parse(msg.payload) as { preDev?: boolean }).preDev === true;
 
@@ -375,12 +399,8 @@ export class Dispatcher {
     const fresh = ["review", "sec", "qa"].includes(role) && !resumeChecks(p);
     const session = fresh
       ? undefined
-      : get<{ id: number; harness_session_id: string; branch: string | null }>(
-          p.db,
-          "SELECT id, harness_session_id, branch FROM sessions WHERE member_id = ? AND ticket_id = ? AND repo_id = ?",
-          [member.id, ticket.id, repo.id],
-        );
-    const branch = devBranch(p, ticket, repo.id);
+      : await p.pdb.from("sessions").select(["id", "harness_session_id", "branch"]).where("member_id", "=", member.id).where("ticket_id", "=", ticket.id).where("repo_id", "=", repo.id).executeTakeFirst();
+    const branch = await devBranch(p, ticket, repo.id);
     // 同じ会話を引き継ぐのは上限まで。超えたら新しく始める(ADR-0032)
     const resumeId = session && canResume(p, session.harness_session_id) ? session.harness_session_id : undefined;
 
@@ -427,7 +447,7 @@ export class Dispatcher {
         cwd: ws.path,
         confine: confinementFor(p, ws, role),
         systemPrompt: systemPromptFor(p, role, policy, { name: use.unitName, focus: use.unitFocus }, member.name) + (preDev ? PRE_DEV_NOTE : ""),
-        prompt: promptFor(p, msg, ticket, { branch, base: ws.base, repo: repo.full_name, ...prNumber(p, ticket.id, repo.id) }) + designPrompt(designs, role, { hasSystem: withSystem, systemTicket, references: new Set(refs.keys()) }),
+        prompt: (await promptFor(p, msg, ticket, { branch, base: ws.base, repo: repo.full_name, ...(await prNumber(p, ticket.id, repo.id)) })) + designPrompt(designs, role, { hasSystem: withSystem, systemTicket, references: new Set(refs.keys()) }),
         model: use.model,
         effort: use.effort,
         ...(resumeId ? { resumeSessionId: resumeId } : {}),
@@ -462,7 +482,7 @@ export class Dispatcher {
               }
             : {}),
           // ノンストップでは、戻せる判断はリーダーが決める(戻せない判断だけ責任者へ)
-          ...(msg.kind === "decide" ? { escalateAllowed: !nonstop(p) || !decision(p, Number(JSON.parse(msg.payload).decision_id)).reversible } : {}),
+          ...(msg.kind === "decide" ? { escalateAllowed: !nonstop(p) || !(await decision(p, Number(JSON.parse(msg.payload).decision_id))).reversible } : {}),
           }),
           // ほかの島・リーダーに質問する(経路が無ければリーダーに回る)。担当・工程は変わらない。開発より前の確認は、コードを見ず申し送りだけ残す
           ...(preDev ? [] : askTools(p, member, ticket)),
@@ -470,13 +490,14 @@ export class Dispatcher {
         onProgress: progressRecorder(p, runId),
         // 開発より前の確認は、コードを見ない(組み込みの道具は渡さず、申し送りを残す道具だけ)
         ...(role === "dev" ? {} : { allowedTools: preDev ? [] : ["Read", "Glob", "Grep", "Bash"] }),
-        maxBudgetUsd: this.runBudget(leftUsd(ticketBudgetUsd(p, ticket.id), ticketSpentUsd(p, ticket.id)), unit ? unitLeftUsd(p, unit) : Infinity),
+        maxBudgetUsd: this.runBudget(leftUsd(ticketBudgetUsd(p, ticket.id), await ticketSpentUsd(p, ticket.id)), unit ? unitLeftUsd(p, unit) : Infinity),
       });
       if (result.status === "error") error = result.error ?? "ハーネスがエラーで終わりました";
       if (result.status === "max_turns") error = "回数の上限に達しました";
       // 開発が報告したら、Kuramoto が外で push して PR を作る・更新する(エージェントは作業場所の外に出られない)
       if (!error && result.status === "ok" && report.draft) {
         const d = report.draft;
+        const issue = await issueOf(p, ticket);
         const pub = await this.deps.workspace.publish({
           repo: repo.full_name,
           ticketNumber: ticket.number,
@@ -484,7 +505,7 @@ export class Dispatcher {
           branch,
           base: ws.base,
           title: d.title ?? defaultPrTitle(ticket),
-          body: `${d.body ?? d.summary}\n\n---\nKuramoto のチケット #${ticket.number}${issueOf(p, ticket) ? `\nCloses #${issueOf(p, ticket)}` : ""}`,
+          body: `${d.body ?? d.summary}\n\n---\nKuramoto のチケット #${ticket.number}${issue ? `\nCloses #${issue}` : ""}`,
         });
         // 承認済みのチケットが(衝突・CI などで)戻ってきたなら、承認のあとに自分で足した変更があるかを数える
         const approved = p.setting(`approved_sha:${ticket.id}`);
@@ -511,15 +532,9 @@ export class Dispatcher {
     await p.pdb.transaction(async () => {
       const u = result?.usage;
       await p.pdb.update("runs", { ended_at: p.now(), input_tokens: (u?.inputTokens ?? 0) + judged.inputTokens, output_tokens: (u?.outputTokens ?? 0) + judged.outputTokens, cache_read_tokens: (u?.cacheReadTokens ?? 0) + judged.cacheReadTokens, cost_usd: (u?.costUsd ?? 0) + judged.costUsd, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null, summary: (report.pr?.summary || report.draft?.summary || result?.finalText || "").trim() || null }).where("id", "=", runId).execute();
-      run(p.db, "UPDATE tickets SET active_ms = active_ms + ? WHERE id = ?", [elapsed, ticket.id]);
+      await p.pdb.update("tickets", { active_ms: sql`active_ms + ${elapsed}` }).where("id", "=", ticket.id).execute();
       if (result?.sessionId) {
-        run(
-          p.db,
-          `INSERT INTO sessions (member_id, ticket_id, repo_id, harness, harness_session_id, branch, created_at, last_used_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(member_id, ticket_id, repo_id) DO UPDATE SET harness_session_id = excluded.harness_session_id, last_used_at = excluded.last_used_at`,
-          [member.id, ticket.id, repo.id, harness.name, result.sessionId, role === "dev" ? branch : null, p.now(), p.now()],
-        );
+        await rememberSession(p, { memberId: member.id, ticketId: ticket.id, repoId: repo.id, harness: harness.name, sessionId: result.sessionId, branch: role === "dev" ? branch : null });
         noteSession(p, result.sessionId, resumeId);
       }
     });
@@ -534,8 +549,7 @@ export class Dispatcher {
       return;
     }
     if (!error) {
-      // applyReport は同期の書き込み。並列の起動の非同期トランザクションと混ざらないよう、順番待ちの中で流す
-      error = await p.pdb.transaction(async () => applyReport(p, { msg, runId, memberId: member.id }, report));
+      error = await applyReport(p, { msg, runId, memberId: member.id }, report);
       if (!error) {
         await complete(p, msg.id);
         resetUnstick(p, ticket.id); // 前に進んだので、リーダーの手助けの回数を数え直す
@@ -626,7 +640,7 @@ export class Dispatcher {
   private async executeLeadChat(job: Job, mode: "chat" | "triage" | "patrol"): Promise<void> {
     const p = this.p;
     const { msg, member } = job;
-    const targets = mode === "triage" ? untriaged(p) : [];
+    const targets = mode === "triage" ? await untriaged(p) : [];
     if (mode === "triage" && !targets.length) {
       await complete(p, msg.id);
       return;
@@ -637,7 +651,7 @@ export class Dispatcher {
       await complete(p, msg.id);
       return;
     }
-    const signals: LoopSignal[] = mode === "patrol" ? loopSignals(p) : [];
+    const signals: LoopSignal[] = mode === "patrol" ? await loopSignals(p) : [];
     const policy = p.policy("lead");
     const harness = this.deps.harnesses[policy.harness];
     const repo = p.repos()[0];
@@ -658,7 +672,7 @@ export class Dispatcher {
         cwd: ws.path,
         confine: confinementFor(p, ws, "lead"),
         systemPrompt: LEAD_CHAT_SYSTEM + (policy.focus.trim() ? `\n\n## このプロジェクトで重視すること\n${policy.focus.trim()}` : "") + speechNote(member.name),
-        prompt: mode === "chat" ? leadChatPrompt(p, unread) : mode === "triage" ? triagePrompt(p, targets) : patrolPrompt(p, signals, { start: !!(JSON.parse(msg.payload) as { start?: boolean }).start }),
+        prompt: mode === "chat" ? await leadChatPrompt(p, unread) : mode === "triage" ? await triagePrompt(p, targets) : await patrolPrompt(p, signals, { start: !!(JSON.parse(msg.payload) as { start?: boolean }).start }),
         model: policy.model,
         effort: policy.effort,
         tools:
@@ -680,24 +694,21 @@ export class Dispatcher {
       await p.pdb.update("runs", { ended_at: p.now(), input_tokens: u?.inputTokens ?? 0, output_tokens: u?.outputTokens ?? 0, cache_read_tokens: u?.cacheReadTokens ?? 0, cost_usd: u?.costUsd ?? 0, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null, summary: result?.finalText?.trim() || null }).where("id", "=", runId).execute();
     });
     if (error) {
-      run(p.db, "INSERT INTO lead_messages (who, body, at) VALUES ('system', ?, ?)", [
-        `${member.name} の${{ chat: "返事", triage: "交通整理", patrol: "見回り" }[mode]}がエラーで止まりました: ${error}`,
-        p.now(),
-      ]);
+      await p.pdb.insert("lead_messages", { who: "system", body: `${member.name} の${{ chat: "返事", triage: "交通整理", patrol: "見回り" }[mode]}がエラーで止まりました: ${error}`, at: p.now() }).execute();
       await this.failed(msg, null, error);
       // 交通整理の再試行が尽きたら、チケットを止めずに流す
-      if (mode === "triage" && (await p.pdb.from("messages").select("status").where("id", "=", msg.id).executeTakeFirst())?.status === "failed") giveUpTriage(p);
+      if (mode === "triage" && (await p.pdb.from("messages").select("status").where("id", "=", msg.id).executeTakeFirst())?.status === "failed") await giveUpTriage(p);
       return;
     }
     await p.pdb.transaction(async () => {
       await complete(p, msg.id);
       if (mode === "triage") {
-        markTriaged(p, targets.map((t) => t.id));
+        await markTriaged(p, targets.map((t) => t.id));
         p.event(member.name, "triaged", null, { tickets: targets.map((t) => t.number) });
         const text = result?.finalText?.trim();
         leadReply(p, `【交通整理 #${targets.map((t) => t.number).join(", #")}】${text ? `\n${text}` : ""}`);
       } else if (mode === "patrol") {
-        finishPatrol(p, signals);
+        await finishPatrol(p, signals);
         p.event(member.name, "patrolled", null, { tickets: signals.map((s) => s.ticket.number) });
         const text = result?.finalText?.trim();
         leadReply(p, `【見回り】${text ? `\n${text}` : ""}`);
@@ -731,16 +742,16 @@ export class Dispatcher {
     const formation = p.currentFormation();
     const unit = formation.units.find((u) => u.id === member.unit_id);
     const harness = this.deps.harnesses[policy.harness];
-    const repo = ticketRepo(p, ticket);
+    const repo = await ticketRepo(p, ticket);
     if (!harness || !repo) {
       await this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
       return;
     }
-    const session = get<{ id: number; harness_session_id: string }>(p.db, "SELECT id, harness_session_id FROM sessions WHERE member_id = ? AND ticket_id = ? AND repo_id = ?", [member.id, ticket.id, repo.id]);
+    const session = await p.pdb.from("sessions").select(["id", "harness_session_id"]).where("member_id", "=", member.id).where("ticket_id", "=", ticket.id).where("repo_id", "=", repo.id).executeTakeFirst();
     const resumeId = session && canResume(p, session.harness_session_id) ? session.harness_session_id : undefined;
     // 終わったチケット(ブランチが消えていることがある)では、チケットのブランチを取り出さず、既定のブランチで答える
     const finished = isFinishedTicket(ticket);
-    const branch = finished ? "" : devBranch(p, ticket, repo.id);
+    const branch = finished ? "" : await devBranch(p, ticket, repo.id);
     const runId = await dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, about_ticket_id: ticket.id, member_id: member.id, role: role, session_id: resumeId ? session!.id : null, policy_id: policy.id, formation_id: formation.id, started_at: p.now(), model: use.model, effort: use.effort, unit_name: use.unitName }));
     p.event(member.name, "member_chat_started", ticket.id, { model: use.model });
     const done: { handedOver?: boolean } = {};
@@ -770,18 +781,12 @@ export class Dispatcher {
       await p.pdb.update("runs", { ended_at: p.now(), input_tokens: u?.inputTokens ?? 0, output_tokens: u?.outputTokens ?? 0, cache_read_tokens: u?.cacheReadTokens ?? 0, cost_usd: u?.costUsd ?? 0, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null, summary: result?.finalText?.trim() || null }).where("id", "=", runId).execute();
       // 同じ会話の続きとして覚える(このあと同じチケットの仕事を始めるときも、ここから続ける)
       if (result?.sessionId) {
-        run(
-          p.db,
-          `INSERT INTO sessions (member_id, ticket_id, repo_id, harness, harness_session_id, branch, created_at, last_used_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(member_id, ticket_id, repo_id) DO UPDATE SET harness_session_id = excluded.harness_session_id, last_used_at = excluded.last_used_at`,
-          [member.id, ticket.id, repo.id, harness.name, result.sessionId, role === "dev" && branch ? branch : null, p.now(), p.now()],
-        );
+        await rememberSession(p, { memberId: member.id, ticketId: ticket.id, repoId: repo.id, harness: harness.name, sessionId: result.sessionId, branch: role === "dev" && branch ? branch : null });
         noteSession(p, result.sessionId, resumeId);
       }
     });
     if (error) {
-      run(p.db, "INSERT INTO member_messages (member_id, ticket_id, who, body, at) VALUES (?, ?, 'system', ?, ?)", [member.id, ticket.id, `${member.name} の返事がエラーで止まりました: ${error}`, p.now()]);
+      await p.pdb.insert("member_messages", { member_id: member.id, ticket_id: ticket.id, who: "system", body: `${member.name} の返事がエラーで止まりました: ${error}`, at: p.now() }).execute();
       await this.failed(msg, null, error);
       return;
     }
@@ -807,7 +812,7 @@ export class Dispatcher {
     const formation = p.currentFormation();
     const unit = formation.units.find((u) => u.id === member.unit_id);
     const harness = this.deps.harnesses[policy.harness];
-    const repo = ticketRepo(p, ticket);
+    const repo = await ticketRepo(p, ticket);
     if (!harness || !repo) {
       await this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
       return;
@@ -873,7 +878,7 @@ export class Dispatcher {
       if (msg.kind === "unstick") {
         // リーダーの手助けそのものが動かない。保留して責任者に頼む
         const payload = JSON.parse(msg.payload) as StuckPayload;
-        holdTicket(p, ticket.id, {
+        await holdTicket(p, ticket.id, {
           reason: `担当の仕事が止まり、リーダーの調査もエラーで止まりました: ${error}(担当のエラー: ${payload.error})`,
           ownerAction: "エラーの原因(環境・認証・ハーネスなど)を取り除いてから再開してください。",
           resume: payload.resume,
@@ -881,7 +886,7 @@ export class Dispatcher {
         return;
       }
       // 責任者に上げる前に、リーダーが原因を調べて手助けする
-      askLeadToUnstick(p, ticket, msg, error);
+      await askLeadToUnstick(p, ticket, msg, error);
     });
   }
 
@@ -896,7 +901,7 @@ export class Dispatcher {
     const payload = JSON.parse(msg.payload) as StuckPayload;
     const policy = p.policy("lead");
     const harness = this.deps.harnesses[policy.harness];
-    const repo = ticketRepo(p, ticket);
+    const repo = await ticketRepo(p, ticket);
     if (!harness || !repo) {
       await this.failed(msg, ticket, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
       return;
@@ -908,7 +913,7 @@ export class Dispatcher {
     let error: string | undefined;
     try {
       // 担当が push したブランチを読むだけの場所で調べる
-      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: ticket.number, role: "lead", memberName: member.name, branch: devBranch(p, ticket, repo.id) });
+      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: ticket.number, role: "lead", memberName: member.name, branch: await devBranch(p, ticket, repo.id) });
       result = await harness.run({
         cwd: ws.path,
         confine: confinementFor(p, ws, "lead"),
@@ -917,7 +922,7 @@ export class Dispatcher {
 - 直せる問題は、担当への具体的な助言で解かせます。チームの中では解けないときだけ保留し、責任者に何をしてほしいかを伝えます。` +
           (policy.focus.trim() ? `\n\n## このプロジェクトで重視すること\n${policy.focus.trim()}` : "") +
           speechNote(member.name),
-        prompt: unstickPrompt(p, ticket, payload),
+        prompt: await unstickPrompt(p, ticket, payload),
         model: policy.model,
         effort: policy.effort,
         tools: [
@@ -957,15 +962,18 @@ export class Dispatcher {
 
 /** すでに main に入っていた(commit あり)・重複として片付けた(commit 空)チケットの、開いたままの PR を閉じる。閉じられなくても片付けはする(出来事に残す)。 */
 async function closeOpenPrs(ws: Workspace, p: Project, ticket: TicketRow, a: { commit: string; reason: string }): Promise<void> {
-  const prs = all<{ number: number; full_name: string }>(
-    p.db,
-    "SELECT pr.number, r.full_name FROM pull_requests pr JOIN repos r ON r.id = pr.repo_id WHERE pr.ticket_id = ? AND COALESCE(pr.gh_state, 'OPEN') = 'OPEN'",
-    [ticket.id],
-  );
+  const prs = await p.pdb.k
+    .selectFrom("pull_requests as pr")
+    .innerJoin("repos as r", "r.id", "pr.repo_id")
+    .select(["pr.number", "r.full_name"])
+    .where("pr.project_id", "=", p.pdb.projectId)
+    .where("pr.ticket_id", "=", ticket.id)
+    .where((eb) => eb.fn.coalesce("pr.gh_state", sql<string>`'OPEN'`), "=", "OPEN")
+    .execute();
   for (const pr of prs) {
     try {
       await ws.closePr(pr.full_name, pr.number, a.commit ? `このチケット(#${ticket.number})の変更は、すでに main に入っていました(${a.commit})。${a.reason}` : `${a.reason}(Kuramoto のチケット #${ticket.number})`);
-      run(p.db, "UPDATE pull_requests SET gh_state = 'CLOSED' WHERE ticket_id = ? AND number = ?", [ticket.id, pr.number]);
+      await p.pdb.update("pull_requests", { gh_state: "CLOSED" }).where("ticket_id", "=", ticket.id).where("number", "=", pr.number).execute();
     } catch (e) {
       p.event("system", "pr_close_failed", ticket.id, { pr: pr.number, error: e instanceof Error ? e.message : String(e) });
     }
@@ -982,22 +990,22 @@ function isWorkRole(r: Role): r is WorkRole {
 }
 
 /** チケットで片付ける GitHub の Issue の番号(既存のリポジトリの続きから。ADR-0030)。 */
-function issueOf(p: Project, t: TicketRow): number | undefined {
-  const refs = JSON.parse((get<{ plan_refs: string }>(p.db, "SELECT plan_refs FROM tickets WHERE id = ?", [t.id])?.plan_refs ?? "{}")) as { issue?: number };
+async function issueOf(p: Project, t: TicketRow): Promise<number | undefined> {
+  const refs = JSON.parse((await p.pdb.from("tickets").select("plan_refs").where("id", "=", t.id).executeTakeFirst())?.plan_refs ?? "{}") as { issue?: number };
   return refs.issue;
 }
 
 /** チケットが対象にするリポジトリ。plan_refs.repo が無ければ最初に登録したもの。 */
-export function ticketRepo(p: Project, t: TicketRow): { id: number; full_name: string } | undefined {
-  const refs = JSON.parse((get<{ plan_refs: string }>(p.db, "SELECT plan_refs FROM tickets WHERE id = ?", [t.id])?.plan_refs ?? "{}")) as { repo?: string };
+export async function ticketRepo(p: Project, t: TicketRow): Promise<{ id: number; full_name: string } | undefined> {
+  const refs = JSON.parse((await p.pdb.from("tickets").select("plan_refs").where("id", "=", t.id).executeTakeFirst())?.plan_refs ?? "{}") as { repo?: string };
   const repos = p.repos();
   return (refs.repo ? repos.find((r) => r.full_name === refs.repo) : undefined) ?? repos[0];
 }
 
-function devBranch(p: Project, t: TicketRow, repoId: number): string {
-  const existing = get<{ branch: string }>(p.db, "SELECT branch FROM sessions WHERE ticket_id = ? AND repo_id = ? AND branch IS NOT NULL LIMIT 1", [t.id, repoId]);
-  if (existing) return existing.branch;
-  const pr = get<{ head: string }>(p.db, "SELECT head FROM pull_requests WHERE ticket_id = ? AND repo_id = ?", [t.id, repoId]);
+async function devBranch(p: Project, t: TicketRow, repoId: number): Promise<string> {
+  const existing = await p.pdb.from("sessions").select("branch").where("ticket_id", "=", t.id).where("repo_id", "=", repoId).where("branch", "is not", null).limit(1).executeTakeFirst();
+  if (existing) return existing.branch!;
+  const pr = await p.pdb.from("pull_requests").select("head").where("ticket_id", "=", t.id).where("repo_id", "=", repoId).executeTakeFirst();
   return pr?.head ?? `kuramoto/${t.jira_key ?? t.number}`;
 }
 
@@ -1006,7 +1014,19 @@ function defaultPrTitle(t: TicketRow): string {
   return `${t.jira_key ? `${t.jira_key} ` : ""}${t.title}`;
 }
 
-function prNumber(p: Project, ticketId: number, repoId: number): { prNumber?: number } {
-  const pr = get<{ number: number }>(p.db, "SELECT number FROM pull_requests WHERE ticket_id = ? AND repo_id = ?", [ticketId, repoId]);
+async function prNumber(p: Project, ticketId: number, repoId: number): Promise<{ prNumber?: number }> {
+  const pr = await p.pdb.from("pull_requests").select("number").where("ticket_id", "=", ticketId).where("repo_id", "=", repoId).executeTakeFirst();
   return pr ? { prNumber: pr.number } : {};
+}
+
+/** 同じ会話の続きとして覚える(同じ人・チケット・リポジトリなら、会話の id と使った時刻を更新する)。 */
+async function rememberSession(p: Project, s: { memberId: number; ticketId: number; repoId: number; harness: string; sessionId: string; branch: string | null }): Promise<void> {
+  const now = p.now();
+  await dialect
+    .upsert(
+      p.pdb.insert("sessions", { member_id: s.memberId, ticket_id: s.ticketId, repo_id: s.repoId, harness: s.harness, harness_session_id: s.sessionId, branch: s.branch, created_at: now, last_used_at: now }),
+      ["member_id", "ticket_id", "repo_id"],
+      ["harness_session_id", "last_used_at"],
+    )
+    .execute();
 }

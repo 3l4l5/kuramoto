@@ -25,7 +25,7 @@ describe("作業場所への閉じ込め", () => {
     });
     const workspace = new StaticWorkspace("/tmp/ws");
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace });
-    createTicket(p, { title: "CSV の書き出し" });
+    await createTicket(p, { title: "CSV の書き出し" });
     await d.drain();
 
     const [dev, review] = harness.calls;
@@ -70,14 +70,14 @@ describe("作業場所への閉じ込め", () => {
     });
     const workspace = new StaticWorkspace("/tmp/ws", { ready: () => (dirty ? "コミットしていない変更があります" : undefined) });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace });
-    createTicket(p, { title: "x" });
+    await createTicket(p, { title: "x" });
     await d.dispatchOnce();
     expect(replies[0]).toContain("コミットしていない変更");
     expect(replies[1]).toContain("受け付けました");
     expect(workspace.published).toHaveLength(1);
   });
 
-  it("SDK には、ファイルの道具の締め出しと、抜け道の無いサンドボックスとして渡す", () => {
+  it("SDK には、ファイルの道具の締め出しと、抜け道の無いサンドボックスとして渡す", async () => {
     const o = confineOptions("/w", { readable: ["/t"], writable: ["/g"], hidden: ["/k"], allowedDomains: ["github.com"], hiddenEnv: ["GH_TOKEN"], allowLocalSockets: true, env: { MISE_TRUSTED_CONFIG_PATHS: "/w" } });
     expect(o.env.MISE_TRUSTED_CONFIG_PATHS).toBe("/w");
     expect(o.env.PATH).toBe(process.env.PATH);

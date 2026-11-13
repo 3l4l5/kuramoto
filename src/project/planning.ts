@@ -636,7 +636,7 @@ export function studioProgress(p: Project) {
 
 // ---- 画面に出す全体 ----
 
-export function studioView(p: Project) {
+export async function studioView(p: Project) {
   const thinking = new Set(
     all<{ stage: string }>(p.db, "SELECT json_extract(payload, '$.stage') AS stage FROM messages WHERE kind = 'plan' AND status IN ('pending','claimed')").map((r) => r.stage),
   );
@@ -658,7 +658,7 @@ export function studioView(p: Project) {
       };
     }),
     handoff: { blocker: handoffBlocker(p), requested: !!p.setting("plan_handoff_requested_at"), handed: handedOff(p), thinking: thinking.has("handoff") },
-    work: planningWork(p),
+    work: await planningWork(p),
     /** 止めているか(いつ・なぜ) */
     paused: studioPaused(p),
     /** 段階ごとの進み具合 */

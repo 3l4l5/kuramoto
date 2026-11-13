@@ -21,13 +21,14 @@ describe("途中経過", () => {
       req.onProgress!({ type: "heartbeat", text: "考えています(約 1,200 トークン)" });
       req.onProgress!({ type: "heartbeat", text: "考えています(約 1,300 トークン)" }); // 2 秒以内は書かない
       req.onProgress!({ type: "step", kind: "thinking", text: "目的から聞くのがよさそう" });
-      seen = planningWork(p);
+      await new Promise((r) => setTimeout(r, 0)); // 進み具合の書き込みが流れ終わるのを待つ
+      seen = await planningWork(p);
       return { finalText: "何のためのものですか?" };
     });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp"), ticketsAllowed: () => false });
 
     advance(p);
-    expect(studioView(p).work).toEqual({ req: { state: "queued" } });
+    expect((await studioView(p)).work).toEqual({ req: { state: "queued" } });
     await d.drain();
 
     expect(seen.req).toMatchObject({
@@ -41,10 +42,10 @@ describe("途中経過", () => {
         { kind: "thinking", text: "目的から聞くのがよさそう" },
       ],
     });
-    expect(studioView(p).work).toEqual({});
+    expect((await studioView(p)).work).toEqual({});
   });
 
-  it("SDK のメッセージを、画面に出す言葉にする", () => {
+  it("SDK のメッセージを、画面に出す言葉にする", async () => {
     expect(describeTool("Read", { file_path: "/w/src/app.ts" })).toBe("app.ts を読んでいます");
     expect(describeTool("Grep", { pattern: "reservations" })).toBe("「reservations」を検索しています");
     expect(describeTool("mcp__kuramoto__upsert_screen", { name: "空き枠を探す" })).toBe("画面の試作を作っています: 空き枠を探す");

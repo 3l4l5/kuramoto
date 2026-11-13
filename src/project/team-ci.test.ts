@@ -60,7 +60,7 @@ class FakeGitHub implements GitHub {
 }
 
 describe("チームの CI(ADR-0028)", () => {
-  it("package.json から、入れる → lint → 型 → テストを決める", () => {
+  it("package.json から、入れる → lint → 型 → テストを決める", async () => {
     const dir = mkdtempSync(join(tmpdir(), "kuramoto-ci-"));
     try {
       writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { lint: "eslint .", typecheck: "tsc", test: "vitest run", dev: "vite" } }));
@@ -77,7 +77,7 @@ describe("チームの CI(ADR-0028)", () => {
   it("PR を出したら、レビューの前に流す。落ちたら出力を付けてその場で持ち主に戻し、通ったらレビューに回す", async () => {
     const runner = new FakeRunner((cmd, n) => (cmd === "npm run typecheck" && n === 1 ? "src/a.ts(3,1): error TS2322: Type 'string' is not assignable to type 'number'." : null));
     const { p, d, prompts } = setup(runner);
-    const t = createTicket(p, { title: "A" });
+    const t = await createTicket(p, { title: "A" });
     await d.drain();
 
     // 1 回目は型で落ちる。テストは流さない(早く返す)。レビューには回さない
@@ -98,8 +98,8 @@ describe("チームの CI(ADR-0028)", () => {
     let failNext = false;
     const runner = new FakeRunner((cmd) => (failNext && cmd === "npx vitest run" ? "FAIL test/save.test.ts" : null));
     const { p, d, hook } = setup(runner, () => base);
-    const a = createTicket(p, { title: "A" });
-    const b = createTicket(p, { title: "B" });
+    const a = await createTicket(p, { title: "A" });
+    const b = await createTicket(p, { title: "B" });
     await d.drain();
     const gh = new FakeGitHub();
 
@@ -146,20 +146,20 @@ describe("チームの CI(ADR-0028)", () => {
   it("チームの CI を使うなら、GitHub Actions の CI のためのチケット(main の CI を直す)は取りやめる。リーダーは、やることの無いチケットを手助けの中で取りやめられる", async () => {
     const runner = new FakeRunner(() => null);
     const { p, d } = setup(runner);
-    const fixer = createTicket(p, { title: "main の CI を直す(check)", planRefs: { repo: REPO, baseCi: REPO } });
+    const fixer = await createTicket(p, { title: "main の CI を直す(check)", planRefs: { repo: REPO, baseCi: REPO } });
     const { holdTicket, droppedInfo } = await import("./workflow.js");
-    holdTicket(p, fixer.id, { reason: "Actions の請求で止まっている", ownerAction: "請求を直す", resume: { toRole: "dev", toMemberId: null, kind: "implement", payload: {} } });
+    await holdTicket(p, fixer.id, { reason: "Actions の請求で止まっている", ownerAction: "請求を直す", resume: { toRole: "dev", toMemberId: null, kind: "implement", payload: {} } });
     p.setSetting("ci_blocked", JSON.stringify([{ repo: REPO, since: "", notes: [], probedAt: "", runIds: [] }]));
-    d.housekeep();
+    await d.housekeep();
     expect(p.ticket(fixer.id).stage).toBe("dropped");
-    expect(droppedInfo(p, fixer.id)!.reason).toContain("チームの CI");
+    expect(await droppedInfo(p, fixer.id)!.reason).toContain("チームの CI");
     expect(p.setting("ci_blocked")).toBe("[]");
     const { pendingOwnerDecisions } = await import("./workflow.js");
-    expect(pendingOwnerDecisions(p)).toEqual([]);
+    expect(await pendingOwnerDecisions(p)).toEqual([]);
 
     // 手助けの道具: やることの無いチケットを取りやめる(リーダー自身の起動中でも)
     const { unstickTools } = await import("./unstick.js");
-    const t = createTicket(p, { title: "docs だけの調査" });
+    const t = await createTicket(p, { title: "docs だけの調査" });
     const msg = run(p.db, "INSERT INTO messages (ticket_id, to_role, kind, status, available_at, created_at) VALUES (?, 'lead', 'unstick', 'claimed', '', '')", [t.id]).lastId;
     run(p.db, "INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at) VALUES (?, ?, ?, 'lead', 1, 1, '')", [msg, t.id, p.fixedMember("lead").id]);
     const done: { action?: "retry" | "hold" | "closed" | "dropped" } = {};

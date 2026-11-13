@@ -99,8 +99,8 @@ export function collectTransfer(p: Project, projectName: string): TransferData {
  * 空のプロジェクトに、書き出したときの企画の状態を戻す。版は書き出したときの番号のまま置く(途中の版の履歴は戻さない)。
  * チケットは、完了・取りやめはそのまま、それ以外は開発の受信箱に入れ直す(PR は GitHub にあるので、持ち主が続きから直す)。
  */
-export function restoreTransfer(p: Project, d: TransferData): void {
-  tx(p.db, () => {
+export async function restoreTransfer(p: Project, d: TransferData): Promise<void> {
+  await p.pdb.transaction(async () => {
     if (get(p.db, "SELECT 1 AS x FROM plan_artifacts LIMIT 1") || p.tickets().length) throw new Error("空のプロジェクトにだけ戻せます");
     for (const [k, v] of Object.entries(d.settings)) if (KEEP_SETTING.test(k)) p.setSetting(k, v);
 
@@ -147,7 +147,7 @@ export function restoreTransfer(p: Project, d: TransferData): void {
         const row = p.addTicket(base);
         p.setStage(row.id, t.stage as TicketStage);
       } else {
-        createTicket(p, base);
+        await createTicket(p, base);
       }
     }
     // 書き出したときに担当が作業中・順番待ちだった依頼は持ち越していない。

@@ -61,7 +61,7 @@ describe("企画スタジオを止める(ADR-0031)", () => {
     }
     expect(checkStudioLoop(p)).toBe("req");
     expect(studioPaused(p)!.reason).toContain("回っている");
-    d.housekeep();
+    await d.housekeep();
     expect(await d.dispatchOnce()).toBe(false);
   });
 });

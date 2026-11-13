@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { all, get, run } from "../db/sqlite.js";
 import { ROLE_LABEL, type Role } from "../domain/roles.js";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
 import { send, type MessageRow } from "./inbox.js";
@@ -41,12 +40,12 @@ export function resetUnstick(p: Project, ticketId: number): void {
 }
 
 /** 再試行が尽きた。リーダーに手助けを頼む。手助けを使い切っていたら保留する。 */
-export function askLeadToUnstick(p: Project, ticket: TicketRow, msg: MessageRow, error: string): void {
+export async function askLeadToUnstick(p: Project, ticket: TicketRow, msg: MessageRow, error: string): Promise<void> {
   const resume = messageOf(msg);
   const n = unstickCount(p, ticket.id);
   const max = p.settingNumber("unstick_max", 5);
   if (n >= max) {
-    holdTicket(p, ticket.id, {
+    await holdTicket(p, ticket.id, {
       reason: `リーダーが ${n} 回手助けしても、同じように止まりました。最後のエラー: ${error}`,
       ownerAction: "チケットの「やりとり」とリーダーのメモを見て、原因(環境・権限・仕様など)を取り除いてから再開してください。",
       resume,
@@ -59,19 +58,22 @@ export function askLeadToUnstick(p: Project, ticket: TicketRow, msg: MessageRow,
 }
 
 /** リーダーが調べる材料: チケット・止まった仕事・最近の起動・最後の起動の途中経過・これまでの助言。 */
-export function unstickPrompt(p: Project, ticket: TicketRow, payload: StuckPayload): string {
-  const runs = all<{ id: number; role: string; name: string; outcome: string | null; error: string | null; summary: string | null; started_at: string; cost_usd: number | null }>(
-    p.db,
-    "SELECT r.id, r.role, m.name, r.outcome, r.error, r.summary, r.started_at, r.cost_usd FROM runs r JOIN members m ON m.id = r.member_id WHERE r.ticket_id = ? ORDER BY r.id DESC LIMIT 8",
-    [ticket.id],
-  );
+export async function unstickPrompt(p: Project, ticket: TicketRow, payload: StuckPayload): Promise<string> {
+  const runs = await p.pdb.k
+    .selectFrom("runs as r")
+    .innerJoin("members as m", "m.id", "r.member_id")
+    .select(["r.id", "r.role", "m.name", "r.outcome", "r.error", "r.summary", "r.started_at", "r.cost_usd"])
+    .where("r.project_id", "=", p.pdb.projectId)
+    .where("r.ticket_id", "=", ticket.id)
+    .orderBy("r.id", "desc")
+    .limit(8)
+    .execute();
   const last = runs.find((r) => r.outcome === "error") ?? runs[0];
-  const steps = last
-    ? all<{ kind: string; text: string }>(p.db, "SELECT kind, text FROM run_steps WHERE run_id = ? ORDER BY id DESC LIMIT 30", [last.id]).reverse()
-    : [];
+  const steps = last ? (await p.pdb.from("run_steps").select(["kind", "text"]).where("run_id", "=", last.id).orderBy("id", "desc").limit(30).execute()).reverse() : [];
   const notes = p.notes(ticket.id);
   const budget = ticketBudgetUsd(p, ticket.id);
-  const pr = get<{ number: number; head: string }>(p.db, "SELECT number, head FROM pull_requests WHERE ticket_id = ? LIMIT 1", [ticket.id]);
+  const spent = await ticketSpentUsd(p, ticket.id);
+  const pr = await p.pdb.from("pull_requests").select(["number", "head"]).where("ticket_id", "=", ticket.id).limit(1).executeTakeFirst();
   const who = payload.resume.toMemberId ? p.member(payload.resume.toMemberId).name : `${ROLE_LABEL[payload.resume.toRole as Role] ?? payload.resume.toRole}の手すきの人`;
   return `チケットの仕事が同じように失敗し続けて止まりました。原因を調べて、チームが先に進めるように手助けしてください。
 
@@ -81,7 +83,7 @@ ${ticket.body.trim().slice(0, 2000) || "(本文なし)"}
 ## 止まった仕事
 - 担当: ${who}(${ROLE_LABEL[payload.resume.toRole as Role] ?? payload.resume.toRole}の「${payload.resume.kind}」)
 - 最後のエラー: ${payload.error}
-- 使った額: $${ticketSpentUsd(p, ticket.id).toFixed(2)}${budget === null ? "(予算は無制限)" : ` / 予算 $${budget}`}
+- 使った額: $${spent.toFixed(2)}${budget === null ? "(予算は無制限)" : ` / 予算 $${budget}`}
 ${pr ? `- PR: #${pr.number}(ブランチ ${pr.head})` : "- PR: まだありません"}
 - これまでのリーダーの手助け: ${unstickCount(p, ticket.id)} 回
 
@@ -132,7 +134,7 @@ export function unstickTools(
         const problem = await ws.checkLanded?.(a.commit);
         if (problem) return problem;
         await ws.closePrs?.(a);
-        closeAlreadyDone(p, ticket, { ...a, by: p.fixedMember("lead").name });
+        await closeAlreadyDone(p, ticket, { ...a, by: p.fixedMember("lead").name });
         done.action = "closed";
         return "確かめて、完了にしました。";
       },
@@ -157,7 +159,7 @@ export function unstickTools(
         to: z.string().min(1).describe("渡す相手。メンバーの名前か島の名前(島なら手すきの人が取る)"),
         advice: z.string().min(1).describe("新しい担当への助言(ここまでの経緯・原因の見立て・避けること)"),
       },
-      handler: (a) => {
+      handler: async (a) => {
         if (done.action) return "もう決めました。";
         const role = payload.resume.toRole;
         const units = p.currentFormation().units.filter((u) => (u.roles as string[]).includes(role));
@@ -167,7 +169,7 @@ export function unstickTools(
         p.addNote(ticket.id, `【手助け・担当替え】${a.advice}`, "lead");
         p.setSetting(`unstick_count:${ticket.id}`, String(unstickCount(p, ticket.id) + 1));
         // 開発なら持ち主ごと替える(新しい担当がブランチの続きから進める)。島を指したら、持ち主を外して手すきの人に取らせる
-        if (role === "dev") run(p.db, "UPDATE tickets SET owner_member_id = ? WHERE id = ?", [member?.id ?? null, ticket.id]);
+        if (role === "dev") await p.pdb.update("tickets", { owner_member_id: member?.id ?? null }).where("id", "=", ticket.id).execute();
         const kind = role === "dev" ? (member ? "answer" : "implement") : payload.resume.kind;
         resumeWork(p, ticket, {
           ...payload.resume,
@@ -189,11 +191,12 @@ export function unstickTools(
         tickets: z.array(z.object({ title: z.string().min(1), body: z.string().describe("やること・受け入れ条件・なぜ切り出したか") })).min(1),
         advice: z.string().min(1).describe("今のチケットの担当への助言(どこまでをこのチケットでやるか)"),
       },
-      handler: (a) => {
+      handler: async (a) => {
         if (done.action) return "もう決めました。";
-        const made = a.tickets.map((t) =>
-          createTicket(p, { title: t.title, body: `${t.body}\n\n---\n#${ticket.number}「${ticket.title}」が大きすぎたため、リーダーが切り出しました。`, planRefs: { splitFrom: ticket.number } }),
-        );
+        const made: TicketRow[] = [];
+        for (const t of a.tickets) {
+          made.push(await createTicket(p, { title: t.title, body: `${t.body}\n\n---\n#${ticket.number}「${ticket.title}」が大きすぎたため、リーダーが切り出しました。`, planRefs: { splitFrom: ticket.number } }));
+        }
         p.addNote(ticket.id, `【手助け・切り出し】#${made.map((t) => t.number).join("・#")} に切り出しました。${a.advice}`, "lead");
         p.setSetting(`unstick_count:${ticket.id}`, String(unstickCount(p, ticket.id) + 1));
         resumeWork(p, ticket, payload.resume);
@@ -220,9 +223,9 @@ export function unstickTools(
         reason: z.string().min(1).describe("何が原因で止まっているか(分かった範囲で)"),
         owner_action: z.string().min(1).describe("責任者にしてほしいこと(具体的に。例: CI の秘密情報 X を登録する、仕様 Y を決める)"),
       },
-      handler: (a) => {
+      handler: async (a) => {
         if (done.action) return "もう決めました。";
-        holdTicket(p, ticket.id, { reason: a.reason, ownerAction: a.owner_action, resume: payload.resume });
+        await holdTicket(p, ticket.id, { reason: a.reason, ownerAction: a.owner_action, resume: payload.resume });
         done.action = "hold";
         return "保留して、責任者に対応を頼みました。";
       },
