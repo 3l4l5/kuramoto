@@ -473,6 +473,11 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(trend.locator('g.mark[data-version="2"]')).toContainText("v2 島");
     await expect(trend.locator('g.mark[data-version="3"]')).toContainText("v3 連絡経路・流れ");
     await expect(trend.locator("g.mark line")).toHaveCount(2);
+    // 同じ日に版が 2 つ上がっても、札(rect)は縦にも横にも重ならず読める
+    const boxes = await trend.locator("g.mark rect").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).map((r) => ({ l: r.left, r: r.right, t: r.top, b: r.bottom })));
+    expect(boxes).toHaveLength(2);
+    const [c1, c2] = boxes as [(typeof boxes)[number], (typeof boxes)[number]];
+    expect(c1.r <= c2.l || c2.r <= c1.l || c1.b <= c2.t || c2.b <= c1.t).toBe(true);
     await page.getByRole("group", { name: "表示" }).getByRole("button", { name: "表" }).click();
     await expect(trend.locator("g.mark")).toHaveCount(2);
     await page.getByRole("group", { name: "表示" }).getByRole("button", { name: "グラフ" }).click();
