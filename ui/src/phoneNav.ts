@@ -10,7 +10,18 @@ import { useSyncExternalStore } from "react";
 export type PhoneTab = "inbox" | "office";
 export type OfficeView = "floor" | "board" | "tree";
 
-let state: { tab: PhoneTab; view: OfficeView } = { tab: "inbox", view: "floor" };
+/**
+ * 開いたときの見ている場所。URL の ?tab=office&view=tree で指定できる(撮影・共有用。ハッシュの前に付ける)。
+ * 知らない値は無視して、既定(対応・オフィス)にする。
+ */
+export function initialNav(search: string): { tab: PhoneTab; view: OfficeView } {
+  const q = new URLSearchParams(search);
+  const tab = q.get("tab");
+  const view = q.get("view");
+  return { tab: tab === "office" ? "office" : "inbox", view: view === "board" || view === "tree" ? view : "floor" };
+}
+
+let state = initialNav(typeof location === "undefined" ? "" : location.search);
 const listeners = new Set<() => void>();
 
 export function setPhoneNav(next: Partial<typeof state>) {
