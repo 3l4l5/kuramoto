@@ -92,8 +92,22 @@ export class Dispatcher {
     await this.p.fillSeats();
   }
 
+  /** プロジェクトを消すときなど、動いている起動をすべて止める。止めたあとは新しい仕事を取らない。 */
+  private readonly halt = new AbortController();
+
+  /** 動いているメンバーの起動をその場で止め、以後は何も起こさない(プロジェクトの削除の前に呼ぶ)。 */
+  halted(): boolean {
+    return this.halt.signal.aborted;
+  }
+
+  stopAll(): void {
+    this.halt.abort(new Error("プロジェクトを削除するので止めました"));
+    this.wake();
+  }
+
   /** 次の 1 件を取り出して担当を決める。起こせるものが無ければ null。 */
   async next(): Promise<Job | null> {
+    if (this.halt.signal.aborted) return null;
     // 全体の予算を使い切ったら、何も起こさない(責任者が予算を足すか無制限にするまで)
     if (await projectExhausted(this.p)) return null;
     const released: number[] = [];
@@ -185,7 +199,7 @@ export class Dispatcher {
     const dbUp = () => this.deps.dbUp?.() ?? true;
     for (;;) {
       // DB が切れている間は、何も取らず、housekeep も走らせない。動いている起動の終わりだけ待つ
-      if (dbUp()) {
+      if (dbUp() && !this.halt.signal.aborted) {
         await this.checkGithub();
         await this.refreshMergedWaits();
         await this.p.pdb.transaction(async () => await this.housekeep());
@@ -508,6 +522,7 @@ export class Dispatcher {
         // 開発より前の確認は、コードを見ない(組み込みの道具は渡さず、申し送りを残す道具だけ)
         ...(role === "dev" ? {} : { allowedTools: preDev ? [] : ["Read", "Glob", "Grep", "Bash"] }),
         maxBudgetUsd: await this.runBudget(leftUsd(await ticketBudgetUsd(p, ticket.id), await ticketSpentUsd(p, ticket.id)), unit ? await unitLeftUsd(p, unit) : Infinity),
+        signal: this.halt.signal,
       });
       if (result.status === "error") error = result.error ?? "ハーネスがエラーで終わりました";
       if (result.status === "max_turns") error = "回数の上限に達しました";
@@ -617,7 +632,7 @@ export class Dispatcher {
         // 設計のときは外のサイトも見られる(検索・ページを読む。ADR-0035)
         allowedTools: ["Read", "Glob", "Grep", ...await planWebTools(p)],
         maxBudgetUsd: await this.runBudget(),
-        signal: abort.signal,
+        signal: AbortSignal.any([abort.signal, this.halt.signal]),
       });
       if (result.status !== "ok" && result.status !== "budget") error = result.error ?? "ハーネスがエラーで終わりました";
     } catch (e) {
@@ -705,6 +720,7 @@ export class Dispatcher {
               : [...patrolTools(p, { closePrs }), ...triageTools(p).filter((t) => t.name === "plan_work"), ...leadChatTools(p).filter((t) => t.name === "create_ticket"), ...githubReadTools(p, this.deps.github), ...await ciTools(p, this.deps.github, { rerun: true })],
         allowedTools: ["Read", "Glob", "Grep"],
         maxBudgetUsd: await this.runBudget(),
+        signal: this.halt.signal,
         onProgress: progressRecorder(p, runId),
       });
       if (result.status !== "ok" && result.status !== "budget") error = result.error ?? "ハーネスがエラーで終わりました";
@@ -793,6 +809,7 @@ export class Dispatcher {
         tools: memberChatTools(p, member, ticket, done),
         allowedTools: ["Read", "Glob", "Grep"],
         maxBudgetUsd: await this.runBudget(unit ? await unitLeftUsd(p, unit) : Infinity),
+        signal: this.halt.signal,
         onProgress: progressRecorder(p, runId),
       });
       if (result.status !== "ok" && result.status !== "budget") error = result.error ?? "ハーネスがエラーで終わりました";
@@ -858,6 +875,7 @@ export class Dispatcher {
         tools: replyTools(report),
         allowedTools: ["Read", "Glob", "Grep"],
         maxBudgetUsd: await this.runBudget(unit ? await unitLeftUsd(p, unit) : Infinity),
+        signal: this.halt.signal,
         onProgress: progressRecorder(p, runId),
       });
       if (result.status !== "ok" && result.status !== "budget") error = result.error ?? "ハーネスがエラーで終わりました";
@@ -960,6 +978,7 @@ export class Dispatcher {
         ],
         allowedTools: ["Read", "Glob", "Grep", "Bash"],
         maxBudgetUsd: await this.runBudget(),
+        signal: this.halt.signal,
         onProgress: progressRecorder(p, runId),
       });
       if (result.status !== "ok" && result.status !== "budget") error = result.error ?? "ハーネスがエラーで終わりました";

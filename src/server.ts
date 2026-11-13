@@ -110,6 +110,8 @@ export class KuramotoServer {
   private readonly records = new Map<number, ProjectRecord>();
   private readonly opening = new Map<number, Promise<Project>>();
   private readonly looping = new Set<number>();
+  /** 削除中のプロジェクト。ループを新しく始めない。 */
+  private readonly deleting = new Set<number>();
   private readonly harnesses: Record<string, Harness>;
   private readonly github: GitHub;
   private readonly workspaceFor: (dataDir: string) => Workspace;
@@ -216,7 +218,7 @@ export class KuramotoServer {
 
   /** プロジェクトの受信箱を見回るループ。1 プロジェクトに 1 つ。 */
   private async loop(id: number): Promise<void> {
-    if (this.runners.has(id) || this.looping.has(id)) return;
+    if (this.runners.has(id) || this.looping.has(id) || this.deleting.has(id)) return;
     this.looping.add(id);
     const p = this.project(id);
     try {
@@ -224,7 +226,7 @@ export class KuramotoServer {
     } finally {
       this.looping.delete(id);
     }
-    if (this.runners.has(id)) return;
+    if (this.runners.has(id) || this.deleting.has(id)) return;
     const workspace = this.workspaceFor(this.record(id).data_dir);
     // merge の直前にチームの CI を流す口(ADR-0028)
     const teamCi: TeamCiHook = {
@@ -316,6 +318,51 @@ export class KuramotoServer {
         ? `【チームの CI に切り替えました】これからは、担当が PR を出すたびに Kuramoto が閉じ込めの中で確認を流し、通ったものだけをレビューに回します。merge の直前にも、main が進んでいれば流し直します。GitHub の CI は待ちません。${done.length ? `\n${done.join("・")} の GitHub Actions を止めました。` : ""}${failed.length ? `\nGitHub Actions を止められませんでした: ${failed.join("・")}。リポジトリの Settings > Actions で止めてください。` : ""}\nリポジトリのブランチ保護で「CI の確認が通ること」を必須にしていると、GitHub が merge を断ります。そのときは必須の確認を外してください。`
         : `【GitHub Actions の CI に戻しました】これからは merge の前に GitHub の CI を待ちます。${done.length ? `\n${done.join("・")} の GitHub Actions を動かしました。` : ""}${failed.length ? `\nGitHub Actions を動かせませんでした: ${failed.join("・")}。リポジトリの Settings > Actions で動かしてください。` : ""}`,
     );
+  }
+
+  /**
+   * プロジェクトを消す(責任者の操作)。順に:
+   *  1. 動きを止める(始業の取り消し・ディスパッチャ・merge の見回り・走っているメンバーの起動)
+   *  2. DB の行を消す(project_id で絞る。本部の記録も)
+   *  3. 作業場所(worktree と clone)を消す。消せなくても止めず、ログに残す
+   * GitHub 上のリポジトリ・PR・Issue には触れない。
+   */
+  async deleteProject(id: number): Promise<{ ok: true; failed: { path: string; error: string }[] }> {
+    const p = await this.open(id);
+    const rec = this.record(id);
+    const repos = (await p.repos()).map((r) => r.full_name);
+    this.deleting.add(id);
+    try {
+      this.running.delete(id);
+      // ループの立ち上がりの途中なら、終わるのを待つ(終わったあとは deleting で止まる)
+      for (let i = 0; this.looping.has(id) && i < 200; i++) await new Promise((res) => setTimeout(res, 10));
+      const r = this.runners.get(id);
+      if (r) {
+        clearInterval(r.timer);
+        clearInterval(r.mergeTimer);
+        this.runners.delete(id);
+        r.dispatcher.stopAll();
+        // 止めた起動の後始末(DB への書き込み)が終わるのを待つ。待ちきれなくても削除は進める
+        const until = Date.now() + 30_000;
+        while (r.busy && Date.now() < until) await new Promise((res) => setTimeout(res, 10));
+      }
+      await this.hq.deleteProject(p, id);
+      this.projects.delete(id);
+      this.records.delete(id);
+      p.close();
+    } finally {
+      this.deleting.delete(id);
+    }
+    let failed: { path: string; error: string }[] = [];
+    try {
+      const w = this.workspaceFor(rec.data_dir);
+      failed = (await w.removeProjectFiles?.(repos))?.failed ?? [];
+    } catch (e) {
+      failed = [{ path: rec.data_dir, error: e instanceof Error ? e.message : String(e) }];
+    }
+    // DB はもう消えている。消せなかったファイルはログに残すだけ
+    for (const f of failed) console.error(`プロジェクト ${id}(${rec.name})の作業場所を消せませんでした: ${f.path}: ${f.error.slice(0, 300)}`);
+    return { ok: true, failed };
   }
 
   /** テスト用: 今すぐ受信箱を見に行く。 */
@@ -426,6 +473,7 @@ export class KuramotoServer {
     if (!Number.isInteger(id)) return undefined;
     const p = await this.open(id); // 入口: id がいまのワークスペースの中にあるかを確かめる
     if (!b && method === "GET") return await this.projectView(id);
+    if (!b && method === "DELETE") return await this.deleteProject(id);
     if (b === "tickets" && c && method === "GET") return await ticketView(p, Number(c));
     if (b === "tickets" && c && parts[4] === "notes" && method === "POST") {
       await p.addNote(Number(c), String(body.body ?? ""));

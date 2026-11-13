@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, post } from "./api";
 import { useAct } from "./hooks";
 import { Btn } from "./ui";
+import { DeleteProjectDialog } from "./DeleteProjectDialog";
 import { Checkbox, Input, Select, Textarea } from "./ds";
 import { BudgetInput, budgetOk as totalOk } from "./BudgetInput";
 import { usd } from "./format";
@@ -27,6 +28,7 @@ export function SettingsPage({ id }: { id: number }) {
   const [planWeb, setPlanWeb] = useState(true);
   const [planWebDomains, setPlanWebDomains] = useState("");
   const [ciCommands, setCiCommands] = useState<Record<string, string>>({});
+  const [deleting, setDeleting] = useState(false);
   const reset = () => {
     if (!data) return;
     setName(data.name);
@@ -203,7 +205,17 @@ export function SettingsPage({ id }: { id: number }) {
             </Btn>
           )}
         </div>
+        <div>
+          <div className="h">危険な操作</div>
+          <div className="hint" style={{ marginBottom: 6 }}>
+            プロジェクトを消します。チケット・やりとり・設定など、このプロジェクトの記録と、Kuramoto の作業場所(clone と worktree)が消えます。GitHub のリポジトリ・PR・Issue はそのまま残ります。
+          </div>
+          <Btn kind="outline" onClick={() => setDeleting(true)}>
+            このプロジェクトを削除
+          </Btn>
+        </div>
       </div>
+      {deleting && <DeleteProjectDialog id={id} name={data.name} close={() => setDeleting(false)} />}
     </section>
   );
 }

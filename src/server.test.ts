@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FakeHarness } from "./harness/fake.js";
 import { Hq } from "./hq.js";
 import { StaticWorkspace } from "./project/workspace.js";
@@ -20,7 +20,7 @@ const leadSaid = async (p: Project, text: string) => (await leadMessages(p)).som
 const cleanups: (() => void)[] = [];
 afterEach(() => cleanups.splice(0).forEach((f) => f()));
 
-async function boot(opts: { publicToken?: string; renderer?: import("./project/design-visual.js").Renderer; dbHealth?: DbHealth } = {}) {
+async function boot(opts: { workspaceFor?: (dataDir: string) => import("./project/workspace.js").Workspace; publicToken?: string; renderer?: import("./project/design-visual.js").Renderer; dbHealth?: DbHealth } = {}) {
   const home = mkdtempSync(join(tmpdir(), "kuramoto-srv-"));
   const harness = new FakeHarness(async (req, call) => {
     if (req.tools.some((t) => t.name === "submit_pr")) await call("submit_pr", { summary: "", responses: fixedAll(req.prompt) });
@@ -42,6 +42,53 @@ async function boot(opts: { publicToken?: string; renderer?: import("./project/d
 }
 
 describe("ローカルサーバー", () => {
+  it("DELETE /api/projects/:id: 動きを止めて、そのプロジェクトの行と作業場所を消す。別のプロジェクトは残る", async () => {
+    const workspaces: StaticWorkspace[] = [];
+    const { call, app } = await boot({ workspaceFor: (d) => { const w = new StaticWorkspace(d, { prNumber: () => 5 }); workspaces.push(w); return w; } });
+    const a = (await call("POST", "/api/projects", { name: "消す", repos: [{ fullName: "acme/shop", role: "API" }, { fullName: "acme/web", role: "UI" }] })).json.id as number;
+    const b = (await call("POST", "/api/projects", { name: "残す", repos: [{ fullName: "acme/other", role: "API" }] })).json.id as number;
+    await call("POST", `/api/projects/${a}/tickets`, { title: "CSV" });
+    await call("POST", `/api/projects/${b}/tickets`, { title: "残る" });
+    await call("POST", `/api/projects/${a}/run`, { running: true });
+    await new Promise((r) => setTimeout(r, 100));
+    const keep = app.project(b);
+    // ヘッダーが無い書き込みは通さない(他の書き込みの API と同じ)
+    expect((await call("DELETE", `/api/projects/${a}`, undefined, {})).status).toBe(403);
+    expect((await app.hq.projects()).map((p) => p.id)).toEqual([a, b]);
+
+    const res = await call("DELETE", `/api/projects/${a}`);
+    expect(res.status).toBe(200);
+    expect(res.json).toMatchObject({ ok: true, failed: [] });
+    expect((await app.hq.projects()).map((p) => p.id)).toEqual([b]);
+    // 消したプロジェクトは開けない・もう 1 度消そうとしても何も起きない
+    expect((await call("GET", `/api/projects/${a}`)).status).toBe(400);
+    expect((await call("DELETE", `/api/projects/${a}`)).status).toBe(400);
+    // 作業場所の片付けは、そのプロジェクトのリポジトリ全部に頼む(1 回だけ)
+    expect(workspaces.flatMap((w) => w.removedProjects)).toEqual([["acme/shop", "acme/web"]]);
+    // 残す側: 行も、動きも、そのまま
+    expect((await keep.tickets()).map((t) => t.title)).toEqual(["残る"]);
+    expect((await call("GET", `/api/projects/${b}`)).status).toBe(200);
+    expect((await app.hq.project(b)).name).toBe("残す");
+  });
+
+  it("作業場所を消せなくても(投げても)DB の削除は進み、ログに残す", async () => {
+    const w = new StaticWorkspace("/tmp/ws");
+    w.removeProjectFiles = async () => { throw new Error("busy"); };
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((m: string) => void errors.push(String(m)));
+    try {
+      const { call, app } = await boot({ workspaceFor: () => w });
+      const id = (await call("POST", "/api/projects", { name: "消す", repos: [{ fullName: "acme/shop", role: "API" }] })).json.id as number;
+      const res = await call("DELETE", `/api/projects/${id}`);
+      expect(res.status).toBe(200);
+      expect(res.json.failed).toHaveLength(1);
+      expect(await app.hq.projects()).toEqual([]);
+      expect(errors.some((e) => e.includes("busy"))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("DB(MySQL)が切れている間は受信箱の見回りとエージェントの起動を止めて待ち、画面にそう出す。繋がり直したら再開する(ADR-0041)", async () => {
     let alive = true;
     const health = new DbHealth(async () => {
