@@ -3,9 +3,11 @@ import { sql, type Selectable } from "kysely";
 import { countFrom, countOf, inScope } from "../db/count.js";
 import type { DecisionsTable, RunsTable, TicketsTable } from "../db/tables.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
+import { isExhausted } from "./budget.js";
 import { violationTotals } from "./dev-rules.js";
 import type { Project } from "./project.js";
 import { LEAD_TARGET } from "./questions.js";
+import { ticketBudgetUsd } from "./workflow.js";
 
 type RunRow = Selectable<RunsTable>;
 type TicketRow = Selectable<TicketsTable>;
@@ -86,7 +88,7 @@ export async function productivity(p: Project) {
     help: { total: decisions + planAsks, decisions, planAsks },
     // 開発ルールに反した件数と、うち持ち主が自動で直した件数(R15)
     ruleViolations: await violationTotals(p),
-    // 島への質問(R16)。島どうしで答えをもらった数と、経路が無くリーダーに回った数(リーダーへ直接聞いたものは、どちらにも数えない)
+    // 島への質問(R16)。島どうしで答えをもらった数と、リーダーに回った数(経路が無かったもの。答える島が編成の変更で無くなって回ったものも含む。リーダーへ直接聞いたものは、どちらにも数えない)
     questions: { islands: questionsAll.filter((q) => q.routed_to_lead === 0).length, noRoute: questionsAll.filter((q) => q.routed_to_lead === 1 && q.to_target !== LEAD_TARGET).length },
     // チケット 1 件あたりの判断の回数(判断カード ÷ チケットの数)
     decisionsPerTicket: ticketsAll.length ? decisions / ticketsAll.length : null,
@@ -200,6 +202,16 @@ export async function productivity(p: Project) {
   }
   const decisionsBy = by(decisionsAll);
   const violationsBy = by(violationsAll);
+  // 予算を使い切って止まっているチケット(片付いていないものだけ。使った額はこの下の cost と同じ数え方)
+  const budgetStopped = new Set<number>();
+  await Promise.all(
+    ticketsAll
+      .filter((t) => t.stage !== "done" && t.stage !== "dropped")
+      .map(async (t) => {
+        const spent = sum((aboutBy.get(t.id) ?? []).map((r) => r.cost_usd));
+        if (isExhausted(await ticketBudgetUsd(p, t.id), spent)) budgetStopped.add(t.id);
+      }),
+  );
   const tickets = ticketsAll.map((t) => {
     const about = aboutBy.get(t.id) ?? [];
     const mine = runsBy.get(t.id) ?? [];
@@ -226,6 +238,7 @@ export async function productivity(p: Project) {
       costUsd: cost ?? 0,
       activeMs: t.active_ms,
       // 「直すまで止める」ルールに反したまま(直った印が無い)で、まだ片付いていない: 画面の状態に「止まっている」と出す
+      budgetStopped: budgetStopped.has(t.id),
       stopped: t.stage !== "done" && t.stage !== "dropped" && vs.some((v) => v.handled === "blocked" && v.resolved_at === null),
     };
   });

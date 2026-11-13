@@ -4,7 +4,7 @@ import { run } from "../db/sqlite.js";
 import { addDevRule } from "./dev-rules.js";
 import { productivity } from "./productivity.js";
 import { Project } from "./project.js";
-import { createTicket, dropTicket } from "./workflow.js";
+import { createTicket, dropTicket, setDefaultTicketBudget, setTicketBudget } from "./workflow.js";
 
 const H = 3_600_000;
 
@@ -113,6 +113,31 @@ describe("生産性: 島への質問・判断の回数・かかった時間(試�
     // 判断カードはまだ無い。いまの編成の版が出る
     expect(v.totals.decisionsPerTicket).toBe(0);
     expect(v.totals.formationVersion).toBe((await p.currentFormation()).version);
+  });
+
+  it("チケットの予算を使い切って片付いていないチケットには、予算切れの印が付く(片付いたもの・余りがあるものには付かない)", async () => {
+    const p = await Project.open(":memory:", new ManualClock(new Date("2026-11-12T00:00:00Z")));
+    await p.addRepo("acme/shop", "API");
+    const lead = (await p.fixedMember("lead")).id;
+    const spend = (ticketId: number, usd: number) => {
+      const msg = run(p.db, "INSERT INTO messages (ticket_id, to_role, kind, status, available_at, created_at) VALUES (?, 'dev', 'implement', 'done', '', '')", [ticketId]).lastId;
+      run(p.db, "INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at, ended_at, cost_usd, outcome) VALUES (?, ?, ?, 'dev', 1, 1, ?, ?, ?, 'ok')", [msg, ticketId, lead, p.now(), p.now(), usd]);
+    };
+    const over = await createTicket(p, { title: "使い切った" });
+    const spare = await createTicket(p, { title: "余りがある" });
+    const done = await createTicket(p, { title: "片付いた" });
+    const own = await createTicket(p, { title: "自分の予算を足した" });
+    await setDefaultTicketBudget(p, 5); // チケット 1 枚の既定の予算を $5 にする
+    spend(over.id, 5);
+    spend(spare.id, 1);
+    spend(done.id, 9);
+    run(p.db, "UPDATE tickets SET stage = 'done', done_at = ? WHERE id = ?", [p.now(), done.id]);
+    spend(own.id, 6);
+    await setTicketBudget(p, own.id, 20);
+
+    const v = await productivity(p);
+    const stopped = (id: number) => v.tickets.find((t) => t.id === id)!.budgetStopped;
+    expect([over, spare, done, own].map((t) => stopped(t.id))).toEqual([true, false, false, false]);
   });
 
   it("チケットも質問も無いプロジェクトは、質問は 0 件、1 件あたりは空", async () => {

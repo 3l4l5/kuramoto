@@ -236,7 +236,9 @@ function EfficiencyTrend({ data }: { data: ProductivityView }) {
     <figure className="chart" aria-label="フロー効率の推移と編成を変えた日">
       <figcaption className="sub">フロー効率の推移 · 編成を変えた日</figcaption>
       <div className="plot">
-        <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`フロー効率の推移: ${rows.map((r) => `${r.day} ${Math.round(r.value * 100)}%`).join("、") || "まだありません"}`}>
+        {/* 札は押せるボタンなので、svg には role="img" を付けない(img の子は支援技術から見えない)。数字の要約は別の文に持たせる */}
+        <p className="sr-only">フロー効率の推移: {rows.map((r) => `${r.day} ${Math.round(r.value * 100)}%`).join("、") || "まだありません"}</p>
+        <svg viewBox={`0 0 ${W} ${H}`}>
           <line x1={L} x2={W - R} y1={H - B} y2={H - B} className="axis" />
           <line x1={L} x2={W - R} y1={y(top)} y2={y(top)} className="grid" />
           <line x1={L} x2={W - R} y1={y(top / 2)} y2={y(top / 2)} className="grid" />
@@ -456,7 +458,12 @@ function Tickets({ data, kind }: { data: ProductivityView; kind: string }) {
         </thead>
         <tbody>
           {rows.map((x) => {
-            const state = x.stopped ? { label: "止まっている", tone: "danger" as const } : (TICKET_STATE[x.stage] ?? { label: x.stage, tone: "neutral" as const });
+            // 状態の札: ルール違反で止まっている > 予算切れ > 工程の名前
+            const state = x.stopped
+              ? { label: "止まっている", tone: "danger" as const }
+              : x.budgetStopped
+                ? { label: "予算切れ", tone: "warn" as const }
+                : (TICKET_STATE[x.stage] ?? { label: x.stage, tone: "neutral" as const });
             return (
               <tr key={x.id}>
                 <td className="id">#{x.number}</td>
