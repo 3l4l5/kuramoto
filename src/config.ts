@@ -131,8 +131,19 @@ function addPassword(
   }
   const password = parseEnvValue(content, PASSWORD_KEY);
   if (!password) throw new ConfigError(`${passwordWhere}: ${file} に ${PASSWORD_KEY} の行がありません(空でない値を書いてください)`);
-  url.password = password;
+  // URL の setter は % をエンコードしないので、自分でエンコードする(読む側が decodeURIComponent でもとに戻せるように)
+  url.password = encodeURIComponent(password);
   return url.toString();
+}
+
+/** 引用符で囲んだ値は中身だけ(後ろのコメントは捨てる)。囲んでいない値は、docker compose の env_file と同じく「空白 + #」から後ろをコメントとする。 */
+function unquote(v: string): string {
+  const q = v[0];
+  if (q === '"' || q === "'") {
+    const end = v.indexOf(q, 1);
+    if (end > 0 && (end === v.length - 1 || /^\s+#/.test(v.slice(end + 1)))) return v.slice(1, end);
+  }
+  return v.replace(/(^|\s+)#.*$/, "");
 }
 
 /** KEY=VALUE の行から key の値だけを取り出す(# のコメント・空行・export・前後の引用符を許す)。後の行が優先。 */
@@ -141,9 +152,7 @@ function parseEnvValue(content: string, key: string): string | undefined {
   for (const raw of content.split(/\r?\n/)) {
     const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(raw);
     if (!m || m[1] !== key) continue;
-    let v = m[2]!.trim();
-    if (v.length >= 2 && (v[0] === '"' || v[0] === "'") && v.endsWith(v[0])) v = v.slice(1, -1);
-    value = v;
+    value = unquote(m[2]!.trim());
   }
   return value;
 }

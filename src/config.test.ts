@@ -133,6 +133,24 @@ describe("設定ファイル", () => {
       expect(loadWith(doc, "MYSQL_PASSWORD=p@ss:/w#rd\r\n").database).toMatchObject({ url: "mysql://kuramoto:p%40ss%3A%2Fw%23rd@127.0.0.1:3306/kuramoto" });
     });
 
+    it("% を含むパスワードは、URL から decodeURIComponent でもとに戻せる", () => {
+      for (const pw of ["a%41b", "x%y", "ab%41 p@:/#", "100%"]) {
+        const c = loadWith(doc, `MYSQL_PASSWORD=${pw}\n`);
+        if (c.database.type !== "mysql") throw new Error("mysql のはず");
+        expect(decodeURIComponent(new URL(c.database.url).password)).toBe(pw);
+      }
+      expect(loadWith(doc, "MYSQL_PASSWORD=ab%41 p@:/#\n").database).toMatchObject({ url: "mysql://kuramoto:ab%2541%20p%40%3A%2F%23@127.0.0.1:3306/kuramoto" });
+    });
+
+    it("値の後ろのコメント(空白 + #)は docker compose と同じく値に含めない", () => {
+      const pw = (content: string) => (loadWith(doc, content).database as { url: string }).url;
+      expect(pw("MYSQL_PASSWORD=abc # memo\n")).toBe("mysql://kuramoto:abc@127.0.0.1:3306/kuramoto");
+      expect(pw('MYSQL_PASSWORD="a #b" # memo\n')).toBe("mysql://kuramoto:a%20%23b@127.0.0.1:3306/kuramoto");
+      expect(pw("MYSQL_PASSWORD='abc'\n")).toBe("mysql://kuramoto:abc@127.0.0.1:3306/kuramoto");
+      expect(pw("MYSQL_PASSWORD=ab#c\n")).toBe("mysql://kuramoto:ab%23c@127.0.0.1:3306/kuramoto");
+      expect(() => loadWith(doc, "MYSQL_PASSWORD= # memo\n")).toThrow(ConfigError);
+    });
+
     it("url にもパスワードがあるときは、どちらを使うか決められないので起動しない", () => {
       const both = "database:\n  type: mysql\n  url: mysql://kuramoto:x@127.0.0.1/kuramoto\n  passwordFile: /h/m.env\n";
       expect(fail2(both, ENV_FILE)).toContain("どちらか一方");
