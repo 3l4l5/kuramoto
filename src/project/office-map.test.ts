@@ -26,7 +26,7 @@ describe("オフィスの路線図(R16・R17)", () => {
     expect(v.lines.map((l) => l.isDefault)).toEqual([true, false, false]);
     const line = (kind: string) => v.lines.find((l) => l.kinds.some((k) => k.kind === kind))!;
     const stops = (kind: string) => line(kind).stops.map((s) => [s.unitId, s.pre]);
-    // 開発より前の工程は pre。並びに無い工程は停車しない(通過)
+    // 開発より前の工程は pre。並びに無い工程は停車しない(省略)
     expect(stops("bugfix")).toEqual([[id("QA"), true], [id("開発"), false], [id("レビュー"), false]]);
     expect(stops("docs")).toEqual([[id("レビュー"), true], [id("開発"), false], [id("QA"), false]]);
     expect(stops("refactor")).toEqual([[id("開発"), false], [id("QA"), false]]);
