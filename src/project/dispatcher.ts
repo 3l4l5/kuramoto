@@ -33,7 +33,7 @@ import { finishMemberChat, isFinishedTicket, memberChatPrompt, memberChatSystem,
 import { giveUpTriage, markTriaged, requestTriage, triagePrompt, triageTools, untriaged } from "./triage.js";
 import { LEAD_CHAT_SYSTEM, leadChatPrompt, leadChatTools, leadReply, markOwnerMessagesRead, unreadOwnerMessages } from "./leadchat.js";
 import { dropGithubCiTickets, githubCheckDue, githubDown, githubStillDown, isGithubAuthError, markGithubDown, markGithubUp } from "./outage.js";
-import { finishPatrol, loopSignals, patrolPrompt, patrolTools, requestPatrol, type LoopSignal } from "./patrol.js";
+import { deadlockSignals, finishPatrol, loopSignals, patrolPrompt, patrolTools, requestPatrol, type Deadlock, type LoopSignal } from "./patrol.js";
 
 export type DispatcherDeps = {
   harnesses: Record<string, Harness>;
@@ -664,6 +664,7 @@ export class Dispatcher {
       return;
     }
     const signals: LoopSignal[] = mode === "patrol" ? await loopSignals(p) : [];
+    const deadlocks: Deadlock[] = mode === "patrol" ? await deadlockSignals(p) : [];
     const policy = p.policy("lead");
     const harness = this.deps.harnesses[policy.harness];
     const repo = p.repos()[0];
@@ -675,7 +676,7 @@ export class Dispatcher {
     const closePrs = (t: TicketRow, reason: string) => closeOpenPrs(this.deps.workspace, p, t, { commit: "", reason });
     // チャット・交通整理・見回りは毎回まっさらに始める。チャットの前のやりとりは、指示に最近の分を入れて渡す(ADR-0032)
     const runId = await dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, member_id: member.id, role: "lead", policy_id: policy.id, formation_id: p.currentFormation().id, started_at: p.now(), model: policy.model, effort: policy.effort }));
-    p.event(member.name, `${mode}_run_started`, null, { model: policy.model, tickets: (mode === "patrol" ? signals.map((s) => s.ticket) : targets).map((t) => t.number) });
+    p.event(member.name, `${mode}_run_started`, null, { model: policy.model, tickets: (mode === "patrol" ? signals.map((s) => s.ticket) : targets).map((t) => t.number), ...(mode === "patrol" ? { deadlocks: deadlocks.map((x) => x.key) } : {}) });
     let result: HarnessResult | undefined;
     let error: string | undefined;
     try {
@@ -684,7 +685,7 @@ export class Dispatcher {
         cwd: ws.path,
         confine: confinementFor(p, ws, "lead"),
         systemPrompt: LEAD_CHAT_SYSTEM + (policy.focus.trim() ? `\n\n## このプロジェクトで重視すること\n${policy.focus.trim()}` : "") + speechNote(member.name),
-        prompt: mode === "chat" ? await leadChatPrompt(p, unread) : mode === "triage" ? await triagePrompt(p, targets) : await patrolPrompt(p, signals, { start: !!(JSON.parse(msg.payload) as { start?: boolean }).start }),
+        prompt: mode === "chat" ? await leadChatPrompt(p, unread) : mode === "triage" ? await triagePrompt(p, targets) : await patrolPrompt(p, signals, { start: !!(JSON.parse(msg.payload) as { start?: boolean }).start, deadlocks }),
         model: policy.model,
         effort: policy.effort,
         tools:
@@ -692,7 +693,7 @@ export class Dispatcher {
             ? [...leadChatTools(p, { closePrs }), ...githubReadTools(p, this.deps.github), ...ciTools(p, this.deps.github, {})]
             : mode === "triage"
               ? triageTools(p)
-              : [...patrolTools(p, { closePrs }), ...githubReadTools(p, this.deps.github), ...ciTools(p, this.deps.github, { rerun: true })],
+              : [...patrolTools(p, { closePrs }), ...triageTools(p).filter((t) => t.name === "plan_work"), ...leadChatTools(p).filter((t) => t.name === "create_ticket"), ...githubReadTools(p, this.deps.github), ...ciTools(p, this.deps.github, { rerun: true })],
         allowedTools: ["Read", "Glob", "Grep"],
         maxBudgetUsd: await this.runBudget(),
         onProgress: progressRecorder(p, runId),
@@ -721,8 +722,8 @@ export class Dispatcher {
         const text = result?.finalText?.trim();
         leadReply(p, `【交通整理 #${targets.map((t) => t.number).join(", #")}】${text ? `\n${text}` : ""}`);
       } else if (mode === "patrol") {
-        await finishPatrol(p, signals);
-        p.event(member.name, "patrolled", null, { tickets: signals.map((s) => s.ticket.number) });
+        await finishPatrol(p, signals, deadlocks);
+        p.event(member.name, "patrolled", null, { tickets: signals.map((s) => s.ticket.number), deadlocks: deadlocks.map((x) => x.key) });
         const text = result?.finalText?.trim();
         leadReply(p, `【見回り】${text ? `\n${text}` : ""}`);
       } else {
