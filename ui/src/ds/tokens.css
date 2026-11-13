@@ -40,6 +40,58 @@
   --art-mug: #e98aa0; /* 絵: マグの縁 */
   --art-note: #fff4c2; /* 絵: 付箋・手すきの吹き出しの地 */
   --art-zz: #8aa0d8; /* 絵: 終業中の zz */
+  --art-laptop: #9aa3b2; /* 絵: ノート PC(ふだん) */
+  --art-laptop-idle: #b9c4d6; /* 絵: 手すきのメンバーの服 */
+  --art-laptop-on: #7fb8f0; /* 絵: ノート PC(作業中) */
+  --art-floor: #f7efe3; /* 絵: オフィスの床 */
+  --art-wall: #efe3d0; /* 絵: オフィスの壁 */
+  --art-wall-edge: #e2d2b8; /* 絵: 壁の下の線 */
+  --art-window: #cfe6f7; /* 絵: 窓 */
+  --art-island-edge: #eadcc6; /* 絵: 島・棚・完了の山の縁 */
+  --art-wood-rim: #c9a273; /* 絵: 机の天板の縁 */
+  --art-paper-ink: #5a4026; /* 絵: 机の上の書類の字 */
+  --art-leaf-1: #6cbf73; /* 絵: 植物の葉(明るい) */
+  --art-leaf-2: #57a862; /* 絵: 植物の葉(ふつう) */
+  --art-leaf-3: #7ccc82; /* 絵: 植物の葉(淡い) */
+  --art-seat: #d8c5a8; /* 絵: 空席の輪郭 */
+  --art-add-edge: #d3bb98; /* 絵: 島を足す枠 */
+  --art-add-edge-hover: #b89466; /* 絵: 島を足す枠(ホバー) */
+  --art-add-ink: #8a6a44; /* 絵: 島を足す枠の字 */
+  --art-hair-seina: #f1e2b3; /* 絵: 星南の髪 */
+  --art-hair-hiro: #c7cfe0; /* 絵: 広の髪 */
+  --art-hair-saki: #e2643f; /* 絵: 咲季の髪 */
+  --art-hair-sumika: #f3bf5a; /* 絵: 清夏の髪 */
+  --art-hair-temari: #33406e; /* 絵: 手毬の髪 */
+  --art-hair-kotone: #f4d270; /* 絵: ことねの髪 */
+  --art-hair-mao: #8c3340; /* 絵: 麻央の髪 */
+  --art-hair-lilja: #ecebf3; /* 絵: リーリヤの髪 */
+  --art-hair-china: #f0a356; /* 絵: 千奈の髪 */
+  --art-hair-rinami: #d98ea1; /* 絵: 莉波の髪 */
+  --art-hair-ume: #e86a42; /* 絵: 佑芽の髪 */
+  --art-hair-misuzu: #9aa8dc; /* 絵: 美鈴の髪 */
+  --art-hair-haruka: #8d5b3c; /* 絵: 春香の髪 */
+  --art-hair-chihaya: #3b5fa8; /* 絵: 千早の髪 */
+  --art-hair-miki: #f5d576; /* 絵: 美希の髪 */
+  --art-hair-uzuki: #7c4b2b; /* 絵: 卯月の髪 */
+  --art-hair-rin: #3a2a2e; /* 絵: 凛の髪 */
+  --art-hair-mio: #9b6b3c; /* 絵: 未央の髪 */
+  --art-hair-miku: #a8683a; /* 絵: 未来の髪 */
+  --art-hair-shizuka: #232634; /* 絵: 静香の髪 */
+  --art-hair-tsubasa: #a5703f; /* 絵: 翼の髪 */
+  --art-hair-mano: #c99c8e; /* 絵: 真乃の髪 */
+  --art-ribbon-1: #f5c542; /* 絵: リボン */
+  --art-ribbon-2: #ef7a9a; /* 絵: リボン */
+  --art-ribbon-3: #7fb2e5; /* 絵: リボン */
+  --art-ribbon-4: #e5527a; /* 絵: リボン */
+  --art-ribbon-5: #e5455b; /* 絵: リボン */
+  --art-ribbon-6: #f2a541; /* 絵: リボン */
+  --art-hair-default: #6b5545; /* 絵: 髪(名前が決まっていない人) */
+  --art-face: #fde3cf; /* 絵: アバターの顔 */
+  --art-eye-closed: #4a3a3a; /* 絵: 眠っている目 */
+  --art-blush: #f7a9b4; /* 絵: ほっぺ */
+  --art-mouth: #c0606e; /* 絵: 口 */
+  --art-shade: #000000; /* 絵: 髪の影を作るときに混ぜる色 */
+  --art-role-arch: #008da6; /* 絵: アーキテクトの服(開発の青とは別の青緑) */
   --f-body: 'Noto Sans JP', -apple-system, 'Hiragino Sans', sans-serif; /* 本文・見出し */
   --f-mono: 'Noto Sans Mono', ui-monospace, monospace; /* チケット番号・版・数値 */
   --fs-xs: 11px; /* 番号・版・図の中の字・吹き出し */

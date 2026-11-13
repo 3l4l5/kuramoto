@@ -191,7 +191,7 @@ function DecisionCard({ pid, d }: { pid: number; d: Decision }) {
         <dd>{d.deadline ? "期限が来たら推奨で進みます" : "あなたが選ぶまで止まっています"}</dd>
       </dl>
       <div className="answer">
-        <label className="h" htmlFor={`dc-note-${d.id}`} style={{ fontSize: 14 }}>
+        <label className="h" htmlFor={`dc-note-${d.id}`} style={{ fontSize: "var(--fs-base)" }}>
           答え・指示(任意。チケットのメモになり、次に動く担当が読みます)
         </label>
         <Textarea id={`dc-note-${d.id}`} rows={d.leadNote ? 4 : 2} className="w-full" value={note} onChange={(e) => setNote(e.target.value)} />
@@ -395,7 +395,7 @@ function Board({ d }: { d: ProjectView }) {
                       )
                     )}
                     {t.pr && (
-                      <span style={{ fontSize: 11 }}>
+                      <span style={{ fontSize: "var(--fs-xs)" }}>
                         <PrLink pr={t.pr} />
                       </span>
                     )}
@@ -452,7 +452,7 @@ function NewTicket({ id }: { id: number }) {
           足す
         </Btn>
       </form>
-      <div style={{ fontSize: 12, color: "var(--muted)" }}>足したチケットは開発の受信箱に入り、稼働中なら空いているメンバーが取ります。</div>
+      <div style={{ fontSize: "var(--fs-sm)", color: "var(--muted)" }}>足したチケットは開発の受信箱に入り、稼働中なら空いているメンバーが取ります。</div>
     </section>
   );
 }
@@ -591,7 +591,7 @@ const ROLE_NAME: Record<string, string> = { dev: "開発", review: "レビュー
 function Formation({ d }: { d: ProjectView }) {
   const f = d.formation;
   return (
-    <div style={{ fontSize: 13 }}>
+    <div style={{ fontSize: "var(--fs-md)" }}>
       <div style={{ color: "var(--muted)", marginBottom: 6 }}>
         編成 v{f.version} · リポジトリ {d.repos.map((r) => r.full_name).join("、")}
       </div>
@@ -605,7 +605,7 @@ function Formation({ d }: { d: ProjectView }) {
           <div>{u.members.join("、")}</div>
         </div>
       ))}
-      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
+      <div style={{ fontSize: "var(--fs-sm)", color: "var(--muted)", marginTop: 6 }}>
         データ: <code>{d.project.dataDir}</code>
       </div>
     </div>

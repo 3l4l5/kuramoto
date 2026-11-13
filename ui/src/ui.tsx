@@ -1,27 +1,30 @@
 import type { ComponentProps, ReactNode } from "react";
-import { Button, type ButtonSize, type ButtonVariant } from "./dads/Button";
+import { Button, type ButtonVariant } from "./ds";
 
 /**
- * デジタル庁デザインシステムの部品(ui/src/dads/)を、Kuramoto の画面で使いやすくする薄い包み。
- * - 主な操作は solid-fill、それ以外は outline、軽い操作は text。
- * - 押せないときは disabled と aria-disabled の両方を付ける(デザインシステムの見た目は aria-disabled で決まる)。
+ * 画面で使うボタン。見た目はデザインシステムの共通の部品(ui/src/ds/)で、色・大きさはトークンだけで決まる。
+ * - 主な操作(保存・作成)は solid-fill = --action(ほぼ黒)、それ以外は outline(副)、軽い操作は text(リンクの青)。
+ * - 青は開発の島・リンク・選択の印だけに使う。主ボタンには使わない。
  */
+export type BtnKind = "solid-fill" | "outline" | "text";
+export type BtnSize = "lg" | "md" | "sm" | "xs";
 export type BtnProps = Omit<ComponentProps<"button">, "type"> & {
-  kind?: ButtonVariant;
-  size?: ButtonSize;
+  kind?: BtnKind;
+  size?: BtnSize;
   type?: "button" | "submit";
   children: ReactNode;
 };
 
-export function Btn({ kind = "outline", size = "md", disabled, type = "button", ...rest }: BtnProps) {
-  return <Button type={type} variant={kind} size={size} disabled={disabled} aria-disabled={disabled || undefined} {...rest} />;
+const VARIANT: Record<BtnKind, ButtonVariant> = { "solid-fill": "primary", outline: "secondary", text: "text" };
+/** 行の中の小さなボタン(sm・xs)は --h-control-sm、それ以外は --h-control */
+const small = (size: BtnSize) => size === "sm" || size === "xs";
+
+export function Btn({ kind = "outline", size = "md", type = "button", ...rest }: BtnProps) {
+  return <Button type={type} variant={VARIANT[kind]} size={small(size) ? "sm" : "md"} {...rest} />;
 }
 
 /** リンクをボタンの見た目で出す(ダウンロードなど)。 */
-export function LinkBtn({ kind = "outline", size = "md", ...rest }: ComponentProps<"a"> & { kind?: ButtonVariant; size?: ButtonSize }) {
-  return (
-    <Button asChild variant={kind} size={size}>
-      <a {...rest} />
-    </Button>
-  );
+export function LinkBtn({ kind = "outline", size = "md", className, ...rest }: ComponentProps<"a"> & { kind?: BtnKind; size?: BtnSize }) {
+  const cls = ["ds-btn", `ds-btn--${VARIANT[kind]}`, small(size) && "ds-btn--sm", className].filter(Boolean).join(" ");
+  return <a className={cls} {...rest} />;
 }

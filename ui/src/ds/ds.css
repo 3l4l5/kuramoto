@@ -9,6 +9,7 @@
   font-family: var(--f-body); font-size: var(--fs-base); font-weight: var(--fw-bold); line-height: var(--lh-tight);
   cursor: pointer; white-space: nowrap;
 }
+a.ds-btn { text-decoration: none; }
 .ds-btn--sm { height: var(--h-control-sm); padding: 0 var(--sp-3); border-radius: var(--r-sm); font-size: var(--fs-md); }
 .ds-btn--primary { background: var(--action); color: var(--surface); }
 .ds-btn--primary:hover, .ds-btn--primary[data-hover] { background: var(--action-hover); border-color: var(--action-hover); }
@@ -123,5 +124,5 @@
 }
 button.ds-desk { cursor: pointer; padding: 0; }
 .ds-desk__paper { padding: var(--sp-1) var(--sp-2); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-sm); box-shadow: 0 3px 0 -1px var(--surface), 0 3px 0 0 var(--line-strong); }
-.ds-desk__mug { position: absolute; left: var(--sp-3); top: var(--sp-3); width: 14px; height: 16px; border-radius: 2px 2px 5px 5px; background: var(--surface); border: 2px solid var(--art-mug); }
-.ds-desk__plant { position: absolute; right: var(--sp-3); bottom: var(--sp-2); width: 16px; height: 13px; border-radius: 2px 2px 6px 6px; background: var(--art-pot); box-shadow: 0 -10px 0 2px var(--art-leaf); }
+.ds-desk__mug { position: absolute; left: var(--sp-3); top: var(--sp-3); width: 14px; height: 16px; border-radius: 0 0 var(--r-sm) var(--r-sm); background: var(--surface); border: 2px solid var(--art-mug); }
+.ds-desk__plant { position: absolute; right: var(--sp-3); bottom: var(--sp-2); width: 16px; height: 13px; border-radius: 0 0 var(--r-sm) var(--r-sm); background: var(--art-pot); box-shadow: 0 -10px 0 2px var(--art-leaf); }

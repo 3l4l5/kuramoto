@@ -169,7 +169,7 @@ export function FlowSvg({ flow, selected, onSelect }: { flow: Flow; selected: st
         return (
           <g key={n.id} className={cls} tabIndex={0} role="button" aria-label={n.label} onClick={() => onSelect(n.id)} onKeyDown={(e) => e.key === "Enter" && onSelect(n.id)}>
             <title>{[n.label, n.sub].filter(Boolean).join("\n")}</title>
-            <rect x={p.x} y={p.y} width={t.w} height={t.h} rx={10} />
+            <rect x={p.x} y={p.y} width={t.w} height={t.h} rx={8} />
             {t.title.map((s, i) => (
               <text key={`t${i}`} x={p.x + 12} y={p.y + 22 + i * 17} fontWeight={700}>
                 {s}
@@ -217,16 +217,16 @@ export function ModelSvg({ domain }: { domain: Domain }) {
           if (!p) return null;
           return (
             <g key={e.name}>
-              <rect x={p.x} y={p.y} width={s.w} height={s.h} rx={10} fill="var(--surface)" stroke={e.isNew ? "var(--dev)" : "var(--table-edge)"} strokeWidth={1.5} />
-              <text x={p.x + 12} y={p.y + 22} fontWeight={700} fill="var(--ink)" fontSize={13}>
+              <rect x={p.x} y={p.y} width={s.w} height={s.h} rx={8} fill="var(--surface)" stroke={e.isNew ? "var(--dev)" : "var(--line-strong)"} strokeWidth={1.5} />
+              <text x={p.x + 12} y={p.y + 22} fontWeight={700} fill="var(--ink)" style={{ fontSize: "var(--fs-md)" }}>
                 {wrap(e.name, 13, BW - 60, 1)[0]}
                 {"  "}
-                <tspan fill={e.isNew ? "var(--dev)" : "var(--muted)"} fontSize={10.5}>
+                <tspan fill={e.isNew ? "var(--dev)" : "var(--muted)"} style={{ fontSize: "var(--fs-xs)" }}>
                   {e.isNew ? "新規" : "既存"}
                 </tspan>
               </text>
               {e.fields.map((f, i) => (
-                <text key={i} x={p.x + 12} y={p.y + 44 + i * 18} fill="var(--muted)" fontSize={11} fontFamily="IBM Plex Mono, monospace">
+                <text key={i} x={p.x + 12} y={p.y + 44 + i * 18} fill="var(--muted)" style={{ fontSize: "var(--fs-xs)" }} fontFamily="var(--f-mono)">
                   {wrap(f, 11, BW - 24, 1)[0]}
                   <title>{f}</title>
                 </text>
@@ -291,12 +291,12 @@ export function InfraSvg({ infra }: { infra: Infra }) {
             return (
               <g key={c.name}>
                 <title>{`${c.name}\n${c.service}\n${c.purpose}`}</title>
-                <rect x={p.x} y={p.y} width={t.w} height={t.h} rx={10} fill="var(--surface)" stroke={KIND_COLOR[c.kind] ?? "var(--table-edge)"} strokeWidth={1.8} strokeDasharray={c.isNew ? undefined : "4 3"} />
-                <text x={p.x + 12} y={p.y + 22} fontWeight={700} fill="var(--ink)" fontSize={13}>
+                <rect x={p.x} y={p.y} width={t.w} height={t.h} rx={8} fill="var(--surface)" stroke={KIND_COLOR[c.kind] ?? "var(--line-strong)"} strokeWidth={1.8} strokeDasharray={c.isNew ? undefined : "4 3"} />
+                <text x={p.x + 12} y={p.y + 22} fontWeight={700} fill="var(--ink)" style={{ fontSize: "var(--fs-md)" }}>
                   {t.title[0]}
                 </text>
                 {t.sub.map((s, i) => (
-                  <text key={i} x={p.x + 12} y={p.y + 40 + i * 14} fill="var(--muted)" fontSize={10.5}>
+                  <text key={i} x={p.x + 12} y={p.y + 40 + i * 14} fill="var(--muted)" style={{ fontSize: "var(--fs-xs)" }}>
                     {s}
                   </text>
                 ))}
