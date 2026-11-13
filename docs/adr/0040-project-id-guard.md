@@ -10,7 +10,7 @@ ADR-0039(1/2)の続き。残りの src/project・server を async + Kysely に�
 ## 決定
 
 - **project_id の見張り**(`src/db/guard.ts`)。Kysely のプラグインで、project_id の表を触る SELECT / UPDATE / DELETE が project_id を参照していない、INSERT の列に project_id が無い、生 SQL(RawNode)のときに投げる。テストでは vitest の setup(`src/db/vitest-setup.ts`)で有効にし、`ProjectDb` に付く。本番の ProjectDb には付けない(`ProjectDb.from / insert / update / deleteFrom` が必ず付けるので、見張りが落とすのは口を通さない書き方)。
-- **同期の書き込みの見張り**。`tx()` が持っていた「他の流れの非同期トランザクションの最中なら投げる」を、`run()` にも掛ける。`p.event`・`run(p.db, ...)` が、並列の起動の `Conn.transaction()` に黙って混ざるのを防ぐ。1 本の接続に `Conn` が複数かぶっても(同じ接続に 2 つのプロジェクトの口を置くとき)見張れるよう、接続ごとに全部の `Conn` を持つ。同期の書き込み自体を無くすのは、移し終えたとき(各ファイルの移行)。
+- **同期の書き込みの見張り**。`tx()` が持っていた「他の流れの非同期トランザクションの最中なら投げる」を、`run()` にも掛ける(ただしテストでだけ。移し終えるまでの本番では、トランザクションの中で外部 I/O を await する流れがあると、画面操作が時々例外になるため。`tx()` の見張りは本番でも有効)。`p.event`・`run(p.db, ...)` が、並列の起動の `Conn.transaction()` に黙って混ざるのを防ぐ。1 本の接続に `Conn` が複数かぶっても(同じ接続に 2 つのプロジェクトの口を置くとき)見張れるよう、接続ごとに全部の `Conn` を持つ。同期の書き込み自体を無くすのは、移し終えたとき(各ファイルの移行)。
 - **検査**(`src/db/no-raw-sql.test.ts`)。node:sqlite を直接 import しない。同期の `all / get / run / tx` を import できるのは、一覧(まだ移していないファイル)だけ。一覧は増やさず、移したら外す。移したファイルに方言に依る生 SQL を書かない。
 - **project_id=0 の埋め直し**。版 20 のあとに 0 で入った行は、`Project` を開くたびに埋める(ADR-0039)。ここで足すものは無い。
 

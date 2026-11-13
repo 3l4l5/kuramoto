@@ -7,6 +7,7 @@ export type Db = DatabaseSync;
 export type Params = Record<string, SQLInputValue> | SQLInputValue[];
 
 export type { Migration, MigrationContext } from "./migrate.js";
+import { syncWriteGuardOn } from "./guard.js";
 import { assertNotForeignAsyncTx } from "./tx.js";
 export { tx } from "./tx.js";
 
@@ -36,7 +37,7 @@ export function get<T>(db: Db, sql: string, params?: Params): T | undefined {
 }
 
 export function run(db: Db, sql: string, params?: Params): { changes: number; lastId: number } {
-  assertNotForeignAsyncTx(db, "run()");
+  if (syncWriteGuardOn()) assertNotForeignAsyncTx(db, "run()");
   const stmt = db.prepare(sql);
   const r = stmt.run(...(bind(params) as []));
   return { changes: Number(r.changes), lastId: Number(r.lastInsertRowid) };
