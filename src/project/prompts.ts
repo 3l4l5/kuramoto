@@ -75,7 +75,7 @@ function teamCiNote(p: Project, repo?: string): string {
   return `\nsubmit_pr のあと、Kuramoto がチームの CI(PR を最新の main と合わせて${cmds ? `、${cmds.map((c) => `\`${c}\``).join(" → ")} を流す` : "、lint・型・テストを流す"})で確かめ、通ったものだけをレビューに回します。報告の前に、手元で同じ確認を通しておいてください。`;
 }
 
-export function promptFor(p: Project, msg: MessageRow, ticket: TicketRow | null, ctx: { branch?: string; base?: string; repo?: string; prNumber?: number }): string {
+export async function promptFor(p: Project, msg: MessageRow, ticket: TicketRow | null, ctx: { branch?: string; base?: string; repo?: string; prNumber?: number }): Promise<string> {
   const base = `origin/${ctx.base ?? "main"}`;
   const payload = JSON.parse(msg.payload) as Record<string, unknown>;
   const notes = ticket ? p.notes(ticket.id) : [];
@@ -179,7 +179,7 @@ ${how}`;
     case "ask":
       return "";
     case "decide": {
-      const d = decision(p, Number(payload.decision_id));
+      const d = await decision(p, Number(payload.decision_id));
       const options = (JSON.parse(d.options) as DecisionOption[]).map((o, i) => `${i}. ${o.label}${i === d.recommended ? "(推奨)" : ""}`).join("\n");
       return `${head}\n\nチームから判断が上がりました。\n${d.question}\n選択肢:\n${options}\n推奨の理由: ${d.why}\n間違えると: ${d.impact}\n戻せるか: ${d.reversible ? "戻せる" : "戻せない"}\n\ndecide で決めるか、escalate_to_owner で責任者に上げてください。`;
     }

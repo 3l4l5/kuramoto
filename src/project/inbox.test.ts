@@ -58,7 +58,7 @@ describe("受信箱(Kysely・スコープつきの口)", () => {
 });
 
 describe("project_id の埋め直し", () => {
-  it("開くとき、残っている 0 の行をそのファイルのプロジェクトの id で埋める(seed の行・同期の書き込みの行)", () => {
+  it("開くとき、残っている 0 の行をそのファイルのプロジェクトの id で埋める(seed の行・同期の書き込みの行)", async () => {
     const path = join(mkdtempSync(join(tmpdir(), "kuramoto-fill-")), "project.sqlite");
     const first = new Project(path, clock()); // id を渡さない → 0 のまま
     expect(first.db.prepare("SELECT COUNT(*) AS n FROM members WHERE project_id = 0").get()).not.toMatchObject({ n: 0 });
@@ -68,13 +68,14 @@ describe("project_id の埋め直し", () => {
     expect(p.db.prepare("SELECT COUNT(*) AS n FROM settings WHERE project_id = 5").get()).not.toEqual({ n: 0 });
   });
 
-  it("まだ同期の書き方で入る行(project_id を書かない INSERT)も、次に開くときに埋まる。ほかのプロジェクトの行は触らない", () => {
+  it("まだ同期の書き方で入る行(project_id を書かない INSERT)も、次に開くときに埋まる。ほかのプロジェクトの行は触らない", async () => {
     const path = join(mkdtempSync(join(tmpdir(), "kuramoto-fill-")), "project.sqlite");
     const first = new Project(path, clock(), 5);
-    // 同期の書き込み(版 21 のあとも、project_id を書かない)。DEFAULT 0 で入る
+    // 同期の書き込み(版 21 のあとも、project_id を書かない)。DEFAULT 0 で入るが、この接続の間は、入れた行をすぐこのプロジェクトの id に直す(移した側が見失わないため)
     first.db.prepare("INSERT INTO lead_messages (who, body, at) VALUES ('owner', 'hi', '')").run();
     first.db.prepare("INSERT INTO lead_messages (who, body, at, project_id) VALUES ('owner', 'other', '', 9)").run();
-    expect(first.db.prepare("SELECT COUNT(*) AS n FROM lead_messages WHERE project_id = 0").get()).toEqual({ n: 1 });
+    expect(first.db.prepare("SELECT COUNT(*) AS n FROM lead_messages WHERE project_id = 0").get()).toEqual({ n: 0 });
+    expect(first.db.prepare("SELECT body FROM lead_messages WHERE project_id = 5").all()).toEqual([{ body: "hi" }]);
     first.close();
     const p = new Project(path, clock(), 5);
     expect(p.db.prepare("SELECT body FROM lead_messages WHERE project_id = 5").all()).toEqual([{ body: "hi" }]);

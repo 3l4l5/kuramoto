@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
+import { sql } from "kysely";
 import { isExhausted } from "./budget.js";
 import { iso } from "../clock.js";
-import { all, get, run, tx } from "../db/sqlite.js";
+import { dialect } from "../db/dialect/index.js";
 import { isPreDev, nextStage, pipelineOf } from "../domain/formation.js";
 import { flowFor, isTicketKind, KIND_LABEL, type TicketKind } from "../domain/flow.js";
 import { WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
@@ -117,11 +118,11 @@ export function advance(p: Project, ticket: TicketRow, from: WorkRole, opts: { p
 }
 
 /** 責任者がチケットの種類を変える。変えたことをやりとりに残し、次の工程から新しい種類の流れで進む(今いる工程はそのまま)。 */
-export function setTicketKind(p: Project, ticketId: number, kind: unknown, by = "owner"): TicketRow {
+export async function setTicketKind(p: Project, ticketId: number, kind: unknown, by = "owner"): Promise<TicketRow> {
   if (!isTicketKind(kind)) throw new Error(`知らないチケットの種類です: ${String(kind)}`);
   const t = p.ticket(ticketId);
   if (t.kind === kind) return t;
-  run(p.db, "UPDATE tickets SET kind = ? WHERE id = ?", [kind, ticketId]);
+  await p.pdb.update("tickets", { kind }).where("id", "=", ticketId).execute();
   p.event(by, "kind_changed", ticketId, { from: t.kind, to: kind, fromLabel: KIND_LABEL[t.kind] ?? t.kind, toLabel: KIND_LABEL[kind] });
   return p.ticket(ticketId);
 }
@@ -130,24 +131,24 @@ export function setTicketKind(p: Project, ticketId: number, kind: unknown, by = 
  * 起動 1 回の報告を工程に反映する。
  * @returns 報告が足りないなど、起動を失敗として扱うべきときはその理由
  */
-export function applyReport(p: Project, ctx: { msg: MessageRow; runId: number; memberId: number }, report: RunReport): string | undefined {
+export async function applyReport(p: Project, ctx: { msg: MessageRow; runId: number; memberId: number }, report: RunReport): Promise<string | undefined> {
   const { msg } = ctx;
   if (msg.ticket_id === null) return undefined;
   const ticket = p.ticket(msg.ticket_id);
 
-  return tx(p.db, () => {
+  return p.pdb.transaction(async () => {
     switch (msg.kind) {
       case "implement":
       case "fix":
       case "answer":
-        return applyDev(p, ticket, ctx.memberId, report, JSON.parse(msg.payload) as { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string; rules?: unknown });
+        return await applyDev(p, ticket, ctx.memberId, report, JSON.parse(msg.payload) as { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string; rules?: unknown });
       case "review":
       case "sec":
       case "qa":
         if ((JSON.parse(msg.payload) as { preDev?: boolean }).preDev) return applyHandoff(p, ticket, REVIEW_KINDS[msg.kind]!, report);
-        return applyReview(p, ticket, REVIEW_KINDS[msg.kind]!, ctx.runId, report);
+        return await applyReview(p, ticket, REVIEW_KINDS[msg.kind]!, ctx.runId, report);
       case "decide":
-        return applyLead(p, ticket, JSON.parse(msg.payload) as { decision_id: number }, report);
+        return await applyLead(p, ticket, JSON.parse(msg.payload) as { decision_id: number }, report);
       case "plan":
       case "chat":
       case "triage":
@@ -166,17 +167,17 @@ function applyHandoff(p: Project, ticket: TicketRow, role: WorkRole, report: Run
   return undefined;
 }
 
-function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunReport, payload: { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string; rules?: unknown } = {}): string | undefined {
+async function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunReport, payload: { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string; rules?: unknown } = {}): Promise<string | undefined> {
   if (ticket.owner_member_id === null) {
-    run(p.db, "UPDATE tickets SET owner_member_id = ? WHERE id = ?", [memberId, ticket.id]);
+    await p.pdb.update("tickets", { owner_member_id: memberId }).where("id", "=", ticket.id).execute();
     ticket = p.ticket(ticket.id);
   }
   if (report.question) {
-    raiseToLead(p, ticket, report.question);
+    await raiseToLead(p, ticket, report.question);
     return undefined;
   }
   if (report.alreadyDone) {
-    closeAlreadyDone(p, ticket, { ...report.alreadyDone, by: p.member(memberId).name });
+    await closeAlreadyDone(p, ticket, { ...report.alreadyDone, by: p.member(memberId).name });
     return undefined;
   }
   if (!report.pr) return "submit_pr が呼ばれませんでした";
@@ -187,14 +188,9 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
     return `開発ルールに反したコミット(${payload.sha.slice(0, 7)})から何も変わっていません。ルールを守るように直してから出し直してください`;
   const repo = p.repos().find((r) => r.full_name === report.pr!.repo);
   if (!repo) return `登録されていないリポジトリです: ${report.pr.repo}`;
-  run(
-    p.db,
-    `INSERT INTO pull_requests (ticket_id, repo_id, number, head) VALUES (?, ?, ?, ?)
-     ON CONFLICT(ticket_id, repo_id) DO UPDATE SET number = excluded.number, head = excluded.head`,
-    [ticket.id, repo.id, report.pr.number, report.pr.head],
-  );
+  await dialect.upsert(p.pdb.insert("pull_requests", { ticket_id: ticket.id, repo_id: repo.id, number: report.pr.number, head: report.pr.head }), ["ticket_id", "repo_id"], ["number", "head"]).execute();
   // 開発を通った。これより前の工程には戻らない
-  run(p.db, "UPDATE tickets SET dev_done = 1 WHERE id = ?", [ticket.id]);
+  await p.pdb.update("tickets", { dev_done: 1 }).where("id", "=", ticket.id).execute();
   ticket = p.ticket(ticket.id);
   p.event(p.member(memberId).name, "pr_submitted", ticket.id, { number: report.pr.number, repo: report.pr.repo });
   if (report.pr.sha) p.setSetting(`pr_sha:${ticket.id}`, report.pr.sha);
@@ -221,14 +217,19 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
     return undefined;
   }
   // 衝突の解き方で行き先を分ける(ADR-0013): 機械的に解けたら merge 待ちへ、ロジックに手を入れたら確認をやり直す。
-  const conflict = get<{ id: number }>(
-    p.db,
-    `SELECT c.id FROM conflicts c JOIN pull_requests pr ON pr.id = c.pr_id WHERE pr.ticket_id = ? AND c.resolved_at IS NULL ORDER BY c.id DESC LIMIT 1`,
-    [ticket.id],
-  );
+  const conflict = await p.pdb.k
+    .selectFrom("conflicts as c")
+    .innerJoin("pull_requests as pr", "pr.id", "c.pr_id")
+    .select("c.id")
+    .where("c.project_id", "=", p.pdb.projectId)
+    .where("pr.ticket_id", "=", ticket.id)
+    .where("c.resolved_at", "is", null)
+    .orderBy("c.id", "desc")
+    .limit(1)
+    .executeTakeFirst();
   if (conflict) {
     const resolution = report.pr.conflictResolution ?? "logic";
-    run(p.db, "UPDATE conflicts SET resolution = ?, resolved_at = ? WHERE id = ?", [resolution, p.now(), conflict.id]);
+    await p.pdb.update("conflicts", { resolution, resolved_at: p.now() }).where("id", "=", conflict.id).execute();
     if (resolution === "mechanical") {
       enterStage(p, ticket, "merge");
       return undefined;
@@ -261,7 +262,7 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
   return undefined;
 }
 
-function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: number, report: RunReport): string | undefined {
+async function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: number, report: RunReport): Promise<string | undefined> {
   if (!report.review) return "submit_review が呼ばれませんでした";
   const { resolutions } = report.review;
   // 「レビューで指摘」の開発ルール(R15)の違反は、最初の確認の工程が、まだ指摘にしていないものを指摘に足す
@@ -270,7 +271,7 @@ function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: numbe
   const ruleFindings = role === first ? reviewFindingsFor(p, ticket.id) : [];
   for (const f of ruleFindings) markListed(p, f.violationId);
   const findings: Finding[] = [...report.review.findings, ...ruleFindings.map(({ violationId: _, ...f }) => f)];
-  const reviewer = get<{ member_id: number }>(p.db, "SELECT member_id FROM runs WHERE id = ?", [runId])!.member_id;
+  const reviewer = (await p.pdb.from("runs").select("member_id").where("id", "=", runId).executeTakeFirstOrThrow()).member_id;
   const who = { memberId: reviewer, role };
   const round = ticket.rounds + 1;
 
@@ -290,16 +291,9 @@ function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: numbe
   }
   const blocking = findings.some((f) => f.blocking !== false) || resolutions.some((r) => r.result === "reopen" && prior.has(r.findingId));
   const verdict = blocking ? "changes" : "approve";
-  const reviewId = run(p.db, "INSERT INTO reviews (ticket_id, role, round, run_id, verdict, created_at) VALUES (?, ?, ?, ?, ?, ?)", [
-    ticket.id,
-    role,
-    round,
-    runId,
-    verdict,
-    p.now(),
-  ]).lastId;
-  recordFindings(p, ticket.id, role, reviewId, findings, who);
-  createFollowups(p, ticket, role, report.review.followups ?? []);
+  const reviewId = await dialect.insertedId(p.pdb.insert("reviews", { ticket_id: ticket.id, role, round, run_id: runId, verdict, created_at: p.now() }));
+  await recordFindings(p, ticket.id, role, reviewId, findings, who);
+  await createFollowups(p, ticket, role, report.review.followups ?? []);
 
   if (verdict === "approve") {
     p.event(role, "approved", ticket.id, { round });
@@ -309,7 +303,7 @@ function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: numbe
     return undefined;
   }
 
-  run(p.db, "UPDATE tickets SET rounds = rounds + 1 WHERE id = ?", [ticket.id]);
+  await p.pdb.update("tickets", { rounds: sql`rounds + 1` }).where("id", "=", ticket.id).execute();
   ticket = p.ticket(ticket.id);
   p.event(role, "changes_requested", ticket.id, { round: ticket.rounds, findings: findings.length, reopened: resolutions.filter((r) => r.result === "reopen").length });
 
@@ -321,7 +315,7 @@ function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: numbe
       const reSaid = resolutions.find((r) => r.findingId === id)?.comment ?? "";
       return `指摘 ${id}: ${t.body}\n  開発: ${devSaid}\n  ${ROLE_TEXT[role]}: ${reSaid || "(まだ直っていない)"}`;
     });
-    raiseToLead(
+    await raiseToLead(
       p,
       ticket,
       {
@@ -343,7 +337,7 @@ function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: numbe
 
   const limit = Math.max(1, Number(p.policyOption("review", "escalateAfterRounds", 2)));
   if (ticket.rounds % limit === 0) {
-    raiseToLead(p, ticket, {
+    await raiseToLead(p, ticket, {
       context: `チケット #${ticket.number}「${ticket.title}」のレビュー`,
       question: `レビューの往復が ${ticket.rounds} 回に達しました。どう進めますか?`,
       options: ["指摘を直して続ける", "今の形で通す", "保留して責任者に相談する"],
@@ -371,13 +365,13 @@ const ROLE_TEXT: Record<string, string> = { review: "レビュー", sec: "セキ
  * - 無ければ控えておき、この PR が merge されたとき(flushFollowups)にまとめて 1 回だけ別チケットにする。
  *   確認をやり直すたびに同じ指摘が出ても、merge までに 1 つにまとまる(同じタイトルは 1 つにする)。
  */
-function createFollowups(p: Project, from: TicketRow, role: WorkRole, followups: Followup[]): void {
+async function createFollowups(p: Project, from: TicketRow, role: WorkRole, followups: Followup[]): Promise<void> {
   const key = `pending_followups:${from.id}`;
   const pending = JSON.parse(p.setting(key) || "[]") as (Followup & { role: string })[];
   for (const f of followups) {
     const title = f.title.trim();
     if (!title) continue;
-    const existing = f.existing ? get<TicketRow>(p.db, "SELECT * FROM tickets WHERE number = ? AND stage NOT IN ('done','dropped')", [f.existing]) : undefined;
+    const existing = f.existing ? ((await p.pdb.from("tickets").where("number", "=", f.existing).where("stage", "not in", ["done", "dropped"]).executeTakeFirst()) as TicketRow | undefined) : undefined;
     if (existing && existing.id !== from.id) {
       p.addNote(existing.id, `【#${from.number} の${ROLE_TEXT[role] ?? role}から】${title}\n${f.body.trim()}`, "lead");
       p.event(role, "followup_noted", existing.id, { number: existing.number, from: from.number, title });
@@ -390,16 +384,16 @@ function createFollowups(p: Project, from: TicketRow, role: WorkRole, followups:
 }
 
 /** merge されたチケットの、控えておいた followups を別チケットにする。同じタイトルのチケットが既にあれば作らない。 */
-export function flushFollowups(p: Project, from: TicketRow): void {
+export async function flushFollowups(p: Project, from: TicketRow): Promise<void> {
   const key = `pending_followups:${from.id}`;
   const pending = JSON.parse(p.setting(key) || "[]") as (Followup & { role: string })[];
   p.setSetting(key, "[]");
   for (const f of pending) {
     const title = f.title;
     const role = f.role;
-    if (get(p.db, "SELECT 1 AS x FROM tickets WHERE title = ?", [title])) continue;
-    const refs = JSON.parse((get<{ plan_refs: string }>(p.db, "SELECT plan_refs FROM tickets WHERE id = ?", [from.id])?.plan_refs ?? "{}")) as { repo?: string };
-    const t = createTicket(p, {
+    if (await p.pdb.from("tickets").select("id").where("title", "=", title).executeTakeFirst()) continue;
+    const refs = JSON.parse((await p.pdb.from("tickets").select("plan_refs").where("id", "=", from.id).executeTakeFirst())?.plan_refs ?? "{}") as { repo?: string };
+    const t = await createTicket(p, {
       title,
       body: `${f.body.trim()}\n\n---\n#${from.number}「${from.title}」の${ROLE_TEXT[role] ?? role}で見つかった、チケットの範囲外のこと。`,
       ...(refs.repo ? { planRefs: { repo: refs.repo, followupOf: from.number } } : { planRefs: { followupOf: from.number } }),
@@ -411,24 +405,33 @@ export function flushFollowups(p: Project, from: TicketRow): void {
 /**
  * 指摘を記録する。前の周回で開いていた指摘は「直した」にし、同じ指紋の指摘がまた出たら「再発」にする。
  */
-function recordFindings(p: Project, ticketId: number, role: string, reviewId: number, findings: Finding[], who: { memberId: number; role: string }): void {
+async function recordFindings(p: Project, ticketId: number, role: string, reviewId: number, findings: Finding[], who: { memberId: number; role: string }): Promise<void> {
   // 前に直したはずの指摘と同じものがまた出たら「再発」
-  const seen = new Set(
-    all<{ fingerprint: string }>(p.db, "SELECT f.fingerprint FROM findings f JOIN reviews r ON r.id = f.review_id WHERE r.ticket_id = ? AND r.role = ? AND r.id <> ?", [ticketId, role, reviewId]).map((f) => f.fingerprint),
-  );
+  const prior = await p.pdb.k
+    .selectFrom("findings as f")
+    .innerJoin("reviews as r", "r.id", "f.review_id")
+    .select("f.fingerprint")
+    .where("f.project_id", "=", p.pdb.projectId)
+    .where("r.ticket_id", "=", ticketId)
+    .where("r.role", "=", role)
+    .where("r.id", "<>", reviewId)
+    .execute();
+  const seen = new Set(prior.map((f) => f.fingerprint));
   for (const f of findings) {
     const fp = fingerprint(f);
-    const id = run(p.db, "INSERT INTO findings (review_id, category, severity, path, line, body, fingerprint, status, blocking) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-      reviewId,
-      f.category,
-      f.severity,
-      f.path ?? null,
-      f.line ?? null,
-      f.body,
-      fp,
-      seen.has(fp) ? "recurred" : "open",
-      f.blocking === false ? 0 : 1,
-    ]).lastId;
+    const id = await dialect.insertedId(
+      p.pdb.insert("findings", {
+        review_id: reviewId,
+        category: f.category,
+        severity: f.severity,
+        path: f.path ?? null,
+        line: f.line ?? null,
+        body: f.body,
+        fingerprint: fp,
+        status: seen.has(fp) ? "recurred" : "open",
+        blocking: f.blocking === false ? 0 : 1,
+      }),
+    );
     comment(p, id, who, "raised", f.body);
   }
 }
@@ -441,19 +444,26 @@ export function fingerprint(f: Pick<Finding, "category" | "path" | "body">): str
 
 // ---- 判断(ADR-0006) ----
 
-function insertDecision(p: Project, ticket: TicketRow, q: Question, opts: { escalated: boolean; options?: DecisionOption[]; noDeadline?: boolean }): number {
+async function insertDecision(p: Project, ticket: TicketRow, q: Question, opts: { escalated: boolean; options?: DecisionOption[]; noDeadline?: boolean }): Promise<number> {
   const options: DecisionOption[] = opts.options ?? q.options.map((label) => ({ label }));
   const deadline = opts.escalated && !opts.noDeadline ? iso(new Date(p.clock.now().getTime() + p.settingNumber("decision_timeout_sec", 3600) * 1000)) : null;
-  return run(
-    p.db,
-    `INSERT INTO decisions (ticket_id, question, options, recommended, why, impact, reversible, escalated, deadline_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [ticket.id, `${q.context}\n${q.question}`, JSON.stringify(options), q.recommended, q.why, q.impact, q.reversible ? 1 : 0, opts.escalated ? 1 : 0, deadline],
-  ).lastId;
+  return dialect.insertedId(
+    p.pdb.insert("decisions", {
+      ticket_id: ticket.id,
+      question: `${q.context}\n${q.question}`,
+      options: JSON.stringify(options),
+      recommended: q.recommended,
+      why: q.why,
+      impact: q.impact,
+      reversible: q.reversible ? 1 : 0,
+      escalated: opts.escalated ? 1 : 0,
+      deadline_at: deadline,
+    }),
+  );
 }
 
-function raiseToLead(p: Project, ticket: TicketRow, q: Question, options: DecisionOption[] = q.options.map((label) => ({ label }))): void {
-  const id = insertDecision(p, ticket, q, { escalated: false, options });
+async function raiseToLead(p: Project, ticket: TicketRow, q: Question, options: DecisionOption[] = q.options.map((label) => ({ label }))): Promise<void> {
+  const id = await insertDecision(p, ticket, q, { escalated: false, options });
   p.setStage(ticket.id, "decision");
   p.event("system", "decision_raised", ticket.id, { decision_id: id });
   send(p, { ticketId: ticket.id, toRole: "lead", kind: "decide", payload: { decision_id: id } });
@@ -463,51 +473,54 @@ function raiseToLead(p: Project, ticket: TicketRow, q: Question, options: Decisi
  * リーダーを通さず責任者に直接上げる(予算切れ・保留など、責任者にしか解けないとき)。
  * noDeadline なら期限を付けない(期限切れで勝手に推奨を選ばない。保留に使う)。
  */
-export function raiseToOwner(p: Project, ticketId: number, q: Omit<Question, "options">, options: DecisionOption[], opts: { noDeadline?: boolean } = {}): number {
+export async function raiseToOwner(p: Project, ticketId: number, q: Omit<Question, "options">, options: DecisionOption[], opts: { noDeadline?: boolean } = {}): Promise<number> {
   const ticket = p.ticket(ticketId);
-  const id = insertDecision(p, ticket, { ...q, options: options.map((o) => o.label) }, { escalated: true, options, ...opts });
+  const id = await insertDecision(p, ticket, { ...q, options: options.map((o) => o.label) }, { escalated: true, options, ...opts });
   p.setStage(ticket.id, "decision");
   p.event("system", "escalated", ticket.id, { decision_id: id });
   return id;
 }
 
-function applyLead(p: Project, ticket: TicketRow, payload: { decision_id: number }, report: RunReport): string | undefined {
-  const d = decision(p, payload.decision_id);
+async function applyLead(p: Project, ticket: TicketRow, payload: { decision_id: number }, report: RunReport): Promise<string | undefined> {
+  const d = await decision(p, payload.decision_id);
   if (report.leadDecision && !report.escalate) {
     const options = JSON.parse(d.options) as DecisionOption[];
     if (report.leadDecision.choice >= options.length) return "decide の choice が選択肢の範囲外です";
     if (!d.reversible) {
       // 戻せない判断は必ず責任者へ(ADR-0006)。リーダーが決めようとしても上げる。
-      escalate(p, d, "戻せない判断のため");
+      await escalate(p, d, "戻せない判断のため");
       return undefined;
     }
     const { choice, reason, note } = report.leadDecision;
     if (note?.trim()) p.addNote(ticket.id, note.trim(), "lead");
-    resolve(p, d, choice, "lead");
+    await resolve(p, d, choice, "lead");
     p.event("lead", "decided_by_recommendation", ticket.id, { decision_id: d.id, choice, reason });
     // 止めずに進め、責任者には何をどう決めたかを報告する(違えばあとから指示できる)
-    run(p.db, "INSERT INTO lead_messages (who, body, at) VALUES ('lead', ?, ?)", [
-      `【#${ticket.number} の判断】「${d.question.split("\n").pop()}」は「${options[choice]!.label}」に決めました。\n理由: ${reason}${note?.trim() ? `\n担当への指示: ${note.trim()}` : ""}\n違えば、チャットかチケットのメモで教えてください。`,
-      p.now(),
-    ]);
+    await p.pdb
+      .insert("lead_messages", {
+        who: "lead",
+        body: `【#${ticket.number} の判断】「${d.question.split("\n").pop()}」は「${options[choice]!.label}」に決めました。\n理由: ${reason}${note?.trim() ? `\n担当への指示: ${note.trim()}` : ""}\n違えば、チャットかチケットのメモで教えてください。`,
+        at: p.now(),
+      })
+      .execute();
     return undefined;
   }
   if (report.escalate) {
-    escalate(p, d, report.escalate.reason);
+    await escalate(p, d, report.escalate.reason);
     return undefined;
   }
   return "decide も escalate_to_owner も呼ばれませんでした";
 }
 
-function escalate(p: Project, d: DecisionRow, reason: string): void {
+async function escalate(p: Project, d: DecisionRow, reason: string): Promise<void> {
   const deadline = iso(new Date(p.clock.now().getTime() + p.settingNumber("decision_timeout_sec", 3600) * 1000));
   // リーダーが責任者に上げた理由・聞きたいことは、判断のカードに出す
-  run(p.db, "UPDATE decisions SET escalated = 1, deadline_at = ?, lead_note = ? WHERE id = ?", [deadline, reason.trim() || null, d.id]);
+  await p.pdb.update("decisions", { escalated: 1, deadline_at: deadline, lead_note: reason.trim() || null }).where("id", "=", d.id).execute();
   p.event("lead", "escalated", d.ticket_id, { decision_id: d.id, reason });
 }
 
-export function decision(p: Project, id: number): DecisionRow {
-  const d = get<DecisionRow>(p.db, "SELECT * FROM decisions WHERE id = ?", [id]);
+export async function decision(p: Project, id: number): Promise<DecisionRow> {
+  const d = (await p.pdb.from("decisions").where("id", "=", id).executeTakeFirst()) as DecisionRow | undefined;
   if (!d) throw new Error(`判断 ${id} がありません`);
   return d;
 }
@@ -517,52 +530,52 @@ export function decision(p: Project, id: number): DecisionRow {
  * 責任者が画面で答えた。note を書いたら、チケットのメモとして残し、次に動く担当(持ち主・レビュアー)が読む。
  * リーダーの問いへの答え(版を決める・線引きをする)は、ここに書く。
  */
-export function answerDecision(p: Project, id: number, choice: number, note?: string): void {
-  tx(p.db, () => {
-    const d = decision(p, id);
+export async function answerDecision(p: Project, id: number, choice: number, note?: string): Promise<void> {
+  await p.pdb.transaction(async () => {
+    const d = await decision(p, id);
     if (d.decided_at) throw new Error("この判断はもう決まっています");
     if (!d.escalated) throw new Error("この判断はまだリーダーが見ています");
     if (choice < 0 || choice >= (JSON.parse(d.options) as unknown[]).length) throw new Error("選択肢の範囲外です");
     if (note?.trim()) p.addNote(d.ticket_id, note.trim(), "owner");
-    resolve(p, d, choice, "owner");
+    await resolve(p, d, choice, "owner");
   });
 }
 
 /** 保留を解いて、止まったところから続ける(保留の原因が無くなったと Kuramoto が確かめたとき)。 */
-export function resumeHold(p: Project, id: number, by: "owner" | "lead"): void {
-  tx(p.db, () => {
-    const d = decision(p, id);
+export async function resumeHold(p: Project, id: number, by: "owner" | "lead"): Promise<void> {
+  await p.pdb.transaction(async () => {
+    const d = await decision(p, id);
     if (d.decided_at) return;
     const i = (JSON.parse(d.options) as DecisionOption[]).findIndex((o) => o.action === "resume");
-    if (i >= 0) resolve(p, d, i, by);
+    if (i >= 0) await resolve(p, d, i, by);
   });
 }
 
 /** 期限を過ぎた判断を推奨で決める。 */
-export function expireDecisions(p: Project): number {
-  const due = all<DecisionRow>(p.db, "SELECT * FROM decisions WHERE escalated = 1 AND decided_at IS NULL AND deadline_at <= ?", [p.now()]);
+export async function expireDecisions(p: Project): Promise<number> {
+  const due = (await p.pdb.from("decisions").where("escalated", "=", 1).where("decided_at", "is", null).where("deadline_at", "<=", p.now()).execute()) as DecisionRow[];
   let n = 0;
   for (const d of due) {
     const options = JSON.parse(d.options) as DecisionOption[];
     // チケットをやめる・保留を解くのは、責任者が選んだときだけ。期限で勝手に選ばず、期限を外して待つ
     if (["drop", "resume", "unlimited", "continue"].includes(options[d.recommended]?.action ?? "")) {
-      run(p.db, "UPDATE decisions SET deadline_at = NULL WHERE id = ?", [d.id]);
+      await p.pdb.update("decisions", { deadline_at: null }).where("id", "=", d.id).execute();
       continue;
     }
-    tx(p.db, () => resolve(p, d, d.recommended, "timeout"));
+    await p.pdb.transaction(() => resolve(p, d, d.recommended, "timeout"));
     n++;
   }
   return n;
 }
 
-function resolve(p: Project, d: DecisionRow, choice: number, by: "owner" | "lead" | "timeout"): void {
-  run(p.db, "UPDATE decisions SET decided_by = ?, choice = ?, decided_at = ? WHERE id = ?", [by, choice, p.now(), d.id]);
+async function resolve(p: Project, d: DecisionRow, choice: number, by: "owner" | "lead" | "timeout"): Promise<void> {
+  await p.pdb.update("decisions", { decided_by: by, choice, decided_at: p.now() }).where("id", "=", d.id).execute();
   const option = (JSON.parse(d.options) as DecisionOption[])[choice]!;
   const ticket = p.ticket(d.ticket_id);
   p.event(by, "decided", ticket.id, { decision_id: d.id, choice, label: option.label });
   if (option.action === "drop") {
     p.setStage(ticket.id, "dropped");
-    run(p.db, "UPDATE tickets SET dropped_by = ?, dropped_reason = ?, dropped_at = ? WHERE id = ?", [by === "lead" ? "lead" : "owner", `判断「${d.question.split("\n").pop()}」で「${option.label}」を選んだため`, p.now(), ticket.id]);
+    await p.pdb.update("tickets", { dropped_by: by === "lead" ? "lead" : "owner", dropped_reason: `判断「${d.question.split("\n").pop()}」で「${option.label}」を選んだため`, dropped_at: p.now() }).where("id", "=", ticket.id).execute();
     return;
   }
   if (option.action === "pass" && option.from) {
@@ -584,7 +597,7 @@ function resolve(p: Project, d: DecisionRow, choice: number, by: "owner" | "lead
     else advance(p, ticket, option.from);
     return;
   }
-  if (option.action === "continue" && ticketExhausted(p, ticket.id)) {
+  if (option.action === "continue" && (await ticketExhausted(p, ticket.id))) {
     // 既定の額(無制限なら、このチケットの額)をもう 1 枚分足す
     const key = `ticket_budget_extra_usd:${ticket.id}`;
     const step = defaultTicketBudgetUsd(p) ?? ticketBaseBudgetUsd(p, ticket.id) ?? 5;
@@ -592,12 +605,12 @@ function resolve(p: Project, d: DecisionRow, choice: number, by: "owner" | "lead
   }
   if (option.action === "unlimited") {
     p.setSetting(`ticket_budget_usd:${ticket.id}`, "unlimited");
-    run(p.db, "DELETE FROM settings WHERE key = ?", [`ticket_budget_extra_usd:${ticket.id}`]);
+    await p.pdb.deleteFrom("settings").where("key", "=", `ticket_budget_extra_usd:${ticket.id}`).execute();
     p.event(by, "budget_set", ticket.id, { usd: null, own: true });
   }
   if (option.action === "hold") {
     const from = option.from ?? "review";
-    holdTicket(p, ticket.id, {
+    await holdTicket(p, ticket.id, {
       reason: d.question,
       ownerAction: "リーダーが責任者に相談したいと判断しました。チケットの「やりとり」を見て、方針をチケットのメモに書いてから再開してください。",
       resume: { toRole: "dev", toMemberId: ticket.owner_member_id, kind: ticket.owner_member_id ? "fix" : "implement", payload: { from } },
@@ -621,8 +634,8 @@ function resolve(p: Project, d: DecisionRow, choice: number, by: "owner" | "lead
 }
 
 /** 責任者の対応の一覧(判断カード)。期限の近い順。 */
-export function pendingOwnerDecisions(p: Project): DecisionRow[] {
-  return all(p.db, "SELECT * FROM decisions WHERE escalated = 1 AND decided_at IS NULL ORDER BY deadline_at, id");
+export async function pendingOwnerDecisions(p: Project): Promise<DecisionRow[]> {
+  return (await p.pdb.from("decisions").where("escalated", "=", 1).where("decided_at", "is", null).orderBy("deadline_at").orderBy("id").execute()) as DecisionRow[];
 }
 
 /**
@@ -653,8 +666,8 @@ export function setDefaultTicketBudget(p: Project, usd: number | null): void {
 }
 
 /** チケットの予算を使い切っているか(残りが少なすぎて起動しても進まないときも含む)。 */
-export function ticketExhausted(p: Project, ticketId: number): boolean {
-  return isExhausted(ticketBudgetUsd(p, ticketId), ticketSpentUsd(p, ticketId));
+export async function ticketExhausted(p: Project, ticketId: number): Promise<boolean> {
+  return isExhausted(ticketBudgetUsd(p, ticketId), await ticketSpentUsd(p, ticketId));
 }
 
 function ticketBaseBudgetUsd(p: Project, ticketId: number): number | null {
@@ -671,35 +684,40 @@ export function hasOwnBudget(p: Project, ticketId: number): boolean {
  * チケットの予算を決める(null ならプロジェクトの既定に戻す)。決めた額がそのまま予算になるよう、足した分は消す。
  * 予算切れで止まっていて、新しい予算が使った額を上回るなら、止めた判断を「続ける」で閉じて仕事に戻す。
  */
-export function setTicketBudget(p: Project, ticketId: number, usd: number | null | "unlimited"): void {
+export async function setTicketBudget(p: Project, ticketId: number, usd: number | null | "unlimited"): Promise<void> {
   if (usd !== null && usd !== "unlimited" && !(Number.isFinite(usd) && usd > 0)) throw new Error("予算は 0 より大きい金額にしてください");
   const ticket = p.ticket(ticketId);
   if (!ticket) throw new Error(`チケット ${ticketId} はありません`);
-  tx(p.db, () => {
-    if (usd === null) run(p.db, "DELETE FROM settings WHERE key = ?", [`ticket_budget_usd:${ticketId}`]);
+  await p.pdb.transaction(async () => {
+    if (usd === null) await p.pdb.deleteFrom("settings").where("key", "=", `ticket_budget_usd:${ticketId}`).execute();
     else p.setSetting(`ticket_budget_usd:${ticketId}`, String(usd));
-    run(p.db, "DELETE FROM settings WHERE key = ?", [`ticket_budget_extra_usd:${ticketId}`]);
+    await p.pdb.deleteFrom("settings").where("key", "=", `ticket_budget_extra_usd:${ticketId}`).execute();
     p.event("owner", "budget_set", ticketId, { usd: ticketBudgetUsd(p, ticketId), own: usd !== null });
   });
-  if (ticketExhausted(p, ticketId)) return;
-  const stopped = all<DecisionRow>(p.db, "SELECT * FROM decisions WHERE ticket_id = ? AND decided_at IS NULL", [ticketId]).find((d) =>
-    (JSON.parse(d.options) as DecisionOption[]).some((o) => o.action === "continue"),
-  );
+  if (await ticketExhausted(p, ticketId)) return;
+  const open = (await p.pdb.from("decisions").where("ticket_id", "=", ticketId).where("decided_at", "is", null).execute()) as DecisionRow[];
+  const stopped = open.find((d) => (JSON.parse(d.options) as DecisionOption[]).some((o) => o.action === "continue"));
   if (!stopped) return;
   const options = JSON.parse(stopped.options) as DecisionOption[];
-  tx(p.db, () => resolve(p, stopped, options.findIndex((o) => o.action === "continue"), "owner"));
+  await p.pdb.transaction(() => resolve(p, stopped, options.findIndex((o) => o.action === "continue"), "owner"));
 }
 
-export function ticketSpentUsd(p: Project, ticketId: number): number {
-  return get<{ s: number | null }>(p.db, "SELECT SUM(cost_usd) AS s FROM runs WHERE COALESCE(ticket_id, about_ticket_id) = ?", [ticketId])?.s ?? 0;
+export async function ticketSpentUsd(p: Project, ticketId: number): Promise<number> {
+  const row = await p.pdb
+    .from("runs")
+    .clearSelect()
+    .select((eb) => eb.fn.sum<number | string | null>("cost_usd").as("s"))
+    .where((eb) => eb.fn.coalesce("ticket_id", "about_ticket_id"), "=", ticketId)
+    .executeTakeFirst();
+  return Number(row?.s ?? 0);
 }
 
 /** チケットを作り、開発の受信箱に入れる。 */
-export function createTicket(p: Project, t: Parameters<Project["addTicket"]>[0]): TicketRow {
-  return tx(p.db, () => {
+export async function createTicket(p: Project, t: Parameters<Project["addTicket"]>[0]): Promise<TicketRow> {
+  return p.pdb.transaction(async () => {
     const ticket = p.addTicket(t);
     // リーダーの交通整理を待つ(交通整理をしない設定なら、そのまま取られる)
-    run(p.db, "UPDATE tickets SET triaged = 0 WHERE id = ?", [ticket.id]);
+    await p.pdb.update("tickets", { triaged: 0 }).where("id", "=", ticket.id).execute();
     // 種類の流れの先頭から始める(開発より前の工程があれば、そこから)
     enterStage(p, ticket, firstStage(p, ticket));
     return p.ticket(ticket.id);
@@ -725,14 +743,14 @@ export function resumeWork(p: Project, ticket: TicketRow, m: ResumeMessage): voi
  * コミットが main に入っていることは、呼ぶ前に Kuramoto が確かめておく(Workspace.landed)。
  * 待っている判断と仕事を片付け、チケットを完了にする。後に待っていたチケットはそのまま動き出す。
  */
-export function closeAlreadyDone(p: Project, ticket: TicketRow, a: { commit: string; reason: string; by: string }): void {
-  tx(p.db, () => {
-    run(p.db, "UPDATE decisions SET decided_by = 'lead', decided_at = ? WHERE ticket_id = ? AND decided_at IS NULL", [p.now(), ticket.id]);
-    run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ? AND status = 'pending'", [ticket.id]);
+export async function closeAlreadyDone(p: Project, ticket: TicketRow, a: { commit: string; reason: string; by: string }): Promise<void> {
+  await p.pdb.transaction(async () => {
+    await p.pdb.update("decisions", { decided_by: "lead", decided_at: p.now() }).where("ticket_id", "=", ticket.id).where("decided_at", "is", null).execute();
+    await p.pdb.update("messages", { status: "done" }).where("ticket_id", "=", ticket.id).where("status", "=", "pending").execute();
     p.setStage(ticket.id, "merge"); // 完了の時刻を入れる
     p.setStage(ticket.id, "done");
     p.addNote(ticket.id, `【すでに main に入っていました】${a.reason}(コミット ${a.commit})`, "lead");
-    flushFollowups(p, ticket);
+    await flushFollowups(p, ticket);
     p.event(a.by, "already_done", ticket.id, { commit: a.commit, reason: a.reason });
   });
 }
@@ -742,15 +760,21 @@ export function closeAlreadyDone(p: Project, ticket: TicketRow, a: { commit: str
  * 待っている仕事と判断を閉じる。このチケットを待っていた後のチケットは、残す方(sameAs)があればそちらを待ち、無ければ待つのをやめる。
  * 開いている PR を閉じるのは呼ぶ側(外の操作なので)。起動中でないことも呼ぶ側で確かめる。
  */
-export function dropTicket(p: Project, ticketId: number, d: { by: "lead" | "owner"; reason: string; sameAs?: TicketRow }): void {
+export async function dropTicket(p: Project, ticketId: number, d: { by: "lead" | "owner"; reason: string; sameAs?: TicketRow }): Promise<void> {
   const ticket = p.ticket(ticketId);
   const actor = d.by === "lead" ? p.fixedMember("lead").name : "owner";
-  tx(p.db, () => {
-    run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ? AND status = 'pending'", [ticketId]);
-    run(p.db, "UPDATE decisions SET decided_by = ?, decided_at = ? WHERE ticket_id = ? AND decided_at IS NULL", [d.by, p.now(), ticketId]);
-    if (d.sameAs) run(p.db, "UPDATE OR IGNORE ticket_deps SET depends_on = ? WHERE depends_on = ? AND ticket_id <> ?", [d.sameAs.id, ticketId, d.sameAs.id]);
-    run(p.db, "DELETE FROM ticket_deps WHERE depends_on = ? OR ticket_id = ?", [ticketId, ticketId]);
-    run(p.db, "UPDATE tickets SET triaged = 1, dropped_by = ?, dropped_reason = ?, dropped_at = ? WHERE id = ?", [d.by, d.reason, p.now(), ticketId]);
+  await p.pdb.transaction(async () => {
+    await p.pdb.update("messages", { status: "done" }).where("ticket_id", "=", ticketId).where("status", "=", "pending").execute();
+    await p.pdb.update("decisions", { decided_by: d.by, decided_at: p.now() }).where("ticket_id", "=", ticketId).where("decided_at", "is", null).execute();
+    if (d.sameAs) {
+      // 待っていたチケットは、残す方(sameAs)を待つようにつけ替える。すでに sameAs を待っているものは、そのまま(下で消える)
+      const same = d.sameAs.id;
+      const waiting = await p.pdb.from("ticket_deps").where("depends_on", "=", ticketId).where("ticket_id", "<>", same).execute();
+      const already = new Set((await p.pdb.from("ticket_deps").where("depends_on", "=", same).execute()).map((r) => r.ticket_id));
+      for (const w of waiting) if (!already.has(w.ticket_id)) await p.pdb.update("ticket_deps", { depends_on: same }).where("depends_on", "=", ticketId).where("ticket_id", "=", w.ticket_id).execute();
+    }
+    await p.pdb.deleteFrom("ticket_deps").where((eb) => eb.or([eb("depends_on", "=", ticketId), eb("ticket_id", "=", ticketId)])).execute();
+    await p.pdb.update("tickets", { triaged: 1, dropped_by: d.by, dropped_reason: d.reason, dropped_at: p.now() }).where("id", "=", ticketId).execute();
     p.setStage(ticketId, "dropped");
     p.addNote(ticketId, `【取りやめ】${d.reason}`, d.by);
     p.event(actor, d.sameAs ? "duplicate_dropped" : "ticket_dropped", ticketId, { number: ticket.number, reason: d.reason, ...(d.sameAs ? { sameAs: d.sameAs.number } : {}) });
@@ -758,20 +782,18 @@ export function dropTicket(p: Project, ticketId: number, d: { by: "lead" | "owne
 }
 
 /** 取りやめたチケットの、誰が・いつ・なぜ。取りやめていなければ null。 */
-export function droppedInfo(p: Project, ticketId: number): { by: "lead" | "owner" | null; reason: string | null; at: string | null } | null {
-  const r = get<{ stage: string; dropped_by: "lead" | "owner" | null; dropped_reason: string | null; dropped_at: string | null }>(
-    p.db,
-    "SELECT stage, dropped_by, dropped_reason, dropped_at FROM tickets WHERE id = ?",
-    [ticketId],
-  );
+export async function droppedInfo(p: Project, ticketId: number): Promise<{ by: "lead" | "owner" | null; reason: string | null; at: string | null } | null> {
+  const r = (await p.pdb.from("tickets").select(["stage", "dropped_by", "dropped_reason", "dropped_at"]).where("id", "=", ticketId).executeTakeFirst()) as
+    | { stage: string; dropped_by: "lead" | "owner" | null; dropped_reason: string | null; dropped_at: string | null }
+    | undefined;
   return r && r.stage === "dropped" ? { by: r.dropped_by, reason: r.dropped_reason, at: r.dropped_at } : null;
 }
 
-export function holdTicket(p: Project, ticketId: number, h: { reason: string; ownerAction: string; resume: ResumeMessage }): number {
+export async function holdTicket(p: Project, ticketId: number, h: { reason: string; ownerAction: string; resume: ResumeMessage }): Promise<number> {
   const ticket = p.ticket(ticketId);
-  const open = get<{ id: number }>(p.db, "SELECT id FROM decisions WHERE ticket_id = ? AND decided_at IS NULL AND options LIKE '%\"resume\"%'", [ticketId]);
+  const open = await p.pdb.from("decisions").select("id").where("ticket_id", "=", ticketId).where("decided_at", "is", null).where("options", "like", '%"resume"%').executeTakeFirst();
   if (open) return open.id;
-  const id = raiseToOwner(
+  const id = await raiseToOwner(
     p,
     ticketId,
     {
@@ -793,16 +815,16 @@ export function holdTicket(p: Project, ticketId: number, h: { reason: string; ow
  * 取りやめたチケットを戻して、続きから進める。持ち主がいれば持ち主に、いなければ新しい実装として開発に回す。
  * 持ち主はセッションを続きから再開するので、前にしたことを覚えている。取りやめの間に溜まった判断は閉じる。
  */
-export function reopenTicket(p: Project, ticketId: number, by: "owner" | "lead" = "owner"): void {
+export async function reopenTicket(p: Project, ticketId: number, by: "owner" | "lead" = "owner"): Promise<void> {
   const ticket = p.ticket(ticketId);
   if (!ticket) throw new Error(`チケット ${ticketId} はありません`);
   if (ticket.stage !== "dropped") throw new Error("取りやめになっていないチケットです");
-  tx(p.db, () => {
-    run(p.db, "UPDATE decisions SET decided_by = ?, decided_at = ? WHERE ticket_id = ? AND decided_at IS NULL", [by, p.now(), ticketId]);
+  await p.pdb.transaction(async () => {
+    await p.pdb.update("decisions", { decided_by: by, decided_at: p.now() }).where("ticket_id", "=", ticketId).where("decided_at", "is", null).execute();
     // 取りやめの前のメッセージが残っていても、取り出したときに捨てられているので、新しく頼み直す
-    run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ? AND status IN ('pending','claimed')", [ticketId]);
+    await p.pdb.update("messages", { status: "done" }).where("ticket_id", "=", ticketId).where("status", "in", ["pending", "claimed"]).execute();
     p.setStage(ticketId, "dev");
-    run(p.db, "UPDATE tickets SET dropped_by = NULL, dropped_reason = NULL, dropped_at = NULL WHERE id = ?", [ticketId]);
+    await p.pdb.update("tickets", { dropped_by: null, dropped_reason: null, dropped_at: null }).where("id", "=", ticketId).execute();
     if (ticket.owner_member_id) {
       send(p, {
         ticketId,

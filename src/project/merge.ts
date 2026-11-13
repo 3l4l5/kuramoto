@@ -85,7 +85,7 @@ export async function ownerMerge(p: Project, gh: GitHub, ticketId: number, by: "
   p.setStage(ticket.id, "done");
   p.event(by, "merged", ticket.id, { number: ticket.number, by });
   // 確認で見つかった範囲外のことは、merge したときにまとめて別チケットにする
-  flushFollowups(p, ticket);
+  await flushFollowups(p, ticket);
 
   await recheckConflicts(p, gh, prs);
   return { result: "merged" };
@@ -122,7 +122,7 @@ async function onCiFailure(p: Project, gh: GitHub, ticket: TicketRow, pr: PrRow)
   if (detail?.failing.some((f) => f.started)) markCiRunning(p, pr.full_name);
   const onBase = detail ? names.filter((n) => detail.baseFailing.includes(n)) : [];
   if (detail && onBase.length) {
-    const fixer = ensureBaseCiTicket(p, ticket, pr, detail, onBase);
+    const fixer = await ensureBaseCiTicket(p, ticket, pr, detail, onBase);
     p.event("system", "ci_red_on_base", ticket.id, { checks: onBase, fixer: fixer.number });
     return `${detail.base} でも同じ CI(${onBase.join("・")})が落ちています。#${fixer.number} で直してから merge します`;
   }
@@ -161,7 +161,7 @@ export function lastCiFailure(p: Project, ticketId: number, maxChars = 3000): st
 }
 
 /** main の CI を直すチケット。開いているものがあればそれを使い、無ければ 1 枚だけ作る。 */
-function ensureBaseCiTicket(p: Project, from: TicketRow, pr: PrRow, detail: CiDetail, checks: string[]): TicketRow {
+async function ensureBaseCiTicket(p: Project, from: TicketRow, pr: PrRow, detail: CiDetail, checks: string[]): Promise<TicketRow> {
   const open = get<TicketRow>(p.db, "SELECT * FROM tickets WHERE stage NOT IN ('done','dropped') AND json_extract(plan_refs, '$.baseCi') = ? ORDER BY number LIMIT 1", [pr.full_name]);
   if (open) return open;
   const logs = ciFindings({ ...detail, failing: detail.failing.filter((f) => checks.includes(f.name)) })

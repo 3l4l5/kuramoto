@@ -9,7 +9,7 @@ import { createTicket, dropTicket } from "./workflow.js";
 const H = 3_600_000;
 
 describe("生産性: 流れとメンバー(ADR-0029)", () => {
-  it("時間あたりの merge・入った数と片付いた数・リードタイム・どこから入ったか・仕掛かりを数える", () => {
+  it("時間あたりの merge・入った数と片付いた数・リードタイム・どこから入ったか・仕掛かりを数える", async () => {
     const clock = new ManualClock(new Date("2026-11-12T00:00:00Z"));
     const p = new Project(":memory:", clock);
     p.addRepo("acme/shop", "API");
@@ -26,8 +26,8 @@ describe("生産性: 流れとメンバー(ADR-0029)", () => {
       ]);
     };
 
-    const a = createTicket(p, { title: "A" }); // 手で足した
-    const b = createTicket(p, { title: "B", planRefs: { followupOf: a.number } }); // 確認で見つかった範囲外のこと
+    const a = await createTicket(p, { title: "A" }); // 手で足した
+    const b = await createTicket(p, { title: "B", planRefs: { followupOf: a.number } }); // 確認で見つかった範囲外のこと
     clock.advance(H);
     devRun(a.id, 30 * 60_000);
     clock.advance(H);
@@ -35,8 +35,8 @@ describe("生産性: 流れとメンバー(ADR-0029)", () => {
     clock.advance(H);
     p.event("team", "merged", a.id, {}); // 入ってから 3 時間・取りかかってから 2 時間・merge 待ち 1 時間
     run(p.db, "UPDATE tickets SET stage = 'done', active_ms = ? WHERE id = ?", [30 * 60_000, a.id]);
-    const c = createTicket(p, { title: "C", planRefs: { splitFrom: a.number } });
-    dropTicket(p, c.id, { by: "lead", reason: "いらなくなった" });
+    const c = await createTicket(p, { title: "C", planRefs: { splitFrom: a.number } });
+    await dropTicket(p, c.id, { by: "lead", reason: "いらなくなった" });
 
     const f = productivity(p).flow;
     expect(f.throughput).toMatchObject({ mergedLast24h: 1, createdLast24h: 3, closedLast24h: 2, netLast24h: 1 });
@@ -69,11 +69,11 @@ describe("生産性: 流れとメンバー(ADR-0029)", () => {
 });
 
 describe("生産性: ルール違反(R15)", () => {
-  it("合計に加え、チケットごとの違反の数とうち自動で直した数が出る", () => {
+  it("合計に加え、チケットごとの違反の数とうち自動で直した数が出る", async () => {
     const p = new Project(":memory:", new ManualClock(new Date("2026-11-12T00:00:00Z")));
     p.addRepo("acme/shop", "API");
-    const a = createTicket(p, { title: "A" });
-    const b = createTicket(p, { title: "B" });
+    const a = await createTicket(p, { title: "A" });
+    const b = await createTicket(p, { title: "B" });
     const fix = addDevRule(p, { template: "jira" });
     const block = addDevRule(p, { template: "migration-alone" });
     const add = (rule: number, ticket: number, handled: string) =>

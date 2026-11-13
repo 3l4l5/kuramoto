@@ -32,13 +32,13 @@ export function sayToLead(p: Project, body: string): void {
   });
 }
 
-export function leadChatView(p: Project) {
+export async function leadChatView(p: Project) {
   const r = all<{ id: number; status: string; run_id: number | null }>(
     p.db,
     `SELECT m.id, m.status, (SELECT r.id FROM runs r WHERE r.message_id = m.id AND r.ended_at IS NULL ORDER BY r.id DESC LIMIT 1) AS run_id
      FROM messages m WHERE m.kind = 'chat' AND m.status IN ('pending','claimed') ORDER BY m.id LIMIT 1`,
   )[0];
-  const w = r?.run_id ? runWork(p, r.run_id) : null;
+  const w = r?.run_id ? await runWork(p, r.run_id) : null;
   return {
     lead: p.fixedMember("lead").name,
     messages: leadMessages(p),
@@ -81,17 +81,17 @@ export function markOwnerMessagesRead(p: Project, upTo: number): void {
 }
 
 /** リーダーへの指示。今のチケットの状況と、まだ返事をしていない責任者のメッセージを渡す。 */
-export function leadChatPrompt(p: Project, unread: LeadMessage[] = unreadOwnerMessages(p)): string {
+export async function leadChatPrompt(p: Project, unread: LeadMessage[] = unreadOwnerMessages(p)): Promise<string> {
   const tickets = p.tickets().filter((t) => t.stage !== "dropped");
   const board = tickets.map((t) => `- #${t.number} ${t.title} [${t.stage}]${t.rounds ? ` 往復 ${t.rounds}` : ""}`).join("\n") || "(チケットはまだありません)";
-  const decisions = pendingOwnerDecisions(p).map((d) => `- ${d.question.split("\n").pop()}`).join("\n") || "(なし)";
+  const decisions = (await pendingOwnerDecisions(p)).map((d) => `- ${d.question.split("\n").pop()}`).join("\n") || "(なし)";
   return `責任者からチャットが届きました。
 
 ## 今のチケット
 ${board}
 
 ## チームの今(島・メンバー・空き)
-${teamStatus(p)}
+${await teamStatus(p)}
 
 ## 責任者の答えを待っている判断
 ${decisions}
@@ -132,13 +132,13 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
         design_system: z.boolean().optional().describe("デザインシステムの土台のチケットなら true"),
         after: z.array(z.number().int()).optional().describe("先に merge されている必要があるチケットの番号(画面のチケットは、デザインシステムの土台のチケットを書く)"),
       },
-      handler: (a) => {
+      handler: async (a) => {
         const known = new Set(screens(p).keys());
         const bad = (a.screens ?? []).filter((k) => !known.has(k));
         if (bad.length) return `画面 ${bad.join("・")} は企画にありません。使えるのは ${[...known].join("・") || "(なし)"}`;
         const item = a.requirement ? requirements(p).find((r) => r.code === a.requirement) : undefined;
         if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
-        const t = createTicket(p, {
+        const t = await createTicket(p, {
           title: a.title,
           body: a.body,
           kind: a.kind ?? "feature",

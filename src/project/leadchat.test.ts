@@ -76,7 +76,7 @@ describe("会話を引き継ぐ回数(ADR-0032)", () => {
     });
     // 往復の上限でリーダーの判断に上がらないよう、上限を大きくする
     p.db.prepare("UPDATE policies SET options = json_set(COALESCE(options,'{}'), '$.escalateAfterRounds', 10) WHERE role = 'review'").run();
-    createTicket(p, { title: "A" });
+    await createTicket(p, { title: "A" });
     await new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp") }).drain();
     const dev = harness.calls.filter((c) => c.tools.some((t) => t.name === "submit_pr")).map((c) => !!c.resumeSessionId);
     // 1 回目は新しく、2 回目は引き継ぎ、3 回目は上限(1 回)を超えたので新しく
@@ -94,8 +94,12 @@ describe("チームに渡したあとのデザインの合わせ直し(ADR-0034)
     p.addRepo("acme/shop", "API");
     putScreen(p, "list", { name: "メモ一覧", device: "phone", requirements: [], variants: [{ id: "A", html: "<p>一覧</p>" }], chosen: "A", agreed: true });
     putArtifact(p, "screen", "designsystem", "main", { principles: [], tokens: [{ group: "color", name: "--c", value: "#000", use: "x" }], components: [{ name: "ボタン", use: "x", states: [], html: "<button/>" }] });
-    expect(leadChatPrompt(p, [])).toContain("- list: メモ一覧");
-    expect(leadChatPrompt(p, [])).toContain("デザインシステム: あり");
+    expect(await leadChatPrompt(p, [])).toContain("- list: メモ一覧");
+    expect(await leadChatPrompt(p, [])).toContain("デザインシステム: あり");
+    // チームの今(島・メンバー)が、Promise のままでなく文字で入る
+    const prompt = await leadChatPrompt(p, []);
+    expect(prompt).not.toContain("[object Promise]");
+    expect(prompt).toMatch(/## チームの今[^\n]*\n- /);
     const create = leadChatTools(p).find((t) => t.name === "create_ticket")!;
     expect(await create.handler({ title: "x", body: "", screens: ["nope"] } as never)).toContain("企画にありません");
     await create.handler({ title: "デザインシステムの土台", body: "トークン・部品・/_design", design_system: true } as never);
@@ -104,6 +108,6 @@ describe("チームに渡したあとのデザインの合わせ直し(ADR-0034)
     expect(isDesignSystemTicket(p, base!)).toBe(true);
     expect(designFor(p, base!).map((d) => d.key)).toEqual(["list"]); // 土台はカタログに全部の画面を並べる
     expect(designFor(p, screen!).map((d) => d.key)).toEqual(["list"]);
-    expect(blockers(p, screen!.id)).toEqual([base!.number]);
+    expect(await blockers(p, screen!.id)).toEqual([base!.number]);
   });
 });
