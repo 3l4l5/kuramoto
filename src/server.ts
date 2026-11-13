@@ -381,7 +381,7 @@ export class KuramotoServer {
       await this.open(rec.id);
       // 既存のリポジトリの続きから: GitHub の途中の仕事(開いている PR・Issue)を取ってきてから、担当に現状を読ませる(ADR-0030)
       if (body.mode === "existing") {
-        markExisting(await this.open(rec.id), typeof body.issueLabel === "string" ? body.issueLabel : "kuramoto");
+        await markExisting(await this.open(rec.id), typeof body.issueLabel === "string" ? body.issueLabel : "kuramoto");
         await fetchGithubSnapshot(this.project(rec.id), this.github);
       }
       // リポジトリを登録したら、企画スタジオの企画担当が要件を聞き始める(既存なら現状を読み始める)

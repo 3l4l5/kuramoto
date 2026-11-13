@@ -29,6 +29,7 @@ ADR-0039(1/2)の続き。残りの src/project・server を async + Kysely に�
 
 ## C(#44)の途中経過
 
-- 移した: metrics・productivity・formation-marks・transfer(と export の async 化)・design・planning-agent・design-visual・ticket(ticketView)。
+- 移した: metrics・productivity・formation-marks・transfer(と export の async 化)・design・planning-agent・design-visual・ticket(ticketView)・office・people・team・onboard。
 - **読むときの project_id は「自分の id と 0」(`src/db/count.ts` の `inScope` / `countFrom`)**。Project 本体・workflow・planning などの同期の INSERT は project_id を書かず、開き直すまで 0 のまま。`= 自分の id` だけで読むと、開いている間の画面から、その間に入った行(チケット・出来事・設定など)が欠ける。同期の書き込みが無くなったら(D)、`= 自分の id` に戻す。
-- まだ移していない(C の残り): planning・questions・leadchat・member-chat・dev-rules・office・people・onboard・prompts・team。leadchat の `leadReply`・`sayToLead` を async にすると outage(B)・dispatcher(A)・server へ await が広がるため、A・B と足並みを揃えて移す。
+- dev_rule_versions は、版の番号をプロジェクトごとの MAX で決め、project_id を書いて残すようにした(同期のまま。#41 の QA)。
+- **まだ移していない(C の残り)**: planning・questions・leadchat・member-chat・dev-rules・prompts。これらを呼ぶのが、まだ同期の workflow(applyReview・applyDevReport など。A の対象)と outage(B の対象)で、async にすると await が、それらの同期の関数の呼び出しの連鎖(enterStage・advance など)へ広がる。workflow の移行(A)が入ってから移す。

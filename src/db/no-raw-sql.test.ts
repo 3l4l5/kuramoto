@@ -23,7 +23,6 @@ const NOT_MIGRATED = new Set([
   "project/leadchat.ts",
   "project/member-chat.ts",
   "project/merge.ts",
-  "project/onboard.ts",
   "project/outage.ts",
   "project/patrol.ts",
   "project/planning.ts",
