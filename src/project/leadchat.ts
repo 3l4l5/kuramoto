@@ -91,7 +91,7 @@ export async function leadChatPrompt(p: Project, unread: LeadMessage[] = unreadO
 ${board}
 
 ## チームの今(島・メンバー・空き)
-${teamStatus(p)}
+${await teamStatus(p)}
 
 ## 責任者の答えを待っている判断
 ${decisions}

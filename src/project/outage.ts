@@ -54,10 +54,10 @@ export function githubStillDown(p: Project, error: string): void {
 }
 
 /** また GitHub に入れるようになった。知らせて、認証切れで保留にしていたチケットを再開する。 */
-export function markGithubUp(p: Project): number {
+export async function markGithubUp(p: Project): Promise<number> {
   const cur = githubDown(p);
   p.setSetting("github_down", "");
-  const resumed = resumeAuthHolds(p);
+  const resumed = await resumeAuthHolds(p);
   if (cur) {
     p.event("system", "github_up", null, { since: cur.since, resumed });
     leadReply(p, `【GitHub に戻れました】また GitHub に入れるようになったので、止めていた仕事を再開します。${resumed ? `認証切れで保留になっていたチケット ${resumed} 枚も再開しました。` : ""}`);
@@ -66,14 +66,14 @@ export function markGithubUp(p: Project): number {
 }
 
 /** 認証切れが理由の保留(責任者の対応待ち)を、続きから再開する。 */
-export function resumeAuthHolds(p: Project): number {
+export async function resumeAuthHolds(p: Project): Promise<number> {
   const holds = all<DecisionRow>(p.db, "SELECT * FROM decisions WHERE escalated = 1 AND decided_at IS NULL ORDER BY id");
   let n = 0;
   for (const d of holds) {
     const options = JSON.parse(d.options) as DecisionOption[];
     if (!options.some((o) => o.action === "resume")) continue;
     if (!isGithubAuthError(`${d.question}\n${d.impact}\n${d.lead_note ?? ""}`)) continue;
-    resumeHold(p, d.id, "lead");
+    await resumeHold(p, d.id, "lead");
     n++;
   }
   return n;

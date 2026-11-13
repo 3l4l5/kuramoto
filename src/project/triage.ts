@@ -55,7 +55,7 @@ export async function areasOf(p: Project, ticketId: number): Promise<string[]> {
 export async function areaBlockers(p: Project, ticketId: number): Promise<{ number: number; areas: string[] }[]> {
   const rows = await p.pdb.k
     .selectFrom("ticket_areas as a")
-    .innerJoin("ticket_areas as b", (j) => j.onRef("b.area", "=", "a.area").onRef("b.ticket_id", "<>", "a.ticket_id"))
+    .innerJoin("ticket_areas as b", (j) => j.onRef("b.area", "=", "a.area").onRef("b.ticket_id", "<>", "a.ticket_id").onRef("b.project_id", "=", "a.project_id"))
     .innerJoin("tickets as o", "o.id", "b.ticket_id")
     .select(["o.number", "a.area"])
     .where("a.project_id", "=", p.pdb.projectId)

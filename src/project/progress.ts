@@ -14,11 +14,12 @@ export type ProgressRecorder = ((e: ProgressEvent) => void) & { flush(): Promise
 /** 起動ごとの記録の受け口(起動を終える側が flushProgress で待つ)。 */
 const recorders = new Map<number, ProgressRecorder>();
 
-/** 起動の途中経過の書き込みが済むまで待つ。受け口が無ければ何もしない。 */
+/** 起動の途中経過の書き込みが済むまで待つ(失敗は投げない)。受け口が無ければ何もしない。 */
 export async function flushProgress(runId: number): Promise<void> {
   const r = recorders.get(runId);
   recorders.delete(runId);
-  await r?.flush();
+  // 途中経過は補助の記録。書き込みに失敗しても、起動の後片付けは止めない
+  await r?.flush().catch(() => {});
 }
 
 export function progressRecorder(p: Project, runId: number): ProgressRecorder {

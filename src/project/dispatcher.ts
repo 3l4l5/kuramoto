@@ -129,7 +129,7 @@ export class Dispatcher {
     if (!repo || !probe) return;
     const error = await probe.call(this.deps.workspace, repo.full_name).catch((e: unknown) => (e instanceof Error ? e.message : String(e)));
     if (error) githubStillDown(this.p, error);
-    else markGithubUp(this.p);
+    else await markGithubUp(this.p);
   }
 
   /** 動いている企画の起動(止めるときに使う)。 */
@@ -610,6 +610,7 @@ export class Dispatcher {
     }
     // 企画スタジオを止めたので途中でやめた。失敗に数えず、再開したら同じ依頼を取り直す
     if (abort.signal.aborted) {
+      await flushProgress(runId);
       await p.pdb.transaction(async () => {
         await p.pdb.update("runs", { ended_at: p.now(), outcome: "cancelled", error: "企画スタジオを止めたので、途中でやめました", cost_usd: result?.usage?.costUsd ?? 0 }).where("id", "=", runId).execute();
         await release(p, msg.id, 0);
