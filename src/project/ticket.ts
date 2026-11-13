@@ -112,7 +112,7 @@ export async function ticketView(p: Project, ticketId: number) {
       role: ROLE_LABEL[rv.role as Role] ?? rv.role,
       round: rv.round,
       verdict: VERDICT[rv.verdict] ?? rv.verdict,
-      findings: threads(p, ticketId, { reviewId: rv.id }),
+      findings: await threads(p, ticketId, { reviewId: rv.id }),
     });
   }
   for (const d of all<{ id: number; question: string; options: string; recommended: number; why: string; escalated: number; choice: number | null; decided_by: string | null; decided_at: string | null }>(
@@ -212,4 +212,4 @@ export async function ticketView(p: Project, ticketId: number) {
   };
 }
 
-export type TicketView = ReturnType<typeof ticketView>;
+export type TicketView = Awaited<ReturnType<typeof ticketView>>;

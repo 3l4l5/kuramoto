@@ -416,10 +416,10 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
                   title: z.string().optional().describe("チケットのタイトル(省くと PR のタイトル)"),
                   body: z.string().optional().describe("やること・受け入れ条件(省くと PR の本文)"),
                 },
-                handler: (a) => {
+                handler: async (a) => {
                   const item = a.requirement ? requirements(p).find((r) => r.code === a.requirement) : undefined;
                   if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
-                  const r = adoptPull(p, { repo: a.repo ?? p.repos()[0]!.full_name, number: a.number, ...(a.title ? { title: a.title } : {}), ...(a.body ? { body: a.body } : {}), ...(item ? { requirementItemId: item.id } : {}) });
+                  const r = await adoptPull(p, { repo: a.repo ?? p.repos()[0]!.full_name, number: a.number, ...(a.title ? { title: a.title } : {}), ...(a.body ? { body: a.body } : {}), ...(item ? { requirementItemId: item.id } : {}) });
                   return typeof r === "string" ? r : `#${r.number} を作り、PR #${a.number} を確認の工程から続けます。`;
                 },
               }),

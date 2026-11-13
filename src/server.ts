@@ -150,7 +150,7 @@ export class KuramotoServer {
     for (const rec of await this.hq.projects()) {
       if (rec.status === "running") this.running.add(rec.id);
       // 止まっている間に始められるようになった段階があれば始める
-      advance(await this.open(rec.id));
+      await advance(await this.open(rec.id));
       await this.loop(rec.id);
     }
   }
@@ -395,7 +395,7 @@ export class KuramotoServer {
 
   private async route(method: string, parts: string[], body: Record<string, unknown>): Promise<unknown> {
     const [a, idStr, b, c] = parts;
-    if (a === "hq" && method === "GET") return this.hqView();
+    if (a === "hq" && method === "GET") return await this.hqView();
     if (a !== "projects") return undefined;
     if (idStr === "import" && method === "POST") {
       // 書き出した設計書から、新しいプロジェクトとして復元する
@@ -403,7 +403,7 @@ export class KuramotoServer {
       const rec = await this.hq.createProject(data.project.name, data.repos);
       await restoreTransfer(await this.open(rec.id), data);
       await this.hq.setStatus(rec.id, handedOff(this.project(rec.id)) ? "starting" : "planning");
-      advance(this.project(rec.id));
+      await advance(this.project(rec.id));
       await this.loop(rec.id);
       return { id: rec.id };
     }
@@ -417,38 +417,38 @@ export class KuramotoServer {
         await fetchGithubSnapshot(this.project(rec.id), this.github);
       }
       // リポジトリを登録したら、企画スタジオの企画担当が要件を聞き始める(既存なら現状を読み始める)
-      advance(this.project(rec.id));
+      await advance(this.project(rec.id));
       await this.loop(rec.id);
       return { id: rec.id };
     }
     const id = Number(idStr);
     if (!Number.isInteger(id)) return undefined;
     const p = await this.open(id); // 入口: id がいまのワークスペースの中にあるかを確かめる
-    if (!b && method === "GET") return this.projectView(id);
-    if (b === "tickets" && c && method === "GET") return ticketView(p, Number(c));
+    if (!b && method === "GET") return await this.projectView(id);
+    if (b === "tickets" && c && method === "GET") return await ticketView(p, Number(c));
     if (b === "tickets" && c && parts[4] === "notes" && method === "POST") {
       p.addNote(Number(c), String(body.body ?? ""));
-      return ticketView(p, Number(c));
+      return await ticketView(p, Number(c));
     }
     if (b === "tickets" && c && parts[4] === "reopen" && method === "POST") {
       await reopenTicket(p, Number(c));
       this.poke(id);
-      return ticketView(p, Number(c));
+      return await ticketView(p, Number(c));
     }
     // 責任者がチケットの種類を変える。次の工程から新しい種類の流れで進み、変えたことはやりとりに残る(R17)
     if (b === "tickets" && c && parts[4] === "kind" && method === "POST") {
       await setTicketKind(p, Number(c), body.kind);
       this.poke(id);
-      return ticketView(p, Number(c));
+      return await ticketView(p, Number(c));
     }
     if (b === "tickets" && c && parts[4] === "budget" && method === "POST") {
       await setTicketBudget(p, Number(c), body.unlimited ? "unlimited" : body.usd === null || body.usd === undefined || body.usd === "" ? null : Number(body.usd));
       this.poke(id);
-      return ticketView(p, Number(c));
+      return await ticketView(p, Number(c));
     }
     if (b === "tickets" && c && method === "POST") {
       p.editTicket(Number(c), { title: String(body.title ?? ""), body: String(body.body ?? "") });
-      return ticketView(p, Number(c));
+      return await ticketView(p, Number(c));
     }
     if (b === "tickets" && method === "POST") {
       const title = String(body.title ?? "").trim();
@@ -464,7 +464,7 @@ export class KuramotoServer {
     }
     if (b === "merge" && c && method === "POST") {
       await this.loop(id);
-      return ownerMerge(p, this.github, Number(c), "owner", { teamCi: this.runners.get(id)!.teamCi });
+      return await ownerMerge(p, this.github, Number(c), "owner", { teamCi: this.runners.get(id)!.teamCi });
     }
     if (b === "run" && method === "POST") {
       if (body.running) await this.start(id);
@@ -515,7 +515,7 @@ export class KuramotoServer {
       return memberChatView(p, Number(c));
     }
     if (b === "members" && c && method === "GET") return memberView(p, Number(c));
-    if (b === "units" && c && method === "GET") return unitView(p, Number(c), await officeView(p));
+    if (b === "units" && c && method === "GET") return await unitView(p, Number(c), await officeView(p));
     if (b === "lead-chat" && method === "GET") return leadChatView(p);
     if (b === "lead-chat" && method === "POST") {
       sayToLead(p, String(body.body ?? ""));
@@ -529,7 +529,7 @@ export class KuramotoServer {
         repos: p.repos().map((r) => ({ fullName: r.full_name, role: r.role })),
         ticketBudgetUsd: defaultTicketBudgetUsd(p),
         projectBudgetUsd: projectBudgetUsd(p),
-        projectSpentUsd: projectSpentUsd(p),
+        projectSpentUsd: await projectSpentUsd(p),
         nonstop: nonstop(p),
         autoMerge: autoMergeEnabled(p),
         resumeChecks: resumeChecks(p),
@@ -548,7 +548,7 @@ export class KuramotoServer {
       const total = body.projectBudgetUsd === undefined ? undefined : body.projectBudgetUsd === null || body.projectBudgetUsd === "" ? null : Number(body.projectBudgetUsd);
       if (total !== undefined && total !== null && !(Number.isFinite(total) && total > 0)) throw new Error("全体の予算は 0 より大きい金額か、無制限にしてください");
       if (budget !== undefined) setDefaultTicketBudget(p, budget);
-      if (total !== undefined) setProjectBudget(p, total);
+      if (total !== undefined) await setProjectBudget(p, total);
       if (typeof body.nonstop === "boolean") p.setSetting("nonstop", body.nonstop ? "1" : "0");
       if (typeof body.autoMerge === "boolean") p.setSetting("auto_merge", body.autoMerge ? "1" : "0");
       if (typeof body.resumeChecks === "boolean") p.setSetting("resume_checks", body.resumeChecks ? "1" : "0");
@@ -568,14 +568,14 @@ export class KuramotoServer {
     }
     if (b === "policies" && c && method === "POST") return { version: savePolicyInput(p, c, body).version };
     if (b === "studio") {
-      const out = this.studioRoute(p, id, method, parts.slice(3), body);
+      const out = await this.studioRoute(p, id, method, parts.slice(3), body);
       if (method === "POST") this.poke(id);
       return out;
     }
     return undefined;
   }
 
-  private studioRoute(p: Project, id: number, method: string, parts: string[], body: Record<string, unknown>): unknown {
+  private async studioRoute(p: Project, id: number, method: string, parts: string[], body: Record<string, unknown>): Promise<unknown> {
     const [a, key, c] = parts;
     const stage = (s: unknown): Stage => {
       if (!STAGES.includes(s as Stage)) throw new Error(`段階 ${String(s)} はありません`);
@@ -598,11 +598,11 @@ export class KuramotoServer {
         return { ok: true };
       }
       case "open-items":
-        answerOpenItem(p, Number(key), String(body.answer ?? "").trim() || (() => { throw new Error("答えがありません"); })());
+        await answerOpenItem(p, Number(key), String(body.answer ?? "").trim() || (() => { throw new Error("答えがありません"); })());
         return { ok: true };
       case "stages":
-        if (c === "agree") agree(p, stage(key));
-        else if (c === "mode") setMode(p, stage(key), body.mode as Mode);
+        if (c === "agree") await agree(p, stage(key));
+        else if (c === "mode") await setMode(p, stage(key), body.mode as Mode);
         else return undefined;
         return { ok: true };
       case "screens":
@@ -633,7 +633,7 @@ export class KuramotoServer {
         planning: { handed: handedOff(p), stages: stages.length, stagesDone: stages.filter((s) => s.done).length, current: stages.find((s) => !s.done)?.key ?? null },
         repos: p.repos().map((r) => ({ fullName: r.full_name, role: r.role })),
         decisions: (await pendingOwnerDecisions(p)).length,
-        merges: suggestedMergeOrder(p).length,
+        merges: (await suggestedMergeOrder(p)).length,
         open: p.tickets().filter((t) => !["done", "dropped"].includes(t.stage)).length,
         working: get<{ n: number }>(p.db, "SELECT COUNT(*) AS n FROM runs WHERE ended_at IS NULL")?.n ?? 0,
         metrics: m,
@@ -645,7 +645,7 @@ export class KuramotoServer {
       return [
         ...ownerPlanItems(p).map((x) => ({ projectId: rec.id, projectName: rec.name, kind: "plan", text: x.text, deadline: null })),
         ...owed.map((d) => ({ projectId: rec.id, projectName: rec.name, kind: "decide", text: d.question.split("\n").pop(), deadline: d.deadline_at })),
-        ...suggestedMergeOrder(p).map((t) => ({ projectId: rec.id, projectName: rec.name, kind: "merge", text: `#${t.number} ${t.title} を merge できます`, deadline: null })),
+        ...(await suggestedMergeOrder(p)).map((t) => ({ projectId: rec.id, projectName: rec.name, kind: "merge", text: `#${t.number} ${t.title} を merge できます`, deadline: null })),
       ];
     }));
     const queue = queueParts.flat();
@@ -746,8 +746,8 @@ export class KuramotoServer {
       formation: { version: formation.version, units: formation.units.map((u) => ({ name: u.name, roles: u.roles, max: u.max_members, repos: u.repos, model: u.model, effort: u.effort, members: p.membersOfUnit(u.id).map((m) => m.name) })) },
       tickets,
       decisions,
-      mergeOrder: suggestedMergeOrder(p).map((t) => t.id),
-      budget: budgetView(p),
+      mergeOrder: (await suggestedMergeOrder(p)).map((t) => t.id),
+      budget: await budgetView(p),
       autoMerge: autoMergeEnabled(p),
       // GitHub に入れない(認証切れ)とき: いつから・どんなエラーか(ADR-0027)
       githubDown: githubDown(p),
