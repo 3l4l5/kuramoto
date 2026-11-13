@@ -6,11 +6,11 @@ import { describe, expect, it } from "vitest";
 const uiDir = new URL("../ui/src/", import.meta.url).pathname;
 const read = (p: string) => readFileSync(join(uiDir, p), "utf8");
 
-/** ui/src の下の画面のソース。トークンの定義(ds/tokens.css)・トークンを並べて見せるカタログ・公式の部品を写した dads/ は除く。 */
+/** ui/src の下の画面と部品のソース。除くのはトークンの定義(ds/tokens.css)とトークンを並べて見せるカタログだけ。 */
 function sources(dir = ""): string[] {
   return readdirSync(join(uiDir, dir), { withFileTypes: true }).flatMap((e) => {
     const rel = join(dir, e.name);
-    if (e.isDirectory()) return e.name === "dads" ? [] : sources(rel);
+    if (e.isDirectory()) return sources(rel);
     return /\.(tsx?|css)$/.test(e.name) && ![join("ds", "tokens.css"), join("ds", "Catalog.tsx")].includes(rel) ? [rel] : [];
   });
 }
@@ -63,6 +63,19 @@ describe("既存の画面をトークンにそろえる", () => {
     }
     expect(style).toMatch(/of-r-arch \.of-body \{ fill: var\(--art-role-arch\)/);
     expect(tokensCss).toMatch(/--art-role-arch: #008da6/);
+  });
+
+  it("入力欄・選択・チェック・チップ・スイッチは ds の部品。デジタル庁のスニペット(dads/)も、その色クラスも残らない", () => {
+    expect(readdirSync(uiDir)).not.toContain("dads");
+    for (const f of files.filter((f) => f.endsWith(".tsx"))) {
+      const src = read(f);
+      expect(src, f).not.toMatch(/\/dads\//);
+      expect(src.match(/\b(?:border|bg|text)-(?:solid-gray|key|oln|std|dns)-[\w-]+/g), f).toBeNull();
+    }
+    const ds = read("ds/index.tsx");
+    for (const part of ["Input", "Select", "Textarea", "Checkbox", "Switch", "Chip"]) expect(ds).toMatch(new RegExp(`export function ${part}\\b`));
+    for (const f of ["Settings.tsx", "Team.tsx", "NewProject.tsx"]) expect(read(f), f).toMatch(/from "\.\/ds"/);
+    expect(read("WorkSwitch.tsx")).toMatch(/import \{ Switch \} from "\.\/ds"/);
   });
 
   it("主ボタンは --action、青(--dev)は地に使わない", () => {

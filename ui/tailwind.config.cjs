@@ -1,6 +1,6 @@
 /**
  * デジタル庁デザインシステム(https://design.digital.go.jp/dads/)のトークンを Tailwind CSS で使う。
- * 部品は公式のコードスニペット(React 版)を ui/src/dads/ に写して使う(それが前提にしている v1 のプラグイン)。
+ * 部品は ui/src/ds/ の自前の部品(トークンだけを使う)。Tailwind は配置のクラス(w-full など)に使う。
  * @type {import('tailwindcss').Config}
  */
 module.exports = {

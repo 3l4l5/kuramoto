@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { Checkbox } from "./dads/Checkbox";
-import { Input } from "./dads/Input";
+import { Checkbox, Input } from "./ds";
 
 /** 0 より大きい金額か。 */
 export const budgetOk = (v: number | null) => v === null || (Number.isFinite(v) && v > 0);
@@ -23,16 +22,16 @@ export function BudgetInput({ id, name, value, onChange, size = "md" }: { id: st
         id={id}
         min="0.01"
         step="0.01"
-        blockSize={size}
+        size={size}
         disabled={unlimited}
-        isError={!unlimited && !budgetOk(value)}
+        invalid={!unlimited && !budgetOk(value)}
         value={unlimited ? "" : text}
         onChange={(e) => {
           setText(e.target.value);
           onChange(e.target.value.trim() === "" ? NaN : Number(e.target.value));
         }}
       />
-      <Checkbox size="sm" aria-label={`${name}を無制限にする`} checked={unlimited} onChange={() => onChange(unlimited ? (Number(text) > 0 ? Number(text) : NaN) : null)}>
+      <Checkbox aria-label={`${name}を無制限にする`} checked={unlimited} onChange={() => onChange(unlimited ? (Number(text) > 0 ? Number(text) : NaN) : null)}>
         無制限
       </Checkbox>
     </div>

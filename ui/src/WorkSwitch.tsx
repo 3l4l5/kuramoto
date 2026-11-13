@@ -1,8 +1,8 @@
 import { post } from "./api";
 import { useAct } from "./hooks";
-import { SwitchOnOff } from "./dads/Switch";
+import { Switch } from "./ds";
 
-/** 始業 / 終業のスイッチ(デジタル庁デザインシステムのスイッチ)。入れると始業、切ると終業。 */
+/** 始業 / 終業のスイッチ(デザインシステムのスイッチ)。入れると始業、切ると終業。 */
 export function WorkSwitch({ id, running, showState = true }: { id: number; running: boolean; showState?: boolean }) {
   const act = useAct();
   const toggle = () =>
@@ -14,7 +14,9 @@ export function WorkSwitch({ id, running, showState = true }: { id: number; runn
           {running ? "稼働中" : "終業中"}
         </span>
       )}
-      <SwitchOnOff aria-label="稼働" aria-checked={running} title={running ? "切ると終業します" : "入れると始業します"} onClick={toggle} />
+      <Switch label="稼働" checked={running} title={running ? "切ると終業します" : "入れると始業します"} onChange={toggle}>
+        {null}
+      </Switch>
     </span>
   );
 }

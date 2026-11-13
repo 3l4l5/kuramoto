@@ -4,7 +4,7 @@ import { api, post, type LeadChatView } from "./api";
 import { hhmm } from "./format";
 import { duration, useAct, useNow } from "./hooks";
 import { Btn } from "./ui";
-import { Input } from "./dads/Input";
+import { Input } from "./ds";
 
 /** リーダーとのチャット(非同期)。書いておけば、リーダーが手すきのときに返事をする。 */
 export function LeadChat({ id }: { id: number }) {
@@ -54,7 +54,7 @@ export function LeadChat({ id }: { id: number }) {
         <label className="sr" htmlFor="lead-in">
           リーダーへのメッセージ
         </label>
-        <Input id="lead-in" type="text" blockSize="md" className="grow" autoComplete="off" value={text} onChange={(e) => setText(e.target.value)} />
+        <Input id="lead-in" type="text" className="grow" autoComplete="off" value={text} onChange={(e) => setText(e.target.value)} />
         <Btn kind="solid-fill" type="submit">
           送る
         </Btn>

@@ -4,7 +4,7 @@ import { duration, useAct, useNow, useStudio } from "../hooks";
 import { QuietText } from "../Project";
 import { StageWork, type Ui } from "./Work";
 import { Btn, LinkBtn } from "../ui";
-import { Input } from "../dads/Input";
+import { Input } from "../ds";
 
 export type Stage = StudioView["stages"][number];
 export type Work = StudioView["work"][string];
@@ -161,7 +161,7 @@ function Chat({ d, pid, stage }: { d: StudioView; pid: number; stage: string }) 
         <label htmlFor="st-in" className="sr">
           メッセージ
         </label>
-        <Input id="st-in" type="text" blockSize="md" className="grow" autoComplete="off" aria-describedby="st-in-hint" value={text} onChange={(e) => setText(e.target.value)} />
+        <Input id="st-in" type="text" className="grow" autoComplete="off" aria-describedby="st-in-hint" value={text} onChange={(e) => setText(e.target.value)} />
         <Btn kind="solid-fill" type="submit">
           {kind === "question" ? "質問する" : "送る"}
         </Btn>

@@ -7,8 +7,7 @@ import { TeamDrawer, type Drawer } from "./Team";
 import { OfficeFloor } from "./Office";
 import { TicketLink, TicketProvider } from "./Ticket";
 import { Btn } from "./ui";
-import { Input } from "./dads/Input";
-import { Textarea } from "./dads/Textarea";
+import { Input, Textarea } from "./ds";
 import { MODELS } from "../../src/domain/roles";
 import { castName } from "../../src/domain/cast";
 
@@ -438,7 +437,7 @@ function NewTicket({ id }: { id: number }) {
           <label className="h" htmlFor="nt-title">
             タイトル
           </label>
-          <Input id="nt-title" blockSize="md" autoComplete="off" aria-describedby="nt-title-hint" className="w-full" value={title} onChange={(e) => setTitle(e.target.value)} />
+          <Input id="nt-title"autoComplete="off" aria-describedby="nt-title-hint" className="w-full" value={title} onChange={(e) => setTitle(e.target.value)} />
           <div id="nt-title-hint" className="hint">例: 注文履歴を CSV で書き出す</div>
         </div>
         <div>
