@@ -61,17 +61,18 @@ export function App() {
         {inProject && (
           <div className="tabs screens" role="group" aria-label="プロジェクトの画面">
             {screens.map(([key, label, hash, on]) => (
-              <Btn key={key} kind={inOffice ? "text" : on ? "solid-fill" : "outline"} size="sm" aria-pressed={on} onClick={() => go(hash)}>
+              <Btn key={key} kind="text" size="sm" aria-current={on ? "page" : undefined} onClick={() => go(hash)}>
                 {label}
               </Btn>
             ))}
           </div>
         )}
         <div className="spacer" />
+        {inProject && <FormationChip id={route.id} />}
         {route.name === "metrics" && <MetricsKpi id={route.id} />}
-        {(route.name === "project" || route.name === "ticket") && (
+        {inOffice && (
           <>
-            <OfficeStatus id={route.id} />
+            <WorkStatus id={route.id} />
             <span className="drawerbtns">
               {(Object.keys(DRAWER_LABEL) as Drawer[]).map((k) => (
                 <Btn key={k} kind={drawer === k ? "solid-fill" : "outline"} size="sm" aria-expanded={drawer === k} onClick={() => moveTo(drawer === k ? null : k)}>
@@ -122,16 +123,20 @@ function ProjectName({ id }: { id: number }) {
   );
 }
 
-/** オフィスの右上: 編成の版の札と、始業 / 終業。 */
-function OfficeStatus({ id }: { id: number }) {
+/** どのプロジェクトの画面でも、ヘッダーの右に出す編成の版の札。 */
+function FormationChip({ id }: { id: number }) {
   const { data } = useProject(id);
   if (!data) return null;
   return (
-    <>
-      <Chip tone="version" className="verchip" title="いま使っている編成の版">
-        編成 v{data.formation.version}
-      </Chip>
-      <WorkSwitch id={id} running={data.running} />
-    </>
+    <Chip tone="version" className="verchip" title="いま使っている編成の版">
+      編成 v{data.formation.version}
+    </Chip>
   );
+}
+
+/** オフィスの右上: 始業 / 終業。 */
+function WorkStatus({ id }: { id: number }) {
+  const { data } = useProject(id);
+  if (!data) return null;
+  return <WorkSwitch id={id} running={data.running} />;
 }

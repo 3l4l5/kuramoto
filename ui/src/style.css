@@ -521,6 +521,8 @@ body { background: var(--surface); }
 .dads-bar .viewtabs { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
 .dads-bar .screens { gap: 0; }
 .dads-bar .screens .ds-btn { padding-inline: var(--sp-2); }
+/* いまの画面の行き先は、名前(パンくず)と同じく濃く太くする。枠つきにはしない(どの画面でもヘッダーの見た目を変えない) */
+.dads-bar .screens [aria-current="page"] { color: var(--ink); font-weight: 700; }
 .dads-bar:has(.viewtabs) { column-gap: var(--sp-2); }
 
 .hint { font-size: var(--fs-base); color: var(--muted); }
