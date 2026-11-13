@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import type { Role } from "../domain/roles.js";
 
@@ -67,6 +67,12 @@ export interface Workspace {
   prepareCheck?(req: { repo: string; ticketNumber: number; branch: string }): Promise<CheckWorkspace>;
   /** origin の既定のブランチの今のコミット(merge の直前に、チームの CI を流し直すかを決める)。 */
   baseSha?(repo: string): Promise<string>;
+  /**
+   * 終わったチケット(merge 済み)の作業場所を、すべての役割(開発・レビュー・QA・CI など)ぶん消す。
+   * チケットの番号に結びついた worktrees/<番号>-* だけが対象で、リーダー用の plan-<役割> や、ほかのチケットのものには触らない。
+   * 1 つ消せなくても止まらず、消せたものと消せなかったもの(理由つき)を返す。
+   */
+  removeTicketWorktrees?(repo: string, ticketNumber: number): Promise<{ removed: string[]; failed: { path: string; error: string }[] }>;
   /** 画面の試作を作業場所に置く(ADR-0033)。git には入れない(info/exclude に足す)。 */
   writeDesign?(path: string, gitDir: string, files: { file: string; data: string | Buffer }[]): Promise<void>;
 }
@@ -214,6 +220,41 @@ export class GitWorkspace implements Workspace {
     return { path: realpathSync(path), base, gitDir: realpathSync(join(clone, ".git")), sha, baseSha, ...(merged ? { conflict: merged } : {}) };
   }
 
+  async removeTicketWorktrees(repo: string, ticketNumber: number): Promise<{ removed: string[]; failed: { path: string; error: string }[] }> {
+    const removed: string[] = [];
+    const failed: { path: string; error: string }[] = [];
+    const clone = this.clonePath(repo);
+    if (!existsSync(clone) || !Number.isInteger(ticketNumber) || ticketNumber <= 0) return { removed, failed };
+    // git は realpath で覚えている(macOS の /var → /private/var など)ので、そろえて比べる
+    const dir = resolve(this.workDir, "worktrees");
+    const root = existsSync(dir) ? realpathSync(dir) : dir;
+    // 「<番号>-」で始まる名前だけ(61 の片付けで 6 や 610 のものに触れないよう、番号のあとのハイフンまで合わせる)
+    const mine = (path: string) => dirname(resolve(path)) === root && basename(path).startsWith(`${ticketNumber}-`);
+    // git が覚えているもの(ディレクトリが既に無くても出てくる)と、ディスクに残っているもの(登録が外れたもの)の両方
+    const paths = new Set<string>();
+    const listed = await git(clone, "worktree", "list", "--porcelain").catch((e: unknown) => {
+      failed.push({ path: clone, error: errorText(e) });
+      return "";
+    });
+    for (const line of listed.split("\n")) if (line.startsWith("worktree ")) paths.add(line.slice("worktree ".length).trim());
+    if (existsSync(root)) for (const name of readdirSync(root)) paths.add(join(root, name));
+    for (const path of paths) {
+      if (!mine(path)) continue;
+      try {
+        await git(clone, "worktree", "remove", "--force", path).catch(() => undefined);
+        // 登録が無い・remove で消えなかった残りは、中身ごと消す(上で「worktrees の直下の <番号>-*」と確かめてある)
+        if (existsSync(path)) rmSync(path, { recursive: true, force: true });
+        removed.push(path);
+      } catch (e) {
+        failed.push({ path, error: errorText(e) });
+      }
+    }
+    await git(clone, "worktree", "prune").catch((e: unknown) => {
+      failed.push({ path: clone, error: errorText(e) });
+    });
+    return { removed, failed };
+  }
+
   async writeDesign(path: string, gitDir: string, files: { file: string; data: string | Buffer }[]): Promise<void> {
     for (const f of files) {
       const to = join(path, f.file);
@@ -263,6 +304,11 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return stdout;
 }
 
+function errorText(e: unknown): string {
+  const err = e as { stderr?: string; message?: string };
+  return (err.stderr || err.message || String(e)).trim().slice(0, 300);
+}
+
 async function defaultBranch(base: string): Promise<string> {
   const ref = await git(base, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").catch(() => "origin/main");
   return ref.trim().replace(/^origin\//, "");
@@ -273,7 +319,7 @@ export class StaticWorkspace implements Workspace {
   readonly published: PublishRequest[] = [];
   constructor(
     private readonly path: string,
-    private readonly opts: { prNumber?: (req: PublishRequest) => number; ready?: (path: string) => string | undefined; landed?: (commit: string) => string | undefined; ownCommits?: (since: string) => number | null; publishError?: () => string | undefined; github?: () => string | undefined; baseSha?: () => string; changes?: () => { commits?: string[]; files?: string[]; code?: string } } = {},
+    private readonly opts: { prNumber?: (req: PublishRequest) => number; ready?: (path: string) => string | undefined; landed?: (commit: string) => string | undefined; ownCommits?: (since: string) => number | null; publishError?: () => string | undefined; github?: () => string | undefined; baseSha?: () => string; changes?: () => { commits?: string[]; files?: string[]; code?: string }; removeError?: () => string | undefined } = {},
   ) {}
   /** テスト用: チームの CI の場所は、決まった場所に PR のコミット(sha-<push の回数>)と main を合わせたものとする。 */
   async prepareCheck(): Promise<CheckWorkspace> {
@@ -302,6 +348,14 @@ export class StaticWorkspace implements Workspace {
     return this.opts.ready?.(path);
   }
   readonly closed: { repo: string; number: number; comment: string }[] = [];
+  /** テスト用: 片付けを頼まれたチケット。removeError があれば、消せなかったことにする。 */
+  readonly cleaned: { repo: string; ticketNumber: number }[] = [];
+  async removeTicketWorktrees(repo: string, ticketNumber: number): Promise<{ removed: string[]; failed: { path: string; error: string }[] }> {
+    this.cleaned.push({ repo, ticketNumber });
+    const error = this.opts.removeError?.();
+    if (error) throw new Error(error);
+    return { removed: [`${ticketNumber}-dev`], failed: [] };
+  }
   async ownCommits(_path: string, _base: string, since: string): Promise<number | null> {
     return this.opts.ownCommits ? this.opts.ownCommits(since) : 1;
   }

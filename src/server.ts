@@ -102,7 +102,7 @@ export type ServerDeps = {
  */
 export class KuramotoServer {
   private readonly projects = new Map<number, Project>();
-  private readonly runners = new Map<number, { timer: NodeJS.Timeout; mergeTimer: NodeJS.Timeout; busy: boolean; dispatcher: Dispatcher; tick: () => Promise<void>; teamCi: TeamCiHook }>();
+  private readonly runners = new Map<number, { timer: NodeJS.Timeout; mergeTimer: NodeJS.Timeout; busy: boolean; dispatcher: Dispatcher; tick: () => Promise<void>; teamCi: TeamCiHook; workspace: Workspace }>();
   /** チームの CI のコマンドを閉じ込めの中で流す(プロセスで 1 つ。1 度に 1 つずつ流す)。 */
   private readonly checkRunner: CommandRunner;
   /** オフィス(チケットの仕事)を動かしているプロジェクト。企画スタジオの担当は止めていても動く。 */
@@ -248,7 +248,7 @@ export class KuramotoServer {
       if (merging || !this.running.has(id) || !this.dbUp() || !await autoMergeEnabled(p)) return;
       merging = true;
       try {
-        if (await autoMerge(p, this.github, { teamCi })) this.poke(id);
+        if (await autoMerge(p, this.github, { teamCi, workspace })) this.poke(id);
       } catch (e) {
         this.deps.dbHealth?.reportFailure(e); // 接続のエラーなら、次の ping を待たずに「切れた」にする
         await p.event("system", "dispatcher_error", null, { error: e instanceof Error ? e.message : String(e) });
@@ -260,6 +260,7 @@ export class KuramotoServer {
       busy: false,
       dispatcher,
       teamCi,
+      workspace,
       timer: setInterval(() => void tick(), POLL_MS),
       mergeTimer: setInterval(() => void merge(), this.mergePollMs),
       tick: async () => tick(),
@@ -464,7 +465,7 @@ export class KuramotoServer {
     }
     if (b === "merge" && c && method === "POST") {
       await this.loop(id);
-      return await ownerMerge(p, this.github, Number(c), "owner", { teamCi: this.runners.get(id)!.teamCi });
+      return await ownerMerge(p, this.github, Number(c), "owner", { teamCi: this.runners.get(id)!.teamCi, workspace: this.runners.get(id)!.workspace });
     }
     if (b === "run" && method === "POST") {
       if (body.running) await this.start(id);

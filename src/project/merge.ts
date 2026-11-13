@@ -5,6 +5,8 @@ import type { CiDetail, GitHub, PrStatus } from "../github/github.js";
 import type { Project, TicketRow } from "./project.js";
 import { createTicket, enterStage, flushFollowups, type DecisionOption } from "./workflow.js";
 import { passedAt, teamCiEnabled, teamCiFindings, type TeamCiResult } from "./team-ci.js";
+import { releaseWorktrees } from "./cleanup.js";
+import type { Workspace } from "./workspace.js";
 import { ciBlockAction, ciProbeDue, githubDown, isGithubAuthError, markCiBlocked, markCiRunning, markGithubDown } from "./outage.js";
 
 type PrRow = { id: number; ticket_id: number; repo_id: number; number: number; head: string; full_name: string };
@@ -22,7 +24,14 @@ export type TeamCiHook = {
   baseSha(repo: string): Promise<string>;
 };
 
-export async function ownerMerge(p: Project, gh: GitHub, ticketId: number, by: "owner" | "team" = "owner", opts: { teamCi?: TeamCiHook } = {}): Promise<MergeResult> {
+export async function ownerMerge(p: Project, gh: GitHub, ticketId: number, by: "owner" | "team" = "owner", opts: { teamCi?: TeamCiHook; workspace?: Workspace } = {}): Promise<MergeResult> {
+  const result = await mergeTicket(p, gh, ticketId, by, opts);
+  // done にできたら(責任者が押した・自動・外で merge 済みのどれでも)、そのチケットの作業場所を消す。消せなくても merge は成功のまま
+  if (result.result === "merged") await releaseWorktrees(p, opts.workspace, await p.ticket(ticketId), (await prsOf(p, ticketId)).map((pr) => pr.full_name));
+  return result;
+}
+
+async function mergeTicket(p: Project, gh: GitHub, ticketId: number, by: "owner" | "team", opts: { teamCi?: TeamCiHook }): Promise<MergeResult> {
   const ticket = await p.ticket(ticketId);
   if (ticket.stage !== "merge") throw new Error(`チケット #${ticket.number} は merge 待ちではありません`);
   const prs = await prsOf(p, ticketId);
@@ -274,7 +283,7 @@ export async function autoMergeEnabled(p: Project): Promise<boolean> {
  * CI の途中などで merge できないものは、間を空けて確かめ直す(GitHub に問い合わせすぎないように)。
  * @returns merge したチケットの数
  */
-export async function autoMerge(p: Project, gh: GitHub, opts: { retrySec?: number; teamCi?: TeamCiHook } = {}): Promise<number> {
+export async function autoMerge(p: Project, gh: GitHub, opts: { retrySec?: number; teamCi?: TeamCiHook; workspace?: Workspace } = {}): Promise<number> {
   if (!await autoMergeEnabled(p)) return 0;
   // GitHub に入れない間は見回らない(入れるようになったらディスパッチャが再開を知らせる)
   if (await githubDown(p)) return 0;
@@ -288,7 +297,7 @@ export async function autoMerge(p: Project, gh: GitHub, opts: { retrySec?: numbe
     if (last && p.clock.now().getTime() - new Date(last).getTime() < retryMs) continue;
     await p.setSetting(key, p.now());
     try {
-      const r = await ownerMerge(p, gh, t.id, "team", { ...(opts.teamCi ? { teamCi: opts.teamCi } : {}) });
+      const r = await ownerMerge(p, gh, t.id, "team", { ...(opts.teamCi ? { teamCi: opts.teamCi } : {}), ...(opts.workspace ? { workspace: opts.workspace } : {}) });
       if (r.result === "merged") merged++;
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);

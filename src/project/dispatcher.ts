@@ -129,7 +129,7 @@ export class Dispatcher {
   async refreshMergedWaits(): Promise<void> {
     const gh = this.deps.github;
     if (!gh || !this.deps.triage || !(this.deps.ticketsAllowed?.() ?? true)) return;
-    await refreshMergedWaits(this.p, gh);
+    await refreshMergedWaits(this.p, gh, { workspace: this.deps.workspace });
   }
 
   /** GitHub に入れない間は、間を空けて入れるかを確かめ、入れたら再開する(ADR-0027)。 */
