@@ -60,6 +60,13 @@ describe("ローカルサーバー", () => {
     expect((await call("GET", `/api/projects/${created.id}/settings`)).json.patrolMin).toBe(5);
     await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], patrolMin: 10 });
     expect((await call("GET", `/api/projects/${created.id}/settings`)).json.patrolMin).toBe(10);
+    // merge 先のブランチはリポジトリごとに決められる。空なら既定のブランチ。使えない名前は断る
+    expect((await call("GET", `/api/projects/${created.id}/settings`)).json.baseBranches).toEqual({ "acme/shop": "" });
+    await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], baseBranches: { "acme/shop": "develop" } });
+    expect((await call("GET", `/api/projects/${created.id}/settings`)).json.baseBranches).toEqual({ "acme/shop": "develop" });
+    expect((await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], baseBranches: { "acme/shop": "a..b" } })).status).toBeGreaterThanOrEqual(400);
+    expect((await call("GET", `/api/projects/${created.id}/settings`)).json.baseBranches).toEqual({ "acme/shop": "develop" });
+    await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], baseBranches: { "acme/shop": "" } });
     // チームの CI に切り替えると、GitHub Actions を止める。戻すと動かす(ADR-0028)
     expect((await call("GET", `/api/projects/${created.id}/settings`)).json.ciMode).toBe("github");
     await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], ciMode: "team", ciCommands: { "acme/shop": "npm ci\nnpm test" } });

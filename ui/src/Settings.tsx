@@ -12,7 +12,21 @@ import { usd } from "./format";
 
 const REPO_ROLES = ["フロント", "API", "インフラ", "その他"];
 const repoOk = (r: string) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r);
-type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean; resumeChecks: boolean; patrolMin: number; planWeb: boolean; planWebDomains: string; ciMode: "team" | "github"; ciCommands: Record<string, string> };
+/** git のブランチ名として使えるか(サーバーの branchNameOk と同じ決まり)。空は「既定のブランチ」。 */
+const branchOk = (s: string) =>
+  !s ||
+  (s !== "@" &&
+    !s.startsWith("-") &&
+    !/[\s~^:?*[\\\x00-\x1f\x7f]/.test(s) &&
+    !s.includes("..") &&
+    !s.includes("@{") &&
+    !s.includes("//") &&
+    !s.startsWith("/") &&
+    !s.endsWith("/") &&
+    !s.endsWith(".") &&
+    !s.endsWith(".lock") &&
+    s.split("/").every((part) => part && !part.startsWith(".")));
+type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean; resumeChecks: boolean; patrolMin: number; planWeb: boolean; planWebDomains: string; ciMode: "team" | "github"; ciCommands: Record<string, string>; baseBranches: Record<string, string> };
 
 /** プロジェクトの設定: 名前とリポジトリ(足す・外す・役割を変える)。 */
 export function SettingsPage({ id }: { id: number }) {
@@ -30,6 +44,7 @@ export function SettingsPage({ id }: { id: number }) {
   const [planWeb, setPlanWeb] = useState(true);
   const [planWebDomains, setPlanWebDomains] = useState("");
   const [ciCommands, setCiCommands] = useState<Record<string, string>>({});
+  const [baseBranches, setBaseBranches] = useState<Record<string, string>>({});
   const reset = () => {
     if (!data) return;
     setName(data.name);
@@ -43,6 +58,7 @@ export function SettingsPage({ id }: { id: number }) {
     setPlanWeb(data.planWeb);
     setPlanWebDomains(data.planWebDomains);
     setCiCommands(data.ciCommands);
+    setBaseBranches(data.baseBranches);
     setRepos(data.repos.map((x) => ({ r: x.fullName, role: x.role })));
   };
   useEffect(() => {
@@ -53,10 +69,12 @@ export function SettingsPage({ id }: { id: number }) {
   const set = (i: number, patch: Partial<{ r: string; role: string }>) => setRepos(repos.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const list = repos.filter((x) => x.r).map((x) => ({ fullName: x.r, role: x.role }));
   const budgetOk = totalOk(budget);
-  const changed = name !== data.name || JSON.stringify(list) !== JSON.stringify(data.repos) || budget !== data.ticketBudgetUsd || total !== data.projectBudgetUsd || nonstopOn !== data.nonstop || autoMergeOn !== data.autoMerge || resumeOn !== data.resumeChecks || patrolMin !== String(data.patrolMin) || planWeb !== data.planWeb || planWebDomains !== data.planWebDomains || ciMode !== data.ciMode || JSON.stringify(ciCommands) !== JSON.stringify(data.ciCommands);
+  const bases = Object.fromEntries(list.map((x) => [x.fullName, (baseBranches[x.fullName] ?? "").trim()]));
+  const basesBefore = Object.fromEntries(list.map((x) => [x.fullName, data.baseBranches[x.fullName] ?? ""]));
+  const changed = name !== data.name || JSON.stringify(list) !== JSON.stringify(data.repos) || budget !== data.ticketBudgetUsd || total !== data.projectBudgetUsd || nonstopOn !== data.nonstop || autoMergeOn !== data.autoMerge || resumeOn !== data.resumeChecks || patrolMin !== String(data.patrolMin) || planWeb !== data.planWeb || planWebDomains !== data.planWebDomains || ciMode !== data.ciMode || JSON.stringify(ciCommands) !== JSON.stringify(data.ciCommands) || JSON.stringify(bases) !== JSON.stringify(basesBefore);
   const patrolOk = /^\d+$/.test(patrolMin);
-  const invalid = !name.trim() || !list.length || list.some((x) => !repoOk(x.fullName)) || !budgetOk || !totalOk(total) || !patrolOk;
-  const save = () => act(() => post(`/projects/${id}/settings`, { name: name.trim(), repos: list, ticketBudgetUsd: budget, projectBudgetUsd: total, nonstop: nonstopOn, autoMerge: autoMergeOn, resumeChecks: resumeOn, patrolMin: Number(patrolMin), planWeb, planWebDomains, ciMode, ciCommands }), "プロジェクトの設定を保存しました");
+  const invalid = !name.trim() || !list.length || list.some((x) => !repoOk(x.fullName)) || !budgetOk || !totalOk(total) || !patrolOk || Object.values(bases).some((b) => !branchOk(b));
+  const save = () => act(() => post(`/projects/${id}/settings`, { name: name.trim(), repos: list, ticketBudgetUsd: budget, projectBudgetUsd: total, nonstop: nonstopOn, autoMerge: autoMergeOn, resumeChecks: resumeOn, patrolMin: Number(patrolMin), planWeb, planWebDomains, ciMode, ciCommands, baseBranches: bases }), "プロジェクトの設定を保存しました");
 
   return (
     <section aria-label="プロジェクトの設定">
@@ -64,7 +82,7 @@ export function SettingsPage({ id }: { id: number }) {
         <div>
           <h2 style={{ margin: 0, fontSize: 24 }}>プロジェクトの設定</h2>
           <p className="hint" style={{ margin: "4px 0 0" }}>
-            名前とリポジトリを変えられます。PR や作業の記録があるリポジトリと、編成の島が受け持っているリポジトリは外せません。
+            名前とリポジトリを変えられます。PR や作業の記録があるリポジトリと、編成の島が受け持っているリポジトリは外せません。merge 先のブランチを変えると、これから作る PR の向き先と、作業・チームの CI の起点がそのブランチになります(出してある PR の向き先は変わりません)。
           </p>
         </div>
         <div>
@@ -97,6 +115,26 @@ export function SettingsPage({ id }: { id: number }) {
               {x.r && !repoOk(x.r) && (
                 <div className="bad" style={{ margin: "-2px 0 6px" }}>
                   owner/repo の形で入力してください
+                </div>
+              )}
+              {x.r && repoOk(x.r) && (
+                <div style={{ margin: "0 0 10px" }}>
+                  <label className="h" htmlFor={`ps-base${i}`}>
+                    {x.r} の merge 先のブランチ
+                  </label>
+                  <div className="hint" style={{ marginBottom: 6 }}>
+                    PR の向き先です(例: <code>develop</code>)。空ならリポジトリの既定のブランチ(GitHub の default branch)に向けます
+                  </div>
+                  <Input
+                    type="text"
+                    id={`ps-base${i}`}
+                    blockSize="md"
+                    isError={!branchOk((baseBranches[x.r] ?? "").trim())}
+                    className="w-full font-mono"
+                    value={baseBranches[x.r] ?? ""}
+                    onChange={(e) => setBaseBranches({ ...baseBranches, [x.r]: e.target.value })}
+                  />
+                  {!branchOk((baseBranches[x.r] ?? "").trim()) && <div className="bad">git のブランチ名として使えない文字が入っています</div>}
                 </div>
               )}
             </div>

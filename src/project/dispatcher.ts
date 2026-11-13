@@ -11,6 +11,7 @@ import { advance, applyReport, decision, expireDecisions, holdTicket, nonstop, r
 import { leftUsd, projectExhausted, projectLeftUsd, unitExhausted, unitLeftUsd } from "./budget.js";
 import { askLeadToUnstick, resetUnstick, unstickPrompt, unstickTools, type StuckPayload } from "./unstick.js";
 import type { Workspace } from "./workspace.js";
+import { baseBranchOf } from "./base-branch.js";
 import type { GitHub } from "../github/github.js";
 import { ciTools } from "./ci-tools.js";
 import { planWebNote, planWebTools } from "./web-access.js";
@@ -352,7 +353,7 @@ export class Dispatcher {
     let result: HarnessResult | undefined;
     let error: string | undefined;
     try {
-      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: ticket.number, role, memberName: member.name, branch });
+      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, base: baseBranchOf(p, repo.full_name), ticketNumber: ticket.number, role, memberName: member.name, branch });
       // 画面のデザイン: 企画で合意した試作・デザインシステム・お手本の画像を作業場所に置き、役割ごとの使い方を指示に足す(ADR-0033・0034)
       const designUse = ["dev", "review", "qa"].includes(role);
       const designs = designUse ? designFor(p, ticket) : [];
@@ -509,7 +510,7 @@ export class Dispatcher {
     const abort = new AbortController();
     this.planRuns.set(runId, abort);
     try {
-      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: 0, role, memberName: member.name, branch: "" });
+      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, base: baseBranchOf(p, repo.full_name), ticketNumber: 0, role, memberName: member.name, branch: "" });
       result = await harness.run({
         cwd: ws.path,
         confine: confinementFor(p, ws, role),
@@ -605,7 +606,7 @@ export class Dispatcher {
     let result: HarnessResult | undefined;
     let error: string | undefined;
     try {
-      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: 0, role: "lead", memberName: member.name, branch: "" });
+      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, base: baseBranchOf(p, repo.full_name), ticketNumber: 0, role: "lead", memberName: member.name, branch: "" });
       result = await harness.run({
         cwd: ws.path,
         confine: confinementFor(p, ws, "lead"),
@@ -731,7 +732,7 @@ export class Dispatcher {
     let error: string | undefined;
     try {
       // 担当が push したブランチを読むだけの場所で調べる
-      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: ticket.number, role: "lead", memberName: member.name, branch: devBranch(p, ticket, repo.id) });
+      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, base: baseBranchOf(p, repo.full_name), ticketNumber: ticket.number, role: "lead", memberName: member.name, branch: devBranch(p, ticket, repo.id) });
       result = await harness.run({
         cwd: ws.path,
         confine: confinementFor(p, ws, "lead"),

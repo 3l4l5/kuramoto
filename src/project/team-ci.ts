@@ -6,6 +6,7 @@ import type { Confinement } from "../harness/types.js";
 import { confinementFor } from "./confine.js";
 import type { Project, TicketRow } from "./project.js";
 import type { Workspace } from "./workspace.js";
+import { baseBranchOf } from "./base-branch.js";
 
 /**
  * チームの CI(ADR-0028)。GitHub Actions を待たずに、Kuramoto が PR の中身を最新の main と合わせた状態で、
@@ -77,7 +78,7 @@ function tail(s: string): string {
  */
 export async function runTeamCi(p: Project, ws: Workspace, runner: CommandRunner, ticket: TicketRow, repo: string, branch: string): Promise<TeamCiResult> {
   if (!ws.prepareCheck) throw new Error("この作業場所では、チームの CI を流せません");
-  const prep = await ws.prepareCheck({ repo, ticketNumber: ticket.number, branch });
+  const prep = await ws.prepareCheck({ repo, ticketNumber: ticket.number, branch, base: baseBranchOf(p, repo) });
   const base = { sha: prep.sha, base: prep.base, baseSha: prep.baseSha };
   let result: TeamCiResult;
   if (prep.conflict) {

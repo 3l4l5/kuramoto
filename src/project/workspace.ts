@@ -13,11 +13,13 @@ export type WorkspaceRequest = {
   memberName: string;
   /** 開発のブランチ。レビュー側はこのブランチを読むだけ。 */
   branch: string;
+  /** merge 先(PR の向き先・差分の起点)。空なら origin の既定のブランチ。 */
+  base?: string;
 };
 
 export type PreparedWorkspace = {
   path: string;
-  /** 既定のブランチ(PR の向き先・差分の起点)。 */
+  /** merge 先のブランチ(PR の向き先・差分の起点)。決めていなければ origin の既定のブランチ。 */
   base: string;
   /** git の本体(.git)。worktree の git 操作はここを読み書きする。 */
   gitDir: string;
@@ -62,9 +64,9 @@ export interface Workspace {
    * チームの CI(ADR-0028)の場所を用意する。チケットのブランチ(push 済みのもの)を取り出し、最新の main を合わせる。
    * 合わせられなければ conflict にその理由を入れる。
    */
-  prepareCheck?(req: { repo: string; ticketNumber: number; branch: string }): Promise<CheckWorkspace>;
-  /** origin の既定のブランチの今のコミット(merge の直前に、チームの CI を流し直すかを決める)。 */
-  baseSha?(repo: string): Promise<string>;
+  prepareCheck?(req: { repo: string; ticketNumber: number; branch: string; base?: string }): Promise<CheckWorkspace>;
+  /** merge 先(空なら origin の既定のブランチ)の今のコミット(merge の直前に、チームの CI を流し直すかを決める)。 */
+  baseSha?(repo: string, base?: string): Promise<string>;
   /** 画面の試作を作業場所に置く(ADR-0033)。git には入れない(info/exclude に足す)。 */
   writeDesign?(path: string, gitDir: string, files: { file: string; data: string | Buffer }[]): Promise<void>;
 }
@@ -81,9 +83,10 @@ export class GitWorkspace implements Workspace {
   constructor(private readonly workDir: string) {}
 
   async prepare(req: WorkspaceRequest): Promise<PreparedWorkspace> {
-    const base = this.clonePath(req.repo);
-    const path = await this.preparePath(req);
-    return { path, base: await defaultBranch(base), gitDir: realpathSync(join(base, ".git")) };
+    const clone = await this.ensureClone(req.repo);
+    const base = await resolveBase(clone, req.repo, req.base);
+    const path = await this.preparePath(req, clone, base);
+    return { path, base, gitDir: realpathSync(join(clone, ".git")) };
   }
 
   private clonePath(repo: string): string {
@@ -101,21 +104,20 @@ export class GitWorkspace implements Workspace {
     return base;
   }
 
-  private async preparePath(req: WorkspaceRequest): Promise<string> {
-    // 企画の担当は、既定のブランチを読むだけの場所で動く
-    const base = await this.ensureClone(req.repo);
+  private async preparePath(req: WorkspaceRequest, clone: string, baseBranch: string): Promise<string> {
+    // 企画の担当は、merge 先のブランチを読むだけの場所で動く
     const path = join(this.workDir, "worktrees", req.ticketNumber === 0 ? `plan-${req.role}` : `${req.ticketNumber}-${req.role === "dev" ? "dev" : req.role}`);
     if (existsSync(path)) {
       if (req.role !== "dev" && req.branch) await this.checkoutBranch(path, req.branch);
-      else if (!req.branch) await git(path, "checkout", "--detach", `origin/${await defaultBranch(base)}`);
+      else if (!req.branch) await git(path, "checkout", "--detach", `origin/${baseBranch}`);
       return realpathSync(path);
     }
     if (req.role === "dev") {
-      const remoteHasBranch = await git(base, "ls-remote", "--heads", "origin", req.branch).then((o) => o.trim() !== "");
-      const start = remoteHasBranch ? `origin/${req.branch}` : `origin/${await defaultBranch(base)}`;
-      await git(base, "worktree", "add", "-B", req.branch, path, start);
+      const remoteHasBranch = await git(clone, "ls-remote", "--heads", "origin", req.branch).then((o) => o.trim() !== "");
+      const start = remoteHasBranch ? `origin/${req.branch}` : `origin/${baseBranch}`;
+      await git(clone, "worktree", "add", "-B", req.branch, path, start);
     } else {
-      await git(base, "worktree", "add", "--detach", path, `origin/${await defaultBranch(base)}`);
+      await git(clone, "worktree", "add", "--detach", path, `origin/${baseBranch}`);
       if (req.branch) await this.checkoutBranch(path, req.branch);
     }
     return realpathSync(path);
@@ -175,9 +177,9 @@ export class GitWorkspace implements Workspace {
     await exec("gh", ["pr", "close", String(number), "--repo", repo, "--comment", comment]);
   }
 
-  async prepareCheck(req: { repo: string; ticketNumber: number; branch: string }): Promise<CheckWorkspace> {
+  async prepareCheck(req: { repo: string; ticketNumber: number; branch: string; base?: string }): Promise<CheckWorkspace> {
     const clone = await this.ensureClone(req.repo);
-    const base = await defaultBranch(clone);
+    const base = await resolveBase(clone, req.repo, req.base);
     const path = join(this.workDir, "worktrees", `${req.ticketNumber}-ci`);
     if (!existsSync(path)) await git(clone, "worktree", "add", "--detach", path, `origin/${base}`);
     await git(path, "fetch", "origin", req.branch, base);
@@ -211,9 +213,9 @@ export class GitWorkspace implements Workspace {
     }
   }
 
-  async baseSha(repo: string): Promise<string> {
+  async baseSha(repo: string, wanted?: string): Promise<string> {
     const clone = this.clonePath(repo);
-    const base = await defaultBranch(clone);
+    const base = wanted || (await defaultBranch(clone));
     const out = await git(clone, "ls-remote", "origin", `refs/heads/${base}`);
     return out.split(/\s/)[0] ?? "";
   }
@@ -245,6 +247,17 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return stdout;
 }
 
+/** merge 先のブランチ。決めてあれば origin にあるかを確かめ、無ければ origin の既定のブランチ。 */
+async function resolveBase(clone: string, repo: string, wanted: string | undefined): Promise<string> {
+  if (!wanted) return defaultBranch(clone);
+  const ok = await git(clone, "rev-parse", "--verify", "--quiet", `refs/remotes/origin/${wanted}`).then(
+    () => true,
+    () => false,
+  );
+  if (!ok) throw new Error(`merge 先のブランチ ${wanted} が ${repo} にありません。ブランチを作るか、プロジェクトの設定で merge 先を直してください。`);
+  return wanted;
+}
+
 async function defaultBranch(base: string): Promise<string> {
   const ref = await git(base, "symbolic-ref", "--short", "refs/remotes/origin/HEAD").catch(() => "origin/main");
   return ref.trim().replace(/^origin\//, "");
@@ -258,8 +271,8 @@ export class StaticWorkspace implements Workspace {
     private readonly opts: { prNumber?: (req: PublishRequest) => number; ready?: (path: string) => string | undefined; landed?: (commit: string) => string | undefined; ownCommits?: (since: string) => number | null; publishError?: () => string | undefined; github?: () => string | undefined; baseSha?: () => string } = {},
   ) {}
   /** テスト用: チームの CI の場所は、決まった場所に PR のコミット(sha-<push の回数>)と main を合わせたものとする。 */
-  async prepareCheck(): Promise<CheckWorkspace> {
-    return { path: this.path, base: "main", gitDir: join(this.path, ".git"), sha: `sha-${this.published.length}`, baseSha: this.opts.baseSha?.() ?? "main-1" };
+  async prepareCheck(req: { base?: string }): Promise<CheckWorkspace> {
+    return { path: this.path, base: req.base || "main", gitDir: join(this.path, ".git"), sha: `sha-${this.published.length}`, baseSha: this.opts.baseSha?.() ?? "main-1" };
   }
   async baseSha(): Promise<string> {
     return this.opts.baseSha?.() ?? "main-1";
@@ -272,8 +285,8 @@ export class StaticWorkspace implements Workspace {
   async writeDesign(_path: string, _gitDir: string, files: { file: string; data: string | Buffer }[]): Promise<void> {
     this.designs.push(...files);
   }
-  async prepare(): Promise<PreparedWorkspace> {
-    return { path: this.path, base: "main", gitDir: join(this.path, ".git") };
+  async prepare(req: WorkspaceRequest): Promise<PreparedWorkspace> {
+    return { path: this.path, base: req.base || "main", gitDir: join(this.path, ".git") };
   }
   async checkReady(path: string): Promise<string | undefined> {
     return this.opts.ready?.(path);
