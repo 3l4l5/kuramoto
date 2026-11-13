@@ -206,6 +206,50 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
     expect(ticketView(p, t.id).ruleBlocked).toEqual(["マイグレーションは単独の PR"]);
   });
 
+  it("ブランチ名は持ち主が直せない: Jira の番号が無いチケットで「Jira 番号をそろえる」を有効にしても、止まらない", async () => {
+    // jira_key が無いので、ブランチは kuramoto/<番号> のまま。タイトルとコミットだけ直せる
+    const { p, d, workspace, toolReplies, order } = setup([{ title: "CSV", commits: ["書き出し"] }, { title: "SHOP-1 CSV", commits: ["SHOP-1 書き出し"] }]);
+    template(p, "jira");
+    const t = createTicket(p, { title: "CSV の書き出し" });
+    await d.drain();
+
+    // 1 回目はタイトルとコミットだけを直すよう戻し、ブランチ名は直せとは言わない
+    expect(toolReplies[0]).toContain("開発ルールに反しています");
+    expect(toolReplies[0]).toContain("PR タイトル");
+    expect(toolReplies[0]).not.toContain("ブランチ名が決まった形");
+    // 2 回目で PR が出る。起動は失敗していない
+    expect(workspace.published[0]!.title).toBe("SHOP-1 CSV");
+    expect(all<{ outcome: string }>(p.db, "SELECT outcome FROM runs WHERE role = 'dev'").every((r) => r.outcome === "ok")).toBe(true);
+    // ブランチ名の違反だけが残るので、自動で直した扱いにはせず、レビューで指摘に回る
+    expect(all<{ handled: string; detail: string }>(p.db, "SELECT handled, detail FROM rule_violations")).toMatchObject([{ handled: "review" }]);
+    expect(order).toContain("review");
+    expect(all<{ category: string }>(p.db, "SELECT category FROM findings").map((f) => f.category)).toEqual(["dev-rule"]);
+    expect(p.ticket(t.id).stage).toBe("merge");
+    expect(productivity(p).totals.ruleViolations).toEqual({ total: 1, autofixed: 0 });
+  });
+
+  it("ブランチ名だけに効く「自動で直す」ルールは、戻さずに、レビューで指摘に回す", async () => {
+    const { p, d, toolReplies } = setup([{}]);
+    addDevRule(p, { name: "ブランチは SHOP- で始める", body: "x", appliesTo: ["branch"], check: "pattern", pattern: "^SHOP-", onFail: "autofix" });
+    createTicket(p, { title: "CSV の書き出し" });
+    await d.drain();
+
+    // 直して出し直すよう戻すことは一度も無い(直せないので)
+    expect(toolReplies.some((r) => r.includes("開発ルールに反しています"))).toBe(false);
+    expect(all<{ handled: string }>(p.db, "SELECT handled FROM rule_violations")).toMatchObject([{ handled: "review" }]);
+  });
+
+  it("レビューの指摘は違反ごとに 1 件。違反の中身が変わっても、同じ違反の指摘を足さない", async () => {
+    const { p, d } = setup([{ commits: ["あ".repeat(60)] }, { commits: ["い".repeat(70)] }, { commits: ["う".repeat(80)] }]);
+    template(p, "commit-50");
+    createTicket(p, { title: "CSV の書き出し" });
+    await d.drain();
+
+    // 直しの出し直しのたびにコミットは変わるが、違反は 1 件のまま、指摘も 1 件
+    expect(all(p.db, "SELECT * FROM rule_violations")).toHaveLength(1);
+    expect(all(p.db, "SELECT * FROM findings WHERE category = 'dev-rule'")).toHaveLength(1);
+  });
+
   it("無効のルールは確かめられず、違反も残らない", async () => {
     const { p, d, workspace, toolReplies } = setup([{ title: "CSV", files: ["db/migrations/001.sql", "src/a.ts"], commits: ["あ".repeat(80)], body: "本文" }]);
     for (const t of TEMPLATES) setDevRuleEnabled(p, template(p, t.key).id, false);
@@ -227,6 +271,13 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
     await d.drain();
 
     expect(order.filter((x) => x === "judge")).toHaveLength(2);
+    // 読ませた分の使用量は、その開発の起動に足される(チケットの予算と生産性に入る)
+    const devRuns = all<{ cost_usd: number; input_tokens: number }>(p.db, "SELECT cost_usd, input_tokens FROM runs WHERE role = 'dev' ORDER BY id");
+    expect(devRuns.length).toBeGreaterThan(0);
+    for (const r of devRuns) {
+      expect(r.cost_usd).toBeCloseTo(0.02);
+      expect(r.input_tokens).toBe(2000);
+    }
     const rows = all<{ detail: string; handled: string }>(p.db, "SELECT detail, handled FROM rule_violations");
     expect(rows[0]).toMatchObject({ handled: "review", detail: "テストの名前が分かりにくい" });
     expect(p.ticket(t.id).stage).not.toBe("done");

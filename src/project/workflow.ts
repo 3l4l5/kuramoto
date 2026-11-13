@@ -9,7 +9,7 @@ import type { Project, TicketRow } from "./project.js";
 import type { Finding, Followup, Question, RunReport } from "./tools.js";
 import { comment, lastReviewer, mustResolve, setStatus, threadText } from "./review.js";
 import { teamCiFindings } from "./team-ci.js";
-import { openViolations, reviewFindingsFor } from "./dev-rules.js";
+import { openViolations, markListed, reviewFindingsFor } from "./dev-rules.js";
 
 /**
  * ノンストップで進めるか(ADR-0022)。設定 nonstop が "0" でなければ、戻せる判断はチームで決め、責任者には報告だけする。
@@ -219,9 +219,9 @@ function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId: numbe
   const { resolutions } = report.review;
   // 「レビューで指摘」の開発ルール(R15)の違反は、最初の確認の工程が、まだ指摘にしていないものを指摘に足す
   const first = pipelineOf(p.currentFormation()).find((r) => r !== "dev");
-  const listed = new Set(all<{ body: string }>(p.db, "SELECT f.body FROM findings f JOIN reviews r ON r.id = f.review_id WHERE r.ticket_id = ? AND f.category = 'dev-rule'", [ticket.id]).map((f) => f.body));
-  const ruleFindings = role === first ? reviewFindingsFor(p, ticket.id).filter((f) => !listed.has(f.body)) : [];
-  const findings: Finding[] = [...report.review.findings, ...ruleFindings];
+  const ruleFindings = role === first ? reviewFindingsFor(p, ticket.id) : [];
+  for (const f of ruleFindings) markListed(p, f.violationId);
+  const findings: Finding[] = [...report.review.findings, ...ruleFindings.map(({ violationId: _, ...f }) => f)];
   const reviewer = get<{ member_id: number }>(p.db, "SELECT member_id FROM runs WHERE id = ?", [runId])!.member_id;
   const who = { memberId: reviewer, role };
   const round = ticket.rounds + 1;

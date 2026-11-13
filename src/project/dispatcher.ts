@@ -2,7 +2,7 @@ import { FIXED_CAST, speechNote } from "../domain/cast.js";
 import { mustAnswer, mustResolve } from "./review.js";
 import { all, get, isUniqueViolation, run, tx } from "../db/sqlite.js";
 import { WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
-import type { Harness, HarnessResult } from "../harness/types.js";
+import type { Harness, HarnessResult, HarnessUsage } from "../harness/types.js";
 import { claimNext, complete, fail, pendingCount, release, send, type MessageKind, type MessageRow } from "./inbox.js";
 import type { MemberRow, Project, TicketRow } from "./project.js";
 import { promptFor, systemPromptFor } from "./prompts.js";
@@ -350,6 +350,8 @@ export class Dispatcher {
 
     const started = p.clock.now().getTime();
     const report: RunReport = {};
+    // 開発ルールの「AI が読む」確かめに使った分(submit_pr の中で動く)。この起動の使用量に足す
+    const judged: HarnessUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costUsd: 0 };
     let result: HarnessResult | undefined;
     let error: string | undefined;
     try {
@@ -402,7 +404,12 @@ export class Dispatcher {
                     draft,
                     defaultTitle: defaultPrTitle(ticket),
                     changes: async () => (await this.deps.workspace.changes?.(ws.path, ws.base)) ?? { commits: [], files: [], code: "" },
-                    judge: agentJudge(p, harness, ws.path),
+                    judge: agentJudge(p, harness, ws.path, (u) => {
+                      judged.inputTokens += u.inputTokens;
+                      judged.outputTokens += u.outputTokens;
+                      judged.cacheReadTokens += u.cacheReadTokens;
+                      judged.costUsd += u.costUsd;
+                    }),
                   }),
               }
             : {}),
@@ -454,10 +461,10 @@ export class Dispatcher {
       const u = result?.usage;
       run(p.db, "UPDATE runs SET ended_at = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cost_usd = ?, outcome = ?, error = ?, summary = ? WHERE id = ?", [
         p.now(),
-        u?.inputTokens ?? 0,
-        u?.outputTokens ?? 0,
-        u?.cacheReadTokens ?? 0,
-        u?.costUsd ?? 0,
+        (u?.inputTokens ?? 0) + judged.inputTokens,
+        (u?.outputTokens ?? 0) + judged.outputTokens,
+        (u?.cacheReadTokens ?? 0) + judged.cacheReadTokens,
+        (u?.costUsd ?? 0) + judged.costUsd,
         error ? "error" : (result?.status ?? "error"),
         error ?? null,
         (report.pr?.summary || report.draft?.summary || result?.finalText || "").trim() || null,

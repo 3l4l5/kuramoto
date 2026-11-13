@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { all, get, run } from "../db/sqlite.js";
-import { defineTool, type Harness } from "../harness/types.js";
+import { defineTool, type Harness, type HarnessUsage } from "../harness/types.js";
 import type { Project, TicketRow } from "./project.js";
 
 /**
@@ -169,7 +169,11 @@ export type RuleSubject = { branch: string; title: string; body: string; commits
 export type RuleChanges = { commits: string[]; files: string[]; code: string };
 /** AI が読んで確かめる(読むルールだけを渡す)。結果が返らなかったルールは確かめなかったことにする。 */
 export type RuleJudge = (rules: DevRule[], subject: RuleSubject) => Promise<{ ruleId: number; ok: boolean; detail: string }[]>;
-export type Found = { rule: DevRule; detail: string };
+/**
+ * onFail: 実際の扱い。ブランチ名は Kuramoto が決める名前で、持ち主は直せない。ブランチ名だけが反している「自動で直す」ルールは、直せないので「レビューで指摘」にする。
+ * fixDetail: 持ち主が直せる分の説明(自動で直すときに返す)。
+ */
+export type Found = { rule: DevRule; detail: string; onFail: RuleOnFail; fixDetail: string };
 export type Checked = { found: Found[]; evaluated: Set<number> };
 
 const MAX_SUBJECT = 20_000;
@@ -192,14 +196,14 @@ function subjectsOf(target: RuleTarget, s: RuleSubject): string[] {
   }
 }
 
-function patternDetails(rule: DevRule, s: RuleSubject): string[] {
+function patternDetails(rule: DevRule, s: RuleSubject): { target: RuleTarget; text: string }[] {
   const forbid = rule.pattern!.startsWith("!");
   const re = new RegExp(forbid ? rule.pattern!.slice(1) : rule.pattern!);
-  const out: string[] = [];
+  const out: { target: RuleTarget; text: string }[] = [];
   for (const target of rule.appliesTo) {
     const bad = subjectsOf(target, s).filter((x) => re.test(x.slice(0, MAX_SUBJECT)) === forbid);
-    for (const x of bad.slice(0, 3)) out.push(`${TARGET_LABEL[target]}${target === "files" ? "" : `「${clip(x.replace(/\n/g, " / "))}」`}${forbid ? "は禁止の形に当てはまります" : "が決まった形になっていません"}`);
-    if (bad.length > 3) out.push(`${TARGET_LABEL[target]}: ほか ${bad.length - 3} 件`);
+    for (const x of bad.slice(0, 3)) out.push({ target, text: `${TARGET_LABEL[target]}${target === "files" ? "" : `「${clip(x.replace(/\n/g, " / "))}」`}${forbid ? "は禁止の形に当てはまります" : "が決まった形になっていません"}` });
+    if (bad.length > 3) out.push({ target, text: `${TARGET_LABEL[target]}: ほか ${bad.length - 3} 件` });
   }
   return out;
 }
@@ -215,7 +219,9 @@ export async function checkRules(p: Project, subject: RuleSubject, judge?: RuleJ
   for (const r of rules.filter((x) => x.check === "pattern" && x.pattern)) {
     evaluated.add(r.id);
     const details = patternDetails(r, subject);
-    if (details.length) found.push({ rule: r, detail: details.join(" / ") });
+    if (!details.length) continue;
+    const fixable = details.filter((d) => d.target !== "branch");
+    found.push({ rule: r, detail: details.map((d) => d.text).join(" / "), onFail: r.onFail === "autofix" && !fixable.length ? "review" : r.onFail, fixDetail: fixable.map((d) => d.text).join(" / ") });
   }
   const ai = rules.filter((x) => x.check === "ai");
   if (ai.length && judge) {
@@ -225,7 +231,9 @@ export async function checkRules(p: Project, subject: RuleSubject, judge?: RuleJ
         const rule = byId.get(v.ruleId);
         if (!rule) continue;
         evaluated.add(rule.id);
-        if (!v.ok) found.push({ rule, detail: v.detail.trim() || "AI が、守れていないと判断しました" });
+        if (v.ok) continue;
+        const detail = v.detail.trim() || "AI が、守れていないと判断しました";
+        found.push({ rule, detail, onFail: rule.onFail === "autofix" && !rule.appliesTo.some((t) => t !== "branch") ? "review" : rule.onFail, fixDetail: detail });
       }
     } catch (e) {
       p.event("system", "rule_ai_failed", null, { error: e instanceof Error ? e.message : String(e) });
@@ -246,12 +254,15 @@ export function recordViolations(p: Project, ticketId: number, runId: number | n
   const open = all<ViolationRow>(p.db, "SELECT * FROM rule_violations WHERE ticket_id = ? AND resolved_at IS NULL", [ticketId]);
   const foundIds = new Set(checked.found.map((f) => f.rule.id));
   for (const f of checked.found) {
-    if (open.some((v) => v.rule_id === f.rule.id)) {
-      run(p.db, "UPDATE rule_violations SET detail = ? WHERE ticket_id = ? AND rule_id = ? AND resolved_at IS NULL", [f.detail, ticketId, f.rule.id]);
+    const was = open.find((v) => v.rule_id === f.rule.id);
+    if (was) {
+      // 持ち主が直せる分を直したあとに、直せない分(ブランチ名)だけが残ったなら、レビューで指摘に回す
+      const handled = was.handled === "autofixed" && f.onFail !== "autofix" ? HANDLED[f.onFail] : was.handled;
+      run(p.db, "UPDATE rule_violations SET detail = ?, handled = ? WHERE id = ?", [f.detail, handled, was.id]);
       continue;
     }
-    run(p.db, "INSERT INTO rule_violations (rule_id, ticket_id, handled, created_at, detail, run_id) VALUES (?, ?, ?, ?, ?, ?)", [f.rule.id, ticketId, HANDLED[f.rule.onFail], p.now(), f.detail, runId]);
-    p.event("system", "rule_violated", ticketId, { rule: f.rule.name, handled: HANDLED[f.rule.onFail] });
+    run(p.db, "INSERT INTO rule_violations (rule_id, ticket_id, handled, created_at, detail, run_id) VALUES (?, ?, ?, ?, ?, ?)", [f.rule.id, ticketId, HANDLED[f.onFail], p.now(), f.detail, runId]);
+    p.event("system", "rule_violated", ticketId, { rule: f.rule.name, handled: HANDLED[f.onFail] });
   }
   for (const v of open) if (checked.evaluated.has(v.rule_id) && !foundIds.has(v.rule_id)) run(p.db, "UPDATE rule_violations SET resolved_at = ? WHERE id = ?", [p.now(), v.id]);
 }
@@ -277,15 +288,21 @@ export function violationTotals(p: Project): { total: number; autofixed: number 
   return { total: r?.n ?? 0, autofixed: r?.fixed ?? 0 };
 }
 
-/** レビューの指摘に載せる違反(handled = 'review'で、直っておらず、まだ指摘にしていないもの)。 */
-export function reviewFindingsFor(p: Project, ticketId: number): { category: string; severity: "medium"; blocking: true; basis: "acceptance"; body: string }[] {
-  return openViolations(p, ticketId, "review").map((v) => ({
+/** レビューの指摘に載せる違反(handled = 'review'で、直っておらず、まだ指摘にしていないもの)。指摘にしたかは違反の番号で覚える。 */
+export function reviewFindingsFor(p: Project, ticketId: number): { violationId: number; category: string; severity: "medium"; blocking: true; basis: "acceptance"; body: string }[] {
+  return openViolations(p, ticketId, "review").filter((v) => !p.setting(`rule_listed:${v.id}`)).map((v) => ({
+    violationId: v.id,
     category: "dev-rule",
     severity: "medium" as const,
     blocking: true as const,
     basis: "acceptance" as const,
     body: ruleFindingBody(v.name, v.detail),
   }));
+}
+
+/** 違反を指摘にしたと覚える(同じ違反の指摘を、確かめるたびに足さない)。 */
+export function markListed(p: Project, violationId: number): void {
+  p.setSetting(`rule_listed:${violationId}`, "1");
 }
 
 export function ruleFindingBody(name: string, detail: string): string {
@@ -297,7 +314,8 @@ export function rulesNote(p: Project): string {
   const rules = devRules(p).filter((r) => r.enabled);
   if (!rules.length) return "";
   const how = { autofix: "反していたら submit_pr が戻ってくるので、直して出し直す", review: "反していたらレビューで指摘される", block: "反していたら、直すまで次の工程に進めない" };
-  return `\n\n## 開発ルール(PR を出す前に Kuramoto が確かめます)\n${rules.map((r) => `- ${r.name}: ${r.body}(${r.appliesTo.map((t) => TARGET_LABEL[t]).join("・")}。${how[r.onFail]})`).join("\n")}`;
+  const branchNote = (r: DevRule) => (r.onFail === "autofix" && r.appliesTo.includes("branch") ? "ブランチ名は Kuramoto が決めるので直せません。ブランチ名だけが反しているときはレビューで指摘されます。" : "");
+  return `\n\n## 開発ルール(PR を出す前に Kuramoto が確かめます)\n${rules.map((r) => `- ${r.name}: ${r.body}(${r.appliesTo.map((t) => TARGET_LABEL[t]).join("・")}。${how[r.onFail]}。${branchNote(r)})`.replace("。)", ")")).join("\n")}`;
 }
 
 // ---- PR を出す前に確かめる(submit_pr から) ----
@@ -322,15 +340,16 @@ export async function checkBeforePr(p: Project, c: PreCheck): Promise<string | u
   const changes = await c.changes();
   const checked = await checkRules(p, { branch: c.branch, title: c.draft.title ?? c.defaultTitle, body: c.draft.body ?? c.draft.summary, ...changes }, c.judge);
   recordViolations(p, c.ticket.id, c.runId, checked);
-  const fix = checked.found.filter((f) => f.rule.onFail === "autofix");
+  // 持ち主が直せる違反だけを返して戻す(ブランチ名は Kuramoto が決めるので、戻さない)
+  const fix = checked.found.filter((f) => f.onFail === "autofix");
   if (!fix.length) return undefined;
-  return `開発ルールに反しています。直してから submit_pr を呼び直してください(PR のタイトルと本文は submit_pr の title・body で、コミットやブランチは git で直します):\n${fix.map((f) => `- 「${f.rule.name}」: ${f.detail}(守ること: ${f.rule.body})`).join("\n")}`;
+  return `開発ルールに反しています。直してから submit_pr を呼び直してください(PR のタイトルと本文は submit_pr の title・body で、コミットは git で直します。ブランチ名は Kuramoto が決めるので変えません):\n${fix.map((f) => `- 「${f.rule.name}」: ${f.fixDetail}(守ること: ${f.rule.body})`).join("\n")}`;
 }
 
 // ---- AI が読んで確かめる ----
 
 /** 読むルールを 1 回の起動でまとめて確かめる。道具は結果の報告だけ。ファイルも通信も使わない。 */
-export function agentJudge(p: Project, harness: Harness, cwd: string): RuleJudge {
+export function agentJudge(p: Project, harness: Harness, cwd: string, onUsage?: (u: HarnessUsage) => void): RuleJudge {
   return async (rules, subject) => {
     const policy = p.policy("review");
     const results: { ruleId: number; ok: boolean; detail: string }[] = [];
@@ -366,6 +385,7 @@ export function agentJudge(p: Project, harness: Harness, cwd: string): RuleJudge
       allowedTools: [],
       maxTurns: 3,
     });
+    onUsage?.(res.usage);
     if (res.status === "error") throw new Error(res.error ?? "ハーネスがエラーで終わりました");
     return results;
   };
