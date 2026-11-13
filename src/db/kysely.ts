@@ -1,5 +1,5 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
-import { Kysely, SqliteDialect, type SqliteDatabase, type SqliteStatement } from "kysely";
+import { Kysely, SqliteDialect, type KyselyPlugin, type SqliteDatabase, type SqliteStatement } from "kysely";
 
 /**
  * Kysely の SqliteDialect に node:sqlite(DatabaseSync)を渡すための薄いドライバ。
@@ -34,6 +34,6 @@ export function sqliteDatabase(db: DatabaseSync): SqliteDatabase {
 }
 
 /** 開いてある DatabaseSync の上に Kysely を作る。接続は共有し、閉じるのは DatabaseSync の持ち主。 */
-export function createKysely<DB>(db: DatabaseSync): Kysely<DB> {
-  return new Kysely<DB>({ dialect: new SqliteDialect({ database: sqliteDatabase(db) }) });
+export function createKysely<DB>(db: DatabaseSync, plugins: KyselyPlugin[] = []): Kysely<DB> {
+  return new Kysely<DB>({ dialect: new SqliteDialect({ database: sqliteDatabase(db) }), plugins });
 }

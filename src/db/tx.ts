@@ -6,12 +6,23 @@ import type { DatabaseSync } from "node:sqlite";
  * 同期の tx() が、他の流れの非同期トランザクションに黙って相乗りしてしまうのを防ぐために使う。
  */
 type AsyncOwner = { als: AsyncLocalStorage<unknown>; open: boolean };
-const asyncOwners = new WeakMap<DatabaseSync, AsyncOwner>();
+// 1 本の接続に Conn が複数かぶることがある(同じ接続に別のプロジェクトの口を置くとき)ので、配列で持つ
+const asyncOwners = new WeakMap<DatabaseSync, AsyncOwner[]>();
 
 export function registerAsyncOwner(db: DatabaseSync, als: AsyncLocalStorage<unknown>): AsyncOwner {
   const owner = { als, open: false };
-  asyncOwners.set(db, owner);
+  asyncOwners.set(db, [...(asyncOwners.get(db) ?? []), owner]);
   return owner;
+}
+
+/**
+ * 他の流れが開いている非同期トランザクションの最中なら投げる(同期の書き込みが、そのトランザクションに黙って混ざるのを防ぐ)。
+ * tx() と、トランザクションを張らない同期の書き込み(sqlite.ts の run)が使う。
+ */
+export function assertNotForeignAsyncTx(db: DatabaseSync, what: string): void {
+  if (db.isTransaction && asyncOwners.get(db)?.some((o) => o.open && o.als.getStore() === undefined)) {
+    throw new Error(`別の処理のトランザクションの途中なので、ここでは書き込めません(非同期のトランザクションを await している間に同期の ${what} が呼ばれました)`);
+  }
 }
 
 /**
@@ -22,8 +33,7 @@ export function registerAsyncOwner(db: DatabaseSync, als: AsyncLocalStorage<unkn
  */
 export function tx<T>(db: DatabaseSync, fn: () => T): T {
   if (db.isTransaction) {
-    const owner = asyncOwners.get(db);
-    if (owner?.open && owner.als.getStore() === undefined) throw new Error("別の処理のトランザクションの途中なので、ここでは書き込めません(非同期のトランザクションを await している間に同期の tx() が呼ばれました)");
+    assertNotForeignAsyncTx(db, "tx()");
     return fn();
   }
   db.exec("BEGIN IMMEDIATE");

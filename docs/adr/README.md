@@ -43,3 +43,4 @@ Kuramoto の設計で下した判断を 1 件ずつ残します。状態は「�
 | [0037](0037-workspace-and-project-scope.md) | ワークスペースと project_id のスコープを足す | 提案 |
 | [0038](0038-mysql-first-migration.md) | MySQL の最初の版と schema_version | 提案 |
 | [0039](0039-async-scoped-db.md) | 本部・入口・受信箱・ディスパッチャを、Kysely とスコープつきの口に移す | 提案 |
+| [0040](0040-project-id-guard.md) | project_id の見張りと、同期の書き込みの見張り | 提案 |
