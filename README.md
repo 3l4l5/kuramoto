@@ -50,7 +50,7 @@ database:
 | `src/db/` | SQLite(`node:sqlite`)とスキーマ(設計書 9 章) |
 | `src/domain/` | 役割・モデル・既定の方針、編成の決まりと工程の組み立て |
 | `src/server.ts` | ローカルサーバー(API・画面の配信・受信箱の見回り)。画面に渡す型(`HqView` など)もここから出す |
-| `ui/` | 画面(React + TypeScript + TanStack Query、Vite でビルド)。見た目はデジタル庁デザインシステム(`ui/src/dads/` は公式コードスニペットの写し) |
+| `ui/` | 画面(React + TypeScript + TanStack Query、Vite でビルド)。見た目はデジタル庁デザインシステムのトークンに合わせた自前の部品(`ui/src/ds/`) |
 | `e2e/` | 画面の E2E テスト(Playwright)と、フェイクの担当で動くテスト用サーバー |
 | `src/project/planning.ts` / `planning-agent.ts` | 企画スタジオ(段階・版・未決・コメント・引き渡し)と、企画の担当に渡す道具 |
 | `src/config.ts` | 起動の設定ファイル(`~/.kuramoto/config.yaml`)の読み込み |

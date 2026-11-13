@@ -3,11 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { api, post } from "./api";
 import { useAct } from "./hooks";
 import { Btn } from "./ui";
-import { Input } from "./dads/Input";
-import { Select } from "./dads/Select";
+import { Checkbox, Input, Select, Textarea } from "./ds";
 import { BudgetInput, budgetOk as totalOk } from "./BudgetInput";
-import { Checkbox } from "./dads/Checkbox";
-import { Textarea } from "./dads/Textarea";
 import { usd } from "./format";
 
 const REPO_ROLES = ["フロント", "API", "インフラ", "その他"];
@@ -71,7 +68,7 @@ export function SettingsPage({ id }: { id: number }) {
           <label className="h" htmlFor="ps-name">
             名前
           </label>
-          <Input type="text" id="ps-name" blockSize="md" className="w-full" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input type="text" id="ps-name"className="w-full" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div>
           <label className="h">リポジトリ</label>
@@ -84,8 +81,8 @@ export function SettingsPage({ id }: { id: number }) {
                 <label className="sr" htmlFor={`ps-r${i}`}>
                   リポジトリ {i + 1}
                 </label>
-                <Input type="text" id={`ps-r${i}`} blockSize="md" isError={!!x.r && !repoOk(x.r)} className="w-full font-mono" value={x.r} onChange={(e) => set(i, { r: e.target.value.trim() })} />
-                <Select aria-label={`リポジトリ ${i + 1} の役割`} blockSize="md" value={x.role} onChange={(e) => set(i, { role: e.target.value })}>
+                <Input type="text" id={`ps-r${i}`} invalid={!!x.r && !repoOk(x.r)} className="w-full font-mono" value={x.r} onChange={(e) => set(i, { r: e.target.value.trim() })} />
+                <Select aria-label={`リポジトリ ${i + 1} の役割`}value={x.role} onChange={(e) => set(i, { role: e.target.value })}>
                   {REPO_ROLES.map((r) => (
                     <option key={r}>{r}</option>
                   ))}
@@ -107,13 +104,13 @@ export function SettingsPage({ id }: { id: number }) {
         </div>
         <fieldset className="runmode">
           <legend className="h">進め方</legend>
-          <Checkbox size="sm" checked={nonstopOn} onChange={() => setNonstop(!nonstopOn)}>
+          <Checkbox checked={nonstopOn} onChange={() => setNonstop(!nonstopOn)}>
             ノンストップで進める(戻せる判断はチームで決め、あなたには報告だけする)
           </Checkbox>
-          <Checkbox size="sm" checked={autoMergeOn} onChange={() => setAutoMerge(!autoMergeOn)}>
+          <Checkbox checked={autoMergeOn} onChange={() => setAutoMerge(!autoMergeOn)}>
             チームが自動で merge する(確認がすべて済み、CI が通り、衝突が無いとき)
           </Checkbox>
-          <Checkbox size="sm" checked={resumeOn} onChange={() => setResume(!resumeOn)}>
+          <Checkbox checked={resumeOn} onChange={() => setResume(!resumeOn)}>
             確認のやり直しで、前の会話を引き継ぐ(前回の見立てを覚えている。外すと毎回新しく読み直し、トークンを節約できる)
           </Checkbox>
           <div className="hint">
@@ -122,7 +119,7 @@ export function SettingsPage({ id }: { id: number }) {
         </fieldset>
         <fieldset className="runmode">
           <legend className="h">設計で外のサイトを見る</legend>
-          <Checkbox size="sm" checked={planWeb} onChange={() => setPlanWeb(!planWeb)}>
+          <Checkbox checked={planWeb} onChange={() => setPlanWeb(!planWeb)}>
             企画スタジオの担当(企画・デザイナー・アーキテクト)が、Web を検索し、ページを読める(公式のドキュメント・版・料金・よく似たサービスを確かめるため)
           </Checkbox>
           {planWeb && (
@@ -139,7 +136,7 @@ export function SettingsPage({ id }: { id: number }) {
         </fieldset>
         <fieldset className="runmode">
           <legend className="h">CI</legend>
-          <Select aria-label="CI の扱い" blockSize="md" value={ciMode} onChange={(e) => setCiMode(e.target.value as "team" | "github")}>
+          <Select aria-label="CI の扱い"value={ciMode} onChange={(e) => setCiMode(e.target.value as "team" | "github")}>
             <option value="team">チームの CI を使う(GitHub Actions は止める)</option>
             <option value="github">GitHub Actions の CI を待つ</option>
           </Select>
@@ -172,7 +169,7 @@ export function SettingsPage({ id }: { id: number }) {
           <div className="hint" style={{ marginBottom: 6 }}>
             リーダーがボードを見て、重複したチケットを片付け、同じところを回り続けているチケットに手を打ちます。始業したときは必ず見回り、その後はこの間隔ごとに見ます(気になるものが無ければ起動しません)。0 にすると見回りません。
           </div>
-          <Input type="number" id="ps-patrol" blockSize="md" min={0} step={1} isError={!patrolOk} value={patrolMin} onChange={(e) => setPatrolMin(e.target.value.trim())} />
+          <Input type="number" id="ps-patrol" min={0} step={1} invalid={!patrolOk} value={patrolMin} onChange={(e) => setPatrolMin(e.target.value.trim())} />
           {!patrolOk && <div className="bad">0 以上の整数(分)を入れてください</div>}
         </div>
         <div>

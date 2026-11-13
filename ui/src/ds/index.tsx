@@ -2,7 +2,7 @@
  * デザインシステムの共通の部品。見た目は ds.css(トークンだけを使う)にまとめ、ここは形と状態だけを持つ。
  * 画面からは `import { Button, Chip, ... } from "./ds"` で使う。見本は開発のときだけ開ける /_design にある。
  */
-import { useId, type ButtonHTMLAttributes, type CSSProperties, type InputHTMLAttributes, type ReactNode } from "react";
+import { useId, type ButtonHTMLAttributes, type CSSProperties, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import "./ds.css";
 
 const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
@@ -47,6 +47,30 @@ export function TextField({ label, hint, error, id, className, style, ...rest }:
   );
 }
 
+// 画面の中でラベルを別に置く入力欄(TextField はラベルごと包むので、フォームの行に合わせるときはこちらを使う)。
+// md は --h-control、sm は行の中の小さな欄(--h-control-sm)。invalid は枠が --danger になる。
+type ControlProps = { size?: "md" | "sm"; invalid?: boolean };
+const control = (base: string, size: "md" | "sm", invalid: boolean | undefined, className: string | undefined) => ({
+  className: cx("ds-input", base, size === "sm" && "ds-input--sm", className),
+  "aria-invalid": invalid ? (true as const) : undefined,
+});
+
+export function Input({ size = "md", invalid, className, ...rest }: Omit<InputHTMLAttributes<HTMLInputElement>, "size"> & ControlProps) {
+  return <input {...control("", size, invalid, className)} {...rest} />;
+}
+export function Select({ size = "md", invalid, className, ...rest }: Omit<SelectHTMLAttributes<HTMLSelectElement>, "size"> & ControlProps) {
+  return <select {...control("ds-select", size, invalid, className)} {...rest} />;
+}
+export function Textarea({ invalid, className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement> & { invalid?: boolean }) {
+  return <textarea {...control("ds-textarea", "md", invalid, className)} {...rest} />;
+}
+
+// ---- チェックボックス ----
+export function Checkbox({ children, invalid, ...rest }: Omit<InputHTMLAttributes<HTMLInputElement>, "type" | "size"> & { invalid?: boolean }) {
+  const box = <input type="checkbox" className="ds-check__box" aria-invalid={invalid ? true : undefined} {...rest} />;
+  return children ? <label className="ds-check">{box}<span>{children}</span></label> : box;
+}
+
 // ---- 切り替え(セグメント) ----
 export type SegmentOption<T extends string> = { value: T; label: ReactNode; disabled?: boolean };
 export function Segmented<T extends string>({ options, value, onChange, label, className }: {
@@ -77,25 +101,26 @@ export function Segmented<T extends string>({ options, value, onChange, label, c
 }
 
 // ---- スイッチ ----
-export function Switch({ checked, onChange, children, disabled, label }: {
+export function Switch({ checked, onChange, children, disabled, label, title }: {
   checked: boolean;
   onChange: (v: boolean) => void;
-  /** 横に出す文字(省くと「有効 / 無効」) */
+  /** 横に出す文字(省くと「有効 / 無効」。null なら出さない) */
   children?: ReactNode;
   disabled?: boolean;
   /** 横の文字が無いときの読み上げ用の名前 */
   label?: string;
+  title?: string;
 }) {
   return (
-    <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} className="ds-switch" onClick={() => onChange(!checked)}>
+    <button type="button" role="switch" aria-checked={checked} aria-label={label} title={title} disabled={disabled} className="ds-switch" onClick={() => onChange(!checked)}>
       <span className="ds-switch__track"><span className="ds-switch__knob" /></span>
-      {children ?? (checked ? "有効" : "無効")}
+      {children === undefined ? (checked ? "有効" : "無効") : children}
     </button>
   );
 }
 
 // ---- チップ ----
-export type ChipTone = "default" | "warn" | "danger" | "ok" | "review" | "version";
+export type ChipTone = "default" | "warn" | "danger" | "ok" | "review" | "neutral" | "version";
 export function Chip({ tone = "default", children, className, title }: { tone?: ChipTone; children: ReactNode; className?: string; title?: string }) {
   return <span title={title} className={cx("ds-chip", tone !== "default" && `ds-chip--${tone}`, className)}>{children}</span>;
 }

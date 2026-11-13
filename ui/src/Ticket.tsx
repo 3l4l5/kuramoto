@@ -5,9 +5,7 @@ import { droppedText, hhmm, usd, waitText } from "./format";
 import { BudgetInput, budgetOk } from "./BudgetInput";
 import { duration, useAct } from "./hooks";
 import { Btn } from "./ui";
-import { Input } from "./dads/Input";
-import { Textarea } from "./dads/Textarea";
-import { ChipLabel } from "./dads/ChipLabel";
+import { Chip, Input, Textarea, type ChipTone } from "./ds";
 
 /**
  * チケットの詳細(モーダル)。中身・ひも付く要件と画面・PR・金額と、
@@ -37,7 +35,7 @@ export function TicketLink({ id, children }: { id: number; children: ReactNode }
 }
 
 const STAGE: Record<string, string> = { dev: "開発", review: "レビュー", sec: "セキュリティ", qa: "QA", decision: "判断待ち", merge: "merge 待ち", done: "完了", dropped: "取りやめ" };
-const SEVERITY: Record<string, [string, "red" | "orange" | "gray"]> = { high: ["重い", "red"], medium: ["中", "orange"], low: ["軽い", "gray"] };
+const SEVERITY: Record<string, [string, ChipTone]> = { high: ["重い", "danger"], medium: ["中", "review"], low: ["軽い", "neutral"] };
 const FINDING_STATUS: Record<string, string> = {
   open: "未対応",
   addressed: "直したと返事・確認待ち",
@@ -68,10 +66,10 @@ function TicketDialog({ projectId, ticketId, close }: { projectId: number; ticke
               #{data.number}
               {data.jiraKey ? ` · ${data.jiraKey}` : ""} {data.title}
             </h2>
-            <ChipLabel variant="filled-1" color={data.stage === "done" ? "green" : data.stage === "decision" ? "yellow" : "blue"}>
+            <Chip tone={data.stage === "done" ? "ok" : data.stage === "decision" ? "warn" : "default"}>
               {STAGE[data.stage] ?? data.stage}
-            </ChipLabel>
-            {data.ruleBlocked.length > 0 && <ChipLabel variant="filled-1" color="red">ルール違反で止まっている: {data.ruleBlocked.join("・")}</ChipLabel>}
+            </Chip>
+            {data.ruleBlocked.length > 0 && <Chip tone="danger">ルール違反で止まっている: {data.ruleBlocked.join("・")}</Chip>}
             {data.stage === "dropped" && <Reopen projectId={projectId} id={data.id} />}
             <Btn kind="text" size="sm" style={{ marginLeft: "auto" }} onClick={() => ref.current?.close()}>
               閉じる
@@ -132,7 +130,7 @@ function Details({ projectId, t }: { projectId: number; t: TicketView }) {
             <label className="h" htmlFor="tk-title">
               タイトル
             </label>
-            <Input id="tk-title" blockSize="md" className="w-full" value={title} onChange={(e) => setTitle(e.target.value)} />
+            <Input id="tk-title"className="w-full" value={title} onChange={(e) => setTitle(e.target.value)} />
           </div>
           <div>
             <label className="h" htmlFor="tk-body">
@@ -360,18 +358,18 @@ function item(x: TicketView["timeline"][number]): ReactNode {
         <>
           <b>
             {x.who}の{x.role}({x.round} 回目):{" "}
-            <ChipLabel variant="filled-1" color={x.verdict === "承認" ? "green" : "red"}>
+            <Chip tone={x.verdict === "承認" ? "ok" : "danger"}>
               {x.verdict}
-            </ChipLabel>
+            </Chip>
           </b>
           {x.findings.length > 0 && (
             <ul className="findings" aria-label="指摘">
               {x.findings.map((f, i) => (
                 <li key={i} className={f.blocking ? "must" : "nit"}>
                   <div>
-                    <ChipLabel variant="outlined" color={f.blocking ? (SEVERITY[f.severity]?.[1] ?? "gray") : "gray"}>
+                    <Chip tone={f.blocking ? (SEVERITY[f.severity]?.[1] ?? "neutral") : "neutral"}>
                       {f.blocking ? `必須・${SEVERITY[f.severity]?.[0] ?? f.severity}` : "提案"}
-                    </ChipLabel>{" "}
+                    </Chip>{" "}
                     {f.path && (
                       <code>
                         {f.path}
@@ -405,9 +403,9 @@ function item(x: TicketView["timeline"][number]): ReactNode {
         <>
           <b>
             ルール「{x.rule}」に反していました{" "}
-            <ChipLabel variant="filled-1" color={x.handled === "autofixed" ? "green" : x.handled === "blocked" ? "red" : "yellow"}>
+            <Chip tone={x.handled === "autofixed" ? "ok" : x.handled === "blocked" ? "danger" : "warn"}>
               {HANDLED[x.handled] ?? x.handled}
-            </ChipLabel>
+            </Chip>
           </b>
           {x.detail && <p className="said">{x.detail}</p>}
           <span className="meta">{x.resolvedAt ? `${hhmm(x.resolvedAt)} に直りました` : "まだ直っていません"}</span>

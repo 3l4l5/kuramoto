@@ -142,6 +142,7 @@ const KURAMOTO_TOOL_TEXT: Record<string, string> = {
   submit_pr: "PR を報告しています",
   raise_question: "判断をリーダーに上げています",
   submit_review: "確認の結果を報告しています",
+  leave_handoff: "申し送りを残しています",
   decide: "判断を決めています",
   escalate_to_owner: "判断を責任者に上げています",
 };

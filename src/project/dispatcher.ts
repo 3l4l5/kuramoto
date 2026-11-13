@@ -5,7 +5,7 @@ import { WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
 import type { Harness, HarnessResult, HarnessUsage } from "../harness/types.js";
 import { claimNext, complete, fail, pendingCount, release, send, type MessageKind, type MessageRow } from "./inbox.js";
 import type { MemberRow, Project, TicketRow } from "./project.js";
-import { promptFor, systemPromptFor } from "./prompts.js";
+import { PRE_DEV_NOTE, promptFor, systemPromptFor } from "./prompts.js";
 import { toolsFor, type RunReport } from "./tools.js";
 import { advance, applyReport, decision, expireDecisions, holdTicket, nonstop, raiseToOwner, resumeChecks, ticketBudgetUsd, ticketExhausted, ticketSpentUsd } from "./workflow.js";
 import { leftUsd, projectExhausted, projectLeftUsd, unitExhausted, unitLeftUsd } from "./budget.js";
@@ -251,10 +251,12 @@ export class Dispatcher {
     const units = p.unitsForRole(role, repo);
     if (!units.length) {
       // 編成が変わってこの工程が無くなった。工程を飛ばす。
+      // 開発より前の工程(preDev)なら、飛ばしたあとも開発へ進む(今の流れで工程が開発より後ろに見えても、開発を飛ばさない)
       if (ticket && role !== "dev") {
+        const preDev = (JSON.parse(msg.payload) as { preDev?: boolean }).preDev === true;
         tx(p.db, () => {
           complete(p, msg.id);
-          advance(p, ticket, role);
+          advance(p, ticket, role, { preDev });
         });
         return "handled";
       }
@@ -327,6 +329,8 @@ export class Dispatcher {
     const unit = formation.units.find((u) => u.id === member.unit_id);
     const harness = this.deps.harnesses[policy.harness];
     const repo = ticket ? ticketRepo(p, ticket) : undefined;
+    // 開発より前の確認(R17): 受信箱は review/sec/qa のまま、コードを見ずにチケットの中身を読んで申し送りを残す
+    const preDev = ["review", "sec", "qa"].includes(msg.kind) && (JSON.parse(msg.payload) as { preDev?: boolean }).preDev === true;
 
     if (!harness || !repo || !ticket) {
       this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : !ticket ? "チケットの無いメッセージはまだ扱えません" : "リポジトリが登録されていません");
@@ -367,9 +371,10 @@ export class Dispatcher {
     let result: HarnessResult | undefined;
     let error: string | undefined;
     try {
-      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: ticket.number, role, memberName: member.name, branch });
+      // 開発より前には、まだ PR のブランチが無い(既定のブランチを置くだけ)
+      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: ticket.number, role, memberName: member.name, branch: preDev ? "" : branch });
       // 画面のデザイン: 企画で合意した試作・デザインシステム・お手本の画像を作業場所に置き、役割ごとの使い方を指示に足す(ADR-0033・0034)
-      const designUse = ["dev", "review", "qa"].includes(role);
+      const designUse = ["dev", "review", "qa"].includes(role) && !preDev;
       const designs = designUse ? designFor(p, ticket) : [];
       const system = designUse ? designSystem(p) : null;
       const systemTicket = designUse && isDesignSystemTicket(p, ticket);
@@ -391,7 +396,7 @@ export class Dispatcher {
       result = await harness.run({
         cwd: ws.path,
         confine: confinementFor(p, ws, role),
-        systemPrompt: systemPromptFor(p, role, policy, { name: use.unitName, focus: use.unitFocus }, member.name),
+        systemPrompt: systemPromptFor(p, role, policy, { name: use.unitName, focus: use.unitFocus }, member.name) + (preDev ? PRE_DEV_NOTE : ""),
         prompt: promptFor(p, msg, ticket, { branch, base: ws.base, repo: repo.full_name, ...prNumber(p, ticket.id, repo.id) }) + designPrompt(designs, role, { hasSystem: withSystem, systemTicket, references: new Set(refs.keys()) }),
         model: use.model,
         effort: use.effort,
@@ -402,7 +407,8 @@ export class Dispatcher {
           ...compareTools,
           ...toolsFor(msg.kind, report, {
           mustAnswer: msg.kind === "fix" && !JSON.parse(msg.payload).conflict ? mustAnswer(p, ticket.id).map((t) => t.id) : [],
-          mustResolve: ["review", "sec", "qa"].includes(msg.kind) ? mustResolve(p, ticket.id, msg.kind).map((t) => t.id) : [],
+          preDev,
+          mustResolve: ["review", "sec", "qa"].includes(msg.kind) && !preDev ? mustResolve(p, ticket.id, msg.kind).map((t) => t.id) : [],
           checkReady: () => this.deps.workspace.checkReady(ws.path, ws.base),
           checkLanded: (commit) => this.deps.workspace.landed(ws.path, ws.base, commit),
           // PR を出す前に、有効な開発ルールを確かめる(形式はコードで、AI が読むものだけエージェントで。ADR-0011)
@@ -430,7 +436,8 @@ export class Dispatcher {
           }),
         ],
         onProgress: progressRecorder(p, runId),
-        ...(role === "dev" ? {} : { allowedTools: ["Read", "Glob", "Grep", "Bash"] }),
+        // 開発より前の確認は、コードを見ない(組み込みの道具は渡さず、申し送りを残す道具だけ)
+        ...(role === "dev" ? {} : { allowedTools: preDev ? [] : ["Read", "Glob", "Grep", "Bash"] }),
         maxBudgetUsd: this.runBudget(leftUsd(ticketBudgetUsd(p, ticket.id), ticketSpentUsd(p, ticket.id)), unit ? unitLeftUsd(p, unit) : Infinity),
       });
       if (result.status === "error") error = result.error ?? "ハーネスがエラーで終わりました";

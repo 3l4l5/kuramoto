@@ -7,6 +7,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { all, get } from "./db/sqlite.js";
 import { pipelineOf } from "./domain/formation.js";
+import type { TicketKind } from "./domain/flow.js";
 import { ROLE_LABEL } from "./domain/roles.js";
 import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import type { Harness } from "./harness/types.js";
@@ -40,7 +41,7 @@ import { areaWait, blockers, dependsOn, mergeBlockers, mergeUnblocks } from "./p
 import { budgetView, projectBudgetUsd, projectSpentUsd, setProjectBudget } from "./project/budget.js";
 import type { Project } from "./project/project.js";
 import { GitWorkspace, type Workspace } from "./project/workspace.js";
-import { answerDecision, createTicket, defaultTicketBudgetUsd, droppedInfo, nonstop, pendingOwnerDecisions, reopenTicket, resumeChecks, setDefaultTicketBudget, setTicketBudget, type DecisionOption } from "./project/workflow.js";
+import { answerDecision, createTicket, defaultTicketBudgetUsd, droppedInfo, nonstop, pendingOwnerDecisions, reopenTicket, resumeChecks, setDefaultTicketBudget, setTicketBudget, setTicketKind, type DecisionOption } from "./project/workflow.js";
 import {
   addComment,
   advance,
@@ -367,6 +368,12 @@ export class KuramotoServer {
       this.poke(id);
       return ticketView(p, Number(c));
     }
+    // 責任者がチケットの種類を変える。次の工程から新しい種類の流れで進み、変えたことはやりとりに残る(R17)
+    if (b === "tickets" && c && parts[4] === "kind" && method === "POST") {
+      setTicketKind(p, Number(c), body.kind);
+      this.poke(id);
+      return ticketView(p, Number(c));
+    }
     if (b === "tickets" && c && parts[4] === "budget" && method === "POST") {
       setTicketBudget(p, Number(c), body.unlimited ? "unlimited" : body.usd === null || body.usd === undefined || body.usd === "" ? null : Number(body.usd));
       this.poke(id);
@@ -379,7 +386,7 @@ export class KuramotoServer {
     if (b === "tickets" && method === "POST") {
       const title = String(body.title ?? "").trim();
       if (!title) throw new Error("タイトルがありません");
-      const t = createTicket(p, { title, body: String(body.body ?? "") });
+      const t = createTicket(p, { title, body: String(body.body ?? ""), ...(body.kind === undefined ? {} : { kind: body.kind as TicketKind }) });
       this.poke(id);
       return t;
     }

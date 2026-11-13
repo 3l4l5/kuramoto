@@ -22,7 +22,8 @@ import {
   upsertRequirement,
   withdrawOpenItem,
 } from "./planning.js";
-import { collectTransfer, extractTransfer, restoreTransfer } from "./transfer.js";
+import { run } from "../db/sqlite.js";
+import { collectTransfer, extractTransfer, restoreTransfer, transferSchema } from "./transfer.js";
 import { createTicket } from "./workflow.js";
 
 const homes: string[] = [];
@@ -131,6 +132,29 @@ describe("設計書からの復元", () => {
     expect(view(q).stages.find((s) => s.key === "req")).toMatchObject({ version: 2, agreedVersion: 1 });
     expect(q.tickets().map((t) => [t.title, t.stage, t.jira_key])).toEqual([["予約の表を足す", "dev", "RSV-1"]]);
     expect(studioView(q).messages.at(-1)!.body).toContain("復元しました");
+  });
+
+  it("チケットの種類と、開発を通ったかを持ち越す。古い書き出し(種類なし)は feature として読む", () => {
+    const hq = newHq();
+    const rec = hq.createProject("種類", [{ fullName: "acme/kind", role: "API" }]);
+    const p = hq.openProject(rec.id);
+    const bug = createTicket(p, { title: "直す", kind: "bugfix" });
+    const doc = createTicket(p, { title: "書く", kind: "docs" });
+    createTicket(p, { title: "機能", kind: "feature" });
+    run(p.db, "UPDATE tickets SET dev_done = 1 WHERE id = ?", [doc.id]);
+    const data = extractTransfer(exportDesignDoc(p, "種類"));
+    expect(data.tickets.map((t) => [t.kind, t.devDone])).toEqual([["bugfix", false], ["docs", true], ["feature", false]]);
+
+    const q = hq.openProject(hq.createProject("種類", data.repos).id);
+    restoreTransfer(q, data);
+    expect(q.tickets().map((t) => [t.title, t.kind, t.dev_done])).toEqual([["直す", "bugfix", 0], ["書く", "docs", 1], ["機能", "feature", 0]]);
+    expect(q.ticket(bug.id).kind).toBe("bugfix");
+
+    // 種類のない古い書き出しは feature・開発前として読める
+    const old = { ...data, tickets: data.tickets.map(({ kind: _k, devDone: _d, ...t }) => t) };
+    const r = hq.openProject(hq.createProject("種類", data.repos).id);
+    restoreTransfer(r, transferSchema.parse(old));
+    expect(r.tickets().map((t) => [t.kind, t.dev_done])).toEqual([["feature", 0], ["feature", 0], ["feature", 0]]);
   });
 
   it("Kuramoto が書き出したものでない・壊れている・空でないプロジェクトには戻さない", () => {

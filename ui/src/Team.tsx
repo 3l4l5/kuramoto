@@ -6,10 +6,7 @@ import { MAX_MEMBERS_PER_UNIT, MAX_UNITS, pipelineOf, validateFormation, type Fo
 import { EFFORTS, MODELS, ROLE_LABEL, WORK_ROLES, type WorkRole } from "../../src/domain/roles";
 import { Btn } from "./ui";
 import { LeadChat } from "./LeadChat";
-import { Input } from "./dads/Input";
-import { Select } from "./dads/Select";
-import { Textarea } from "./dads/Textarea";
-import { Checkbox } from "./dads/Checkbox";
+import { Checkbox, Input, Select, Textarea } from "./ds";
 import { BudgetInput } from "./BudgetInput";
 import { Drawer as DsDrawer } from "./ds";
 import { DevRulesTab, draftDirty, type RuleDraft } from "./DevRules";
@@ -111,7 +108,7 @@ function FormationEditor({ id, t }: { id: number; t: TeamView }) {
         <label className="h" htmlFor="pull">
           仕事の取り方
         </label>
-        <Select id="pull" blockSize="sm" className="w-full" value={draft.pull} onChange={(e) => setDraft({ ...draft, pull: e.target.value as FormationSpec["pull"] })}>
+        <Select id="pull" size="sm" className="w-full" value={draft.pull} onChange={(e) => setDraft({ ...draft, pull: e.target.value as FormationSpec["pull"] })}>
           <option value="down">下流優先(仕掛かりを先に片付ける)</option>
           <option value="start">着手優先(新しいチケットを先に取る)</option>
         </Select>
@@ -171,7 +168,7 @@ export function UnitFields({ u, i, repos, set, remove }: { u: UnitSpec; i: numbe
             <label className="sr" htmlFor={`unit-name-${i}`}>
               島 {i + 1} の名前
             </label>
-            <Input id={`unit-name-${i}`} blockSize="sm" type="text" className="w-full font-bold" value={u.name} onChange={(e) => set({ name: e.target.value })} />
+            <Input id={`unit-name-${i}`} size="sm" type="text" className="w-full font-bold" value={u.name} onChange={(e) => set({ name: e.target.value })} />
             {remove && (
               <Btn kind="text" size="xs" aria-label={`島 ${i + 1} を外す`} onClick={remove}>
                 外す
@@ -181,7 +178,7 @@ export function UnitFields({ u, i, repos, set, remove }: { u: UnitSpec; i: numbe
           <fieldset className="roles">
             <legend className="sr">島 {i + 1} の役割</legend>
             {WORK_ROLES.map((r) => (
-              <Checkbox key={r} size="sm" checked={u.roles.includes(r)} onChange={() => toggleRole(r)}>
+              <Checkbox key={r} checked={u.roles.includes(r)} onChange={() => toggleRole(r)}>
                 {ROLE_LABEL[r]}
               </Checkbox>
             ))}
@@ -190,7 +187,7 @@ export function UnitFields({ u, i, repos, set, remove }: { u: UnitSpec; i: numbe
             <fieldset className="roles">
               <legend className="hint">受け持つリポジトリ(選ばなければすべて)</legend>
               {repos.map((r) => (
-                <Checkbox key={r} size="sm" checked={(u.repos ?? []).includes(r)} onChange={() => toggleRepo(r)}>
+                <Checkbox key={r} checked={(u.repos ?? []).includes(r)} onChange={() => toggleRepo(r)}>
                   <span className="font-mono">{r}</span>
                 </Checkbox>
               ))}
@@ -201,7 +198,7 @@ export function UnitFields({ u, i, repos, set, remove }: { u: UnitSpec; i: numbe
               <label className="h" htmlFor={`unit-model-${i}`}>
                 モデル
               </label>
-              <Select id={`unit-model-${i}`} blockSize="sm" className="w-full" value={u.model ?? ""} onChange={(e) => set({ model: e.target.value || null })}>
+              <Select id={`unit-model-${i}`} size="sm" className="w-full" value={u.model ?? ""} onChange={(e) => set({ model: e.target.value || null })}>
                 <option value="">役割の方針どおり</option>
                 {Object.entries(MODELS).map(([k, v]) => (
                   <option key={k} value={k}>
@@ -214,7 +211,7 @@ export function UnitFields({ u, i, repos, set, remove }: { u: UnitSpec; i: numbe
               <label className="h" htmlFor={`unit-effort-${i}`}>
                 考える深さ
               </label>
-              <Select id={`unit-effort-${i}`} blockSize="sm" className="w-full" value={u.effort ?? ""} onChange={(e) => set({ effort: (e.target.value || null) as UnitSpec["effort"] })}>
+              <Select id={`unit-effort-${i}`} size="sm" className="w-full" value={u.effort ?? ""} onChange={(e) => set({ effort: (e.target.value || null) as UnitSpec["effort"] })}>
                 <option value="">役割の方針どおり</option>
                 {EFFORTS.map((x) => (
                   <option key={x}>{x}</option>
@@ -324,7 +321,7 @@ function PolicyEditor({ id, t }: { id: number; t: TeamView }) {
         <label className="h" htmlFor="pol-model">
           モデル
         </label>
-        <Select id="pol-model" blockSize="sm" className="w-full" value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })}>
+        <Select id="pol-model" size="sm" className="w-full" value={draft.model} onChange={(e) => setDraft({ ...draft, model: e.target.value })}>
           {Object.entries(MODELS).map(([k, v]) => (
             <option key={k} value={k}>
               {v.label}
@@ -341,7 +338,7 @@ function PolicyEditor({ id, t }: { id: number; t: TeamView }) {
         <label className="h" htmlFor="pol-effort">
           考える深さ(effort)
         </label>
-        <Select id="pol-effort" blockSize="sm" className="w-full" value={draft.effort} onChange={(e) => setDraft({ ...draft, effort: e.target.value })}>
+        <Select id="pol-effort" size="sm" className="w-full" value={draft.effort} onChange={(e) => setDraft({ ...draft, effort: e.target.value })}>
           {EFFORTS.map((e) => (
             <option key={e}>{e}</option>
           ))}
@@ -349,7 +346,7 @@ function PolicyEditor({ id, t }: { id: number; t: TeamView }) {
       </div>
       {(OPTION_UI[role] ?? []).map((o) =>
         o.kind === "bool" ? (
-          <Checkbox key={o.key} size="sm" checked={!!draft.options[o.key]} onChange={(e) => setDraft({ ...draft, options: { ...draft.options, [o.key]: e.target.checked } })}>
+          <Checkbox key={o.key}checked={!!draft.options[o.key]} onChange={(e) => setDraft({ ...draft, options: { ...draft.options, [o.key]: e.target.checked } })}>
             {o.label}
           </Checkbox>
         ) : o.kind === "select" ? (
@@ -357,7 +354,7 @@ function PolicyEditor({ id, t }: { id: number; t: TeamView }) {
             <label className="h" htmlFor={`opt-${o.key}`}>
               {o.label}
             </label>
-            <Select id={`opt-${o.key}`} blockSize="sm" className="w-full" value={String(draft.options[o.key] ?? "")} onChange={(e) => setDraft({ ...draft, options: { ...draft.options, [o.key]: e.target.value } })}>
+            <Select id={`opt-${o.key}`} size="sm" className="w-full" value={String(draft.options[o.key] ?? "")} onChange={(e) => setDraft({ ...draft, options: { ...draft.options, [o.key]: e.target.value } })}>
               {o.choices!.map(([v, l]) => (
                 <option key={v} value={v}>
                   {l}

@@ -84,3 +84,16 @@ describe("部品", () => {
     for (const [all, value] of art!.matchAll(/font-size:\s*([^;}]+)/g)) expect(value, all).toMatch(/^var\(--fs-/);
   });
 });
+
+describe("オフィスの作業中のノート PC", () => {
+  const style = readFileSync(new URL("../ui/src/style.css", import.meta.url), "utf8");
+  const rules = [...style.matchAll(/^(\.officefloor \.of-working \.of-avatar \.of-laptop)\s*\{([^}]*)\}/gm)];
+
+  it("規則は 1 つで、光の色は --art-laptop-on", () => {
+    expect(rules).toHaveLength(1);
+    const body = rules[0]![2]!;
+    expect(body).toMatch(/fill:\s*var\(--art-laptop-on\)/);
+    expect(body).toMatch(/drop-shadow\([^)]*var\(--art-laptop-on\)\)/);
+    expect(body).not.toMatch(/--dev\b/);
+  });
+});

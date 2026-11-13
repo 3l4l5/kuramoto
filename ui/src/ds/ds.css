@@ -31,6 +31,15 @@ a.ds-btn { text-decoration: none; }
 .ds-input:focus, .ds-input:focus-visible, .ds-input[data-focus] { border-color: var(--dev); outline: 2px solid var(--dev); outline-offset: 1px; box-shadow: none; }
 .ds-input[aria-invalid="true"] { border: 2px solid var(--danger); }
 .ds-input:disabled { background: var(--bg); color: var(--muted); border-color: var(--line); }
+.ds-input--sm { height: var(--h-control-sm); padding: 0 var(--sp-2); font-size: var(--fs-md); }
+.ds-select { padding: 0 var(--sp-2); }
+.ds-textarea { height: auto; padding: var(--sp-2) var(--sp-3); line-height: var(--lh-body); resize: vertical; }
+
+/* チェックボックス(印は --dev) */
+.ds-check { display: inline-flex; align-items: center; gap: var(--sp-2); font-family: var(--f-body); font-size: var(--fs-base); color: var(--ink); cursor: pointer; }
+.ds-check__box { flex: none; width: var(--sp-4); height: var(--sp-4); margin: 0; accent-color: var(--dev); cursor: pointer; }
+.ds-check__box[aria-invalid="true"] { outline: 2px solid var(--danger); }
+.ds-check__box:disabled { cursor: not-allowed; }
 
 /* 切り替え(セグメント) */
 .ds-seg { display: inline-flex; padding: var(--sp-1); border-radius: var(--r-lg); background: var(--bg); border: 1px solid var(--line); font-family: var(--f-body); }
@@ -60,6 +69,7 @@ a.ds-btn { text-decoration: none; }
 .ds-chip--danger { background: var(--danger-soft); color: var(--danger-ink); }
 .ds-chip--ok { background: var(--ok-soft); color: var(--ok); }
 .ds-chip--review { background: var(--review-soft); color: var(--review-ink); }
+.ds-chip--neutral { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
 .ds-chip--version { background: var(--bg); color: var(--muted); border: 1px solid var(--line); font-family: var(--f-mono); font-size: var(--fs-xs); font-weight: var(--fw-regular); }
 
 /* 引き出し(タブあり) */

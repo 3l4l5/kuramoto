@@ -2,9 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, post, type DevRulesView } from "./api";
 import { useAct } from "./hooks";
-import { Button, Chip, List, ListItem, SectionHeading, Segmented, Switch } from "./ds";
-import { Input } from "./dads/Input";
-import { Textarea } from "./dads/Textarea";
+import { Button, Chip, Input, List, ListItem, SectionHeading, Segmented, Switch, Textarea } from "./ds";
 
 /**
  * チームの方針の「開発ルール」(R15・ADR-0011)。左に一覧(有効 / 無効のスイッチ)とひな形、右にルールの中身か追加のフォーム。
@@ -178,7 +176,7 @@ function RuleForm({ draft, set }: { draft: RuleDraft; set: (d: RuleDraft) => voi
   return (
     <>
       <Field label="名前" htmlFor="rule-name" hint="一覧に出る名前">
-        <Input id="rule-name" blockSize="sm" value={draft.name} onChange={(e) => patch({ name: e.target.value })} />
+        <Input id="rule-name" size="sm" value={draft.name} onChange={(e) => patch({ name: e.target.value })} />
       </Field>
       <Field label="何を守るか" htmlFor="rule-body">
         <Textarea id="rule-body" rows={3} value={draft.body} onChange={(e) => patch({ body: e.target.value })} />
@@ -189,7 +187,7 @@ function RuleForm({ draft, set }: { draft: RuleDraft; set: (d: RuleDraft) => voi
       <Field label="確かめ方" hint="形式は速くてトークンを使いません。意味を読む必要があるものは「AI が読む」。">
         <Segmented label="確かめ方" options={CHECK_OPTIONS} value={draft.check} onChange={(check) => patch({ check })} />
         {draft.check === "pattern" && (
-          <Input id="rule-pattern" aria-label="正規表現" className="rules__mono" blockSize="sm" value={draft.pattern} onChange={(e) => patch({ pattern: e.target.value })} />
+          <Input id="rule-pattern" aria-label="正規表現" className="rules__mono" size="sm" value={draft.pattern} onChange={(e) => patch({ pattern: e.target.value })} />
         )}
       </Field>
       <Field label="違反したとき" hint={ON_FAIL_HINT}>

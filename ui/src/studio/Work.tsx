@@ -3,8 +3,7 @@ import { post, type StudioView } from "../api";
 import { useAct } from "../hooks";
 import { FlowSvg, InfraSvg, ModelSvg } from "./diagrams";
 import { Btn } from "../ui";
-import { Input } from "../dads/Input";
-import { ChipLabel } from "../dads/ChipLabel";
+import { Chip, Input } from "../ds";
 import { ownerOf, type Cast, type Stage } from "./Studio";
 
 export type Ui = {
@@ -236,7 +235,7 @@ function FreeAnswer({ id, onAnswer }: { id: number; onAnswer: (t: string) => voi
       <label className="hint" htmlFor={`free-${id}`}>
         別の答え
       </label>
-      <Input id={`free-${id}`} type="text" blockSize="sm" className="grow" autoComplete="off" value={t} onChange={(e) => setT(e.target.value)} />
+      <Input id={`free-${id}`} type="text" size="sm" className="grow" autoComplete="off" value={t} onChange={(e) => setT(e.target.value)} />
       <Btn kind="outline" size="sm" type="submit">
         答える
       </Btn>
@@ -409,7 +408,7 @@ function Screens({ d, pid, ui, setUi }: Props) {
           <label className="hint" htmlFor="pin-in">
             コメント
           </label>
-          <Input id="pin-in" type="text" blockSize="sm" className="grow" autoComplete="off" autoFocus value={text} onChange={(e) => setText(e.target.value)} />
+          <Input id="pin-in" type="text" size="sm" className="grow" autoComplete="off" autoFocus value={text} onChange={(e) => setText(e.target.value)} />
           <Btn kind="solid-fill" size="sm" type="submit">
             付ける
           </Btn>
@@ -751,9 +750,9 @@ function TechSelectionView({ s }: { s: NonNullable<NonNullable<StudioView["archi
               → <b>{x.choice}</b>
             </span>
             {!x.reversible && (
-              <ChipLabel variant="filled-1" color="red">
+              <Chip tone="danger">
                 後から替えにくい
-              </ChipLabel>
+              </Chip>
             )}
           </header>
           <div className="need">{x.need}</div>
@@ -774,9 +773,9 @@ function TechSelectionView({ s }: { s: NonNullable<NonNullable<StudioView["archi
                     {c.name === x.choice && (
                       <>
                         {" "}
-                        <ChipLabel variant="filled-2" color="blue">
+                        <Chip>
                           選択
-                        </ChipLabel>
+                        </Chip>
                       </>
                     )}
                   </th>

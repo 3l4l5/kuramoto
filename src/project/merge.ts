@@ -223,7 +223,7 @@ function unreviewedRoles(p: Project, ticket: TicketRow): string[] {
   const last = new Map<string, { verdict: string; created_at: string }>();
   for (const r of reviews) last.set(r.role, r);
   const gaps = [...last].filter(([role, r]) => r.verdict !== "approve" && !passes.some((x) => x.role === role && x.at >= r.created_at)).map(([role]) => role);
-  const hasChecks = pipelineOf(p.currentFormation()).some((r) => r !== "dev");
+  const hasChecks = pipelineOf(p.currentFormation(), ticket.kind, { devDone: true }).some((r) => r !== "dev");
   if (hasChecks && last.size === 0) gaps.push("review");
   return gaps;
 }
