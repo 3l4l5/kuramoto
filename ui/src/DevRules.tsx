@@ -80,7 +80,15 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
   /** 一覧や「足す」で別へ移る。直している途中なら、捨ててよいか確かめてから(足すフォームの途中から「足す」を押しても、そのまま残す) */
   const go = (to: number | "add") => {
     // 足している途中なら、足すフォームへ戻るだけ(スマホで一覧へ戻ったあとも、下書きのフォームを開き直せる)
-    if (to === "add") return adding ? setPhoneView("edit") : unsaved ? setLeaving("add") : openAdd();
+    // 確かめ(捨てて移る / このまま直す)は編集の画面にあるので、スマホでは編集の画面へ移して見えるようにする
+    if (to === "add") {
+      if (adding) return setPhoneView("edit");
+      if (unsaved) {
+        setLeaving("add");
+        return setPhoneView("edit");
+      }
+      return openAdd();
+    }
     if (!unsaved) return select(to);
     setLeaving(to === current?.id ? null : to);
     setPhoneView("edit");

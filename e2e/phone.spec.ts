@@ -88,6 +88,18 @@ test("幅 390px: 全画面が横にはみ出さず、引き出しも全画面で
   await expect(tpl).toBeVisible();
   await fits(page, "dev-rules-templates");
   await tpl.getByRole("button", { name: "ひな形のシートを閉じる" }).click();
+  // ひな形を選ぶと、そのルールの編集の画面が開く。名前を直して一覧へ戻り「+ ルールを足す」を押すと、捨ててよいかの確かめが出る
+  await policy.getByRole("button", { name: "ひな形から足す" }).click();
+  await tpl.getByRole("button", { name: "+ Jira 番号をそろえる" }).click();
+  await expect(policy.getByLabel("名前")).toBeVisible();
+  await policy.getByLabel("名前").fill("直している途中");
+  await policy.getByRole("button", { name: "← ルールの一覧" }).click();
+  await expect(policy.getByLabel("名前")).toBeHidden();
+  await policy.getByRole("button", { name: "+ ルールを足す" }).click();
+  await expect(policy.getByRole("alert")).toContainText("保存していない変更があります");
+  await policy.getByRole("button", { name: "捨てて移る" }).click();
+  await expect(policy.getByLabel("名前")).toHaveValue("");
+  await policy.getByRole("button", { name: "← ルールの一覧" }).click();
   // 空のルールを足している途中で一覧へ戻っても、「+ ルールを足す」で、その下書きのフォームに戻れる
   await policy.getByRole("button", { name: "+ ルールを足す" }).click();
   await policy.getByLabel("名前").fill("途中のルール");
