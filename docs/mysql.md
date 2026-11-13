@@ -53,18 +53,19 @@ Kuramoto が使う DB は `config.yaml` で選びます。パスワードは `co
 ```yaml
 database:
   type: mysql
-  host: 127.0.0.1
-  port: 3306
-  name: kuramoto              # mysql.env の MYSQL_DATABASE
-  user: kuramoto              # mysql.env の MYSQL_USER
-  passwordFile: ~/.kuramoto/mysql.env   # 読むのは MYSQL_PASSWORD の 1 行だけ
+  url: mysql://kuramoto@127.0.0.1:3306/kuramoto   # mysql://ユーザー@ホスト:ポート/database 名(パスワードは書かない)
+  passwordFile: ~/.kuramoto/mysql.env             # 読むのは MYSQL_PASSWORD の 1 行だけ
 ```
 
-テスト用は同じ書き方で、`port: 3307`・`name: kuramoto_test`・`user: kuramoto_test` にします(パスワードは `compose.yaml` の `mysql-test` に書いてあるテスト専用のものです)。
+- `url` の ユーザーと database 名は、`mysql.env` の `MYSQL_USER` と `MYSQL_DATABASE` と同じにします。
+- パスワードは `config.yaml` に書かず、`passwordFile` が指す `mysql.env` の `MYSQL_PASSWORD` の行から読みます。`~/` は家のディレクトリです。`url` にもパスワードを書くと、どちらを使うか決められないので起動しません。`MYSQL_PASSWORD` の行が無い・空のときも起動しません。
+- 環境変数 `KURAMOTO_DATABASE_URL` があるときは、`url` の代わりにそちらを使います(`passwordFile` はそのまま効きます)。
+- TLS を使うときは `tls: { ca: <CA のファイルのパス> }` を足します。
+- ここに書ける項目は `type`・`url`・`passwordFile`・`tls` です。これ以外(`host`・`port`・`name`・`user` など)を書くと、知らない項目として起動しません。
 
-`mysql.env` には `MYSQL_ROOT_PASSWORD` も入っています。Kuramoto は `MYSQL_PASSWORD` の行だけを読み、root のパスワードは使いません(root で繋がない)。root のパスワードまで Kuramoto に見せたくない場合は、`MYSQL_PASSWORD` だけを書いた別のファイル(0600)を作って `passwordFile` で指します。
+テスト用は同じ書き方で、`url` を `mysql://kuramoto_test@127.0.0.1:3307/kuramoto_test` にします(パスワードは `compose.yaml` の `mysql-test` に書いてあるテスト専用のものです)。
 
-> この節のキー名は、`config.yaml` を読む側の実装と合わせてください。この手順書の範囲は、MySQL を立てて、バックアップを取り、戻すところまでです。
+`mysql.env` には `MYSQL_ROOT_PASSWORD` も入っています。Kuramoto は `MYSQL_PASSWORD` の行だけを読み、root のパスワードは読みません(root で繋がない)。root のパスワードまで Kuramoto に見せたくない場合は、`MYSQL_PASSWORD` だけを書いた別のファイル(0600)を作って `passwordFile` で指します。
 
 ## 3. バックアップ(1 日 1 回、launchd)
 
