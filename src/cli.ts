@@ -1,6 +1,8 @@
 import { parseArgs } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadStartupConfig } from "./config.js";
+import { isConnectionError } from "./db/mysql-health.js";
+import { startDatabase } from "./db/startup.js";
 import { transferCommand } from "./db/transfer-cmd.js";
 import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import { GhCli } from "./github/github.js";
@@ -30,16 +32,17 @@ async function main(argv: string[]): Promise<void> {
     options: { body: { type: "string" }, concurrency: { type: "string" }, once: { type: "boolean" } },
   });
   const [cmd, sub, ...rest] = positionals;
-  // SQLite → MySQL へ移す。MySQL を選んだ設定は loadStartupConfig が止めるので、その前に分ける(本部の DB も、移す道具が自分で開く)
+  // SQLite → MySQL へ移す。移す道具は、本部の SQLite も MySQL も自分で開くので、起動の DB の用意(startDatabase)の前に分ける
   if (cmd === "db") {
     if (sub !== "transfer") throw new Error(USAGE);
     await transferCommand();
     return;
   }
   // 設定は stderr に出す(一覧などの出力に混ぜない)
-  loadStartupConfig((line) => console.error(line));
+  // MySQL のときは繋いで版を最新にする。届かなければ理由を出して止まる(SQLite には黙って戻らない)
+  const db = await startDatabase(loadStartupConfig((line) => console.error(line)), (line) => console.error(line));
   // 入口で今のワークスペースを決め、本部へ渡す。プロジェクトの id がそのワークスペースの中にあるかは、hq.project() / hq.openProject() が確かめる
-  const hq = new Hq(undefined, undefined, currentWorkspaceId());
+  const hq = new Hq(undefined, undefined, currentWorkspaceId(), db.mysql);
   try {
     switch (cmd) {
       case "project":
@@ -75,12 +78,22 @@ async function main(argv: string[]): Promise<void> {
       case "run": {
         const rec = await hq.project(Number(sub));
         const p = await hq.openProject(rec.id);
-        const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": new ClaudeAgentSdkHarness() }, workspace: new GitWorkspace(workDirFor(rec.data_dir)) });
+        // 切れている間は受信箱から取らず、繋がり直したら続ける(サーバーと同じ。ADR-0041)
+        db.health?.start();
+        const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": new ClaudeAgentSdkHarness() }, workspace: new GitWorkspace(workDirFor(rec.data_dir)), dbUp: () => db.health?.isUp() ?? true });
         const recovered = await recoverStale(p);
         if (recovered) console.log(`止まっていた ${recovered} 件を受信箱に戻しました`);
         const concurrency = Number(values.concurrency ?? 1);
         for (;;) {
-          const n = await d.drain({ concurrency });
+          let n = 0;
+          try {
+            n = await d.drain({ concurrency });
+          } catch (e) {
+            // 接続のエラーは、見張りに知らせて待つ(--once のときは、そのまま落とす)。それ以外は落とす
+            if (!db.health || values.once || !isConnectionError(e)) throw e;
+            db.health.reportFailure(e);
+            console.error(`DB に繋がりません。繋がり直すまで待ちます: ${e instanceof Error ? e.message : String(e)}`);
+          }
           if (n) console.log(`${n} 件を起動しました`);
           if (values.once) break;
           await sleep(5_000);
@@ -120,6 +133,7 @@ async function main(argv: string[]): Promise<void> {
     }
   } finally {
     hq.close();
+    await db.close();
   }
 }
 

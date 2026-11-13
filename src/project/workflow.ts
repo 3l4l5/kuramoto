@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { isExhausted } from "./budget.js";
 import { iso } from "../clock.js";
-import { dialect } from "../db/dialect/index.js";
 import { isPreDev, nextStage, pipelineOf } from "../domain/formation.js";
 import { flowFor, isTicketKind, KIND_LABEL, type TicketKind } from "../domain/flow.js";
 import { WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
@@ -188,7 +187,7 @@ async function applyDev(p: Project, ticket: TicketRow, memberId: number, report:
     return `開発ルールに反したコミット(${payload.sha.slice(0, 7)})から何も変わっていません。ルールを守るように直してから出し直してください`;
   const repo = (await p.repos()).find((r) => r.full_name === report.pr!.repo);
   if (!repo) return `登録されていないリポジトリです: ${report.pr.repo}`;
-  await dialect.upsert(p.pdb.insert("pull_requests", { ticket_id: ticket.id, repo_id: repo.id, number: report.pr.number, head: report.pr.head }), ["ticket_id", "repo_id"], ["number", "head"]).execute();
+  await p.pdb.dialect.upsert(p.pdb.insert("pull_requests", { ticket_id: ticket.id, repo_id: repo.id, number: report.pr.number, head: report.pr.head }), ["ticket_id", "repo_id"], ["number", "head"]).execute();
   // 開発を通った。これより前の工程には戻らない
   await p.pdb.update("tickets", { dev_done: 1 }).where("id", "=", ticket.id).execute();
   ticket = await p.ticket(ticket.id);
@@ -291,7 +290,7 @@ async function applyReview(p: Project, ticket: TicketRow, role: WorkRole, runId:
   }
   const blocking = findings.some((f) => f.blocking !== false) || resolutions.some((r) => r.result === "reopen" && prior.has(r.findingId));
   const verdict = blocking ? "changes" : "approve";
-  const reviewId = await dialect.insertedId(p.pdb.insert("reviews", { ticket_id: ticket.id, role, round, run_id: runId, verdict, created_at: p.now() }));
+  const reviewId = await p.pdb.dialect.insertedId(p.pdb.insert("reviews", { ticket_id: ticket.id, role, round, run_id: runId, verdict, created_at: p.now() }));
   await recordFindings(p, ticket.id, role, reviewId, findings, who);
   await createFollowups(p, ticket, role, report.review.followups ?? []);
 
@@ -419,7 +418,7 @@ async function recordFindings(p: Project, ticketId: number, role: string, review
   const seen = new Set(prior.map((f) => f.fingerprint));
   for (const f of findings) {
     const fp = fingerprint(f);
-    const id = await dialect.insertedId(
+    const id = await p.pdb.dialect.insertedId(
       p.pdb.insert("findings", {
         review_id: reviewId,
         category: f.category,
@@ -447,7 +446,7 @@ export function fingerprint(f: Pick<Finding, "category" | "path" | "body">): str
 async function insertDecision(p: Project, ticket: TicketRow, q: Question, opts: { escalated: boolean; options?: DecisionOption[]; noDeadline?: boolean }): Promise<number> {
   const options: DecisionOption[] = opts.options ?? q.options.map((label) => ({ label }));
   const deadline = opts.escalated && !opts.noDeadline ? iso(new Date(p.clock.now().getTime() + await p.settingNumber("decision_timeout_sec", 3600) * 1000)) : null;
-  return dialect.insertedId(
+  return p.pdb.dialect.insertedId(
     p.pdb.insert("decisions", {
       ticket_id: ticket.id,
       question: `${q.context}\n${q.question}`,

@@ -26,5 +26,5 @@ DB を MySQL にも置けるようにする(docs/mysql.md、ADR-0036・0037)。S
 - `src/db/mysql-migrate.test.ts` が mysql-test(`KURAMOTO_MYSQL_TEST_URL`、既定は 127.0.0.1:3307)に流し、表・列が SQLite と一致すること、版が 21 であること、2 回流しても変わらないことを確かめる。繋がらないときは飛ばす。
 - `src/db/dev-done.test.ts` が、SQLite の版 18 のデータに版 19 を流した結果と、`inferDevDone`・MySQL の `backfillDevDone` の結果がそろうことを、工程 8 通り × 起動の有無で確かめる(MySQL は繋がらないときは飛ばす)。
 - `src/db/sqlite-to-mysql.test.ts` が、移したあとの `dev_done` が SQLite の版 19 の結果とそろうこと(プロジェクトごとに `backfillDevDone` を呼ぶこと・id の付け替え)を確かめる(MySQL は繋がらないときは飛ばす。呼ぶ順序だけは MySQL が無くても確かめる)。
-- 実行の入口は `kuramoto db transfer`(`src/db/transfer-cmd.ts`、手順は [docs/mysql.md](../mysql.md) の 6)。`config.ts` の MySQL の接続先を `loadConfig` で読み(`loadStartupConfig` は MySQL を起動の段階で止めるので使わない)、`connectMysql` で最新の版まで流してから、`openDb` で最新の版まで流した本部・プロジェクトの SQLite を `transferSqliteToMysql` に渡す。結果はプロジェクトごとのチケット数と、`dev_done` を埋めた件数で出す。`src/db/transfer-cmd.test.ts` が確かめる(MySQL の部分は繋がらないときは飛ばす)。
-- サーバー・`Project` の読み書きの本体は、まだ MySQL に繋がない(ADR-0041)。
+- 実行の入口は `kuramoto db transfer`(`src/db/transfer-cmd.ts`、手順は [docs/mysql.md](../mysql.md) の 6)。`config.ts` の MySQL の接続先を `loadConfig` で読み(移す道具は起動ではないので、`startDatabase` を通さず、自分で繋ぐ)、`connectMysql` で最新の版まで流してから、`openDb` で最新の版まで流した本部・プロジェクトの SQLite を `transferSqliteToMysql` に渡す。結果はプロジェクトごとのチケット数と、`dev_done` を埋めた件数で出す。`src/db/transfer-cmd.test.ts` が確かめる(MySQL の部分は繋がらないときは飛ばす)。
+- サーバー・`Project` の読み書きの本体は、#65 で MySQL に繋いだ(ADR-0041)。移したあとは、`config.yaml` を `type: mysql` にして起動する。

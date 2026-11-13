@@ -14,6 +14,8 @@ import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import type { Harness } from "./harness/types.js";
 import { GhCli, type GitHub } from "./github/github.js";
 import { ConfigError, loadStartupConfig } from "./config.js";
+import { DatabaseConnectError } from "./db/mysql.js";
+import { startDatabase } from "./db/startup.js";
 import { currentWorkspaceId, Hq, kuramotoHome, workDirFor, type ProjectRecord } from "./hq.js";
 import { Dispatcher } from "./project/dispatcher.js";
 import { recoverStale } from "./project/inbox.js";
@@ -410,6 +412,7 @@ export class KuramotoServer {
       if (out === undefined) return send(res, 404, { error: "ありません" });
       send(res, 200, out);
     } catch (e) {
+      this.deps.dbHealth?.reportFailure(e); // 接続のエラーなら、次の ping を待たずに「切れた」にする(画面が先に知らせる)
       send(res, 400, { error: e instanceof Error ? e.message : String(e) });
     }
   }
@@ -444,6 +447,8 @@ export class KuramotoServer {
 
   private async route(method: string, parts: string[], body: Record<string, unknown>): Promise<unknown> {
     const [a, idStr, b, c] = parts;
+    // DB に繋がっているか。DB を読まないので、切れている間も返る(画面が上に警告を出す。ADR-0041)
+    if (a === "db" && method === "GET") return { dbDown: this.dbDown() } satisfies DbStatusView;
     if (a === "hq" && method === "GET") return await this.hqView();
     if (a !== "projects") return undefined;
     if (idStr === "import" && method === "POST") {
@@ -914,6 +919,8 @@ export class KuramotoServer {
 
 /** 画面(ui/)が受け取る API の形。サーバーの戻り値から型を作り、画面とずれないようにする。 */
 export type HqView = Awaited<ReturnType<KuramotoServer["hqView"]>>;
+/** GET /api/db: DB(MySQL)に繋がっていないときだけ、いつから・どんなエラーか。繋がっていれば null。 */
+export type DbStatusView = { dbDown: ReturnType<KuramotoServer["dbDown"]> };
 export type ProjectView = Awaited<ReturnType<KuramotoServer["projectView"]>>;
 export type StudioView = Awaited<ReturnType<KuramotoServer["studioViewOf"]>>;
 export type TeamView = Awaited<ReturnType<typeof teamView>>;
@@ -996,10 +1003,12 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 
 // 直接起動したとき
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  let db: Awaited<ReturnType<typeof startDatabase>>;
   try {
-    loadStartupConfig();
+    // MySQL のときは、ここで繋いで版を最新にする。届かなければ理由を出して起動しない(SQLite には黙って戻らない)
+    db = await startDatabase(loadStartupConfig());
   } catch (e) {
-    if (!(e instanceof ConfigError)) throw e;
+    if (!(e instanceof ConfigError || e instanceof DatabaseConnectError)) throw e;
     console.error(e.message);
     process.exit(1);
   }
@@ -1007,8 +1016,12 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const port = Number(process.env.KURAMOTO_PORT ?? 4300);
   const open = process.env.KURAMOTO_PUBLIC === "1";
   const token = open ? publicToken() : undefined;
-  // 入口で今のワークスペースを決め、本部へ渡す
-  const app = new KuramotoServer({ hq: new Hq(undefined, undefined, currentWorkspaceId()), ...(token ? { publicToken: token } : {}) });
+  // 入口で今のワークスペースを決め、本部へ渡す。MySQL のときは、本部もプロジェクトもその上で動き、見張りを渡す
+  const app = new KuramotoServer({
+    hq: new Hq(undefined, undefined, currentWorkspaceId(), db.mysql),
+    ...(db.health ? { dbHealth: db.health } : {}),
+    ...(token ? { publicToken: token } : {}),
+  });
   await app.resume();
   const server = createServer((req, res) => void app.handle(req, res));
   server.listen(port, open ? "0.0.0.0" : "127.0.0.1", () => {
@@ -1020,7 +1033,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   });
   const shutdown = () => {
     app.close();
-    server.close(() => process.exit(0));
+    server.close(() => void db.close().finally(() => process.exit(0)));
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);

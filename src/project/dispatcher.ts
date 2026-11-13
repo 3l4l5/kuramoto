@@ -4,7 +4,6 @@ import { isUniqueViolation } from "../db/sqlite.js";
 import { sql } from "kysely";
 import { WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
 import type { Harness, HarnessResult, HarnessUsage } from "../harness/types.js";
-import { dialect } from "../db/dialect/index.js";
 import { claimNext, complete, fail, pendingCount, release, send, type MessageKind, type MessageRow } from "./inbox.js";
 import type { MemberRow, Project, TicketRow } from "./project.js";
 import { PRE_DEV_NOTE, promptFor, systemPromptFor } from "./prompts.js";
@@ -445,7 +444,7 @@ export class Dispatcher {
 
     let runId: number;
     try {
-      runId = await dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: ticket.id, member_id: member.id, role: role, session_id: resumeId ? session!.id : null, policy_id: policy.id, formation_id: formation.id, started_at: p.now(), model: use.model, effort: use.effort, unit_name: use.unitName }));
+      runId = await p.pdb.dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: ticket.id, member_id: member.id, role: role, session_id: resumeId ? session!.id : null, policy_id: policy.id, formation_id: formation.id, started_at: p.now(), model: use.model, effort: use.effort, unit_name: use.unitName }));
     } catch (e) {
       if (!isUniqueViolation(e)) throw e;
       await release(p, msg.id, WAIT_MS); // 同じチケットを別の起動が触っている
@@ -617,7 +616,7 @@ export class Dispatcher {
     const sessionKey = `plan_session:${member.id}:${payload.stage}`;
     const saved = await p.setting(sessionKey);
     const resume = await canResume(p, saved) ? saved : undefined;
-    const runId = await dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, member_id: member.id, role: role, policy_id: policy.id, formation_id: (await p.currentFormation()).id, started_at: p.now(), model: policy.model, effort: policy.effort }));
+    const runId = await p.pdb.dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, member_id: member.id, role: role, policy_id: policy.id, formation_id: (await p.currentFormation()).id, started_at: p.now(), model: policy.model, effort: policy.effort }));
     await p.event(member.name, "plan_run_started", null, { stage: payload.stage, model: policy.model, effort: policy.effort, policyVersion: policy.version });
 
     let result: HarnessResult | undefined;
@@ -707,7 +706,7 @@ export class Dispatcher {
     // 取りやめ・重複の片付けで、開いている PR を閉じる
     const closePrs = (t: TicketRow, reason: string) => closeOpenPrs(this.deps.workspace, p, t, { commit: "", reason });
     // チャット・交通整理・見回りは毎回まっさらに始める。チャットの前のやりとりは、指示に最近の分を入れて渡す(ADR-0032)
-    const runId = await dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, member_id: member.id, role: "lead", policy_id: policy.id, formation_id: (await p.currentFormation()).id, started_at: p.now(), model: policy.model, effort: policy.effort }));
+    const runId = await p.pdb.dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, member_id: member.id, role: "lead", policy_id: policy.id, formation_id: (await p.currentFormation()).id, started_at: p.now(), model: policy.model, effort: policy.effort }));
     await p.event(member.name, `${mode}_run_started`, null, { model: policy.model, tickets: (mode === "patrol" ? signals.map((s) => s.ticket) : targets).map((t) => t.number), ...(mode === "patrol" ? { deadlocks: deadlocks.map((x) => x.key) } : {}) });
     let result: HarnessResult | undefined;
     let error: string | undefined;
@@ -799,7 +798,7 @@ export class Dispatcher {
     // 終わったチケット(ブランチが消えていることがある)では、チケットのブランチを取り出さず、既定のブランチで答える
     const finished = isFinishedTicket(ticket);
     const branch = finished ? "" : await devBranch(p, ticket, repo.id);
-    const runId = await dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, about_ticket_id: ticket.id, member_id: member.id, role: role, session_id: resumeId ? session!.id : null, policy_id: policy.id, formation_id: formation.id, started_at: p.now(), model: use.model, effort: use.effort, unit_name: use.unitName }));
+    const runId = await p.pdb.dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, about_ticket_id: ticket.id, member_id: member.id, role: role, session_id: resumeId ? session!.id : null, policy_id: policy.id, formation_id: formation.id, started_at: p.now(), model: use.model, effort: use.effort, unit_name: use.unitName }));
     await p.event(member.name, "member_chat_started", ticket.id, { model: use.model });
     const done: { handedOver?: boolean } = {};
     let result: HarnessResult | undefined;
@@ -866,7 +865,7 @@ export class Dispatcher {
       await this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
       return;
     }
-    const runId = await dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, about_ticket_id: ticket.id, member_id: member.id, role: role, session_id: null, policy_id: policy.id, formation_id: formation.id, started_at: p.now(), model: use.model, effort: use.effort, unit_name: use.unitName }));
+    const runId = await p.pdb.dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, about_ticket_id: ticket.id, member_id: member.id, role: role, session_id: null, policy_id: policy.id, formation_id: formation.id, started_at: p.now(), model: use.model, effort: use.effort, unit_name: use.unitName }));
     await p.event(member.name, "ask_started", ticket.id, { questionId: q.id, model: use.model });
     const report: AnswerReport = {};
     let result: HarnessResult | undefined;
@@ -957,7 +956,7 @@ export class Dispatcher {
       await this.failed(msg, ticket, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
       return;
     }
-    const runId = await dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: ticket.id, member_id: member.id, role: "lead", policy_id: policy.id, formation_id: (await p.currentFormation()).id, started_at: p.now(), model: policy.model, effort: policy.effort }));
+    const runId = await p.pdb.dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: ticket.id, member_id: member.id, role: "lead", policy_id: policy.id, formation_id: (await p.currentFormation()).id, started_at: p.now(), model: policy.model, effort: policy.effort }));
     await p.event(member.name, "unstick_run_started", ticket.id, { error: payload.error });
     const done: { action?: "retry" | "hold" | "closed" | "dropped" } = {};
     let result: HarnessResult | undefined;
@@ -1075,7 +1074,7 @@ async function prNumber(p: Project, ticketId: number, repoId: number): Promise<{
 /** 同じ会話の続きとして覚える(同じ人・チケット・リポジトリなら、会話の id と使った時刻を更新する)。 */
 async function rememberSession(p: Project, s: { memberId: number; ticketId: number; repoId: number; harness: string; sessionId: string; branch: string | null }): Promise<void> {
   const now = p.now();
-  await dialect
+  await p.pdb.dialect
     .upsert(
       p.pdb.insert("sessions", { member_id: s.memberId, ticket_id: s.ticketId, repo_id: s.repoId, harness: s.harness, harness_session_id: s.sessionId, branch: s.branch, created_at: now, last_used_at: now }),
       ["member_id", "ticket_id", "repo_id"],

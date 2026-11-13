@@ -1,5 +1,4 @@
 import { sql, type SqlBool } from "kysely";
-import { dialect } from "../db/dialect/index.js";
 import { pipelineOf } from "../domain/formation.js";
 import type { CiDetail, GitHub, PrStatus } from "../github/github.js";
 import type { Project, TicketRow } from "./project.js";
@@ -185,7 +184,7 @@ async function ensureBaseCiTicket(p: Project, from: TicketRow, pr: PrRow, detail
   const open = (await p.pdb
     .from("tickets")
     .where("stage", "not in", ["done", "dropped"])
-    .where(sql<SqlBool>`${dialect.jsonExtract("tickets.plan_refs", "baseCi")} = ${pr.full_name}`)
+    .where(sql<SqlBool>`${p.pdb.dialect.jsonExtract("tickets.plan_refs", "baseCi")} = ${pr.full_name}`)
     .orderBy("number")
     .limit(1)
     .executeTakeFirst()) as TicketRow | undefined;

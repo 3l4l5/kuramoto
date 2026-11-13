@@ -41,14 +41,14 @@ database:
 
 - 環境変数 `KURAMOTO_DATABASE_URL`(`mysql://ユーザー:パスワード@ホスト/データベース名`)があれば、ファイルの `database.url` と `type` より優先して MySQL を使います。
 - 読めない・知らない `type`・知らない項目・MySQL なのに接続先が無い、というときは、どの項目(何行目)がおかしいかを出して起動しません。SQLite に黙って戻すことはしません。
-- `type: mysql`(または `KURAMOTO_DATABASE_URL`)にすると、今は設定を確かめたうえで起動を止めます。MySQL のアダプタ(mysql2 のプール・TLS・受信箱の取り出し・切断の見張り)は `src/db/` にありますが、本部とプロジェクトの読み書きの本体がまだ SQLite の同期の書き方で、MySQL に移っていないためです。MySQL を選んだのに SQLite に書き続けることにならないよう、SQLite に黙って戻さず止めます(ADR-0041)。本体が移ったら、この止めを外して MySQL で起動します。
-- そのとき(MySQL で起動するようになったとき)の決まり: 外の DB は TLS 必須(`tls.ca`)。届かなければ理由を出して起動しない。動いている間に切れたら、受信箱の見回りとエージェントの起動を止めて待ち、画面に出して、繋がり直したら再開する。初めて繋いだときに SQLite のプロジェクトが残っていれば「移りません」を 1 行出す。`KURAMOTO_DATABASE_URL` は閉じ込めの中には渡さない(この最後の 1 つは、いまも効いています)。
+- `type: mysql`(または `KURAMOTO_DATABASE_URL`)にすると、起動時に MySQL に繋いで版を最新にし、本部もプロジェクトもその上で動きます(`src/db/startup.ts` の `startDatabase` を、サーバーと CLI の入口が呼びます)。立て方・バックアップ・SQLite からの移し方は [docs/mysql.md](docs/mysql.md) です。
+- MySQL のときの決まり: 外の DB は TLS 必須(`tls.ca`)。届かなければ理由を出して起動しない(SQLite に黙って戻らない)。動いている間に切れたら、受信箱の見回りとエージェントの起動を止めて待ち、画面の一番上に出して、繋がり直したら自動で再開する。初めて繋いだときに SQLite のプロジェクトが残っていれば、`kuramoto db transfer` で移せることを 1 行出す。SQLite の中身は自動では移らないので、先に `kuramoto db transfer` を流す。`KURAMOTO_DATABASE_URL` は閉じ込めの中には渡さない。
 
 ## コードの地図
 
 | 場所 | 中身 |
 |---|---|
-| `src/db/` | SQLite(`node:sqlite`)とスキーマ(設計書 9 章) |
+| `src/db/` | SQLite(`node:sqlite`)・MySQL(mysql2 + Kysely)とスキーマ(設計書 9 章)。起動時の DB の用意(`startup.ts`)・切断の見張り・SQLite から MySQL へ移す道具 |
 | `src/domain/` | 役割・モデル・既定の方針、編成の決まりと工程の組み立て |
 | `src/server.ts` | ローカルサーバー(API・画面の配信・受信箱の見回り)。画面に渡す型(`HqView` など)もここから出す |
 | `ui/` | 画面(React + TypeScript + TanStack Query、Vite でビルド)。見た目はデジタル庁デザインシステムのトークンに合わせた自前の部品(`ui/src/ds/`) |

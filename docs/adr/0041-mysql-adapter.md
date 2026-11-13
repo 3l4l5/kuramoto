@@ -20,11 +20,18 @@ ADR-0036〜0040 で、Kysely・スコープつきの口・MySQL の最初の版�
 - **初めて繋いだとき**。`schema_version` が無かった(=その database に初めて繋いだ)うえで、本部の SQLite(hq.sqlite。読むだけ)にプロジェクトが残っていれば、「SQLite のプロジェクトは MySQL には移りません。企画は設計書(書き出し)で移せます」を 1 行出す。
 - **閉じ込め**。`KURAMOTO_DATABASE_URL` は、シェルに渡さない環境変数(`HIDDEN_ENV`)に入れ、SDK に渡す環境変数からも外す。チームの CI も `hiddenEnv` を外して流すので、渡らない。
 
-## 起動はまだ止めたままにする
+## 起動の配線(チケット #65 で止めを外した)
 
-アダプタ・見張り・受信箱の取り出しは入ったが、`Project`(同期の node:sqlite)・workflow・`Hq`・ディスパッチャの本体は、まだ SQLite の上でしか動かない。この状態で `type: mysql` の起動を通すと、MySQL に繋いだと表示しながら、実際は SQLite に書き続けることになる(見張りも、使っていない接続を見ることになる)。そのため、**`loadStartupConfig` は `type: mysql` を、これまでどおり ConfigError で止める**。本体が MySQL に移ったら(ADR-0039 の 2/2 と、続きのチケット)、この止めを外し、`startDatabase`(`src/db/startup.ts`)を server・cli の入口から呼び、`KuramotoServer` に `dbHealth` を渡す(サーバー側の受け口と画面の表示はもう入っていて、SQLite の上のテストで確かめてある)。
+アダプタ・見張り・受信箱の取り出しを入れた時点(#21)では、`Project`・`Hq`・ディスパッチャの本体がまだ SQLite の上でしか動かなかったので、`loadStartupConfig` は `type: mysql` を ConfigError で止めていた(MySQL に繋いだと表示しながら、SQLite に書き続けることにならないように)。本体が Kysely の口(`Conn`)に移ったので(ADR-0039。#45 の D1・D2)、#65 で次のようにつないだ。
+
+- **止めを外した**。`loadStartupConfig` は mysql でも設定を確かめて 1 行出すだけ(繋がない)。
+- **入口が繋ぐ**。サーバー(`server.ts` の直接起動)と CLI(`cli.ts`)は、`loadStartupConfig` のあとに `startDatabase`(`db/startup.ts`)を呼ぶ。届かなければ `DatabaseConnectError` の理由を出して起動しない。返った `mysql`(プールと Kysely)を `new Hq(home, clock, workspaceId, mysql)` に渡し、`health` を `KuramotoServer` の `dbHealth` に渡す。終わるときは `startDatabase` の `close()` でプールを閉じる(`Hq.close()` と `Project.close()` は、MySQL では何も閉じない)。
+- **Hq・Project の開き方**。`Hq` は `mysql` を渡されると、`hq.sqlite` を開かず、その Kysely の上に `HqDb` を作る。`Hq.openProject` は `Project.open(path, clock, id, mysql)` を呼び、`project.sqlite` を開かず、同じ database の `project_id = id` の行を開く(`ProjectDb`)。`Hq.db`・`Project.db`(SQLite の接続)は MySQL では投げる。挿入した id・JSON の取り出し・UPSERT は、既定の方言ではなく、接続の方言(`pdb.dialect`・`hqdb.dialect`)を通す。
+- **切れたとき**。サーバーとディスパッチャが待つ受け口は #21 で入っていた。#65 で、CLI の `run` も `dbUp` を渡して同じように待つ。画面は、プロジェクトの上の警告(`dbDown`)に加えて、どの画面でも一番上に「DB に繋がらない」を出す(`GET /api/db` は DB を読まないので、切れている間も返る。画面が読めなくなっても、理由が見える)。API が接続のエラーで落ちたときも、見張りにすぐ知らせる。
+- **SQLite からの移行**。`kuramoto db transfer`(ADR-0038。`db/transfer-cmd.ts`)が、本部と全プロジェクトを 1 つのトランザクションで移し、プロジェクトごとに `backfillDevDone` で `dev_done` を埋める(SQLite の版 19 と同じ結果になることを `sqlite-to-mysql.test.ts` が確かめる)。初めて繋いだときの 1 行は、この道具を案内する。
+- **流れ全体の試験**。`src/flow-e2e.test.ts` が、フェイクのハーネスで チケット → 起動 → merge 待ち → merge を、SQLite の回と MySQL の回(mysql-test。`startDatabase` と `Hq` の入口どおり)で同じように流す。merge で done になったときの作業場所の片付け(`sessions.worktree_path` を外す。#61)・DB の切断と復帰の表示・開き直しても残ることも、MySQL で確かめる。
 
 ## 結果
 
-- できたのは、繋ぐ・版を流す・受信箱の取り出しと状態遷移・切断の見張りと、サーバー・ディスパッチャ側の「待つ・再開する」の受け口まで。チケット #21 の受け入れ条件は、アダプタ単体の試験(受信箱の取り出し・失敗・やり直し・完了・同時取り出しで二重に取らないこと・切断と再接続・起動時に届かないとき理由を出して止まること・初めて繋いだとき SQLite のプロジェクトについて 1 行出すこと・TLS 必須)が mysql-test の上で通ること、に書き直した(`startDatabase` は入口から呼ばれなくてよい)。「mysql-test で流れ全体(フェイクのハーネス)が動く」と、`loadStartupConfig` の止めを外す・`startDatabase` を server・cli の入口から呼ぶ・画面に出す・README と docs/mysql.md の直しは、本体を MySQL に移す #45 で行う(#18・#19 のメモも #45 へ移した)。いまの実機の試験(`src/db/mysql-adapter.test.ts`)は、受信箱の流れ(取り出す・失敗・やり直し・完了・取りこぼしの回復・同時取り出し)と切断・再接続までを MySQL の上で流す。
+- できたのは、繋ぐ・版を流す・受信箱の取り出しと状態遷移・切断の見張りと、サーバー・ディスパッチャ側の「待つ・再開する」の受け口まで。チケット #21 の受け入れ条件は、アダプタ単体の試験(受信箱の取り出し・失敗・やり直し・完了・同時取り出しで二重に取らないこと・切断と再接続・起動時に届かないとき理由を出して止まること・初めて繋いだとき SQLite のプロジェクトについて 1 行出すこと・TLS 必須)が mysql-test の上で通ること、に書き直した(`startDatabase` は入口から呼ばれなくてよい)。「mysql-test で流れ全体(フェイクのハーネス)が動く」と、`loadStartupConfig` の止めを外す・`startDatabase` を server・cli の入口から呼ぶ・画面に出す・README と docs/mysql.md の直しは、#65 で行った(上の「起動の配線」)。いまの実機の試験(`src/db/mysql-adapter.test.ts`)は、受信箱の流れ(取り出す・失敗・やり直し・完了・取りこぼしの回復・同時取り出し)と切断・再接続までを MySQL の上で流す。
 - `src/db/mysql-adapter.test.ts` は mysql-test(`KURAMOTO_MYSQL_TEST_URL`、既定は 127.0.0.1:3307)に繋がるときだけ動く。mysql-test を使う試験ファイルは並列に動くので、名前つきのロック(`mysql-test-support.ts`)で順番にする。
