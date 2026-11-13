@@ -51,6 +51,11 @@ INSERT INTO messages (id, ticket_id, to_role, kind, payload, available_at, creat
 INSERT INTO events (at, actor, type, ticket_id, data) VALUES ('', 'x', 'y', 1, '{"runId":1}');
 `);
   migrate(db, PROJECT_MIGRATIONS, { projectId });
+  // ticket_questions は版 19 の表。島への質問の受信箱(ask)は questionId でこの表を引く
+  db.exec(`
+INSERT INTO ticket_questions (id, ticket_id, from_member_id, to_target, body, asked_at) VALUES (1, 1, 1, 'dev', 'q', '');
+INSERT INTO messages (id, ticket_id, to_role, kind, payload, available_at, created_at) VALUES (3, NULL, 'dev', 'ask', '{"questionId":1}', '', '');
+`);
   if (opts.resetDevDone) db.exec("UPDATE tickets SET dev_done = 0");
   return db;
 }
@@ -168,10 +173,22 @@ describe.skipIf(!conn)("SQLite から MySQL へ移す(mysql-test)", () => {
       const [msg] = await c.query<any[]>("SELECT payload FROM messages WHERE project_id = ? AND kind = 'decision'", [projectId]);
       const payload = typeof msg[0].payload === "string" ? JSON.parse(msg[0].payload) : msg[0].payload;
       expect(payload.decision_id).toBe(Number(dec[0].id));
+      const [qs] = await c.query<any[]>("SELECT id FROM ticket_questions WHERE project_id = ?", [projectId]);
+      const [ask] = await c.query<any[]>("SELECT payload FROM messages WHERE project_id = ? AND kind = 'ask'", [projectId]);
+      const askPayload = typeof ask[0].payload === "string" ? JSON.parse(ask[0].payload) : ask[0].payload;
+      expect(askPayload.questionId).toBe(Number(qs[0].id));
     }
     const minId = async (projectId: number) => Number(((await c.query<any[]>("SELECT MIN(id) AS m FROM tickets WHERE project_id = ?", [projectId]))[0] as any[])[0].m);
     const [a, b] = [await minId(1), await minId(2)];
     expect(b).toBeGreaterThan(a);
+  });
+
+  it("workspaces は元の名前になる(最初の版の「既定」を上書きする)", async () => {
+    const hq = hqDb([1]);
+    run(hq, "UPDATE workspaces SET name = '会社' WHERE id = 1");
+    await transferSqliteToMysql(c, hq, () => projectDb(1));
+    const [rows] = await c.query<any[]>("SELECT name FROM workspaces WHERE id = 1");
+    expect(rows[0].name).toBe("会社");
   });
 
   it("移し先にプロジェクトがあるときは、何も入れずに止める", async () => {

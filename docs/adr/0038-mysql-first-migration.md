@@ -18,7 +18,7 @@ DB を MySQL にも置けるようにする(docs/mysql.md、ADR-0036・0037)。S
 - 本部と同じ database に入れるので、`repos` は 1 つ(本部の列とプロジェクトの列は同じ)。最初の行は `workspaces` の id=1「既定」だけで、`plan_stages` などの最初の行はプロジェクトを作るときに入れる。
 - 既存のチケットの `dev_done` を埋める決まりは、SQLite の版 19 と同じ(`src/domain/dev-done.ts`): 工程が review / sec / qa / decision / merge / done のどれか、または開発(`role = 'dev'`)の起動があれば 1、そうでなければ 0。この版は空の database に流すだけなので入れず、データを移すときに入れる。
   - SQLite から MySQL へ移す道具(`src/db/sqlite-to-mysql.ts` の `transferSqliteToMysql`)は、プロジェクトごとに `tickets` と `runs` を入れ終えてから `backfillDevDone`(`src/db/mysql-backfill.ts`)を呼ぶ。0 から 1 にするだけで、1 のものは触らない。何度呼んでも同じ。
-  - 移すときの id: 最初のプロジェクトは id のまま、2 つ目からは「移し先のその表の最大の id + 元の id」に付け替える(他の表を指す列と、受信箱の payload・events の data の中の id も)。移し先にプロジェクトがすでにあるときは止め、全部を 1 つのトランザクションで入れる。
+  - 移すときの id: 最初のプロジェクトは id のまま、2 つ目からは「移し先のその表の最大の id + 元の id」に付け替える(他の表を指す列と、受信箱の payload・events の data の中の id も。付け替えるキーは decision_id・toMemberId・memberId・runId・run_id・unit_id・questionId に限る。events の data の `id`・`reference`・`actual`・`diff` のように別の意味にも使う名前や、履歴だけに使うものは付け替えない)。workspaces は元の名前で上書きする。移し先にプロジェクトがすでにあるときは止め、全部を 1 つのトランザクションで入れる。
   - 設計書の書き出しから戻すとき(`restoreTransfer`)は、`devDone` が書いてある書き出しはそのとおりに戻す。`devDone` の無い古い書き出しは、工程だけで決める(書き出しに起動の記録が無いので、開発の起動の有無は見られない)。
 
 ## 結果

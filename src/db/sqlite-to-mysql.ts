@@ -67,6 +67,7 @@ const JSON_ID_KEYS: Record<string, string> = {
   runId: "runs",
   run_id: "runs",
   unit_id: "units",
+  questionId: "ticket_questions",
 };
 const JSON_COLUMNS: Record<string, string> = { messages: "payload", events: "data" };
 
@@ -158,13 +159,13 @@ export async function transferSqliteToMysql(
   const result: TransferResult = { projects: [] };
   await conn.beginTransaction();
   try {
-    const insert = async (table: string, rows: Record<string, unknown>[], cols: string[], ignore = false) => {
+    const insert = async (table: string, rows: Record<string, unknown>[], cols: string[], onDup?: "ignore" | "update-name") => {
       if (rows.length === 0) return;
-      const sql = `INSERT ${ignore ? "IGNORE " : ""}INTO ${q(table)} (${cols.map(q).join(", ")}) VALUES ?`;
+      const sql = `INSERT ${onDup === "ignore" ? "IGNORE " : ""}INTO ${q(table)} (${cols.map(q).join(", ")}) VALUES ?${onDup === "update-name" ? " ON DUPLICATE KEY UPDATE name = VALUES(name)" : ""}`;
       await conn.query(sql, [rows.map((r) => cols.map((c) => r[c] ?? null))]);
     };
-    await insert("workspaces", all(hq, "SELECT id, name FROM workspaces"), ["id", "name"], true);
-    await insert("limits", all(hq, "SELECT workspace_id, key, value FROM limits"), ["workspace_id", "key", "value"], true);
+    await insert("workspaces", all(hq, "SELECT id, name FROM workspaces"), ["id", "name"], "update-name"); // 最初の版が入れた id=1「既定」も、元の名前にする
+    await insert("limits", all(hq, "SELECT workspace_id, key, value FROM limits"), ["workspace_id", "key", "value"], "ignore");
     await insert("policy_templates", all(hq, "SELECT id, role, body, workspace_id FROM policy_templates"), ["id", "role", "body", "workspace_id"]);
     const projects = all<{ id: number; name: string; data_dir: string; status: string; created_at: string; workspace_id: number }>(
       hq,
