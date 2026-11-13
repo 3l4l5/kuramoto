@@ -23,7 +23,7 @@ export type TeamCiHook = {
 };
 
 export async function ownerMerge(p: Project, gh: GitHub, ticketId: number, by: "owner" | "team" = "owner", opts: { teamCi?: TeamCiHook } = {}): Promise<MergeResult> {
-  const ticket = p.ticket(ticketId);
+  const ticket = await p.ticket(ticketId);
   if (ticket.stage !== "merge") throw new Error(`チケット #${ticket.number} は merge 待ちではありません`);
   const prs = await prsOf(p, ticketId);
   if (prs.length === 0) throw new Error(`チケット #${ticket.number} に PR がありません`);
@@ -38,8 +38,8 @@ export async function ownerMerge(p: Project, gh: GitHub, ticketId: number, by: "
   // 外(GitHub の画面など)で先に merge された: 「PR が MERGED です」と断り続けず、完了にする(待っているチケットが解ける)
   if (statuses.every(([, s]) => s.state === "MERGED")) {
     for (const [pr] of statuses) await addMerge(p, pr.id, "merged", JSON.stringify({ external: true }));
-    p.setStage(ticket.id, "done");
-    p.event(by, "merged", ticket.id, { number: ticket.number, by, external: true });
+    await p.setStage(ticket.id, "done");
+    await p.event(by, "merged", ticket.id, { number: ticket.number, by, external: true });
     await flushFollowups(p, ticket);
     await recheckConflicts(p, gh, prs);
     return { result: "merged" };
@@ -47,7 +47,7 @@ export async function ownerMerge(p: Project, gh: GitHub, ticketId: number, by: "
 
   const reviewGap = await unreviewedRoles(p, ticket);
   // チームの CI を使うなら、GitHub の CI は見ない(Actions は止めてある)
-  const team = teamCiEnabled(p);
+  const team = await teamCiEnabled(p);
   for (const [pr, s] of statuses) {
     const checked = JSON.stringify({ mergeable: s.mergeable, ci: s.ci, reviewed: reviewGap.length === 0 });
     if (s.mergeable === "CONFLICTING") {
@@ -61,7 +61,7 @@ export async function ownerMerge(p: Project, gh: GitHub, ticketId: number, by: "
       s.state !== "OPEN" ? `PR が ${s.state} です` : team ? (reviewGap.length ? `確認が済んでいません: ${reviewGap.join("・")}` : s.mergeable === "UNKNOWN" ? "GitHub が merge できるかをまだ計算中です" : null) : s.ci === "failure" ? await onCiFailure(p, gh, ticket, pr) : s.ci === "pending" ? "CI がまだ終わっていません" : reviewGap.length ? `確認が済んでいません: ${reviewGap.join("・")}` : s.mergeable === "UNKNOWN" ? "GitHub が merge できるかをまだ計算中です" : null;
     if (reason) {
       await addMerge(p, pr.id, "blocked", checked);
-      p.event("system", "merge_blocked", ticket.id, { reason });
+      await p.event("system", "merge_blocked", ticket.id, { reason });
       // CI の失敗は onCiFailure が持ち主に戻すか待つかを決めた。それ以外は待てば解けるので merge 待ちに置いたままにする。
       return { result: "blocked", reason };
     }
@@ -71,8 +71,8 @@ export async function ownerMerge(p: Project, gh: GitHub, ticketId: number, by: "
   if (team) {
     if (!opts.teamCi) return { result: "blocked", reason: "チームの CI を流す仕組みがありません" };
     for (const [pr] of statuses) {
-      const pass = passedAt(p, ticket.id);
-      const head = p.setting(`pr_sha:${ticket.id}`);
+      const pass = await passedAt(p, ticket.id);
+      const head = await p.setting(`pr_sha:${ticket.id}`);
       const baseNow = await opts.teamCi.baseSha(pr.full_name).catch(() => "");
       if (pass && head && pass.sha === head && baseNow && pass.baseSha === baseNow) continue;
       const r = await opts.teamCi.run(ticket, pr.full_name, pr.head);
@@ -83,7 +83,7 @@ export async function ownerMerge(p: Project, gh: GitHub, ticketId: number, by: "
         return { result: "conflict", reason: r.conflict };
       }
       const reason = r.noCommands ? "チームの CI で流すコマンドが決まっていません(プロジェクトの設定で決めてください)" : `新しい main と合わせると、チームの CI(${r.results.filter((x) => !x.ok).map((x) => x.command).join("・")})が落ちます`;
-      p.event("system", "merge_blocked", ticket.id, { reason });
+      await p.event("system", "merge_blocked", ticket.id, { reason });
       if (!r.noCommands) await p.pdb.transaction(async () => await enterStage(p, ticket, "dev", { payload: { ci: true, team: true, sha: r.sha, findings: teamCiFindings(r) } }));
       return { result: "blocked", reason };
     }
@@ -93,8 +93,8 @@ export async function ownerMerge(p: Project, gh: GitHub, ticketId: number, by: "
     await gh.merge(pr.full_name, pr.number);
     await addMerge(p, pr.id, "merged", JSON.stringify({ ok: true }));
   }
-  p.setStage(ticket.id, "done");
-  p.event(by, "merged", ticket.id, { number: ticket.number, by });
+  await p.setStage(ticket.id, "done");
+  await p.event(by, "merged", ticket.id, { number: ticket.number, by });
   // 確認で見つかった範囲外のことは、merge したときにまとめて別チケットにする
   await flushFollowups(p, ticket);
 
@@ -116,9 +116,9 @@ async function onCiFailure(p: Project, gh: GitHub, ticket: TicketRow, pr: PrRow)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (isGithubAuthError(msg)) throw e;
-    p.event("system", "ci_detail_failed", ticket.id, { error: msg.slice(0, 300) });
+    await p.event("system", "ci_detail_failed", ticket.id, { error: msg.slice(0, 300) });
   }
-  if (detail) p.setSetting(`ci_failure:${ticket.id}`, JSON.stringify(detail));
+  if (detail) await p.setSetting(`ci_failure:${ticket.id}`, JSON.stringify(detail));
   const names = detail?.failing.map((f) => f.name) ?? [];
   const runIds = [...new Set(detail?.failing.flatMap((f) => (f.runId ? [f.runId] : [])) ?? [])];
   // ジョブが始まってもいない(請求・上限・ランナーなど、コードの外)。持ち主にも main の CI を直すチケットにも回さず、責任者に 1 回だけ知らせて待つ
@@ -126,7 +126,7 @@ async function onCiFailure(p: Project, gh: GitHub, ticket: TicketRow, pr: PrRow)
     const notes = [...new Set(detail.failing.flatMap((f) => f.notes ?? []))];
     await markCiBlocked(p, pr.full_name, notes, runIds);
     // 間を空けて、直ったかを確かめるためにやり直す
-    for (const id of ciProbeDue(p, pr.full_name)) await gh.rerunFailed?.(pr.full_name, id).catch(() => undefined);
+    for (const id of await ciProbeDue(p, pr.full_name)) await gh.rerunFailed?.(pr.full_name, id).catch(() => undefined);
     return `CI のジョブが始まっていません(GitHub 側の原因)。${ciBlockAction(notes)}`;
   }
   // ジョブが動いている(落ちてはいる)なら、CI そのものは動いている
@@ -134,14 +134,14 @@ async function onCiFailure(p: Project, gh: GitHub, ticket: TicketRow, pr: PrRow)
   const onBase = detail ? names.filter((n) => detail.baseFailing.includes(n)) : [];
   if (detail && onBase.length) {
     const fixer = await ensureBaseCiTicket(p, ticket, pr, detail, onBase);
-    p.event("system", "ci_red_on_base", ticket.id, { checks: onBase, fixer: fixer.number });
+    await p.event("system", "ci_red_on_base", ticket.id, { checks: onBase, fixer: fixer.number });
     return `${detail.base} でも同じ CI(${onBase.join("・")})が落ちています。#${fixer.number} で直してから merge します`;
   }
   const key = `ci_rerun:${ticket.id}`;
-  if (detail && gh.rerunFailed && runIds.length && p.setting(key) !== detail.headSha) {
-    p.setSetting(key, detail.headSha);
+  if (detail && gh.rerunFailed && runIds.length && await p.setting(key) !== detail.headSha) {
+    await p.setSetting(key, detail.headSha);
     for (const id of runIds) await gh.rerunFailed(pr.full_name, id).catch(() => undefined);
-    p.event("system", "ci_rerun", ticket.id, { checks: names });
+    await p.event("system", "ci_rerun", ticket.id, { checks: names });
     return `CI(${names.join("・")})が落ちたので、一時的な失敗でないかを確かめるために、落ちたジョブを 1 回やり直しています`;
   }
   await p.pdb.transaction(async () => await enterStage(p, ticket, "dev", { payload: { ci: true, ...(detail ? { sha: detail.headSha } : {}), findings: ciFindings(detail) } }));
@@ -163,8 +163,8 @@ export function ciFindings(detail: CiDetail | undefined): { severity: string; bo
 }
 
 /** 最後に落ちた CI(Kuramoto が取ってきたもの)。リーダーに見せる。無ければ空。 */
-export function lastCiFailure(p: Project, ticketId: number, maxChars = 3000): string {
-  const v = p.setting(`ci_failure:${ticketId}`);
+export async function lastCiFailure(p: Project, ticketId: number, maxChars = 3000): Promise<string> {
+  const v = await p.setting(`ci_failure:${ticketId}`);
   if (!v) return "";
   const d = JSON.parse(v) as CiDetail;
   const text = ciFindings(d).map((f) => `- ${f.body}`).join("\n");
@@ -193,7 +193,7 @@ async function ensureBaseCiTicket(p: Project, from: TicketRow, pr: PrRow, detail
 
 /** merge が終わったのをきっかけに、残りの merge 待ちの衝突を確かめ直す。 */
 export async function recheckConflicts(p: Project, gh: GitHub, causes: PrRow[]): Promise<number> {
-  const waiting = p.tickets().filter((t) => t.stage === "merge");
+  const waiting = (await p.tickets()).filter((t) => t.stage === "merge");
   const prsByTicket = await prsOfMany(p, waiting.map((t) => t.id));
   let n = 0;
   for (const t of waiting) {
@@ -212,7 +212,7 @@ export async function recheckConflicts(p: Project, gh: GitHub, causes: PrRow[]):
 
 async function backToOwnerForConflict(p: Project, ticket: TicketRow, pr: PrRow, cause: PrRow | null): Promise<void> {
   await p.pdb.insert("conflicts", { pr_id: pr.id, cause_pr_id: cause?.id ?? null, detected_at: p.now() }).execute();
-  p.event("system", "conflict", ticket.id, { pr: pr.number, cause: cause?.number ?? null });
+  await p.event("system", "conflict", ticket.id, { pr: pr.number, cause: cause?.number ?? null });
   await enterStage(p, ticket, "dev", { payload: { conflict: true, cause: cause ? `${cause.full_name}#${cause.number}` : "main の更新" } });
 }
 
@@ -259,14 +259,14 @@ async function unreviewedRoles(p: Project, ticket: TicketRow): Promise<string[]>
   const last = new Map<string, { verdict: string; created_at: string }>();
   for (const r of reviews) last.set(r.role, r);
   const gaps = [...last].filter(([role, r]) => r.verdict !== "approve" && !passes.some((x) => x.role === role && x.at >= r.created_at)).map(([role]) => role);
-  const hasChecks = pipelineOf(p.currentFormation(), ticket.kind, { devDone: true }).some((r) => r !== "dev");
+  const hasChecks = pipelineOf(await p.currentFormation(), ticket.kind, { devDone: true }).some((r) => r !== "dev");
   if (hasChecks && last.size === 0) gaps.push("review");
   return gaps;
 }
 
 /** チームが自動で merge するか(ADR-0022)。設定 auto_merge が "0" なら責任者が押す。既定は自動。 */
-export function autoMergeEnabled(p: Project): boolean {
-  return p.setting("auto_merge") !== "0";
+export async function autoMergeEnabled(p: Project): Promise<boolean> {
+  return await p.setting("auto_merge") !== "0";
 }
 
 /**
@@ -275,18 +275,18 @@ export function autoMergeEnabled(p: Project): boolean {
  * @returns merge したチケットの数
  */
 export async function autoMerge(p: Project, gh: GitHub, opts: { retrySec?: number; teamCi?: TeamCiHook } = {}): Promise<number> {
-  if (!autoMergeEnabled(p)) return 0;
+  if (!await autoMergeEnabled(p)) return 0;
   // GitHub に入れない間は見回らない(入れるようになったらディスパッチャが再開を知らせる)
-  if (githubDown(p)) return 0;
+  if (await githubDown(p)) return 0;
   const retryMs = (opts.retrySec ?? 60) * 1000;
   let merged = 0;
   for (const t of await suggestedMergeOrder(p)) {
     // 前の merge で衝突が見つかって持ち主に戻ったものは飛ばす
-    if (p.ticket(t.id).stage !== "merge") continue;
+    if ((await p.ticket(t.id)).stage !== "merge") continue;
     const key = `automerge_at:${t.id}`;
-    const last = p.setting(key);
+    const last = await p.setting(key);
     if (last && p.clock.now().getTime() - new Date(last).getTime() < retryMs) continue;
-    p.setSetting(key, p.now());
+    await p.setSetting(key, p.now());
     try {
       const r = await ownerMerge(p, gh, t.id, "team", { ...(opts.teamCi ? { teamCi: opts.teamCi } : {}) });
       if (r.result === "merged") merged++;
@@ -296,7 +296,7 @@ export async function autoMerge(p: Project, gh: GitHub, opts: { retrySec?: numbe
         await markGithubDown(p, reason);
         break;
       }
-      p.event("system", "merge_blocked", t.id, { reason });
+      await p.event("system", "merge_blocked", t.id, { reason });
     }
   }
   return merged;

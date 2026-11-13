@@ -10,10 +10,10 @@ import { saveFormationInput, savePolicyInput, teamView } from "./team.js";
 import { createTicket } from "./workflow.js";
 import { StaticWorkspace } from "./workspace.js";
 
-function setup() {
+async function setup() {
   const clock = new ManualClock();
-  const p = new Project(":memory:", clock);
-  p.addRepo("acme/shop", "API");
+  const p = await Project.open(":memory:", clock);
+  await p.addRepo("acme/shop", "API");
   const harness = new FakeHarness(async (req, call) => {
     clock.advance(60_000);
     if (req.tools.some((t) => t.name === "submit_pr")) await call("submit_pr", { summary: "", responses: fixedAll(req.prompt) });
@@ -25,12 +25,12 @@ function setup() {
 
 describe("チームの編成と方針", () => {
   it("方針を変えると版が上がり、次に起こしたメンバーから新しいモデル・深さ・重視することで動く", async () => {
-    const { p, d, harness } = setup();
+    const { p, d, harness } = await setup();
     await createTicket(p, { title: "a" });
     await d.drain();
     expect(harness.calls[0]!.model).toBe("claude-opus-5-5");
 
-    const saved = savePolicyInput(p, "dev", { model: "claude-sonnet-5-5", effort: "medium", focus: "  型を厳しく  ", options: { requireTests: false, smallPr: true } });
+    const saved = await savePolicyInput(p, "dev", { model: "claude-sonnet-5-5", effort: "medium", focus: "  型を厳しく  ", options: { requireTests: false, smallPr: true } });
     expect(saved).toMatchObject({ version: 2, model: "claude-sonnet-5-5", focus: "型を厳しく" });
     await createTicket(p, { title: "b" });
     await d.drain();
@@ -39,7 +39,7 @@ describe("チームの編成と方針", () => {
     expect(dev.at(-1)!.systemPrompt).toContain("型を厳しく");
     expect(dev.at(-1)!.systemPrompt).not.toContain("テストを付けて");
     // どの版で動いたかは出来事にも残る
-    const devStarts = p.events(100).filter((e) => e.type === "run_started").map((e) => JSON.parse(e.data)).filter((x) => x.role === "dev");
+    const devStarts = (await p.events(100)).filter((e) => e.type === "run_started").map((e) => JSON.parse(e.data)).filter((x) => x.role === "dev");
     expect(devStarts.map((x) => [x.model, x.policyVersion])).toEqual([
       ["claude-sonnet-5-5", 2], // 新しい順
       ["claude-opus-5-5", 1],
@@ -47,13 +47,13 @@ describe("チームの編成と方針", () => {
   });
 
   it("おかしな方針・編成は理由を出して断る", async () => {
-    const { p } = setup();
-    expect(() => savePolicyInput(p, "dev", { model: "gpt-5", effort: "high", focus: "" })).toThrow(/知らないモデル/);
-    expect(() => savePolicyInput(p, "review", { model: "claude-opus-5-5", effort: "high", focus: "", options: { strictness: "very" } })).toThrow(/レビューの設定/);
-    expect(() => savePolicyInput(p, "sec", { model: "claude-opus-5-5", effort: "high", focus: "", options: { x: 1 } })).toThrow(/セキュリティの設定/);
-    expect(() => savePolicyInput(p, "owner", { model: "claude-opus-5-5", effort: "high", focus: "" })).toThrow(/変えられません/);
-    expect(() => saveFormationInput(p, { pull: "down", units: [{ name: "島", roles: ["review"], maxMembers: 3, summonAt: 2, idleSec: 300 }] })).toThrow(/開発の役割は必須/);
-    expect(() => saveFormationInput(p, { pull: "down", units: [{ name: "", roles: ["dev"], maxMembers: 3, summonAt: 2, idleSec: 300 }] })).toThrow(/島の名前/);
+    const { p } = await setup();
+    await expect(savePolicyInput(p, "dev", { model: "gpt-5", effort: "high", focus: "" })).rejects.toThrow(/知らないモデル/);
+    await expect(savePolicyInput(p, "review", { model: "claude-opus-5-5", effort: "high", focus: "", options: { strictness: "very" } })).rejects.toThrow(/レビューの設定/);
+    await expect(savePolicyInput(p, "sec", { model: "claude-opus-5-5", effort: "high", focus: "", options: { x: 1 } })).rejects.toThrow(/セキュリティの設定/);
+    await expect(savePolicyInput(p, "owner", { model: "claude-opus-5-5", effort: "high", focus: "" })).rejects.toThrow(/変えられません/);
+    await expect(saveFormationInput(p, { pull: "down", units: [{ name: "島", roles: ["review"], maxMembers: 3, summonAt: 2, idleSec: 300 }] })).rejects.toThrow(/開発の役割は必須/);
+    await expect(saveFormationInput(p, { pull: "down", units: [{ name: "", roles: ["dev"], maxMembers: 3, summonAt: 2, idleSec: 300 }] })).rejects.toThrow(/島の名前/);
     expect((await teamView(p)).formation.current).toBe(1);
   });
 
@@ -64,8 +64,8 @@ describe("開発生産性の指標", () => {
     const { productivity } = await import("./productivity.js");
     const { addOpenItem, answerOpenItem } = await import("./planning.js");
     const clock = new ManualClock();
-    const p = new Project(":memory:", clock);
-    p.addRepo("acme/shop", "API");
+    const p = await Project.open(":memory:", clock);
+    await p.addRepo("acme/shop", "API");
     let reviews = 0;
     const harness = new FakeHarness(async (req, call) => {
       if (req.tools.some((t) => t.name === "submit_pr")) await call("submit_pr", { summary: "", responses: fixedAll(req.prompt) });
@@ -106,14 +106,14 @@ describe("登場人物の名前", () => {
     const { mkdtempSync } = await import("node:fs");
     const { join } = await import("node:path");
     const { tmpdir } = await import("node:os");
-    const p = new P(":memory:", new ManualClock());
-    expect(["planner", "designer", "architect", "lead"].map((r) => p.fixedMember(r as never).name)).toEqual(["咲季", "清夏", "広", "星南"]);
+    const p = await P.open(":memory:", new ManualClock());
+    expect(await Promise.all(["planner", "designer", "architect", "lead"].map(async (r) => (await p.fixedMember(r as never)).name))).toEqual(["咲季", "清夏", "広", "星南"]);
     // 島のメンバーは最大人数ぶんずっといる(既定の編成: 開発 4 人・レビュー 3 人)
-    expect(p.activeMembers().filter((m) => m.unit_id !== null).map((m) => m.name)).toEqual(["手毬", "ことね", "麻央", "リーリヤ", "千奈", "莉波", "佑芽"]);
+    expect((await p.activeMembers()).filter((m) => m.unit_id !== null).map((m) => m.name)).toEqual(["手毬", "ことね", "麻央", "リーリヤ", "千奈", "莉波", "佑芽"]);
 
     // 版 4 までの DB(前の名前)を開くと、新しい名前に書き換わる
     const path = join(mkdtempSync(join(tmpdir(), "kuramoto-cast-")), "p.sqlite");
-    new P(path, new ManualClock()).close();
+    (await P.open(path, new ManualClock())).close();
     const raw = new DatabaseSync(path);
     // 版 22 で主キーに project_id が入った表(settings・plan_stages・dev_rule_versions)は、列を外せないので前の形に作り直す
     raw.exec(`
@@ -133,18 +133,18 @@ DROP TABLE dev_rule_versions;
     for (const t of PROJECT_ID_TABLES.filter((t) => !(["settings", "plan_stages", "dev_rule_versions"] as string[]).includes(t))) raw.exec(`ALTER TABLE ${t} DROP COLUMN project_id`);
     raw.exec("UPDATE members SET name = CASE name WHEN '咲季' THEN 'サキ' WHEN '手毬' THEN 'ハル' ELSE name END; ALTER TABLE units DROP COLUMN repos; ALTER TABLE units DROP COLUMN model; ALTER TABLE units DROP COLUMN effort; ALTER TABLE runs DROP COLUMN model; ALTER TABLE runs DROP COLUMN effort; ALTER TABLE units DROP COLUMN focus; ALTER TABLE runs DROP COLUMN summary; DROP TABLE ticket_notes; DROP TABLE lead_messages; ALTER TABLE tickets DROP COLUMN triaged; DROP TABLE ticket_deps; DROP TABLE finding_comments; ALTER TABLE units DROP COLUMN budget_usd; ALTER TABLE runs DROP COLUMN unit_name; ALTER TABLE decisions DROP COLUMN lead_note; ALTER TABLE tickets DROP COLUMN dropped_by; ALTER TABLE tickets DROP COLUMN dropped_reason; ALTER TABLE tickets DROP COLUMN dropped_at; ALTER TABLE formations DROP COLUMN routes; ALTER TABLE formations DROP COLUMN flows; ALTER TABLE tickets DROP COLUMN kind; ALTER TABLE tickets DROP COLUMN dev_done; ALTER TABLE dev_rules DROP COLUMN template; ALTER TABLE dev_rules DROP COLUMN created_at; ALTER TABLE rule_violations DROP COLUMN detail; ALTER TABLE rule_violations DROP COLUMN run_id; ALTER TABLE rule_violations DROP COLUMN resolved_at; ALTER TABLE runs DROP COLUMN about_ticket_id; ALTER TABLE dev_rules DROP COLUMN deleted_at; PRAGMA user_version = 4;");
     raw.close();
-    const q = new P(path, new ManualClock());
-    expect(q.fixedMember("planner").name).toBe("咲季");
-    expect(q.activeMembers().map((m) => m.name)).toContain("手毬");
+    const q = await P.open(path, new ManualClock());
+    expect((await q.fixedMember("planner")).name).toBe("咲季");
+    expect((await q.activeMembers()).map((m) => m.name)).toContain("手毬");
   });
 });
 
 describe("島を増やし、同じ役割を複数の島に持たせる(ADR-0019)", () => {
-  function twoRepos() {
+  async function twoRepos() {
     const clock = new ManualClock();
-    const p = new Project(":memory:", clock);
-    p.addRepo("acme/web", "フロント");
-    p.addRepo("acme/api", "API");
+    const p = await Project.open(":memory:", clock);
+    await p.addRepo("acme/web", "フロント");
+    await p.addRepo("acme/api", "API");
     const harness = new FakeHarness(async (req, call) => {
       // 少し時間をかける(マイクロタスクの数に頼らず、先の起動が動いている間に次の担当が決まるようにする)
       await new Promise((r) => setTimeout(r, 5));
@@ -159,8 +159,8 @@ describe("島を増やし、同じ役割を複数の島に持たせる(ADR-0019)
     all<{ name: string }>(p.db, "SELECT u.name FROM runs r JOIN members m ON m.id = r.member_id JOIN units u ON u.id = m.unit_id WHERE r.ticket_id = ? AND r.role = 'dev'", [ticketId])[0]?.name;
 
   it("受け持つリポジトリを決めた島には、そのリポジトリのチケットだけが行く", async () => {
-    const { p, d } = twoRepos();
-    saveFormationInput(p, {
+    const { p, d } = await twoRepos();
+    await saveFormationInput(p, {
       pull: "down",
       units: [
         { name: "フロント開発", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300, repos: ["acme/web"] },
@@ -173,22 +173,21 @@ describe("島を増やし、同じ役割を複数の島に持たせる(ADR-0019)
     await d.drain({ concurrency: 3 });
     expect(devUnitOf(p, web.id)).toBe("フロント開発");
     expect(devUnitOf(p, api.id)).toBe("API 開発");
-    expect(p.ticket(web.id).stage).toBe("merge");
+    expect((await p.ticket(web.id)).stage).toBe("merge");
     // どこにも受け持たれないリポジトリが出る編成は、適用前に止める
-    expect(() =>
-      saveFormationInput(p, {
+    await expect(saveFormationInput(p, {
         pull: "down",
         units: [
           { name: "フロント開発", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300, repos: ["acme/web"] },
           { name: "レビュー", roles: ["review"], maxMembers: 2, summonAt: 2, idleSec: 300 },
         ],
       }),
-    ).toThrow(/acme\/api の開発を受け持つ島がありません/);
+    ).rejects.toThrow(/acme\/api の開発を受け持つ島がありません/);
   });
 
   it("受け持ちを決めていない同じ役割の島が複数あれば、手の空いている島が取る", async () => {
-    const { p, d } = twoRepos();
-    saveFormationInput(p, {
+    const { p, d } = await twoRepos();
+    await saveFormationInput(p, {
       pull: "down",
       units: [
         { name: "開発 A", roles: ["dev"], maxMembers: 1, summonAt: 2, idleSec: 300 },
@@ -207,8 +206,8 @@ describe("島を増やし、同じ役割を複数の島に持たせる(ADR-0019)
 describe("島ごとのモデル", () => {
   it("島にモデル・深さを設定すると、その島のメンバーはそれを使い、実際に使ったモデルが記録と内訳に残る", async () => {
     const { productivity } = await import("./productivity.js");
-    const { p, d, harness } = setup();
-    saveFormationInput(p, {
+    const { p, d, harness } = await setup();
+    await saveFormationInput(p, {
       pull: "down",
       units: [
         { name: "開発", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300, model: "claude-haiku-5-5", effort: "low" },
@@ -226,7 +225,7 @@ describe("島ごとのモデル", () => {
       { role: "review", model: "claude-opus-5-5", effort: "high" },
     ]);
     expect((await productivity(p)).byModel.map((m) => m.label).sort()).toEqual(["Haiku 5.5", "Opus 5.5"]);
-    expect(() => saveFormationInput(p, { pull: "down", units: [{ name: "x", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300, model: "gpt-5" }] })).toThrow(/知らないモデル/);
+    await expect(saveFormationInput(p, { pull: "down", units: [{ name: "x", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300, model: "gpt-5" }] })).rejects.toThrow(/知らないモデル/);
   });
 });
 
@@ -234,8 +233,8 @@ describe("チケットの中身とやりとり", () => {
   it("起動・PR・レビューの指摘・直し・承認が時刻順に並び、責任者のメモは次の担当への指示に入る。島の重視することも入る", async () => {
     const { ticketView } = await import("./ticket.js");
     const clock = new ManualClock();
-    const p = new Project(":memory:", clock);
-    p.addRepo("acme/shop", "API");
+    const p = await Project.open(":memory:", clock);
+    await p.addRepo("acme/shop", "API");
     let reviews = 0;
     const harness = new FakeHarness(async (req, call) => {
       clock.advance(1000);
@@ -247,7 +246,7 @@ describe("チケットの中身とやりとり", () => {
       return { finalText: "見ました" };
     });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp", { prNumber: () => 9 }) });
-    saveFormationInput(p, {
+    await saveFormationInput(p, {
       pull: "down",
       units: [
         { name: "開発", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300, focus: "テストを先に書く" },
@@ -255,7 +254,7 @@ describe("チケットの中身とやりとり", () => {
       ],
     });
     const t = await createTicket(p, { title: "CSV を書き出す" });
-    p.addNote(t.id, "文字コードは UTF-8(BOM あり)にして");
+    await p.addNote(t.id, "文字コードは UTF-8(BOM あり)にして");
     await d.drain();
 
     const devCalls = harness.calls.filter((c) => c.tools.some((x) => x.name === "submit_pr"));
@@ -286,9 +285,9 @@ describe("チケットの中身とやりとり", () => {
     expect(runs[2]!.type === "run" && runs[2]!.summary).toBe("null を返さないよう直した");
     expect(v.prs).toMatchObject([{ number: 9, full_name: "acme/shop" }]);
 
-    p.editTicket(t.id, { title: "CSV を書き出す(UTF-8)", body: "注文履歴" });
+    await p.editTicket(t.id, { title: "CSV を書き出す(UTF-8)", body: "注文履歴" });
     expect(await ticketView(p, t.id)).toMatchObject({ title: "CSV を書き出す(UTF-8)", body: "注文履歴" });
-    expect(() => p.addNote(t.id, "  ")).toThrow(/メモがありません/);
+    await expect(p.addNote(t.id, "  ")).rejects.toThrow(/メモがありません/);
   });
 });
 
@@ -296,8 +295,8 @@ describe("リーダーとのチャット", () => {
   it("書いたメッセージは 1 回の起動でまとめて読まれ、返事が残る。頼まれた作業はチケットになり、既存のチケットへの指示はメモになる", async () => {
     const { leadChatView, sayToLead } = await import("./leadchat.js");
     const clock = new ManualClock();
-    const p = new Project(":memory:", clock);
-    p.addRepo("acme/shop", "API");
+    const p = await Project.open(":memory:", clock);
+    await p.addRepo("acme/shop", "API");
     const t = await createTicket(p, { title: "CSV" });
     const harness = new FakeHarness(async (req, call) => {
       if (!req.tools.some((x) => x.name === "add_ticket_note")) return {};
@@ -310,8 +309,8 @@ describe("リーダーとのチャット", () => {
     });
     // オフィスは終業中(チケットの仕事は取らない)でも、チャットには返事をする
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp"), ticketsAllowed: () => false });
-    sayToLead(p, "進み具合は?");
-    sayToLead(p, "ログイン画面も作って");
+    await sayToLead(p, "進み具合は?");
+    await sayToLead(p, "ログイン画面も作って");
     expect((await leadChatView(p)).work).toEqual({ state: "queued" });
     await d.drain();
     expect(harness.calls).toHaveLength(1);
@@ -321,16 +320,16 @@ describe("リーダーとのチャット", () => {
       ["lead", "#1 は実装待ちです。ログイン画面は #2 にしました。"],
     ]);
     expect((await leadChatView(p)).work).toBeNull();
-    expect(p.tickets().map((x) => x.title)).toEqual(["CSV", "ログイン画面"]);
-    expect(p.notes(t.id)).toMatchObject([{ who: "lead", body: "文字コードは UTF-8" }]);
+    expect((await p.tickets()).map((x) => x.title)).toEqual(["CSV", "ログイン画面"]);
+    expect(await p.notes(t.id)).toMatchObject([{ who: "lead", body: "文字コードは UTF-8" }]);
     await expect(sayToLead(p, " ")).rejects.toThrow(/メッセージがありません/);
   });
 });
 
 describe("始業の反映", () => {
   it("企画の長い仕事が動いている間に始業しても、起こせばすぐにチケットの仕事を取る", async () => {
-    const p = new Project(":memory:", new ManualClock());
-    p.addRepo("acme/shop", "API");
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo("acme/shop", "API");
     let finishPlan!: () => void;
     const planDone = new Promise<void>((r) => (finishPlan = r));
     const started: string[] = [];
@@ -345,7 +344,7 @@ describe("始業の反映", () => {
     });
     let running = false;
     const { send } = await import("./inbox.js");
-    send(p, { ticketId: null, toRole: "architect", kind: "plan", payload: { stage: "infra", events: [] } });
+    await send(p, { ticketId: null, toRole: "architect", kind: "plan", payload: { stage: "infra", events: [] } });
     await createTicket(p, { title: "CSV" });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp"), ticketsAllowed: () => running, recheckMs: 60_000 });
     const drained = d.drain({ concurrency: 2 });
@@ -362,9 +361,9 @@ describe("始業の反映", () => {
 
 describe("並列と交通整理", () => {
   it("島のメンバー全員で並列に実装する。リーダーが順番を決めたチケットは、先のものが merge されるまで着手しない", async () => {
-    const p = new Project(":memory:", new ManualClock());
-    p.addRepo("acme/shop", "API");
-    p.saveFormation({ pull: "down", units: [{ name: "開発の島", roles: ["dev"], maxMembers: 3, summonAt: 2, idleSec: 600 }, { name: "レビューの島", roles: ["review"], maxMembers: 1, summonAt: 2, idleSec: 600 }] });
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo("acme/shop", "API");
+    await p.saveFormation({ pull: "down", units: [{ name: "開発の島", roles: ["dev"], maxMembers: 3, summonAt: 2, idleSec: 600 }, { name: "レビューの島", roles: ["review"], maxMembers: 1, summonAt: 2, idleSec: 600 }] });
     for (const t of ["土台", "メモ API", "検索 API", "画面"]) await createTicket(p, { title: t });
     const { leadMessages } = await import("./leadchat.js");
     const { blockers } = await import("./triage.js");
@@ -400,14 +399,14 @@ describe("並列と交通整理", () => {
       return {};
     });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp"), triage: true, recheckMs: 10 });
-    expect(d.capacity()).toBe(3 + 1 + 4); // 島の最大人数の合計 + 島に属さない 4 人
-    const drained = d.drain({ concurrency: () => d.capacity(), maxRuns: 6 });
+    expect(await d.capacity()).toBe(3 + 1 + 4); // 島の最大人数の合計 + 島に属さない 4 人
+    const drained = d.drain({ concurrency: async () => await d.capacity(), maxRuns: 6 });
     await new Promise((r) => setTimeout(r, 80));
     // 交通整理が先。#2 は #1 待ちなので、#1・#3・#4 の 3 件が、島の 3 人で同時に動く
     expect(devTickets.sort()).toEqual(["1", "3", "4"]);
     expect(peak).toBe(3);
-    expect(await blockers(p, p.tickets()[1]!.id)).toEqual([1]);
-    expect(p.notes(p.tickets()[1]!.id)).toMatchObject([{ who: "lead", body: "土台の DB 接続を使う" }]);
+    expect(await blockers(p, (await p.tickets())[1]!.id)).toEqual([1]);
+    expect(await p.notes((await p.tickets())[1]!.id)).toMatchObject([{ who: "lead", body: "土台の DB 接続を使う" }]);
     expect((await leadMessages(p)).at(-1)!.body).toContain("【交通整理 #1, #2, #3, #4】");
     release();
     await drained;
@@ -416,9 +415,9 @@ describe("並列と交通整理", () => {
 
 describe("同じ場所を触るチケットは同時に開発しない(ADR-0024)", () => {
   it("触る場所が重なるチケットは、先に取りかかった方が終わるまで着手しない。重ならないものは並列に進む", async () => {
-    const p = new Project(":memory:", new ManualClock());
-    p.addRepo("acme/shop", "API");
-    p.saveFormation({ pull: "down", units: [{ name: "開発の島", roles: ["dev"], maxMembers: 3, summonAt: 2, idleSec: 600 }] });
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo("acme/shop", "API");
+    await p.saveFormation({ pull: "down", units: [{ name: "開発の島", roles: ["dev"], maxMembers: 3, summonAt: 2, idleSec: 600 }] });
     for (const t of ["CI で画面を撮る", "CI で CSP を確かめる", "メモ一覧"]) await createTicket(p, { title: t });
     const { areaWait, areasOf } = await import("./triage.js");
     const { officeView } = await import("./office.js");
@@ -445,11 +444,11 @@ describe("同じ場所を触るチケットは同時に開発しない(ADR-0024)
       return {};
     });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp"), triage: true, recheckMs: 10 });
-    const drained = d.drain({ concurrency: () => d.capacity(), maxRuns: 4 });
+    const drained = d.drain({ concurrency: async () => await d.capacity(), maxRuns: 4 });
     await new Promise((r) => setTimeout(r, 80));
     // 島には 3 人いるが、#2 は #1 と同じファイルを触るので待つ
     expect(devTickets.sort()).toEqual(["1", "3"]);
-    const [t1, t2] = p.tickets();
+    const [t1, t2] = await p.tickets();
     expect(await areasOf(p, t1!.id)).toEqual([".github/workflows", "scripts/ci-screenshots.mjs"]);
     expect(await areaWait(p, t2!.id)).toEqual([{ number: 1, areas: ["scripts/ci-screenshots.mjs"] }]);
     // 先に取りかかった #1 は #2 を待たない
@@ -459,26 +458,26 @@ describe("同じ場所を触るチケットは同時に開発しない(ADR-0024)
     release();
     await drained;
     // #1 が merge されたら、#2 は待たない
-    p.setStage(t1!.id, "done");
+    await p.setStage(t1!.id, "done");
     expect(await areaWait(p, t2!.id)).toEqual([]);
   });
 });
 
 describe("島を離れた持ち主の直し(ADR-0023)", () => {
   it("持ち主が席替えで島を離れていたら、呼び戻さずに島の手すきの人が引き継ぐ。島の人数は最大人数のまま", async () => {
-    const p = new Project(":memory:", new ManualClock());
-    p.addRepo("acme/shop", "API");
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo("acme/shop", "API");
     const formation = (n: number) => ({ pull: "down" as const, units: [{ name: "開発の島", roles: ["dev" as const], maxMembers: n, summonAt: 2, idleSec: 600 }] });
-    p.saveFormation(formation(2));
-    const [a, b] = p.activeMembers().filter((m) => m.unit_id !== null);
+    await p.saveFormation(formation(2));
+    const [a, b] = (await p.activeMembers()).filter((m) => m.unit_id !== null);
     const t = await createTicket(p, { title: "退会" });
     run(p.db, "UPDATE tickets SET owner_member_id = ? WHERE id = ?", [b!.id, t.id]);
     run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ?", [t.id]);
-    p.saveFormation(formation(1));
-    expect(p.member(b!.id).left_at).not.toBeNull();
+    await p.saveFormation(formation(1));
+    expect((await p.member(b!.id)).left_at).not.toBeNull();
 
     const { send } = await import("./inbox.js");
-    send(p, { ticketId: t.id, toRole: "dev", toMemberId: b!.id, kind: "fix", payload: {} });
+    await send(p, { ticketId: t.id, toRole: "dev", toMemberId: b!.id, kind: "fix", payload: {} });
     const harness = new FakeHarness(async (req, call) => {
       if (req.tools.some((x) => x.name === "submit_pr")) await call("submit_pr", { summary: "直した", responses: fixedAll(req.prompt) });
     });
@@ -486,27 +485,27 @@ describe("島を離れた持ち主の直し(ADR-0023)", () => {
     await d.drain({ maxRuns: 1 });
 
     expect(get(p.db, "SELECT member_id FROM runs WHERE role = 'dev'")).toEqual({ member_id: a!.id });
-    expect(p.ticket(t.id).owner_member_id).toBe(a!.id);
-    expect(p.member(b!.id).left_at).not.toBeNull();
-    expect(p.activeMembers().filter((m) => m.unit_id !== null)).toHaveLength(1);
-    expect(p.notes(t.id).at(-1)!.body).toContain("引き継ぎ");
+    expect((await p.ticket(t.id)).owner_member_id).toBe(a!.id);
+    expect((await p.member(b!.id)).left_at).not.toBeNull();
+    expect((await p.activeMembers()).filter((m) => m.unit_id !== null)).toHaveLength(1);
+    expect((await p.notes(t.id)).at(-1)!.body).toContain("引き継ぎ");
   });
 
   it("最大人数を超えて席にいる人は、作業中でなければ帰す", async () => {
-    const p = new Project(":memory:", new ManualClock());
-    p.saveFormation({ pull: "down", units: [{ name: "開発の島", roles: ["dev"], maxMembers: 3, summonAt: 2, idleSec: 600 }] });
-    const unit = p.currentFormation().units[0]!;
-    p.addMember(unit.id, true);
-    expect(p.membersOfUnit(unit.id)).toHaveLength(4);
-    p.fillSeats();
-    expect(p.membersOfUnit(unit.id)).toHaveLength(3);
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.saveFormation({ pull: "down", units: [{ name: "開発の島", roles: ["dev"], maxMembers: 3, summonAt: 2, idleSec: 600 }] });
+    const unit = (await p.currentFormation()).units[0]!;
+    await p.addMember(unit.id, true);
+    expect(await p.membersOfUnit(unit.id)).toHaveLength(4);
+    await p.fillSeats();
+    expect(await p.membersOfUnit(unit.id)).toHaveLength(3);
   });
 });
 
 describe("重複したチケットを片付ける", () => {
   it("リーダーは、まだ着手していない重複チケットを片付け、中身と待ちを残す方へ移す", async () => {
-    const p = new Project(":memory:", new ManualClock());
-    p.addRepo("acme/shop", "API");
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo("acme/shop", "API");
     const { dropAsDuplicate, blockers } = await import("./triage.js");
     const keep = await createTicket(p, { title: "412 のときの文言" });
     const dup = await createTicket(p, { title: "手で押す保存で 412 が出たときの文言", body: "自動保存とそろえる" });
@@ -514,8 +513,8 @@ describe("重複したチケットを片付ける", () => {
     run(p.db, "INSERT INTO ticket_deps (ticket_id, depends_on) VALUES (?, ?)", [later.id, dup.id]);
 
     expect(await dropAsDuplicate(p, dup.number, keep.number)).toContain("片付けました");
-    expect(p.ticket(dup.id).stage).toBe("dropped");
-    expect(p.notes(keep.id).at(-1)!.body).toContain("自動保存とそろえる");
+    expect((await p.ticket(dup.id)).stage).toBe("dropped");
+    expect((await p.notes(keep.id)).at(-1)!.body).toContain("自動保存とそろえる");
     expect(await blockers(p, later.id)).toEqual([keep.number]);
     expect(all(p.db, "SELECT 1 FROM messages WHERE ticket_id = ? AND status = 'pending'", [dup.id])).toEqual([]);
 
@@ -528,13 +527,13 @@ describe("重複したチケットを片付ける", () => {
 describe("リーダーの割り当ての権限", () => {
   it("リーダーは島とメンバーの今を見て、島を名指しして割り当てられる。手すきがいなければ、島の誰かが空いたら取る", async () => {
     const { teamStatus, triageTools, planWork } = await import("./triage.js");
-    const p = new Project(":memory:", new ManualClock());
-    p.addRepo("acme/shop", "API");
-    p.saveFormation({ pull: "down", units: [{ name: "フロント", roles: ["dev"], maxMembers: 2, summonAt: 6, idleSec: 600 }, { name: "レビュー", roles: ["review"], maxMembers: 1, summonAt: 2, idleSec: 600 }] });
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo("acme/shop", "API");
+    await p.saveFormation({ pull: "down", units: [{ name: "フロント", roles: ["dev"], maxMembers: 2, summonAt: 6, idleSec: 600 }, { name: "レビュー", roles: ["review"], maxMembers: 1, summonAt: 2, idleSec: 600 }] });
     const a = await createTicket(p, { title: "A" });
     const b = await createTicket(p, { title: "B" });
     const c = await createTicket(p, { title: "C" });
-    const [m1, m2] = p.membersOfUnit(p.currentFormation().units[0]!.id);
+    const [m1, m2] = await p.membersOfUnit((await p.currentFormation()).units[0]!.id);
     expect(await teamStatus(p)).toContain(`- フロント(開発): 2/2 人 / 待ち 3 件\n  ${m1!.name}: 手すき\n  ${m2!.name}: 手すき`);
 
     // 島を名指し: 1・2 件目は手すきの 2 人に、3 件目は島の誰かが空いたら
@@ -556,29 +555,29 @@ describe("merge 待ちで止まっているチケット", () => {
   it("merge すると着手できるものと、その先で順に動き出すものを分けて返す", async () => {
     const { mergeBlockers, mergeUnblocks, planWork } = await import("./triage.js");
     const { run } = await import("../db/sqlite.js");
-    const p = new Project(":memory:", new ManualClock());
-    p.addRepo("acme/shop", "API");
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo("acme/shop", "API");
     for (let i = 1; i <= 6; i++) await createTicket(p, { title: `T${i}` });
     // #1・#2 は merge 待ち。#3 は #1 だけ待ち、#4 は #3 待ち、#5 は #1 と #2 待ち、#6 は誰も待たない
     run(p.db, "UPDATE tickets SET stage = 'merge' WHERE number IN (1, 2)");
     expect(await planWork(p, [{ number: 3, after: [1] }, { number: 4, after: [3] }, { number: 5, after: [1, 2] }])).toContain("3 件");
     const u = await mergeUnblocks(p);
-    const id = (n: number) => p.tickets().find((t) => t.number === n)!.id;
-    expect(u.get(id(1))).toEqual({ now: [3], later: [4, 5] });
-    expect(u.get(id(2))).toEqual({ now: [], later: [5] });
-    expect(await mergeBlockers(p, id(5))).toEqual([1, 2]);
-    expect(await mergeBlockers(p, id(4))).toEqual([]); // #3 はまだ作業中なので merge 待ちではない
+    const id = async (n: number) => (await p.tickets()).find((t) => t.number === n)!.id;
+    expect(u.get(await id(1))).toEqual({ now: [3], later: [4, 5] });
+    expect(u.get(await id(2))).toEqual({ now: [], later: [5] });
+    expect(await mergeBlockers(p, await id(5))).toEqual([1, 2]);
+    expect(await mergeBlockers(p, await id(4))).toEqual([]); // #3 はまだ作業中なので merge 待ちではない
     // #1 が merge されると、#1 は載らなくなる
     run(p.db, "UPDATE tickets SET stage = 'done' WHERE number = 1");
-    expect((await mergeUnblocks(p)).has(id(1))).toBe(false);
-    expect((await mergeUnblocks(p)).get(id(2))).toEqual({ now: [5], later: [] });
+    expect((await mergeUnblocks(p)).has(await id(1))).toBe(false);
+    expect((await mergeUnblocks(p)).get(await id(2))).toEqual({ now: [5], later: [] });
   });
 });
 
 describe("予算(全体・島)", () => {
   it("全体の予算を使い切ると何も起こさず、無制限にすると再開する。起動 1 回の予算は全体の残りで抑える", async () => {
     const { setProjectBudget, budgetView } = await import("./budget.js");
-    const { p, d, harness } = setup();
+    const { p, d, harness } = await setup();
     await createTicket(p, { title: "一覧" });
     await setProjectBudget(p, 0.5);
     await d.dispatchOnce();
@@ -596,8 +595,8 @@ describe("予算(全体・島)", () => {
   it("島の予算を使い切ると、その島には回さず同じ役割のほかの島へ回す。ほかに無ければ待つ", async () => {
     const { budgetView } = await import("./budget.js");
     const { run } = await import("../db/sqlite.js");
-    const { p, d, harness } = setup();
-    p.saveFormation({
+    const { p, d, harness } = await setup();
+    await p.saveFormation({
       pull: "down",
       units: [
         { name: "開発A", roles: ["dev"], maxMembers: 1, summonAt: 1, idleSec: 600, budgetUsd: 1 },
@@ -607,16 +606,16 @@ describe("予算(全体・島)", () => {
     });
     await createTicket(p, { title: "一覧" });
     // 開発A の予算を使い切ったことにする
-    const a = p.currentFormation().units.find((u) => u.name === "開発A")!;
-    const am = p.membersOfUnit(a.id)[0]!;
+    const a = (await p.currentFormation()).units.find((u) => u.name === "開発A")!;
+    const am = (await p.membersOfUnit(a.id))[0]!;
     const msgId = run(p.db, "INSERT INTO messages (ticket_id, to_role, kind, available_at, created_at, status) VALUES (NULL, 'dev', 'implement', '', '', 'done')").lastId;
-    run(p.db, "INSERT INTO runs (message_id, member_id, role, policy_id, formation_id, started_at, ended_at, cost_usd, unit_name) VALUES (?, ?, 'dev', 1, ?, '', '', 0.95, '開発A')", [msgId, am.id, p.currentFormation().id]);
+    run(p.db, "INSERT INTO runs (message_id, member_id, role, policy_id, formation_id, started_at, ended_at, cost_usd, unit_name) VALUES (?, ?, 'dev', 1, ?, '', '', 0.95, '開発A')", [msgId, am.id, (await p.currentFormation()).id]);
     expect((await budgetView(p)).units.find((u) => u.name === "開発A")!.exhausted).toBe(true);
 
     await d.dispatchOnce();
-    const b = p.currentFormation().units.find((u) => u.name === "開発B")!;
+    const b = (await p.currentFormation()).units.find((u) => u.name === "開発B")!;
     expect(get<{ unit_name: string }>(p.db, "SELECT unit_name FROM runs ORDER BY id DESC LIMIT 1")!.unit_name).toBe("開発B");
-    expect(p.ticket(p.tickets()[0]!.id).owner_member_id).toBe(p.membersOfUnit(b.id)[0]!.id);
+    expect((await p.ticket((await p.tickets())[0]!.id)).owner_member_id).toBe((await p.membersOfUnit(b.id))[0]!.id);
 
     // レビューは島の残り 0.5 で起動を抑える。使い切ったら、ほかにレビューの島が無いので待つ
     await d.dispatchOnce();
@@ -631,11 +630,11 @@ describe("予算(全体・島)", () => {
 
   it("チケットの残りが少なすぎるときは起動せず、予算を足すかを聞く", async () => {
     const { run } = await import("../db/sqlite.js");
-    const { p, d, harness } = setup();
-    p.setSetting("ticket_budget_usd", "5");
+    const { p, d, harness } = await setup();
+    await p.setSetting("ticket_budget_usd", "5");
     const t = await createTicket(p, { title: "CI" });
     const msgId = run(p.db, "INSERT INTO messages (ticket_id, to_role, kind, available_at, created_at, status) VALUES (?, 'dev', 'implement', '', '', 'done')", [t.id]).lastId;
-    run(p.db, "INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at, ended_at, cost_usd) VALUES (?, ?, 1, 'dev', 1, ?, '', '', 4.95)", [msgId, t.id, p.currentFormation().id]);
+    run(p.db, "INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at, ended_at, cost_usd) VALUES (?, ?, 1, 'dev', 1, ?, '', '', 4.95)", [msgId, t.id, (await p.currentFormation()).id]);
     await d.dispatchOnce();
     expect(harness.calls).toHaveLength(0);
     expect(get<{ question: string }>(p.db, "SELECT question FROM decisions WHERE ticket_id = ?", [t.id])!.question).toContain("予算");
@@ -645,20 +644,20 @@ describe("予算(全体・島)", () => {
 describe("取りやめを戻す・オフィスの順番待ち", () => {
   it("取りやめたチケットを戻すと、持ち主が続きから進めて merge 待ちまで行く", async () => {
     const { reopenTicket } = await import("./workflow.js");
-    const { p, d, harness } = setup();
+    const { p, d, harness } = await setup();
     const t = await createTicket(p, { title: "ログイン" });
     await d.dispatchOnce(); // 実装して持ち主が決まる
-    const owner = p.ticket(t.id).owner_member_id;
-    p.setStage(t.id, "dropped");
+    const owner = (await p.ticket(t.id)).owner_member_id;
+    await p.setStage(t.id, "dropped");
     expect(await d.drain()).toBeGreaterThanOrEqual(0); // 取りやめの間は何も進まない
-    expect(p.ticket(t.id).stage).toBe("dropped");
+    expect((await p.ticket(t.id)).stage).toBe("dropped");
 
     await reopenTicket(p, t.id);
     await d.drain();
     const resumed = harness.calls.find((c) => c.prompt.includes("責任者が取りやめを戻しました"))!;
     expect(resumed).toBeDefined();
-    expect(p.ticket(t.id).owner_member_id).toBe(owner);
-    expect(p.ticket(t.id).stage).toBe("merge");
+    expect((await p.ticket(t.id)).owner_member_id).toBe(owner);
+    expect((await p.ticket(t.id)).stage).toBe("merge");
     await expect(reopenTicket(p, t.id)).rejects.toThrow("取りやめになっていない");
   });
 
@@ -666,13 +665,13 @@ describe("取りやめを戻す・オフィスの順番待ち", () => {
     const { officeView } = await import("./office.js");
     const { planWork, markTriaged } = await import("./triage.js");
     const { run } = await import("../db/sqlite.js");
-    const p = new Project(":memory:", new ManualClock());
-    p.addRepo("acme/shop", "API");
+    const p = await Project.open(":memory:", new ManualClock());
+    await p.addRepo("acme/shop", "API");
     for (const title of ["外枠", "編集", "検索"]) await createTicket(p, { title });
     run(p.db, "UPDATE tickets SET stage = 'merge' WHERE number = 1");
     run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = (SELECT id FROM tickets WHERE number = 1)");
     await planWork(p, [{ number: 2, after: [1] }, { number: 3, after: [] }]);
-    await markTriaged(p, p.tickets().map((t) => t.id));
+    await markTriaged(p, (await p.tickets()).map((t) => t.id));
     const dev = (await officeView(p)).units.find((u) => u.roleKeys.includes("dev"))!;
     expect(dev.waiting).toEqual([3]);
     expect(dev.queued).toEqual([{ number: 2, why: "#1 の merge 待ち" }]);
@@ -683,17 +682,17 @@ describe("オフィスの様子(メンバー・島)", () => {
   it("メンバーの様子には、受け持ちのチケットとこれまでの仕事が新しい順に並ぶ。島の様子には、メンバー・待ち・予算・最近の仕事が並ぶ", async () => {
     const { memberView, unitView } = await import("./people.js");
     const { officeView } = await import("./office.js");
-    const { p, d } = setup();
+    const { p, d } = await setup();
     const t = await createTicket(p, { title: "一覧" });
     await d.drain();
-    const owner = p.ticket(t.id).owner_member_id!;
+    const owner = (await p.ticket(t.id)).owner_member_id!;
     const m = await memberView(p, owner);
     expect(m.owned).toMatchObject([{ number: 1, title: "一覧", stage: "merge" }]);
     expect(m.history[0]).toMatchObject({ ticket: { number: 1 }, kind: "実装", outcome: "終わった", running: false });
     expect(m.totals.runs).toBe(1);
     expect(m.work).toBeNull();
 
-    const dev = p.currentFormation().units.find((u) => u.roles.includes("dev"))!;
+    const dev = (await p.currentFormation()).units.find((u) => u.roles.includes("dev"))!;
     const u = await unitView(p, dev.id, (await officeView(p)));
     expect(u.name).toBe(dev.name);
     expect(u.members.map((x) => x.id)).toContain(owner);

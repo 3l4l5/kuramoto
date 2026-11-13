@@ -91,7 +91,7 @@ function runItem(r: RunRow) {
 
 /** メンバー 1 人の様子: 今の仕事(途中経過つき)・受け持ちのチケット・これまでの仕事。 */
 export async function memberView(p: Project, memberId: number) {
-  const m = p.member(memberId);
+  const m = await p.member(memberId);
   if (!m) throw new Error(`メンバー ${memberId} はいません`);
   const [unit, work, mine, ownedRows, pending] = await Promise.all([
     m.unit_id === null ? null : inScope(p.pdb, "units").where("id", "=", m.unit_id).executeTakeFirst(),
@@ -133,9 +133,9 @@ export async function memberView(p: Project, memberId: number) {
 
 /** 島 1 つの様子: メンバーの今・すぐ取れる仕事と順番待ち・予算・設定・最近の仕事。 */
 export async function unitView(p: Project, unitId: number, office: { units: { id: number; waiting: number[]; queued: { number: number; why: string }[] }[] }) {
-  const u = p.currentFormation().units.find((x) => x.id === unitId);
+  const u = (await p.currentFormation()).units.find((x) => x.id === unitId);
   if (!u) throw new Error(`島 ${unitId} は今の編成にありません`);
-  const unitMembers = p.membersOfUnit(u.id);
+  const unitMembers = await p.membersOfUnit(u.id);
   const works = await workOfMany(p, unitMembers);
   const members = unitMembers.map((m) => {
     const w = works.get(m.id) ?? null;

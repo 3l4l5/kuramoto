@@ -42,8 +42,8 @@ async function fullProject(hq: Hq) {
     { fullName: "acme/shop-api", role: "API" },
   ]);
   const p = await hq.openProject(rec.id);
-  p.setSetting("jira_key", "RSV");
-  p.setSetting("plan_session:5", "このマシンだけのセッション");
+  await p.setSetting("jira_key", "RSV");
+  await p.setSetting("plan_session:5", "このマシンだけのセッション");
   await putArtifact(p, "req", "brief", "main", { purpose: "予約を 1 分で", users: ["会員"], outOfScope: ["決済"] });
   await upsertRequirement(p, { name: "空き枠を探す", acceptance: "残りのある枠が並ぶ" });
   await upsertRequirement(p, { name: "予約する", acceptance: "確定すると予約できる" });
@@ -85,12 +85,12 @@ describe("設計書からの復元", () => {
     await advance(p); // 要件の段階を始める
     await upsertRequirement(p, { name: "探す", acceptance: "並ぶ" });
     await agree(p, "req"); // フローの担当が起こされる(まだ描いていない)
-    expect(p.setting("plan_started:flow")).toBeTruthy();
+    expect(await p.setting("plan_started:flow")).toBeTruthy();
     const data = extractTransfer(await exportDesignDoc(p, "途中"));
 
     const q = await hq.openProject((await hq.createProject("途中", data.repos)).id);
     await restoreTransfer(q, data);
-    expect(q.setting("plan_started:flow")).toBeUndefined();
+    expect(await q.setting("plan_started:flow")).toBeUndefined();
     await advance(q);
     expect(q.db.prepare("SELECT to_role, json_extract(payload, '$.stage') AS stage FROM messages WHERE status = 'pending'").all()).toEqual([
       { to_role: "designer", stage: "flow" },
@@ -130,7 +130,7 @@ describe("設計書からの復元", () => {
     };
     expect(await view(q)).toEqual(await view(p));
     expect((await view(q)).stages.find((s) => s.key === "req")).toMatchObject({ version: 2, agreedVersion: 1 });
-    expect(q.tickets().map((t) => [t.title, t.stage, t.jira_key])).toEqual([["予約の表を足す", "dev", "RSV-1"]]);
+    expect((await q.tickets()).map((t) => [t.title, t.stage, t.jira_key])).toEqual([["予約の表を足す", "dev", "RSV-1"]]);
     expect((await studioView(q)).messages.at(-1)!.body).toContain("復元しました");
   });
 
@@ -147,14 +147,14 @@ describe("設計書からの復元", () => {
 
     const q = await hq.openProject((await hq.createProject("種類", data.repos)).id);
     await restoreTransfer(q, data);
-    expect(q.tickets().map((t) => [t.title, t.kind, t.dev_done])).toEqual([["直す", "bugfix", 0], ["書く", "docs", 1], ["機能", "feature", 0]]);
-    expect(q.ticket(bug.id).kind).toBe("bugfix");
+    expect((await q.tickets()).map((t) => [t.title, t.kind, t.dev_done])).toEqual([["直す", "bugfix", 0], ["書く", "docs", 1], ["機能", "feature", 0]]);
+    expect((await q.ticket(bug.id)).kind).toBe("bugfix");
 
     // 種類のない古い書き出しは feature・開発前として読める
     const old = { ...data, tickets: data.tickets.map(({ kind: _k, devDone: _d, ...t }) => t) };
     const r = await hq.openProject((await hq.createProject("種類", data.repos)).id);
     await restoreTransfer(r, transferSchema.parse(old));
-    expect(r.tickets().map((t) => [t.kind, t.dev_done])).toEqual([["feature", 0], ["feature", 0], ["feature", 0]]);
+    expect((await r.tickets()).map((t) => [t.kind, t.dev_done])).toEqual([["feature", 0], ["feature", 0], ["feature", 0]]);
   });
 
   it("devDone の無い古い書き出しは、SQLite の版 19 と同じ決まりで工程から決める(review 以降・done は 1、dev・dropped は 0)", async () => {
@@ -167,12 +167,12 @@ describe("設計書からの復元", () => {
     const old = { ...data, tickets: stages.map((stage) => ({ title: stage, body: "", stage, planRefs: {} })) };
     const r = await hq.openProject((await hq.createProject("古い", data.repos)).id);
     await restoreTransfer(r, transferSchema.parse(old));
-    expect(r.tickets().map((t) => [t.title, t.dev_done])).toEqual(stages.map((s) => [s, ["dev", "dropped"].includes(s) ? 0 : 1]));
+    expect((await r.tickets()).map((t) => [t.title, t.dev_done])).toEqual(stages.map((s) => [s, ["dev", "dropped"].includes(s) ? 0 : 1]));
     // 新しい書き出し(devDone あり)は、書き出しのとおりにする(工程から決め直さない)
     const explicit = { ...data, tickets: [{ title: "x", body: "", stage: "review", devDone: false, planRefs: {} }] };
     const q = await hq.openProject((await hq.createProject("古い", data.repos)).id);
     await restoreTransfer(q, transferSchema.parse(explicit));
-    expect(q.tickets().map((t) => t.dev_done)).toEqual([0]);
+    expect((await q.tickets()).map((t) => t.dev_done)).toEqual([0]);
   });
 
   it("Kuramoto が書き出したものでない・壊れている・空でないプロジェクトには戻さない", async () => {

@@ -174,7 +174,7 @@ export async function agree(p: Project, s: Stage): Promise<void> {
     // 合意するのは、いま読んだ版(同じトランザクションの中)
     await p.pdb.update("plan_stages", { agreed_version: r.version }).where("stage", "=", s).execute();
     await say(p, s, "planner", `${STAGE_LABEL[s]} v${r.version} に合意をもらいました。`);
-    p.event("owner", "plan_agreed", null, { stage: s, version: r.version });
+    await p.event("owner", "plan_agreed", null, { stage: s, version: r.version });
     await advance(p);
   });
 }
@@ -217,7 +217,7 @@ export async function stageStatus(p: Project, s: Stage): Promise<string> {
   if (r.agreed_version !== null && r.agreed_version === r.version) return `合意済み v${r.version}`;
   const open = (await openItems(p, s)).filter((o) => o.answer === null).length;
   if (r.mode === "delegate") return (await stageDone(p, s)) ? `お任せ v${r.version}` : open ? `お任せ(あなたに 未決 ${open})` : "お任せで作成中";
-  if (!(await hasContent(p, s))) return stageStarted(p, s) ? "作成中" : "前の段階を待っています";
+  if (!(await hasContent(p, s))) return await stageStarted(p, s) ? "作成中" : "前の段階を待っています";
   if (open) return `未決 ${open}`;
   if (s === "screen") {
     const waiting = [...(await screens(p)).values()].filter((x) => !x.agreed).length;
@@ -226,8 +226,8 @@ export async function stageStatus(p: Project, s: Stage): Promise<string> {
   return `下書き v${r.version}`;
 }
 
-function stageStarted(p: Project, s: Stage): boolean {
-  return !!p.setting(`plan_started:${s}`);
+async function stageStarted(p: Project, s: Stage): Promise<boolean> {
+  return !!await p.setting(`plan_started:${s}`);
 }
 
 /**
@@ -236,7 +236,7 @@ function stageStarted(p: Project, s: Stage): boolean {
  */
 export async function advance(p: Project): Promise<void> {
   for (const s of STAGES) {
-    if (!stageStarted(p, s)) {
+    if (!await stageStarted(p, s)) {
       if ((await stageRow(p, s)).mode === "skip") continue;
       await kickoff(p, s);
       return;
@@ -251,11 +251,11 @@ async function onceDone(p: Project, s: Stage): Promise<boolean> {
 }
 
 async function kickoff(p: Project, s: Stage): Promise<void> {
-  p.setSetting(`plan_started:${s}`, p.now());
+  await p.setSetting(`plan_started:${s}`, p.now());
   // 既存のリポジトリの続きから: 聞き取りから作らず、リポジトリを読んで現状を下書きに起こす(ADR-0030)
-  if (fromExisting(p)) {
+  if (await fromExisting(p)) {
     const delegatedNote = (await stageRow(p, s)).mode === "delegate" ? " この段階はお任せです。未決は推奨で決め(answer_open_item)、版を仕上げて、決めた内容を報告してください。戻せない判断だけは未決に残してください。" : "";
-    await sendPlan(p, s, { type: "kickoff", text: existingKickoff(p, s) + delegatedNote });
+    await sendPlan(p, s, { type: "kickoff", text: await existingKickoff(p, s) + delegatedNote });
     return;
   }
   const text: Record<Stage, string> = {
@@ -291,7 +291,7 @@ export async function sendPlan(p: Project, s: Stage | "handoff", event: { type: 
       await p.pdb.update("messages", { payload: JSON.stringify(payload) }).where("id", "=", pending.id).execute();
       return;
     }
-    send(p, { ticketId: null, toRole: role, kind: "plan", payload: { stage: s, events: [event] } });
+    await send(p, { ticketId: null, toRole: role, kind: "plan", payload: { stage: s, events: [event] } });
   });
 }
 
@@ -564,7 +564,7 @@ export async function resolveComment(p: Project, id: number): Promise<void> {
 // ---- チームに渡す ----
 
 export async function handoffBlocker(p: Project): Promise<string | null> {
-  if (p.setting("plan_handed_at")) return "もう渡しています";
+  if (await p.setting("plan_handed_at")) return "もう渡しています";
   const notDone: Stage[] = [];
   for (const s of STAGES) if (!(await stageDone(p, s))) notDone.push(s);
   return notDone.length ? `終わっていない段階があります: ${notDone.map((s) => STAGE_LABEL[s]).join("・")}` : null;
@@ -574,24 +574,24 @@ export async function handoff(p: Project): Promise<void> {
   await p.pdb.transaction(async () => {
     const why = await handoffBlocker(p);
     if (why) throw new Error(why);
-    p.setSetting("plan_handoff_requested_at", p.now());
+    await p.setSetting("plan_handoff_requested_at", p.now());
     await say(p, "handoff", "me", "チームに渡します");
     await sendPlan(p, "handoff", {
       type: "handoff",
       text:
         "企画のすべての段階が終わりました。合意した版から、実装のチケットを create_ticket で作ってください。各チケットには、要件の項目(code)・画面(key)・設計の節をひも付け、受け入れ条件を本文に書いてください。作り終えたら finish_handoff を呼んでください。" +
-        (fromExisting(p) ? `${existingHandoffText()}\n\n## GitHub の途中の仕事(Kuramoto が取ってきたもの)\n${snapshotText(p, { bodies: true })}` : ""),
+        (await fromExisting(p) ? `${existingHandoffText()}\n\n## GitHub の途中の仕事(Kuramoto が取ってきたもの)\n${await snapshotText(p, { bodies: true })}` : ""),
     });
   });
 }
 
-export function handedOff(p: Project): boolean {
-  return !!p.setting("plan_handed_at");
+export async function handedOff(p: Project): Promise<boolean> {
+  return !!await p.setting("plan_handed_at");
 }
 
 /** 責任者の対応として本部に出す、企画の確認待ち。 */
 export async function ownerPlanItems(p: Project): Promise<{ stage: Stage; text: string }[]> {
-  if (handedOff(p)) return [];
+  if (await handedOff(p)) return [];
   const out: { stage: Stage; text: string }[] = [];
   for (const s of STAGES) {
     const open = (await openItems(p, s)).filter((o) => o.answer === null);
@@ -601,37 +601,37 @@ export async function ownerPlanItems(p: Project): Promise<{ stage: Stage; text: 
       if (r.mode === "agree" && !(await agreeBlocker(p, s))) out.push({ stage: s, text: `${STAGE_LABEL[s]} v${r.version} があなたの合意を待っています` });
     }
   }
-  if (!(await handoffBlocker(p)) && !p.setting("plan_handoff_requested_at")) out.push({ stage: "model", text: "すべての段階が終わりました。チームに渡せます" });
+  if (!(await handoffBlocker(p)) && !await p.setting("plan_handoff_requested_at")) out.push({ stage: "model", text: "すべての段階が終わりました。チームに渡せます" });
   return out;
 }
 
 // ---- 止める・回り続けていないか ----
 
 /** 企画スタジオを止めているか。止めている間は、企画の担当を起こさない(オフィスとは別)。 */
-export function studioPaused(p: Project): { at: string; reason: string } | null {
-  const v = p.setting("plan_paused");
+export async function studioPaused(p: Project): Promise<{ at: string; reason: string } | null> {
+  const v = await p.setting("plan_paused");
   return v ? (JSON.parse(v) as { at: string; reason: string }) : null;
 }
 
 /** 企画スタジオを止める・再開する。再開すると、止めたところ(待っている依頼)から続ける。 */
 export async function setStudioPaused(p: Project, paused: boolean, reason = "あなたが止めました"): Promise<void> {
   if (paused) {
-    if (studioPaused(p)) return;
-    p.setSetting("plan_paused", JSON.stringify({ at: p.now(), reason }));
-    p.event("owner", "studio_paused", null, { reason });
+    if (await studioPaused(p)) return;
+    await p.setSetting("plan_paused", JSON.stringify({ at: p.now(), reason }));
+    await p.event("owner", "studio_paused", null, { reason });
     await say(p, await currentStage(p), "system", `企画スタジオを止めました(${reason})。「再開する」で続きから動きます。`);
   } else {
-    if (!studioPaused(p)) return;
-    p.setSetting("plan_paused", "");
-    p.event("owner", "studio_resumed", null, {});
+    if (!await studioPaused(p)) return;
+    await p.setSetting("plan_paused", "");
+    await p.event("owner", "studio_resumed", null, {});
     await say(p, await currentStage(p), "system", "企画スタジオを再開しました。止めたところから続けます。");
   }
 }
 
 /** 今動いている(か、次に動く)段階。会話の知らせを置く場所。 */
 async function currentStage(p: Project): Promise<Stage | "handoff"> {
-  if (p.setting("plan_handoff_requested_at")) return "handoff";
-  for (const s of STAGES) if (stageStarted(p, s) && !(await stageDone(p, s))) return s;
+  if (await p.setting("plan_handoff_requested_at")) return "handoff";
+  for (const s of STAGES) if (await stageStarted(p, s) && !(await stageDone(p, s))) return s;
   return "req";
 }
 
@@ -641,8 +641,8 @@ async function currentStage(p: Project): Promise<Stage | "handoff"> {
  * @returns 止めたら、その段階
  */
 export async function checkStudioLoop(p: Project): Promise<string | null> {
-  if (studioPaused(p)) return null;
-  const limit = p.settingNumber("plan_loop_runs", 10);
+  if (await studioPaused(p)) return null;
+  const limit = await p.settingNumber("plan_loop_runs", 10);
   const since = new Date(p.clock.now().getTime() - 3_600_000).toISOString();
   const rows = await p.pdb.k
     .selectFrom("runs as r")
@@ -720,13 +720,13 @@ export async function studioView(p: Project) {
       done: await stageDone(p, s),
       status: await stageStatus(p, s),
       agreeBlocker: await agreeBlocker(p, s),
-      started: stageStarted(p, s),
+      started: await stageStarted(p, s),
       thinking: thinking.has(s),
     });
   }
   const cs = await commentsByScreen(p);
   // 企画から作ったチケットの plan_refs を、チケットごとに引かず 1 文(IN)で取る
-  const tickets = p.tickets();
+  const tickets = await p.tickets();
   const refsRows = tickets.length
     ? await inScope(p.pdb, "tickets")
         .where("id", "in", tickets.map((t) => t.id))
@@ -735,15 +735,15 @@ export async function studioView(p: Project) {
   const refsOf = new Map(refsRows.map((r) => [r.id, JSON.parse(String(r.plan_refs ?? "{}")) as Record<string, unknown>]));
   return {
     stages,
-    handoff: { blocker: await handoffBlocker(p), requested: !!p.setting("plan_handoff_requested_at"), handed: handedOff(p), thinking: thinking.has("handoff") },
+    handoff: { blocker: await handoffBlocker(p), requested: !!await p.setting("plan_handoff_requested_at"), handed: await handedOff(p), thinking: thinking.has("handoff") },
     work: await planningWork(p),
     /** 止めているか(いつ・なぜ) */
-    paused: studioPaused(p),
+    paused: await studioPaused(p),
     /** 段階ごとの進み具合 */
     progress: await studioProgress(p),
-    loopLimit: p.settingNumber("plan_loop_runs", 10),
+    loopLimit: await p.settingNumber("plan_loop_runs", 10),
     /** 担当の名前(画面はここから受け取る) */
-    cast: { planner: p.fixedMember("planner").name, designer: p.fixedMember("designer").name, architect: p.fixedMember("architect").name, lead: p.fixedMember("lead").name },
+    cast: { planner: (await p.fixedMember("planner")).name, designer: (await p.fixedMember("designer")).name, architect: (await p.fixedMember("architect")).name, lead: (await p.fixedMember("lead")).name },
     brief: await artifact<Brief>(p, "req", "brief", "main"),
     requirements: await requirements(p),
     openItems: items.map((o) => ({ ...o, options: JSON.parse(o.options) as string[], reversible: !!o.reversible })),

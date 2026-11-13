@@ -109,10 +109,10 @@ const agents: FakeStep = async (req, call) => {
   }
 };
 
-function setup(script: FakeStep = agents) {
-  const p = new Project(":memory:", new ManualClock());
-  p.addRepo("acme/shop", "API");
-  p.setSetting("project_name", "acme 予約サイト");
+async function setup(script: FakeStep = agents) {
+  const p = await Project.open(":memory:", new ManualClock());
+  await p.addRepo("acme/shop", "API");
+  await p.setSetting("project_name", "acme 予約サイト");
   const harness = new FakeHarness(script);
   const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp/ws"), ticketsAllowed: () => false });
   return { p, d, harness };
@@ -120,7 +120,7 @@ function setup(script: FakeStep = agents) {
 
 describe("企画スタジオ", () => {
   it("要件 → フロー → 画面 → ドメインとデータ を順に決めて、チームに渡す", async () => {
-    const { p, d, harness } = setup();
+    const { p, d, harness } = await setup();
 
     // リポジトリを登録すると、企画担当が聞き始める
     await advance(p);
@@ -181,7 +181,7 @@ describe("企画スタジオ", () => {
     expect(await handoffBlocker(p)).toBeNull();
     await handoff(p);
     await d.drain();
-    expect(p.tickets().map((t) => t.title)).toEqual(["予約の表を足す", "空き枠を探す画面"]);
+    expect((await p.tickets()).map((t) => t.title)).toEqual(["予約の表を足す", "空き枠を探す画面"]);
     expect((await studioView(p)).handoff.handed).toBe(true);
     expect((await studioView(p)).tickets[1]!.refs).toMatchObject({ requirement: "R1", screens: ["search"], fromPlan: true });
     // チケットは開発の受信箱に入るが、オフィスを動かすまで取られない
@@ -189,7 +189,7 @@ describe("企画スタジオ", () => {
   });
 
   it("フローの未決の答えを要件に書き足しても、要件は合意済みのままで、フローに合意すると画面デザインが始まる", async () => {
-    const { p, d, harness } = setup(async (req, call) => {
+    const { p, d, harness } = await setup(async (req, call) => {
       const has = (n: string) => req.tools.some((t) => t.name === n);
       if (has("set_brief")) {
         if (req.prompt.includes("責任者:")) await call("upsert_requirement", { name: "メモを書く", acceptance: "書くと保存される" });
@@ -229,7 +229,7 @@ describe("企画スタジオ", () => {
   });
 
   it("合意した段階が後から下書きに戻っても、次の段階は止まらない(引き渡しには合意し直しが要る)", async () => {
-    const { p, d } = setup();
+    const { p, d } = await setup();
     await setMode(p, "infra", "skip");
     await advance(p);
     await chat(p, "req", "予約サイトを作りたい");
@@ -247,7 +247,7 @@ describe("企画スタジオ", () => {
   });
 
   it("合意済みの段階を直すと版が上がり、合意し直しになる", async () => {
-    const { p, d } = setup();
+    const { p, d } = await setup();
     await advance(p);
     await chat(p, "req", "予約サイトを作りたい");
     await d.drain();
@@ -265,7 +265,7 @@ describe("企画スタジオ", () => {
   });
 
   it("省いた段階は飛ばし、お任せの段階は担当が決めて仕上げる。要件は省けない", async () => {
-    const { p, d } = setup();
+    const { p, d } = await setup();
     await expect(setMode(p, "req", "skip")).rejects.toThrow(/省けません/);
     await setMode(p, "infra", "skip");
     await setMode(p, "flow", "skip");
@@ -285,7 +285,7 @@ describe("企画スタジオ", () => {
   });
 
   it("お任せでも、戻せない未決は担当が決められない", async () => {
-    const { p, d } = setup(async (req, call) => {
+    const { p, d } = await setup(async (req, call) => {
       if (!req.tools.some((t) => t.name === "set_brief")) return;
       const id = Number((await call("add_open_item", { question: "データを消すか", options: ["消す", "残す"], recommended: 1, why: "戻せない", reversible: false })).match(/#(\d+)/)![1]);
       return { finalText: await call("answer_open_item", { id, answer: "消す" }) };
@@ -299,7 +299,7 @@ describe("企画スタジオ", () => {
   });
 
   it("担当の起動がエラーになったら、会話にそう出して再試行する", async () => {
-    const { p, d } = setup(() => ({ status: "error", error: "claude にログインしていません" }));
+    const { p, d } = await setup(() => ({ status: "error", error: "claude にログインしていません" }));
     await advance(p);
     await d.drain();
     expect((await messages(p, "req")).at(-1)).toMatchObject({ who: "system" });
@@ -310,8 +310,8 @@ describe("企画スタジオ", () => {
 describe("技術選定", () => {
   it("選んだものが候補に無い書き方は、アーキテクトの道具が断る", async () => {
     const { planningTools } = await import("./planning-agent.js");
-    const p = new Project(":memory:", new ManualClock());
-    const tool = planningTools(p, "model").find((t) => t.name === "set_architecture")!;
+    const p = await Project.open(":memory:", new ManualClock());
+    const tool = (await planningTools(p, "model")).find((t) => t.name === "set_architecture")!;
     const base = {
       style: { name: "モノリス", why: "", alternatives: [] },
       modules: [],

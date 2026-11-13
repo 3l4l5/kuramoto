@@ -20,8 +20,8 @@ export function isExhausted(budget: number | null, spent: number): boolean {
 // ---- プロジェクト全体 ----
 
 /** プロジェクト全体の予算。null なら無制限。 */
-export function projectBudgetUsd(p: Project): number | null {
-  const v = p.setting("project_budget_usd");
+export async function projectBudgetUsd(p: Project): Promise<number | null> {
+  const v = await p.setting("project_budget_usd");
   if (v === undefined || v === "") return null;
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -29,13 +29,13 @@ export function projectBudgetUsd(p: Project): number | null {
 
 export async function setProjectBudget(p: Project, usd: number | null): Promise<void> {
   if (usd !== null && !(Number.isFinite(usd) && usd > 0)) throw new Error("全体の予算は 0 より大きい金額か、無制限にしてください");
-  if (usd === projectBudgetUsd(p)) return;
+  if (usd === await projectBudgetUsd(p)) return;
   await p.pdb.transaction(async () => {
     if (usd === null) await p.pdb.deleteFrom("settings").where("key", "=", "project_budget_usd").execute();
-    else p.setSetting("project_budget_usd", String(usd));
+    else await p.setSetting("project_budget_usd", String(usd));
     // 使い切った知らせは、予算を変えたら出し直せるようにする
     await p.pdb.deleteFrom("settings").where("key", "=", "project_budget_notified").execute();
-    p.event("owner", "project_budget_set", null, { usd });
+    await p.event("owner", "project_budget_set", null, { usd });
   });
 }
 
@@ -46,17 +46,17 @@ export async function projectSpentUsd(p: Project): Promise<number> {
 }
 
 export async function projectLeftUsd(p: Project): Promise<number> {
-  return leftUsd(projectBudgetUsd(p), await projectSpentUsd(p));
+  return leftUsd(await projectBudgetUsd(p), await projectSpentUsd(p));
 }
 
 /** 全体の予算を使い切っているか。使い切っていたら、最初の 1 回だけ出来事に残す。 */
 export async function projectExhausted(p: Project): Promise<boolean> {
-  const budget = projectBudgetUsd(p);
+  const budget = await projectBudgetUsd(p);
   const spent = await projectSpentUsd(p);
   if (!isExhausted(budget, spent)) return false;
-  if (!p.setting("project_budget_notified")) {
-    p.setSetting("project_budget_notified", p.now());
-    p.event("system", "project_budget_reached", null, { usd: budget, spent });
+  if (!await p.setting("project_budget_notified")) {
+    await p.setSetting("project_budget_notified", p.now());
+    await p.event("system", "project_budget_reached", null, { usd: budget, spent });
   }
   return true;
 }
@@ -92,9 +92,9 @@ export async function unitSpentMap(p: Project, unitNames: string[]): Promise<Map
 
 /** 画面に出す: 全体と島ごとの予算と使った額。 */
 export async function budgetView(p: Project) {
-  const budget = projectBudgetUsd(p);
+  const budget = await projectBudgetUsd(p);
   const spent = await projectSpentUsd(p);
-  const units = p.currentFormation().units;
+  const units = (await p.currentFormation()).units;
   const spentBy = await unitSpentMap(p, units.map((u) => u.name));
   return {
     project: { budgetUsd: budget, spentUsd: spent, exhausted: isExhausted(budget, spent) },

@@ -184,7 +184,7 @@ export async function addDevRule(p: Project, input: Partial<RuleInput> & { templ
       p.pdb.insert("dev_rules", { name: v.name, body: v.body, applies_to: v.appliesTo.join(","), check_kind: v.check, pattern: v.pattern, on_fail: v.onFail, enabled: 1, template, created_at: p.now() }),
     );
     const version = await bumpVersion(p);
-    p.event("owner", "dev_rule_added", null, { id, name: v.name, version });
+    await p.event("owner", "dev_rule_added", null, { id, name: v.name, version });
     return liveRule(p, id);
   });
 }
@@ -203,7 +203,7 @@ export async function updateDevRule(p: Project, id: number, input: Partial<RuleI
     const v = validRule({ name: was.name, body: was.body, appliesTo: was.appliesTo, check: was.check, pattern: was.pattern, onFail: was.onFail, ...given });
     await p.pdb.update("dev_rules", { name: v.name, body: v.body, applies_to: v.appliesTo.join(","), check_kind: v.check, pattern: v.pattern, on_fail: v.onFail }).where("id", "=", id).execute();
     const version = await bumpVersion(p);
-    p.event("owner", "dev_rule_updated", null, { id, name: v.name, version });
+    await p.event("owner", "dev_rule_updated", null, { id, name: v.name, version });
     return liveRule(p, id);
   });
 }
@@ -217,7 +217,7 @@ export async function deleteDevRule(p: Project, id: number): Promise<void> {
     const was = await liveRule(p, id);
     await p.pdb.update("dev_rules", { deleted_at: p.now() }).where("id", "=", id).execute();
     const version = await bumpVersion(p);
-    p.event("owner", "dev_rule_deleted", null, { id, name: was.name, version });
+    await p.event("owner", "dev_rule_deleted", null, { id, name: was.name, version });
   });
 }
 
@@ -226,7 +226,7 @@ export async function setDevRuleEnabled(p: Project, id: number, enabled: boolean
     await liveRule(p, id);
     await p.pdb.update("dev_rules", { enabled: enabled ? 1 : 0 }).where("id", "=", id).execute();
     const version = await bumpVersion(p);
-    p.event("owner", enabled ? "dev_rule_enabled" : "dev_rule_disabled", null, { id, version });
+    await p.event("owner", enabled ? "dev_rule_enabled" : "dev_rule_disabled", null, { id, version });
     return liveRule(p, id);
   });
 }
@@ -306,7 +306,7 @@ export async function checkRules(p: Project, subject: RuleSubject, judge?: RuleJ
         found.push({ rule, detail, onFail: rule.onFail === "autofix" && !rule.appliesTo.some((t) => t !== "branch") ? "review" : rule.onFail, fixDetail: detail });
       }
     } catch (e) {
-      p.event("system", "rule_ai_failed", null, { error: e instanceof Error ? e.message : String(e) });
+      await p.event("system", "rule_ai_failed", null, { error: e instanceof Error ? e.message : String(e) });
     }
   }
   return { found, evaluated };
@@ -333,7 +333,7 @@ export async function recordViolations(p: Project, ticketId: number, runId: numb
         continue;
       }
       await p.pdb.insert("rule_violations", { rule_id: f.rule.id, ticket_id: ticketId, handled: HANDLED[f.onFail], created_at: p.now(), detail: f.detail, run_id: runId }).execute();
-      p.event("system", "rule_violated", ticketId, { rule: f.rule.name, handled: HANDLED[f.onFail] });
+      await p.event("system", "rule_violated", ticketId, { rule: f.rule.name, handled: HANDLED[f.onFail] });
     }
     for (const v of open) if (checked.evaluated.has(v.rule_id) && !foundIds.has(v.rule_id)) await p.pdb.update("rule_violations", { resolved_at: p.now() }).where("id", "=", v.id).execute();
   });
@@ -371,7 +371,9 @@ export async function violationTotals(p: Project): Promise<{ total: number; auto
 
 /** レビューの指摘に載せる違反(handled = 'review'で、直っておらず、まだ指摘にしていないもの)。指摘にしたかは違反の番号で覚える。 */
 export async function reviewFindingsFor(p: Project, ticketId: number): Promise<{ violationId: number; category: string; severity: "medium"; blocking: true; basis: "acceptance"; body: string }[]> {
-  return (await openViolations(p, ticketId, "review")).filter((v) => !p.setting(`rule_listed:${v.id}`)).map((v) => ({
+  const open = await openViolations(p, ticketId, "review");
+  const listed = await Promise.all(open.map(async (v) => !!(await p.setting(`rule_listed:${v.id}`))));
+  return open.filter((_, i) => !listed[i]).map((v) => ({
     violationId: v.id,
     category: "dev-rule",
     severity: "medium" as const,
@@ -382,8 +384,8 @@ export async function reviewFindingsFor(p: Project, ticketId: number): Promise<{
 }
 
 /** 違反を指摘にしたと覚える(同じ違反の指摘を、確かめるたびに足さない)。 */
-export function markListed(p: Project, violationId: number): void {
-  p.setSetting(`rule_listed:${violationId}`, "1");
+export async function markListed(p: Project, violationId: number): Promise<void> {
+  await p.setSetting(`rule_listed:${violationId}`, "1");
 }
 
 export function ruleFindingBody(name: string, detail: string): string {
@@ -432,7 +434,7 @@ export async function checkBeforePr(p: Project, c: PreCheck): Promise<string | u
 /** 読むルールを 1 回の起動でまとめて確かめる。道具は結果の報告だけ。ファイルも通信も使わない。 */
 export function agentJudge(p: Project, harness: Harness, cwd: string, onUsage?: (u: HarnessUsage) => void): RuleJudge {
   return async (rules, subject) => {
-    const policy = p.policy("review");
+    const policy = await p.policy("review");
     const results: { ruleId: number; ok: boolean; detail: string }[] = [];
     const report = defineTool({
       name: "report_rule_check",

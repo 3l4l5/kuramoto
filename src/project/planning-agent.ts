@@ -133,7 +133,7 @@ const requirementTool = (p: Project, stage: Stage) =>
     handler: async (a) => `${await upsertRequirement(p, a, stage)} を書きました。`,
   });
 
-export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoTool[] {
+export async function planningTools(p: Project, stage: Stage | "handoff"): Promise<KuramotoTool[]> {
   switch (stage) {
     case "req":
       return [
@@ -384,7 +384,7 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
             after: z.array(z.number().int()).optional().describe("先に merge されている必要があるチケットの番号(画面を作るチケットは、デザインシステムの土台のチケットを書く)"),
           },
           handler: async (a) => {
-            const repos = p.repos().map((r) => r.full_name);
+            const repos = (await p.repos()).map((r) => r.full_name);
             if (a.repo && !repos.includes(a.repo)) return `登録されていないリポジトリです。使えるのは ${repos.join(", ")}`;
             const item = a.requirement ? (await requirements(p)).find((r) => r.code === a.requirement) : undefined;
             if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
@@ -399,14 +399,14 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
               planRefs: { fromPlan: true, requirement: a.requirement ?? null, screens: a.screens, design: a.design, modes, versions, ...(a.repo ? { repo: a.repo } : {}), ...(a.issue ? { issue: a.issue } : {}), ...(a.design_system ? { designSystem: true } : {}) },
             });
             for (const n of a.after ?? []) {
-              const dep = p.tickets().find((x) => x.number === n);
+              const dep = (await p.tickets()).find((x) => x.number === n);
               if (dep) await addDependency(p, t.id, dep.id);
             }
-            if (a.issue) markIssueTicketed(p, a.repo ?? repos[0]!, a.issue);
+            if (a.issue) await markIssueTicketed(p, a.repo ?? repos[0]!, a.issue);
             return `#${t.number} を作りました。`;
           },
         }),
-        ...(fromExisting(p)
+        ...(await fromExisting(p)
           ? [
               defineTool({
                 name: "adopt_pr",
@@ -421,7 +421,7 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
                 handler: async (a) => {
                   const item = a.requirement ? (await requirements(p)).find((r) => r.code === a.requirement) : undefined;
                   if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
-                  const r = await adoptPull(p, { repo: a.repo ?? p.repos()[0]!.full_name, number: a.number, ...(a.title ? { title: a.title } : {}), ...(a.body ? { body: a.body } : {}), ...(item ? { requirementItemId: item.id } : {}) });
+                  const r = await adoptPull(p, { repo: a.repo ?? (await p.repos())[0]!.full_name, number: a.number, ...(a.title ? { title: a.title } : {}), ...(a.body ? { body: a.body } : {}), ...(item ? { requirementItemId: item.id } : {}) });
                   return typeof r === "string" ? r : `#${r.number} を作り、PR #${a.number} を確認の工程から続けます。`;
                 },
               }),
@@ -432,10 +432,10 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
           description: "チケットを作り終えたら呼ぶ。",
           input: {},
           handler: async () => {
-            const n = p.tickets().length;
+            const n = (await p.tickets()).length;
             if (n === 0) return "チケットが 1 件もありません。create_ticket で作ってください。";
-            p.setSetting("plan_handed_at", p.now());
-            p.event("lead", "plan_handed", null, { tickets: n });
+            await p.setSetting("plan_handed_at", p.now());
+            await p.event("lead", "plan_handed", null, { tickets: n });
             return "受け付けました。";
           },
         }),
@@ -454,7 +454,7 @@ export async function planningSystemPrompt(p: Project, role: Role, focus: string
 async function snapshot(p: Project, stage: Stage | "handoff"): Promise<string> {
   const rows = await Promise.all(STAGES.map((s) => stageRow(p, s)));
   const data: Record<string, unknown> = {
-    project: { repos: p.repos().map((r) => `${r.full_name}(${r.role})`) },
+    project: { repos: (await p.repos()).map((r) => `${r.full_name}(${r.role})`) },
     stages: rows.map((r) => ({ stage: r.stage, mode: r.mode, version: r.version, agreed: r.agreed_version === r.version })),
     brief: await artifact(p, "req", "brief", "main"),
     requirements: (await requirements(p)).map((r) => ({ code: r.code, name: r.name, acceptance: r.acceptance })),
@@ -493,7 +493,7 @@ export async function addDependency(p: Project, ticketId: number, dependsOn: num
 
 export async function planningPrompt(p: Project, payload: PlanPayload, opts: { fresh?: boolean } = {}): Promise<string> {
   const where = payload.stage === "handoff" ? "チームへの引き渡し" : `段階「${STAGE_LABEL[payload.stage]}」(${payload.stage})`;
-  const name = p.setting("project_name") ?? "";
+  const name = await p.setting("project_name") ?? "";
   const events = payload.events.map((e) => (e.type === "chat" ? `責任者: ${e.text}` : e.type === "question" ? `責任者の質問: ${e.text}` : `[${e.type}] ${e.text}`)).join("\n");
   const ask = onlyQuestions(payload.events);
   return `プロジェクト「${name}」の企画スタジオ、${where}です。
@@ -513,7 +513,7 @@ ${
 
 /** その段階の最近の会話(古い順)。 */
 async function recentPlanChat(p: Project, stage: Stage | "handoff"): Promise<string> {
-  const rows = (await messages(p, stage)).slice(-p.settingNumber("plan_chat_history", 12));
+  const rows = (await messages(p, stage)).slice(-await p.settingNumber("plan_chat_history", 12));
   return rows.map((m) => `- ${m.who === "me" ? "責任者" : m.who === "system" ? "Kuramoto" : SPEAKER_NAME[m.who] ?? m.who}: ${m.body.length > 500 ? `${m.body.slice(0, 500)}…` : m.body}`).join("\n") || "(まだありません)";
 }
 const SPEAKER_NAME: Record<string, string> = { plan: "企画", design: "デザイナー", arch: "アーキテクト", lead: "リーダー" };
@@ -522,8 +522,8 @@ const SPEAKER_NAME: Record<string, string> = { plan: "企画", design: "デザ�
 export async function afterPlanningRun(p: Project, msg: MessageRow, role: Role, finalText: string): Promise<void> {
   const payload = JSON.parse(msg.payload) as PlanPayload;
   if (finalText.trim()) await say(p, payload.stage, SPEAKER[role] ?? role, finalText.trim());
-  if (payload.stage === "handoff" && p.setting("plan_handed_at")) {
-    await say(p, "handoff", "lead", `チームに渡しました。チケットを ${p.tickets().length} 件作りました。オフィスで「始業」を押すと、開発が始まります。`);
+  if (payload.stage === "handoff" && await p.setting("plan_handed_at")) {
+    await say(p, "handoff", "lead", `チームに渡しました。チケットを ${(await p.tickets()).length} 件作りました。オフィスで「始業」を押すと、開発が始まります。`);
   }
   await advance(p);
 }

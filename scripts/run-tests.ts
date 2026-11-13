@@ -125,5 +125,5 @@ export async function main(args: string[], env: NodeJS.ProcessEnv = process.env,
 
 if (isMainModule(import.meta.url, process.argv[1])) {
   trapSignals();
-  main(process.argv.slice(2)).then((code) => process.exit(code));
+  void main(process.argv.slice(2)).then((code) => process.exit(code));
 }

@@ -52,7 +52,7 @@ const isLead = (to: string) => ["lead", "リーダー"].includes(to.trim().toLow
 export async function askQuestion(p: Project, from: MemberRow, ticket: TicketRow, to: string, body: string): Promise<string> {
   const text = body.trim();
   if (!text) return "質問の中身がありません。聞きたいことを書いて呼び直してください。";
-  const formation = p.currentFormation();
+  const formation = await p.currentFormation();
   const mine = formation.units.find((u) => u.id === from.unit_id);
   const target = formation.units.find((u) => u.name === to.trim());
   const id = `#${ticket.number}`;
@@ -65,7 +65,7 @@ export async function askQuestion(p: Project, from: MemberRow, ticket: TicketRow
     await p.pdb.transaction(async () => {
       await p.pdb.insert("ticket_questions", { ticket_id: ticket.id, from_member_id: from.id, to_target: LEAD_TARGET, body: text, routed_to_lead: 1, asked_at: p.now() }).execute();
       await sayToLead(p, `【${place} 質問しています】\n${text}`);
-      p.event(from.name, "question_asked", ticket.id, { to: LEAD_TARGET, routedToLead: true });
+      await p.event(from.name, "question_asked", ticket.id, { to: LEAD_TARGET, routedToLead: true });
     });
     return "リーダーに送りました。答えを待たずに作業を続けてください。";
   }
@@ -76,8 +76,8 @@ export async function askQuestion(p: Project, from: MemberRow, ticket: TicketRow
     await p.pdb.transaction(async () => {
       const qid = await p.pdb.dialect.insertedId(p.pdb.insert("ticket_questions", { ticket_id: ticket.id, from_member_id: from.id, to_target: target.name, body: text, asked_at: p.now() }));
       // 起動はチケットを持たない(チケットの 1 チケット 1 起動を邪魔しない)。ひも付けは payload と runs.about_ticket_id
-      send(p, { ticketId: null, toRole: target.roles[0]!, kind: "ask", payload: { questionId: qid } satisfies AskPayload });
-      p.event(from.name, "question_asked", ticket.id, { to: target.name, routedToLead: false });
+      await send(p, { ticketId: null, toRole: target.roles[0]!, kind: "ask", payload: { questionId: qid } satisfies AskPayload });
+      await p.event(from.name, "question_asked", ticket.id, { to: target.name, routedToLead: false });
     });
     return `${target.name} に送りました。手すきの人が答えます。答えを待たずに作業を続けてください(答えはこのチケットのやりとりに残り、次の仕事の指示に入ります)。`;
   }
@@ -87,7 +87,7 @@ export async function askQuestion(p: Project, from: MemberRow, ticket: TicketRow
   await p.pdb.transaction(async () => {
     await p.pdb.insert("ticket_questions", { ticket_id: ticket.id, from_member_id: from.id, to_target: label, body: text, routed_to_lead: 1, asked_at: p.now() }).execute();
     await sayToLead(p, `【${place} 「${label}」に質問しようとしましたが、経路が無いのでリーダーに回ってきました】\n${text}`);
-    p.event(from.name, "question_asked", ticket.id, { to: label, routedToLead: true, noRoute: true });
+    await p.event(from.name, "question_asked", ticket.id, { to: label, routedToLead: true, noRoute: true });
   });
   return `「${label}」との経路が無いので、リーダーに回しました。答えを待たずに作業を続けてください。`;
 }
@@ -108,8 +108,8 @@ export function askTools(p: Project, member: MemberRow, ticket: TicketRow): Kura
 // ---- 答える側 ----
 
 /** 答える島を決める: 質問の宛先の島。席にいて、手すきで、聞いた本人でない人から選ぶのは dispatcher。 */
-export function targetUnit(p: Project, q: QuestionRow): UnitRow | undefined {
-  return p.currentFormation().units.find((u) => u.name === q.to_target);
+export async function targetUnit(p: Project, q: QuestionRow): Promise<UnitRow | undefined> {
+  return (await p.currentFormation()).units.find((u) => u.name === q.to_target);
 }
 
 export type AnswerReport = { answer?: string };
@@ -136,9 +136,9 @@ export function answerSystem(member: MemberRow, unit: { name: string | null; foc
 - 答えは reply で返します。最後に必ず 1 回呼びます。` + (unit.focus?.trim() ? `\n\n## このプロジェクトで重視すること\n${unit.focus.trim()}` : "");
 }
 
-export function answerPrompt(p: Project, q: QuestionRow, ticket: TicketRow): string {
-  const asker = q.from_member_id ? p.member(q.from_member_id) : null;
-  const askerUnit = asker?.unit_id ? p.currentFormation().units.find((u) => u.id === asker.unit_id)?.name : null;
+export async function answerPrompt(p: Project, q: QuestionRow, ticket: TicketRow): Promise<string> {
+  const asker = q.from_member_id ? await p.member(q.from_member_id) : null;
+  const askerUnit = asker?.unit_id ? (await p.currentFormation()).units.find((u) => u.id === asker.unit_id)?.name : null;
   return `${asker?.name ?? "ほかのメンバー"}(${askerUnit ?? "ほかの島"})から質問が届きました。
 
 ## 質問が出たチケット #${ticket.number}: ${ticket.title}
@@ -153,7 +153,7 @@ ${q.body}
 /** 答えを記録する。聞いたチケットの担当・工程には触らない。 */
 export async function recordAnswer(p: Project, q: QuestionRow, by: MemberRow, answer: string): Promise<void> {
   await p.pdb.update("ticket_questions", { answer: answer.trim(), answered_by_member_id: by.id, answered_at: p.now() }).where("id", "=", q.id).execute();
-  p.event(by.name, "question_answered", q.ticket_id, { questionId: q.id });
+  await p.event(by.name, "question_answered", q.ticket_id, { questionId: q.id });
 }
 
 /** リーダーに回ってきて、まだ答えが無い質問(リーダー宛て・経路が無かったもの・島が無くなったもの)。 */
@@ -179,30 +179,32 @@ export async function answerLeadQuestion(p: Project, lead: MemberRow, questionId
 export async function leadPendingBlock(p: Project): Promise<string> {
   const qs = await leadPendingQuestions(p);
   if (!qs.length) return "(なし)";
-  return qs
-    .map((q) => {
-      const t = p.ticket(q.ticket_id);
-      const from = q.from_member_id ? p.member(q.from_member_id).name : "メンバー";
+  const lines = await Promise.all(
+    qs.map(async (q) => {
+      const t = await p.ticket(q.ticket_id);
+      const from = q.from_member_id ? (await p.member(q.from_member_id)).name : "メンバー";
       const to = q.to_target === LEAD_TARGET ? "リーダー" : `「${q.to_target}」(経路が無い)`;
       return `- 質問 ${q.id}(#${t.number}「${t.title}」、${from} から ${to} へ): ${q.body}`;
-    })
-    .join("\n");
+    }),
+  );
+  return lines.join("\n");
 }
 
 /** 次にそのチケットの仕事をする担当の指示に載せる、答えが返ってきた質問。 */
 export async function answeredBlock(p: Project, ticketId: number): Promise<string> {
   const qs = (await questionsOf(p, ticketId)).filter((q) => q.answer !== null);
   if (!qs.length) return "";
-  const label = (q: QuestionRow) => {
+  const label = async (q: QuestionRow) => {
     const who = q.routed_to_lead ? "リーダー" : q.to_target;
-    return q.answered_by_member_id ? `${p.member(q.answered_by_member_id).name}(${who})` : who;
+    return q.answered_by_member_id ? `${(await p.member(q.answered_by_member_id)).name}(${who})` : who;
   };
-  return `\n\n### ほかの島への質問と答え\n${qs.map((q) => `- 質問: ${q.body}\n  ${label(q)} の答え: ${q.answer}`).join("\n")}`;
+  const lines = await Promise.all(qs.map(async (q) => `- 質問: ${q.body}\n  ${await label(q)} の答え: ${q.answer}`));
+  return `\n\n### ほかの島への質問と答え\n${lines.join("\n")}`;
 }
 
 /** 答える島が無くなっていた(編成が変わった)質問を、リーダーに回す。 */
 export async function reroutedToLead(p: Project, q: QuestionRow, ticket: TicketRow): Promise<void> {
   await p.pdb.update("ticket_questions", { routed_to_lead: 1 }).where("id", "=", q.id).execute();
   await sayToLead(p, `【#${ticket.number}「${ticket.title}」で、「${q.to_target}」への質問が、島が無くなったためリーダーに回ってきました】\n${q.body}`);
-  p.event("system", "question_rerouted", q.ticket_id, { to: q.to_target });
+  await p.event("system", "question_rerouted", q.ticket_id, { to: q.to_target });
 }

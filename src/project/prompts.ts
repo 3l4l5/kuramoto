@@ -45,7 +45,7 @@ const ASK_OWNER: Record<string, string> = {
   all: "迷うものはすべて責任者に上げてください。",
 };
 
-export function systemPromptFor(p: Project, role: Role, policy: PolicyRow, unit?: { name: string | null; focus: string | null }, memberName?: string): string {
+export async function systemPromptFor(p: Project, role: Role, policy: PolicyRow, unit?: { name: string | null; focus: string | null }, memberName?: string): Promise<string> {
   const opts = JSON.parse(policy.options) as Record<string, unknown>;
   const parts = [BASE[role] ?? `あなたは Kuramoto の${ROLE_LABEL[role]}担当です。`];
   if (role === "dev") {
@@ -55,12 +55,12 @@ export function systemPromptFor(p: Project, role: Role, policy: PolicyRow, unit?
   if (role === "review") parts.push(`- ${STRICTNESS[String(opts.strictness ?? "standard")] ?? STRICTNESS.standard}`);
   if (role === "lead")
     parts.push(
-      nonstop(p)
+      await nonstop(p)
         ? `- ノンストップで進めます。チームで責任を持って決め、責任者には上げません(上げてよいのは取り消せない操作だけ)。分からない点は仮に決め、その前提を decide の reason に、担当への指示を note に書きます。決めたことは責任者にあとで報告され、違えば指示が来ます。
 - 往復が続くときは、受け入れ条件・セキュリティ・この差分の不具合だけを必須として通し、範囲外のことは別チケットに回す方針で決めます。保留は選びません。`
         : `- ${ASK_OWNER[String(opts.askOwner ?? "medium")] ?? ASK_OWNER.medium}`,
     );
-  const jira = p.setting("jira_key");
+  const jira = await p.setting("jira_key");
   if (jira && role === "dev") parts.push(`- ブランチ名・コミット・PR タイトルにチケットの Jira 番号を入れてください。`);
   if (policy.focus.trim()) parts.push(`\n## このプロジェクトで重視すること\n${policy.focus.trim()}`);
   if (unit?.focus?.trim()) parts.push(`\n## あなたの島(${unit.name})で重視すること\n${unit.focus.trim()}`);
@@ -69,18 +69,18 @@ export function systemPromptFor(p: Project, role: Role, policy: PolicyRow, unit?
 }
 
 /** チームの CI を使うプロジェクトなら、submit_pr のあとに流す確認を伝える(先に手元で通しておく)。 */
-function teamCiNote(p: Project, repo?: string): string {
-  if (!teamCiEnabled(p) || !repo) return "";
-  const cmds = configuredCommands(p, repo);
+async function teamCiNote(p: Project, repo?: string): Promise<string> {
+  if (!await teamCiEnabled(p) || !repo) return "";
+  const cmds = await configuredCommands(p, repo);
   return `\nsubmit_pr のあと、Kuramoto がチームの CI(PR を最新の main と合わせて${cmds ? `、${cmds.map((c) => `\`${c}\``).join(" → ")} を流す` : "、lint・型・テストを流す"})で確かめ、通ったものだけをレビューに回します。報告の前に、手元で同じ確認を通しておいてください。`;
 }
 
 export async function promptFor(p: Project, msg: MessageRow, ticket: TicketRow | null, ctx: { branch?: string; base?: string; repo?: string; prNumber?: number }): Promise<string> {
   const base = `origin/${ctx.base ?? "main"}`;
   const payload = JSON.parse(msg.payload) as Record<string, unknown>;
-  const notes = ticket ? p.notes(ticket.id) : [];
+  const notes = ticket ? await p.notes(ticket.id) : [];
   // 開発より前の確認(R17)が残した申し送りは、メモとは分けて載せる。開発は読んでから着手する
-  const handoffs = ticket ? p.handoffs(ticket.id) : [];
+  const handoffs = ticket ? await p.handoffs(ticket.id) : [];
   const head = ticket
     ? ticketBlock(ticket) +
       (notes.length ? `\n\n### メモ(責任者・リーダーから)\n${notes.map((n) => `- ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.body}`).join("\n")}` : "") +
@@ -89,7 +89,7 @@ export async function promptFor(p: Project, msg: MessageRow, ticket: TicketRow |
     : "";
   switch (msg.kind) {
     case "implement":
-      return `${head}\n\nこのチケットを実装してください。リポジトリは ${ctx.repo}、ブランチは ${ctx.branch}(作業場所で取り出し済み)です。終わったら変更をコミットし、submit_pr で報告してください(PR のタイトルと本文も渡せます)。push と PR の作成は Kuramoto が行います。${teamCiNote(p, ctx.repo)}${await rulesNote(p)}`;
+      return `${head}\n\nこのチケットを実装してください。リポジトリは ${ctx.repo}、ブランチは ${ctx.branch}(作業場所で取り出し済み)です。終わったら変更をコミットし、submit_pr で報告してください(PR のタイトルと本文も渡せます)。push と PR の作成は Kuramoto が行います。${await teamCiNote(p, ctx.repo)}${await rulesNote(p)}`;
     case "fix": {
       // CI の失敗など、スレッドにならない指示
       const extra = ((payload.findings as { severity: string; body: string }[] | undefined) ?? []).map((f) => `- [${f.severity}] ${f.body}`).join("\n");
@@ -138,7 +138,7 @@ ${ticket ? await openTicketsBlock(p, ticket) : ""}
 - ベースのブランチとの衝突・merge できるかどうかは見ません。merge の前に Kuramoto が確かめ、衝突していれば持ち主に直させます。
 - 確かめるための道具が動かない(テストやブラウザが起動しない)ときは、それを理由に差し戻しません。コードを読んで確かめられた範囲で判断し、動かせなかったことを提案として書きます。
 - 指摘には、何が問題で、どう直すべきかを書きます。`;
-      const recheck = ticket ? p.setting(`recheck:${ticket.id}`) : undefined;
+      const recheck = ticket ? await p.setting(`recheck:${ticket.id}`) : undefined;
       if (recheck && !prior.length) {
         return `${head}
 

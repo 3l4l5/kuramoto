@@ -79,8 +79,8 @@ export class Hq {
     for (let n = 2; (await this.hqdb.from("projects").select("id").where("data_dir", "=", dataDir).executeTakeFirst()) || existsSync(dataDir); n++) dataDir = join(this.home, owner, `${repo}-${n}`);
     const id = await dialect.insertedId(this.hqdb.insert("projects", { name, data_dir: dataDir, status: "planning", created_at: iso(this.clock.now()) }));
     const p = await this.openProject(id);
-    p.setSetting("project_name", name);
-    for (const r of repos) p.addRepo(r.fullName, r.role);
+    await p.setSetting("project_name", name);
+    for (const r of repos) await p.addRepo(r.fullName, r.role);
     p.close();
     return this.project(id);
   }
@@ -98,7 +98,7 @@ export class Hq {
 
   /** プロジェクトの DB を開く。id がいまのワークスペースの中にあることを、開く前に確かめる。 */
   async openProject(id: number): Promise<Project> {
-    return new Project(join((await this.project(id)).data_dir, "project.sqlite"), this.clock, id);
+    return await Project.open(join((await this.project(id)).data_dir, "project.sqlite"), this.clock, id);
   }
 
   /**
@@ -112,19 +112,19 @@ export class Hq {
     for (const r of input.repos) if (!REPO_RE.test(r.fullName)) throw new Error(`owner/repo の形ではありません: ${r.fullName}`);
     if (new Set(input.repos.map((r) => r.fullName)).size !== input.repos.length) throw new Error("同じリポジトリが 2 回入っています");
     await this.project(id); // ワークスペースの外のプロジェクトは変えない
-    const before = p.repos();
+    const before = await p.repos();
     const wanted = new Map(input.repos.map((r) => [r.fullName, r.role]));
     // 外すものを先に確かめる(外せないものがあれば、何も変えずに止める)
     await p.pdb.transaction(async () => {
-      for (const r of before) if (!wanted.has(r.full_name)) p.removeRepo(r.full_name);
+      for (const r of before) if (!wanted.has(r.full_name)) await p.removeRepo(r.full_name);
       for (const [fullName, role] of wanted) {
-        if (before.some((r) => r.full_name === fullName)) p.setRepoRole(fullName, role);
-        else p.addRepo(fullName, role);
+        if (before.some((r) => r.full_name === fullName)) await p.setRepoRole(fullName, role);
+        else await p.addRepo(fullName, role);
       }
-      p.setSetting("project_name", name);
+      await p.setSetting("project_name", name);
     });
     await this.hqdb.update("projects", { name }).where("id", "=", id).execute();
-    p.event("owner", "project_updated", null, { name, repos: input.repos.map((r) => r.fullName) });
+    await p.event("owner", "project_updated", null, { name, repos: input.repos.map((r) => r.fullName) });
     return this.project(id);
   }
 
@@ -141,7 +141,7 @@ export class Hq {
         out.push({
           project: rec,
           decisions: (await pendingOwnerDecisions(p)).length,
-          merges: p.tickets().filter((t) => t.stage === "merge").length,
+          merges: (await p.tickets()).filter((t) => t.stage === "merge").length,
         });
       } finally {
         p.close();

@@ -14,10 +14,10 @@ import { createTicket } from "./workflow.js";
 import { GitWorkspace, StaticWorkspace, type WorkspaceRequest } from "./workspace.js";
 
 /** 開発・レビューは普通に進め、メンバーとの会話(hand_to_lead だけを持つ起動)とリーダーのチャットは台本で答える。 */
-function setup(chat: FakeStep, opts: { open?: boolean } = {}) {
+async function setup(chat: FakeStep, opts: { open?: boolean } = {}) {
   const clock = new ManualClock();
-  const p = new Project(":memory:", clock);
-  p.addRepo("acme/shop", "API");
+  const p = await Project.open(":memory:", clock);
+  await p.addRepo("acme/shop", "API");
   const harness = new FakeHarness(async (req, call) => {
     clock.advance(60_000);
     if (req.tools.some((t) => t.name === "submit_pr")) await call("submit_pr", { summary: "実装した", responses: fixedAll(req.prompt) });
@@ -34,16 +34,16 @@ const isChat = (req: { tools: { name: string }[] }) => req.tools.some((t) => t.n
 async function worked(p: Project, d: Dispatcher) {
   await createTicket(p, { title: "CSV 出力" });
   await d.drain();
-  const t = p.tickets()[0]!;
-  return { ticket: t, member: p.member(t.owner_member_id!) };
+  const t = (await p.tickets())[0]!;
+  return { ticket: t, member: await p.member(t.owner_member_id!) };
 }
 
 describe("メンバーとの会話", () => {
   it("聞く: 今のチケットの会話を引き継いで答える。会話は残り、担当も工程も変わらない", async () => {
-    const { p, d, harness } = setup((req) => (isChat(req) ? { finalText: "いま CSV の文字コードを見ているよ" } : undefined));
+    const { p, d, harness } = await setup((req) => (isChat(req) ? { finalText: "いま CSV の文字コードを見ているよ" } : undefined));
     const { ticket, member } = await worked(p, d);
     const devSession = get<{ harness_session_id: string }>(p.db, "SELECT harness_session_id FROM sessions WHERE member_id = ? AND ticket_id = ?", [member.id, ticket.id])!.harness_session_id;
-    const before = p.ticket(ticket.id);
+    const before = await p.ticket(ticket.id);
 
     await sayToMember(p, member.id, "いま何をやってる?");
     await d.drain();
@@ -61,7 +61,7 @@ describe("メンバーとの会話", () => {
     // 起動はチケットの起動として数えず(1 チケット 1 起動を邪魔しない)、about_ticket_id でひも付く
     const r = get<{ ticket_id: number | null; about_ticket_id: number }>(p.db, "SELECT ticket_id, about_ticket_id FROM runs WHERE id = (SELECT MAX(id) FROM runs)")!;
     expect(r).toEqual({ ticket_id: null, about_ticket_id: ticket.id });
-    expect(p.ticket(ticket.id)).toMatchObject({ stage: before.stage, owner_member_id: before.owner_member_id, rounds: before.rounds });
+    expect(await p.ticket(ticket.id)).toMatchObject({ stage: before.stage, owner_member_id: before.owner_member_id, rounds: before.rounds });
     // 同じ人にもう一度話しかけても、読んだ分は読み直さない
     await sayToMember(p, member.id, "ありがとう");
     await d.drain();
@@ -70,7 +70,7 @@ describe("メンバーとの会話", () => {
   });
 
   it("終業中(チケットの受付が止まっている間)でも、返事が来る", async () => {
-    const { p, d, harness } = setup((req) => (isChat(req) ? { finalText: "了解" } : undefined));
+    const { p, d, harness } = await setup((req) => (isChat(req) ? { finalText: "了解" } : undefined));
     const { member } = await worked(p, d);
     // 終業した状態の起こし方で、会話だけが取り出される
     const closed = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp"), ticketsAllowed: () => false });
@@ -80,25 +80,25 @@ describe("メンバーとの会話", () => {
   });
 
   it("伝える: 伝えたことはそのチケットのメモ(kind = member)に残り、担当・工程は変わらない。次の仕事で読まれる", async () => {
-    const { p, d } = setup((req) => (isChat(req) ? { finalText: "了解!外したときのテストも足すね" } : undefined));
+    const { p, d } = await setup((req) => (isChat(req) ? { finalText: "了解!外したときのテストも足すね" } : undefined));
     const { ticket, member } = await worked(p, d);
-    const before = p.ticket(ticket.id);
+    const before = await p.ticket(ticket.id);
 
     await sayToMember(p, member.id, "区切り文字を変えたときも見てね");
     await d.drain();
 
-    const notes = p.notes(ticket.id).filter((n) => n.kind === "member");
+    const notes = (await p.notes(ticket.id)).filter((n) => n.kind === "member");
     expect(notes.map((n) => [n.who, n.body])).toEqual([["owner", "区切り文字を変えたときも見てね"]]);
     expect((await memberChatView(p, member.id)).messages.at(-1)).toMatchObject({ who: "system", body: `#${ticket.number} のメモに書き足しました` });
-    expect(p.ticket(ticket.id)).toMatchObject({ stage: before.stage, owner_member_id: before.owner_member_id });
+    expect(await p.ticket(ticket.id)).toMatchObject({ stage: before.stage, owner_member_id: before.owner_member_id });
     // 次にこのチケットの仕事をする担当の指示に、メモとして入る
     const { promptFor } = await import("./prompts.js");
     const msg = { id: 0, ticket_id: ticket.id, to_role: "dev", to_member_id: member.id, kind: "implement", payload: "{}", status: "pending", available_at: "", attempts: 0, created_at: "", claimed_at: null, last_error: null } as const;
-    expect(await promptFor(p, msg, p.ticket(ticket.id), {})).toContain("区切り文字を変えたときも見てね");
+    expect(await promptFor(p, msg, await p.ticket(ticket.id), {})).toContain("区切り文字を変えたときも見てね");
   });
 
   it("新しい仕事を頼まれたら、リーダーの受信箱に回す。メモには書かない。リーダーがチケットにできる", async () => {
-    const { p, d, harness } = setup(async (req, call) => {
+    const { p, d, harness } = await setup(async (req, call) => {
       if (isChat(req)) {
         await call("hand_to_lead", { title: "PDF 出力も欲しい", body: "請求書を PDF で出したい" });
         return { finalText: "それは新しい仕事だから、リーダーに回したよ" };
@@ -116,20 +116,20 @@ describe("メンバーとの会話", () => {
     expect(handed.body).toContain(`${member.name} から回ってきた新しい仕事`);
     expect(handed.body).toContain("PDF 出力も欲しい");
     expect(handed.body).toContain("請求書を PDF で出したい");
-    expect(p.notes(ticket.id).filter((n) => n.kind === "member")).toEqual([]); // 今のチケットのメモには書かない
+    expect((await p.notes(ticket.id)).filter((n) => n.kind === "member")).toEqual([]); // 今のチケットのメモには書かない
     expect((await memberChatView(p, member.id)).messages.at(-1)).toMatchObject({ who: "member", body: "それは新しい仕事だから、リーダーに回したよ" });
     // リーダーは、回ってきた頼みを読んでチケットを作る
     const leadCall = harness.calls.find((c) => c.prompt.includes("責任者からチャットが届きました"))!;
     expect(leadCall.prompt).toContain("PDF 出力も欲しい");
-    expect(p.tickets().map((t) => t.title)).toContain("PDF 出力");
-    expect(p.ticket(ticket.id).owner_member_id).toBe(member.id);
+    expect((await p.tickets()).map((t) => t.title)).toContain("PDF 出力");
+    expect((await p.ticket(ticket.id)).owner_member_id).toBe(member.id);
   });
 
   it("メンバーが今の仕事の最中なら、終わるまで待ってから答える", async () => {
     const order: string[] = [];
     const clock = new ManualClock();
-    const p = new Project(":memory:", clock);
-    p.addRepo("acme/shop", "API");
+    const p = await Project.open(":memory:", clock);
+    await p.addRepo("acme/shop", "API");
     let said = false;
     const harness = new FakeHarness(async (req, call) => {
       if (isChat(req)) {
@@ -141,7 +141,7 @@ describe("メンバーとの会話", () => {
         // 開発の最中に話しかける(今のチケットは、起動中のこのチケット)
         if (!said) {
           said = true;
-          const t = p.tickets()[0]!;
+          const t = (await p.tickets())[0]!;
           const m = get<{ member_id: number }>(p.db, "SELECT member_id FROM runs WHERE ticket_id = ? AND ended_at IS NULL", [t.id])!.member_id;
           await sayToMember(p, m, "どう?");
           expect((await memberNow(p, m)).state).toBe("working");
@@ -157,11 +157,11 @@ describe("メンバーとの会話", () => {
   });
 
   it("話しかけられないとき: 島のメンバーでない・まだチケットが無い・空のメッセージ", async () => {
-    const { p, d } = setup(() => undefined);
-    p.fillSeats();
-    const idle = p.membersOfUnit(p.currentFormation().units[0]!.id)[0]!;
+    const { p, d } = await setup(() => undefined);
+    await p.fillSeats();
+    const idle = (await p.membersOfUnit((await p.currentFormation()).units[0]!.id))[0]!;
     await expect(sayToMember(p, idle.id, "やあ")).rejects.toThrow("まだチケットを受け持っていない");
-    await expect(sayToMember(p, p.fixedMember("lead").id, "やあ")).rejects.toThrow("島のメンバーだけ");
+    await expect(sayToMember(p, (await p.fixedMember("lead")).id, "やあ")).rejects.toThrow("島のメンバーだけ");
     const { member } = await worked(p, d);
     await expect(sayToMember(p, member.id, "  ")).rejects.toThrow("メッセージがありません");
   });
@@ -178,8 +178,8 @@ describe("終わったチケット(done・dropped)について話しかける", 
         }
       }
       const clock = new ManualClock();
-      const p = new Project(":memory:", clock);
-      p.addRepo("acme/shop", "API");
+      const p = await Project.open(":memory:", clock);
+      await p.addRepo("acme/shop", "API");
       const harness = new FakeHarness(async (req, call) => {
         clock.advance(60_000);
         if (req.tools.some((t) => t.name === "submit_pr")) await call("submit_pr", { summary: "実装した", responses: fixedAll(req.prompt) });
@@ -192,7 +192,7 @@ describe("終わったチケット(done・dropped)について話しかける", 
       prepared.length = 0;
       // 会話の起動が新しく残すセッションに、チケットのブランチが入らないことを見たいので、開発のセッションは消しておく
       p.db.prepare("DELETE FROM sessions WHERE member_id = ? AND ticket_id = ?").run(member.id, ticket.id);
-      const notesBefore = p.notes(ticket.id).length;
+      const notesBefore = (await p.notes(ticket.id)).length;
 
       await sayToMember(p, member.id, "あれってどうなった?");
       await d.drain();
@@ -206,8 +206,8 @@ describe("終わったチケット(done・dropped)について話しかける", 
         ["owner", "あれってどうなった?"],
         ["member", "もう終わったチケットだよ"],
       ]);
-      expect(p.notes(ticket.id)).toHaveLength(notesBefore);
-      expect(p.ticket(ticket.id).stage).toBe(stage);
+      expect(await p.notes(ticket.id)).toHaveLength(notesBefore);
+      expect((await p.ticket(ticket.id)).stage).toBe(stage);
       // 既定のブランチで動いた起動は、チケットのブランチを覚えない
       expect(get<{ branch: string | null }>(p.db, "SELECT branch FROM sessions WHERE member_id = ? AND ticket_id = ?", [member.id, ticket.id])!.branch).toBeNull();
     });
@@ -265,7 +265,7 @@ describe("終わったチケット(done・dropped)について話しかける", 
 
 describe("メンバーの今していること", () => {
   it("手すきなら「手すき」と直前に終えたチケット、起動中ならチケットの種類・工程・往復・経過・トークンと直近の手順", async () => {
-    const { p, d } = setup(() => undefined);
+    const { p, d } = await setup(() => undefined);
     const { ticket, member } = await worked(p, d);
     const idle = await memberNow(p, member.id);
     expect(idle).toMatchObject({ state: "idle", doing: null, last: { number: ticket.number, title: "CSV 出力" }, ticket: { number: ticket.number, kind: "feature" } });
@@ -275,11 +275,11 @@ describe("メンバーの今していること", () => {
     // 起動中(途中経過つき)
     const { progressRecorder } = await import("./progress.js");
     const msgId = p.db.prepare("INSERT INTO messages (ticket_id, to_role, kind, payload, available_at, created_at) VALUES (?, 'dev', 'fix', '{}', ?, ?)").run(ticket.id, p.now(), p.now()).lastInsertRowid;
-    const policy = p.policy("dev");
+    const policy = await p.policy("dev");
     const runId = Number(
       p.db
         .prepare("INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at, model, effort) VALUES (?, ?, ?, 'dev', ?, ?, ?, ?, ?)")
-        .run(msgId, ticket.id, member.id, policy.id, p.currentFormation().id, p.now(), policy.model, policy.effort).lastInsertRowid,
+        .run(msgId, ticket.id, member.id, policy.id, (await p.currentFormation()).id, p.now(), policy.model, policy.effort).lastInsertRowid,
     );
     const rec = progressRecorder(p, runId);
     rec({ type: "step", kind: "tool", text: "テストを流した" });

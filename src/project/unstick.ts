@@ -30,20 +30,20 @@ function messageOf(msg: MessageRow): ResumeMessage {
 }
 
 /** これまでにリーダーが手助けした回数(このチケットで、前に進むまでの続けての回数)。 */
-export function unstickCount(p: Project, ticketId: number): number {
-  return p.settingNumber(`unstick_count:${ticketId}`, 0);
+export async function unstickCount(p: Project, ticketId: number): Promise<number> {
+  return await p.settingNumber(`unstick_count:${ticketId}`, 0);
 }
 
 /** チケットが前に進んだら(工程を通ったら)数え直す。 */
-export function resetUnstick(p: Project, ticketId: number): void {
-  p.setSetting(`unstick_count:${ticketId}`, "0");
+export async function resetUnstick(p: Project, ticketId: number): Promise<void> {
+  await p.setSetting(`unstick_count:${ticketId}`, "0");
 }
 
 /** 再試行が尽きた。リーダーに手助けを頼む。手助けを使い切っていたら保留する。 */
 export async function askLeadToUnstick(p: Project, ticket: TicketRow, msg: MessageRow, error: string): Promise<void> {
   const resume = messageOf(msg);
-  const n = unstickCount(p, ticket.id);
-  const max = p.settingNumber("unstick_max", 5);
+  const n = await unstickCount(p, ticket.id);
+  const max = await p.settingNumber("unstick_max", 5);
   if (n >= max) {
     await holdTicket(p, ticket.id, {
       reason: `リーダーが ${n} 回手助けしても、同じように止まりました。最後のエラー: ${error}`,
@@ -52,9 +52,9 @@ export async function askLeadToUnstick(p: Project, ticket: TicketRow, msg: Messa
     });
     return;
   }
-  p.setStage(ticket.id, "decision");
-  send(p, { ticketId: ticket.id, toRole: "lead", kind: "unstick", payload: { error, resume } satisfies StuckPayload });
-  p.event("system", "stuck", ticket.id, { error, role: msg.to_role, kind: msg.kind, help: n + 1 });
+  await p.setStage(ticket.id, "decision");
+  await send(p, { ticketId: ticket.id, toRole: "lead", kind: "unstick", payload: { error, resume } satisfies StuckPayload });
+  await p.event("system", "stuck", ticket.id, { error, role: msg.to_role, kind: msg.kind, help: n + 1 });
 }
 
 /** リーダーが調べる材料: チケット・止まった仕事・最近の起動・最後の起動の途中経過・これまでの助言。 */
@@ -70,11 +70,11 @@ export async function unstickPrompt(p: Project, ticket: TicketRow, payload: Stuc
     .execute();
   const last = runs.find((r) => r.outcome === "error") ?? runs[0];
   const steps = last ? (await p.pdb.from("run_steps").select(["kind", "text"]).where("run_id", "=", last.id).orderBy("id", "desc").limit(30).execute()).reverse() : [];
-  const notes = p.notes(ticket.id);
-  const budget = ticketBudgetUsd(p, ticket.id);
+  const notes = await p.notes(ticket.id);
+  const budget = await ticketBudgetUsd(p, ticket.id);
   const spent = await ticketSpentUsd(p, ticket.id);
   const pr = await p.pdb.from("pull_requests").select(["number", "head"]).where("ticket_id", "=", ticket.id).limit(1).executeTakeFirst();
-  const who = payload.resume.toMemberId ? p.member(payload.resume.toMemberId).name : `${ROLE_LABEL[payload.resume.toRole as Role] ?? payload.resume.toRole}の手すきの人`;
+  const who = payload.resume.toMemberId ? (await p.member(payload.resume.toMemberId)).name : `${ROLE_LABEL[payload.resume.toRole as Role] ?? payload.resume.toRole}の手すきの人`;
   return `チケットの仕事が同じように失敗し続けて止まりました。原因を調べて、チームが先に進めるように手助けしてください。
 
 ## チケット #${ticket.number}: ${ticket.title}
@@ -85,7 +85,7 @@ ${ticket.body.trim().slice(0, 2000) || "(本文なし)"}
 - 最後のエラー: ${payload.error}
 - 使った額: $${spent.toFixed(2)}${budget === null ? "(予算は無制限)" : ` / 予算 $${budget}`}
 ${pr ? `- PR: #${pr.number}(ブランチ ${pr.head})` : "- PR: まだありません"}
-- これまでのリーダーの手助け: ${unstickCount(p, ticket.id)} 回
+- これまでのリーダーの手助け: ${await unstickCount(p, ticket.id)} 回
 
 ## 最近の起動(新しい順)
 ${runs.map((r) => `- [${r.started_at}] ${r.name}(${r.role}): ${r.outcome ?? "?"}${r.error ? ` / ${r.error.slice(0, 300)}` : ""}${r.summary ? ` / ${r.summary.slice(0, 200)}` : ""}`).join("\n") || "(なし)"}
@@ -93,8 +93,8 @@ ${runs.map((r) => `- [${r.started_at}] ${r.name}(${r.role}): ${r.outcome ?? "?"}
 ## 最後の起動の途中経過
 ${steps.map((s) => `- [${s.kind}] ${s.text.slice(0, 300)}`).join("\n") || "(記録なし)"}
 
-${lastCiFailure(p, ticket.id)}
-${lastTeamCi(p, ticket.id)}
+${await lastCiFailure(p, ticket.id)}
+${await lastTeamCi(p, ticket.id)}
 
 ## これまでのメモ(責任者・リーダーから)
 ${notes.map((n) => `- ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.body}`).join("\n") || "(なし)"}
@@ -106,7 +106,7 @@ ${notes.map((n) => `- ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.bo
 - 担当が同じところで詰まり続けているなら、reassign で別のメンバーか島に渡します(新しい目で見てもらう)。
 - チケットが大きすぎる・手元で確かめられない部分がある(例: 本番の CI でしか動かない)なら、split_and_retry で残りを別チケットに切り出し、今のチケットは確かめられる範囲に絞ってやり直させます。
 - このチケットの変更が、すでに main に入っている(別のチケットで先に入った・重複していた)なら、close_as_already_done で完了にします。git log origin/main でコミットを確かめ、受け入れ条件を満たしているかも見てから呼びます。保留にはしません。
-${teamCiEnabled(p) ? "- CI はチームの CI を使っています(GitHub Actions は止めてあり、merge にも使いません)。落ちたなら、上の「最後のチームの CI」の出力で原因を見立てます。GitHub の CI の失敗は理由にしません。" : `- CI が落ちているなら、上の「最後に落ちた CI」と、ci_status・ci_run(ジョブ・ステップ・GitHub の注記・ログ)・ci_settings(秘密情報の名前)で原因を見立てます。作業場所からは GitHub は見えませんが、これらの道具は Kuramoto が外で GitHub を見て答えます。責任者に「ログを貼ってほしい」「やり直してほしい」とは頼みません(ci_rerun で自分でやり直せます)。ジョブが始まってもいない(ステップが 1 つも動いていない)なら、注記に理由(請求・使用額の上限・ランナー)が書かれています。原因がコードなら retry_with_advice で直し方を、main でも落ちているなら main の CI を直すチケットに任せて待つよう伝えます。ワークフローの設定・秘密情報など責任者にしかできないことが原因なら hold にします。`}
+${await teamCiEnabled(p) ? "- CI はチームの CI を使っています(GitHub Actions は止めてあり、merge にも使いません)。落ちたなら、上の「最後のチームの CI」の出力で原因を見立てます。GitHub の CI の失敗は理由にしません。" : `- CI が落ちているなら、上の「最後に落ちた CI」と、ci_status・ci_run(ジョブ・ステップ・GitHub の注記・ログ)・ci_settings(秘密情報の名前)で原因を見立てます。作業場所からは GitHub は見えませんが、これらの道具は Kuramoto が外で GitHub を見て答えます。責任者に「ログを貼ってほしい」「やり直してほしい」とは頼みません(ci_rerun で自分でやり直せます)。ジョブが始まってもいない(ステップが 1 つも動いていない)なら、注記に理由(請求・使用額の上限・ランナー)が書かれています。原因がコードなら retry_with_advice で直し方を、main でも落ちているなら main の CI を直すチケットに任せて待つよう伝えます。ワークフローの設定・秘密情報など責任者にしかできないことが原因なら hold にします。`}
 - 直すコードが無い・やることが無いチケット(GitHub の CI のためだけのもの、仕様が変わっていらなくなったものなど)は、hold にせず drop_ticket で理由を書いて取りやめます。
 - 仕様が決まっていないなら、受け入れ条件と設計から仮に決め、その前提を助言に書いて進めます。
 - hold(保留)は、責任者にしかできないことが要るときだけです(秘密情報やアカウントの登録・外のサービスの契約・権限の付与など)。そのときは責任者に何をしてほしいかを具体的に書きます。
@@ -134,7 +134,7 @@ export function unstickTools(
         const problem = await ws.checkLanded?.(a.commit);
         if (problem) return problem;
         await ws.closePrs?.(a);
-        await closeAlreadyDone(p, ticket, { ...a, by: p.fixedMember("lead").name });
+        await closeAlreadyDone(p, ticket, { ...a, by: (await p.fixedMember("lead")).name });
         done.action = "closed";
         return "確かめて、完了にしました。";
       },
@@ -143,11 +143,11 @@ export function unstickTools(
       name: "retry_with_advice",
       description: "担当への助言をチケットのメモに書き、止まった仕事をやり直させる。",
       input: { advice: z.string().min(1).describe("担当への具体的な助言。原因の見立て、どこをどう直すか、何を避けるか") },
-      handler: (a) => {
+      handler: async (a) => {
         if (done.action) return "もう決めました。";
-        p.addNote(ticket.id, `【手助け】${a.advice}`, "lead");
-        p.setSetting(`unstick_count:${ticket.id}`, String(unstickCount(p, ticket.id) + 1));
-        resumeWork(p, ticket, payload.resume);
+        await p.addNote(ticket.id, `【手助け】${a.advice}`, "lead");
+        await p.setSetting(`unstick_count:${ticket.id}`, String(await unstickCount(p, ticket.id) + 1));
+        await resumeWork(p, ticket, payload.resume);
         done.action = "retry";
         return "助言を渡して、やり直しを頼みました。";
       },
@@ -162,16 +162,16 @@ export function unstickTools(
       handler: async (a) => {
         if (done.action) return "もう決めました。";
         const role = payload.resume.toRole;
-        const units = p.currentFormation().units.filter((u) => (u.roles as string[]).includes(role));
+        const units = (await p.currentFormation()).units.filter((u) => (u.roles as string[]).includes(role));
         const unit = units.find((u) => u.name === a.to);
-        const member = units.flatMap((u) => p.membersOfUnit(u.id)).find((m) => m.name === a.to);
-        if (!unit && !member) return `「${a.to}」は${ROLE_LABEL[role as Role] ?? role}の島のメンバーでも島でもありません。今の島: ${units.map((u) => `${u.name}(${p.membersOfUnit(u.id).map((m) => m.name).join("・")})`).join("、")}`;
-        p.addNote(ticket.id, `【手助け・担当替え】${a.advice}`, "lead");
-        p.setSetting(`unstick_count:${ticket.id}`, String(unstickCount(p, ticket.id) + 1));
+        const member = (await Promise.all(units.map((u) => p.membersOfUnit(u.id)))).flat().find((m) => m.name === a.to);
+        if (!unit && !member) return `「${a.to}」は${ROLE_LABEL[role as Role] ?? role}の島のメンバーでも島でもありません。今の島: ${(await Promise.all(units.map(async (u) => `${u.name}(${(await p.membersOfUnit(u.id)).map((m) => m.name).join("・")})`))).join("、")}`;
+        await p.addNote(ticket.id, `【手助け・担当替え】${a.advice}`, "lead");
+        await p.setSetting(`unstick_count:${ticket.id}`, String(await unstickCount(p, ticket.id) + 1));
         // 開発なら持ち主ごと替える(新しい担当がブランチの続きから進める)。島を指したら、持ち主を外して手すきの人に取らせる
         if (role === "dev") await p.pdb.update("tickets", { owner_member_id: member?.id ?? null }).where("id", "=", ticket.id).execute();
         const kind = role === "dev" ? (member ? "answer" : "implement") : payload.resume.kind;
-        resumeWork(p, ticket, {
+        await resumeWork(p, ticket, {
           ...payload.resume,
           toMemberId: member?.id ?? null,
           kind,
@@ -197,9 +197,9 @@ export function unstickTools(
         for (const t of a.tickets) {
           made.push(await createTicket(p, { title: t.title, body: `${t.body}\n\n---\n#${ticket.number}「${ticket.title}」が大きすぎたため、リーダーが切り出しました。`, planRefs: { splitFrom: ticket.number } }));
         }
-        p.addNote(ticket.id, `【手助け・切り出し】#${made.map((t) => t.number).join("・#")} に切り出しました。${a.advice}`, "lead");
-        p.setSetting(`unstick_count:${ticket.id}`, String(unstickCount(p, ticket.id) + 1));
-        resumeWork(p, ticket, payload.resume);
+        await p.addNote(ticket.id, `【手助け・切り出し】#${made.map((t) => t.number).join("・#")} に切り出しました。${a.advice}`, "lead");
+        await p.setSetting(`unstick_count:${ticket.id}`, String(await unstickCount(p, ticket.id) + 1));
+        await resumeWork(p, ticket, payload.resume);
         done.action = "retry";
         return `#${made.map((t) => t.number).join("・#")} に切り出し、範囲を絞ってやり直してもらいます。`;
       },
@@ -211,7 +211,7 @@ export function unstickTools(
       handler: async (a) => {
         if (done.action) return "もう決めました。";
         const r = await dropUnneeded(p, ticket.number, a.reason, ws.closeTicketPrs);
-        if (p.ticket(ticket.id).stage === "dropped") done.action = "dropped";
+        if ((await p.ticket(ticket.id)).stage === "dropped") done.action = "dropped";
         return r;
       },
     }),

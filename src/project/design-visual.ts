@@ -74,7 +74,7 @@ export async function referenceImage(p: Project, store: DesignStore, render: Ren
   try {
     png = await render(s.html, DEVICE_WIDTH[s.device]);
   } catch (e) {
-    p.event("system", "design_render_failed", null, { screen: s.key, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
+    await p.event("system", "design_render_failed", null, { screen: s.key, error: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
     return null;
   }
   await store.put(key, png);
@@ -124,7 +124,7 @@ export async function recordComparison(
   await store.put(diffKey, c.diff);
   const actualId = await record(p, { ticket_id: a.ticketId, screen_key: a.screenKey, kind: "actual", store_key: actualKey, ...size(a.actual), diff_ratio: c.ratio });
   const diffId = await record(p, { ticket_id: a.ticketId, screen_key: a.screenKey, kind: "diff", store_key: diffKey, ...size(c.diff), diff_ratio: c.ratio });
-  p.event("system", "design_compared", a.ticketId, { screen: a.screenKey, ratio: c.ratio, reference: a.reference.id, actual: actualId, diff: diffId });
+  await p.event("system", "design_compared", a.ticketId, { screen: a.screenKey, ratio: c.ratio, reference: a.reference.id, actual: actualId, diff: diffId });
   return { ...c, actualId, diffId };
 }
 

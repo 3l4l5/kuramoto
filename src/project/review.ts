@@ -62,7 +62,7 @@ export async function threads(p: Project, ticketId: number, opts: { role?: strin
   const byFinding = new Map<number, ThreadComment[]>();
   for (const c of cs) {
     const list = byFinding.get(c.finding_id) ?? [];
-    list.push({ who: c.member_id ? p.member(c.member_id).name : c.role === "lead" ? p.fixedMember("lead").name : "責任者", role: c.role, action: c.action, body: c.body, at: c.at });
+    list.push({ who: c.member_id ? (await p.member(c.member_id)).name : c.role === "lead" ? (await p.fixedMember("lead")).name : "責任者", role: c.role, action: c.action, body: c.body, at: c.at });
     byFinding.set(c.finding_id, list);
   }
   return rows.map((f) => ({ ...f, blocking: !!f.blocking, comments: byFinding.get(f.id) ?? [] }));

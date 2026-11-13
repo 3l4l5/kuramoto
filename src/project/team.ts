@@ -28,15 +28,15 @@ const policyInput = z.object({
   options: z.record(z.string(), z.unknown()).default({}),
 });
 
-export function savePolicyInput(p: Project, role: string, input: unknown) {
+export async function savePolicyInput(p: Project, role: string, input: unknown) {
   if (!POLICY_ROLES.includes(role as Role)) throw new Error(`役割 ${role} の方針は変えられません`);
   const r = policyInput.safeParse(input);
   if (!r.success) throw new Error(`方針が正しくありません: ${r.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join(" / ")}`);
   const schema = ROLE_OPTIONS[role as Role];
   const options = schema ? schema.safeParse(r.data.options) : { success: Object.keys(r.data.options).length === 0, data: {} };
   if (!options.success) throw new Error(`${ROLE_LABEL[role as Role]}の設定が正しくありません`);
-  const saved = p.savePolicy(role as Role, { model: r.data.model, effort: r.data.effort, focus: r.data.focus.trim(), options: options.data as Record<string, unknown> });
-  p.event("owner", "policy_saved", null, { role, version: saved.version, model: saved.model, effort: saved.effort });
+  const saved = await p.savePolicy(role as Role, { model: r.data.model, effort: r.data.effort, focus: r.data.focus.trim(), options: options.data as Record<string, unknown> });
+  await p.event("owner", "policy_saved", null, { role, version: saved.version, model: saved.model, effort: saved.effort });
   return saved;
 }
 
@@ -62,16 +62,16 @@ const formationInput = z.object({
   ),
 });
 
-export function saveFormationInput(p: Project, input: unknown) {
+export async function saveFormationInput(p: Project, input: unknown) {
   const r = formationInput.safeParse(input);
   if (!r.success) throw new Error(`編成が正しくありません: ${r.error.issues.map((i) => i.message).join(" / ")}`);
-  return p.saveFormation(r.data as FormationSpec);
+  return await p.saveFormation(r.data as FormationSpec);
 }
 
 // ---- 画面に出す: 今の設定と、版の歴史 ----
 
 export async function teamView(p: Project) {
-  for (const role of POLICY_ROLES) p.policy(role); // 後から足した役割は既定の方針を置く(読む前に)
+  for (const role of POLICY_ROLES) await p.policy(role); // 後から足した役割は既定の方針を置く(読む前に)
   const [formationRows, policyRows] = await Promise.all([inScope(p.pdb, "formations").orderBy("version").execute(), inScope(p.pdb, "policies").orderBy("version").execute()]);
   // 島は、版ごとに引かず 1 文でまとめて取る
   const unitRows = formationRows.length ? await inScope(p.pdb, "units").where("formation_id", "in", formationRows.map((f) => f.id)).orderBy("id").execute() : [];
@@ -90,7 +90,7 @@ export async function teamView(p: Project) {
     }));
     return { id: f.id, version: f.version, pull: f.pull as "down" | "start", flows: parseFlows(f.flows), routes: parseRoutes(f.routes), createdAt: f.created_at, units };
   });
-  const current = p.currentFormation();
+  const current = await p.currentFormation();
   const policies = POLICY_ROLES.map((role) => {
     const versions = policyRows
       .filter((v) => v.role === role)
@@ -98,10 +98,10 @@ export async function teamView(p: Project) {
     return { role, label: ROLE_LABEL[role], versions };
   });
   return {
-    repos: p.repos().map((r) => r.full_name),
+    repos: (await p.repos()).map((r) => r.full_name),
     formation: {
       current: current.version,
-      members: Object.fromEntries(current.units.map((u) => [u.name, p.membersOfUnit(u.id).map((m) => ({ name: m.name, helper: !m.is_base }))])),
+      members: Object.fromEntries(await Promise.all(current.units.map(async (u) => [u.name, (await p.membersOfUnit(u.id)).map((m) => ({ name: m.name, helper: !m.is_base }))] as const))),
       versions: formations,
     },
     policies,

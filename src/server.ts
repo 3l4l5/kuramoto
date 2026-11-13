@@ -211,7 +211,7 @@ export class KuramotoServer {
   /** オフィスを止める(企画スタジオの担当は動き続ける)。 */
   async stop(id: number): Promise<void> {
     this.running.delete(id);
-    await this.hq.setStatus(id, handedOff(this.project(id)) ? "starting" : "planning");
+    await this.hq.setStatus(id, await handedOff(this.project(id)) ? "starting" : "planning");
   }
 
   /** プロジェクトの受信箱を見回るループ。1 プロジェクトに 1 つ。 */
@@ -245,13 +245,13 @@ export class KuramotoServer {
     // チームが自動で merge する(ADR-0022)。始業中だけ。merge できたら、待っていた後のチケットが動けるように受信箱を見直す
     let merging = false;
     const merge = async (): Promise<void> => {
-      if (merging || !this.running.has(id) || !this.dbUp() || !autoMergeEnabled(p)) return;
+      if (merging || !this.running.has(id) || !this.dbUp() || !await autoMergeEnabled(p)) return;
       merging = true;
       try {
         if (await autoMerge(p, this.github, { teamCi })) this.poke(id);
       } catch (e) {
         this.deps.dbHealth?.reportFailure(e); // 接続のエラーなら、次の ping を待たずに「切れた」にする
-        p.event("system", "dispatcher_error", null, { error: e instanceof Error ? e.message : String(e) });
+        await p.event("system", "dispatcher_error", null, { error: e instanceof Error ? e.message : String(e) });
       } finally {
         merging = false;
       }
@@ -275,10 +275,10 @@ export class KuramotoServer {
       r.busy = true;
       try {
         // 島の最大人数まで並列に動かす(編成を変えたら次に見直すときから効く)
-        await dispatcher.drain({ concurrency: () => dispatcher.capacity() });
+        await dispatcher.drain({ concurrency: async () => await dispatcher.capacity() });
       } catch (e) {
         this.deps.dbHealth?.reportFailure(e); // 接続のエラーなら、次の ping を待たずに「切れた」にする
-        p.event("system", "dispatcher_error", null, { error: e instanceof Error ? e.message : String(e) });
+        await p.event("system", "dispatcher_error", null, { error: e instanceof Error ? e.message : String(e) });
       } finally {
         r.busy = false;
       }
@@ -296,10 +296,10 @@ export class KuramotoServer {
    * Actions を切り替えられなかった(権限が無い等)ときは、チームの CI には切り替えたうえで、責任者に知らせる。
    */
   private async setCiMode(p: Project, mode: "team" | "github"): Promise<void> {
-    p.setSetting("ci_mode", mode);
+    await p.setSetting("ci_mode", mode);
     const done: string[] = [];
     const failed: string[] = [];
-    for (const r of p.repos()) {
+    for (const r of await p.repos()) {
       try {
         if (!this.github.setActionsEnabled) throw new Error("この環境では切り替えられません");
         await this.github.setActionsEnabled(r.full_name, mode === "github");
@@ -308,7 +308,7 @@ export class KuramotoServer {
         failed.push(`${r.full_name}(${(e instanceof Error ? e.message : String(e)).slice(0, 200)})`);
       }
     }
-    p.event("owner", "ci_mode", null, { mode, done, failed });
+    await p.event("owner", "ci_mode", null, { mode, done, failed });
     await leadReply(
       p,
       mode === "team"
@@ -402,7 +402,7 @@ export class KuramotoServer {
       const data = extractTransfer(String(body.markdown ?? ""));
       const rec = await this.hq.createProject(data.project.name, data.repos);
       await restoreTransfer(await this.open(rec.id), data);
-      await this.hq.setStatus(rec.id, handedOff(this.project(rec.id)) ? "starting" : "planning");
+      await this.hq.setStatus(rec.id, await handedOff(this.project(rec.id)) ? "starting" : "planning");
       await advance(this.project(rec.id));
       await this.loop(rec.id);
       return { id: rec.id };
@@ -427,7 +427,7 @@ export class KuramotoServer {
     if (!b && method === "GET") return await this.projectView(id);
     if (b === "tickets" && c && method === "GET") return await ticketView(p, Number(c));
     if (b === "tickets" && c && parts[4] === "notes" && method === "POST") {
-      p.addNote(Number(c), String(body.body ?? ""));
+      await p.addNote(Number(c), String(body.body ?? ""));
       return await ticketView(p, Number(c));
     }
     if (b === "tickets" && c && parts[4] === "reopen" && method === "POST") {
@@ -447,7 +447,7 @@ export class KuramotoServer {
       return await ticketView(p, Number(c));
     }
     if (b === "tickets" && c && method === "POST") {
-      p.editTicket(Number(c), { title: String(body.title ?? ""), body: String(body.body ?? "") });
+      await p.editTicket(Number(c), { title: String(body.title ?? ""), body: String(body.body ?? "") });
       return await ticketView(p, Number(c));
     }
     if (b === "tickets" && method === "POST") {
@@ -526,19 +526,19 @@ export class KuramotoServer {
       return {
         name: this.record(id).name,
         dataDir: this.record(id).data_dir,
-        repos: p.repos().map((r) => ({ fullName: r.full_name, role: r.role })),
-        ticketBudgetUsd: defaultTicketBudgetUsd(p),
-        projectBudgetUsd: projectBudgetUsd(p),
+        repos: (await p.repos()).map((r) => ({ fullName: r.full_name, role: r.role })),
+        ticketBudgetUsd: await defaultTicketBudgetUsd(p),
+        projectBudgetUsd: await projectBudgetUsd(p),
         projectSpentUsd: await projectSpentUsd(p),
-        nonstop: nonstop(p),
-        autoMerge: autoMergeEnabled(p),
-        resumeChecks: resumeChecks(p),
-        patrolMin: patrolMinutes(p),
-        planWeb: planWebEnabled(p),
-        planWebDomains: planWebDomains(p).join("\n"),
-        ciMode: teamCiEnabled(p) ? "team" : "github",
+        nonstop: await nonstop(p),
+        autoMerge: await autoMergeEnabled(p),
+        resumeChecks: await resumeChecks(p),
+        patrolMin: await patrolMinutes(p),
+        planWeb: await planWebEnabled(p),
+        planWebDomains: (await planWebDomains(p)).join("\n"),
+        ciMode: await teamCiEnabled(p) ? "team" : "github",
         // チームの CI で流すコマンド(リポジトリごと)。空なら package.json から決める
-        ciCommands: Object.fromEntries(p.repos().map((r) => [r.full_name, p.setting(`team_ci_commands:${r.full_name}`) ?? ""])),
+        ciCommands: Object.fromEntries(await Promise.all((await p.repos()).map(async (r) => [r.full_name, (await p.setting(`team_ci_commands:${r.full_name}`)) ?? ""] as const))),
       };
     if (b === "settings" && method === "POST") {
       const budget = body.ticketBudgetUsd === undefined ? undefined : body.ticketBudgetUsd === null ? null : Number(body.ticketBudgetUsd);
@@ -547,26 +547,26 @@ export class KuramotoServer {
       const rec = await this.hq.updateProject(p, id, { name: String(body.name ?? ""), repos: repos.map((r) => ({ fullName: String(r.fullName).trim(), role: String(r.role) })) });
       const total = body.projectBudgetUsd === undefined ? undefined : body.projectBudgetUsd === null || body.projectBudgetUsd === "" ? null : Number(body.projectBudgetUsd);
       if (total !== undefined && total !== null && !(Number.isFinite(total) && total > 0)) throw new Error("全体の予算は 0 より大きい金額か、無制限にしてください");
-      if (budget !== undefined) setDefaultTicketBudget(p, budget);
+      if (budget !== undefined) await setDefaultTicketBudget(p, budget);
       if (total !== undefined) await setProjectBudget(p, total);
-      if (typeof body.nonstop === "boolean") p.setSetting("nonstop", body.nonstop ? "1" : "0");
-      if (typeof body.autoMerge === "boolean") p.setSetting("auto_merge", body.autoMerge ? "1" : "0");
-      if (typeof body.resumeChecks === "boolean") p.setSetting("resume_checks", body.resumeChecks ? "1" : "0");
-      if (body.patrolMin !== undefined) setPatrolMinutes(p, Number(body.patrolMin));
-      if (typeof body.planWeb === "boolean") p.setSetting("plan_web", body.planWeb ? "1" : "0");
-      if (typeof body.planWebDomains === "string") p.setSetting("plan_web_domains", body.planWebDomains.trim());
+      if (typeof body.nonstop === "boolean") await p.setSetting("nonstop", body.nonstop ? "1" : "0");
+      if (typeof body.autoMerge === "boolean") await p.setSetting("auto_merge", body.autoMerge ? "1" : "0");
+      if (typeof body.resumeChecks === "boolean") await p.setSetting("resume_checks", body.resumeChecks ? "1" : "0");
+      if (body.patrolMin !== undefined) await setPatrolMinutes(p, Number(body.patrolMin));
+      if (typeof body.planWeb === "boolean") await p.setSetting("plan_web", body.planWeb ? "1" : "0");
+      if (typeof body.planWebDomains === "string") await p.setSetting("plan_web_domains", body.planWebDomains.trim());
       if (body.ciCommands && typeof body.ciCommands === "object")
-        for (const [repo, cmds] of Object.entries(body.ciCommands as Record<string, unknown>)) p.setSetting(`team_ci_commands:${repo}`, String(cmds ?? "").trim());
-      if ((body.ciMode === "team" || body.ciMode === "github") && (body.ciMode === "team") !== teamCiEnabled(p)) await this.setCiMode(p, body.ciMode);
+        for (const [repo, cmds] of Object.entries(body.ciCommands as Record<string, unknown>)) await p.setSetting(`team_ci_commands:${repo}`, String(cmds ?? "").trim());
+      if ((body.ciMode === "team" || body.ciMode === "github") && (body.ciMode === "team") !== await teamCiEnabled(p)) await this.setCiMode(p, body.ciMode);
       this.poke(id);
       return { name: rec.name };
     }
     if (b === "formation" && method === "POST") {
-      const f = saveFormationInput(p, body);
+      const f = await saveFormationInput(p, body);
       this.poke(id);
       return { version: f.version };
     }
-    if (b === "policies" && c && method === "POST") return { version: savePolicyInput(p, c, body).version };
+    if (b === "policies" && c && method === "POST") return { version: (await savePolicyInput(p, c, body)).version };
     if (b === "studio") {
       const out = await this.studioRoute(p, id, method, parts.slice(3), body);
       if (method === "POST") this.poke(id);
@@ -589,7 +589,7 @@ export class KuramotoServer {
         await setStudioPaused(p, !!body.paused);
         if (body.paused) this.runners.get(id)?.dispatcher.stopPlanning();
         else this.poke(id);
-        return { paused: !!studioPaused(p) };
+        return { paused: !!await studioPaused(p) };
       }
       case "chat": {
         const text = String(body.text ?? "").trim();
@@ -630,11 +630,11 @@ export class KuramotoServer {
         name: rec.name,
         status: rec.status,
         running: this.running.has(rec.id),
-        planning: { handed: handedOff(p), stages: stages.length, stagesDone: stages.filter((s) => s.done).length, current: stages.find((s) => !s.done)?.key ?? null },
-        repos: p.repos().map((r) => ({ fullName: r.full_name, role: r.role })),
+        planning: { handed: await handedOff(p), stages: stages.length, stagesDone: stages.filter((s) => s.done).length, current: stages.find((s) => !s.done)?.key ?? null },
+        repos: (await p.repos()).map((r) => ({ fullName: r.full_name, role: r.role })),
         decisions: (await pendingOwnerDecisions(p)).length,
         merges: (await suggestedMergeOrder(p)).length,
-        open: p.tickets().filter((t) => !["done", "dropped"].includes(t.stage)).length,
+        open: (await p.tickets()).filter((t) => !["done", "dropped"].includes(t.stage)).length,
         working: get<{ n: number }>(p.db, "SELECT COUNT(*) AS n FROM runs WHERE ended_at IS NULL")?.n ?? 0,
         metrics: m,
       };
@@ -662,7 +662,7 @@ export class KuramotoServer {
   async projectView(id: number) {
     const p = await this.open(id);
     const rec = this.record(id);
-    const members = new Map(p.activeMembers().concat(all(p.db, "SELECT * FROM members WHERE left_at IS NOT NULL")).map((m) => [m.id, m.name]));
+    const members = new Map((await p.activeMembers()).concat(all(p.db, "SELECT * FROM members WHERE left_at IS NOT NULL")).map((m) => [m.id, m.name]));
     const working = new Map(
       all<{ id: number; ticket_id: number; member_id: number; role: string }>(p.db, "SELECT id, ticket_id, member_id, role FROM runs WHERE ended_at IS NULL AND ticket_id IS NOT NULL").map((r) => [r.ticket_id, r]),
     );
@@ -672,11 +672,11 @@ export class KuramotoServer {
         "SELECT pr.ticket_id, pr.number, r.full_name, pr.ci, pr.mergeable, pr.fetched_at FROM pull_requests pr JOIN repos r ON r.id = pr.repo_id",
       ).map((r) => [r.ticket_id, r]),
     );
-    const formation = p.currentFormation();
+    const formation = await p.currentFormation();
     const unblocks = await mergeUnblocks(p);
     // 開発に一度でも取りかかったチケット(ボードで「未着手」と「開発中」を分ける)
     const started = new Set(all<{ ticket_id: number }>(p.db, "SELECT DISTINCT ticket_id FROM runs WHERE ticket_id IS NOT NULL AND role = 'dev'").map((r) => r.ticket_id));
-    const tickets = await Promise.all(p.tickets().map(async (t) => {
+    const tickets = await Promise.all((await p.tickets()).map(async (t) => {
       const w = working.get(t.id);
       return {
         id: t.id,
@@ -709,8 +709,8 @@ export class KuramotoServer {
         ruleBlocked: (await openViolations(p, t.id, "blocked")).map((v) => v.name),
       };
     }));
-    const decisions = (await pendingOwnerDecisions(p)).map((d) => {
-      const t = p.ticket(d.ticket_id);
+    const decisions = await Promise.all((await pendingOwnerDecisions(p)).map(async (d) => {
+      const t = await p.ticket(d.ticket_id);
       return {
         id: d.id,
         ticket: { id: t.id, number: t.number, title: t.title, owner: t.owner_member_id ? members.get(t.owner_member_id) : null, rounds: t.rounds },
@@ -724,11 +724,12 @@ export class KuramotoServer {
         leadNote: d.lead_note,
         pr: prs.get(t.id) ?? null,
       };
-    });
+    }));
+    const unitMembers = new Map(await Promise.all(formation.units.map(async (u) => [u.id, await p.membersOfUnit(u.id)] as const)));
     return {
-      project: { id, name: rec.name, status: rec.status, dataDir: rec.data_dir, handed: handedOff(p) },
+      project: { id, name: rec.name, status: rec.status, dataDir: rec.data_dir, handed: await handedOff(p) },
       running: this.running.has(id),
-      repos: p.repos(),
+      repos: await p.repos(),
       stages: pipelineOf(formation).map((r) => ({ key: r, label: ROLE_LABEL[r] })),
       // 種類ごとの流れ(ボードを種類で絞ったときの列の順)。開発より前の工程は preDev(申し送りだけの工程)
       kinds: TICKET_KINDS.map((k) => {
@@ -743,19 +744,19 @@ export class KuramotoServer {
       }),
       // 工程の名前(流れに無い工程にいるチケットの列にも名前を付けるため)
       roleLabels: ROLE_LABEL as Record<string, string>,
-      formation: { version: formation.version, units: formation.units.map((u) => ({ name: u.name, roles: u.roles, max: u.max_members, repos: u.repos, model: u.model, effort: u.effort, members: p.membersOfUnit(u.id).map((m) => m.name) })) },
+      formation: { version: formation.version, units: formation.units.map((u) => ({ name: u.name, roles: u.roles, max: u.max_members, repos: u.repos, model: u.model, effort: u.effort, members: (unitMembers.get(u.id) ?? []).map((m) => m.name) })) },
       tickets,
       decisions,
       mergeOrder: (await suggestedMergeOrder(p)).map((t) => t.id),
       budget: await budgetView(p),
-      autoMerge: autoMergeEnabled(p),
+      autoMerge: await autoMergeEnabled(p),
       // GitHub に入れない(認証切れ)とき: いつから・どんなエラーか(ADR-0027)
-      githubDown: githubDown(p),
+      githubDown: await githubDown(p),
       // MySQL に繋がらない(切れた)とき: いつから・どんなエラーか(ADR-0041)。繋がっていれば null
       dbDown: this.dbDown(),
       // CI のジョブが始まらない(請求・上限など)リポジトリ。merge だけ止まっている
-      ciBlocked: ciBlocked(p).map((b) => ({ ...b, action: ciBlockAction(b.notes) })),
-      events: p.events(30),
+      ciBlocked: (await ciBlocked(p)).map((b) => ({ ...b, action: ciBlockAction(b.notes) })),
+      events: await p.events(30),
       metrics: await metrics(p),
       spentUsd: get<{ s: number | null }>(p.db, "SELECT SUM(cost_usd) AS s FROM runs")?.s ?? 0,
     };

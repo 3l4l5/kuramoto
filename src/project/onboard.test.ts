@@ -21,8 +21,8 @@ const gh = {
 } as unknown as GitHub;
 
 async function setup() {
-  const p = new Project(":memory:", new ManualClock());
-  p.addRepo(REPO, "API");
+  const p = await Project.open(":memory:", new ManualClock());
+  await p.addRepo(REPO, "API");
   await markExisting(p, "kuramoto");
   await fetchGithubSnapshot(p, gh);
   return p;
@@ -33,10 +33,10 @@ const call = async (p: Project, name: string, args: Record<string, unknown>) => 
 describe("既存のリポジトリの続きから(ADR-0030)", () => {
   it("GitHub の途中の仕事を取ってきて、担当にはリポジトリを読んで現状を起こすよう頼む。画面の試作は既定で省く", async () => {
     const p = await setup();
-    expect(fromExisting(p)).toBe(true);
+    expect(await fromExisting(p)).toBe(true);
     expect((await stageRow(p, "screen")).mode).toBe("skip");
-    expect(snapshotText(p)).toContain("PR #42");
-    expect(snapshotText(p)).toContain("Issue #7");
+    expect(await snapshotText(p)).toContain("PR #42");
+    expect(await snapshotText(p)).toContain("Issue #7");
     await advance(p);
     const m = get<{ payload: string }>(p.db, "SELECT payload FROM messages WHERE kind = 'plan' AND to_role = 'planner'")!;
     const text = (JSON.parse(m.payload) as { events: { text: string }[] }).events[0]!.text;
@@ -50,7 +50,7 @@ describe("既存のリポジトリの続きから(ADR-0030)", () => {
     const p = await setup();
     await upsertRequirement(p, { name: "検索", acceptance: "語で絞り込める" });
     for (const s of STAGES) if (s !== "req" && (await stageRow(p, s)).mode !== "skip") await setMode(p, s, "skip");
-    p.setSetting("plan_started:req", p.now());
+    await p.setSetting("plan_started:req", p.now());
     run2(p);
     await handoff(p);
     const hand = get<{ payload: string }>(p.db, "SELECT payload FROM messages WHERE kind = 'plan' AND to_role = 'lead'")!;
@@ -59,7 +59,7 @@ describe("既存のリポジトリの続きから(ADR-0030)", () => {
     expect(await call(p, "adopt_pr", { number: 42, requirement: "R1" })).toContain("確認の工程から");
     expect(await call(p, "adopt_pr", { number: 42 })).toContain("もう引き継いで");
     expect(await call(p, "adopt_pr", { number: 99 })).toContain("ありません");
-    const adopted = p.tickets().find((t) => t.title === "メモの検索")!;
+    const adopted = (await p.tickets()).find((t) => t.title === "メモの検索")!;
     // 企画スタジオの引き渡しの表に出しても落ちないよう、ひも付けは空で埋めて渡す
     const { studioView } = await import("./planning.js");
     expect((await studioView(p)).tickets.find((t) => t.number === adopted.number)!.refs).toMatchObject({ adoptedPr: 42, screens: [], design: [], modes: {} });
@@ -67,8 +67,8 @@ describe("既存のリポジトリの続きから(ADR-0030)", () => {
     expect(get(p.db, "SELECT number, head FROM pull_requests WHERE ticket_id = ?", [adopted.id])).toEqual({ number: 42, head: "feature/search" });
 
     expect(await call(p, "create_ticket", { title: "保存に失敗したら知らせる", body: "412 のときに知らせる", screens: [], design: [], issue: 7 })).toContain("作りました");
-    expect(snapshotText(p)).toContain("チケット済み");
-    expect(snapshotText(p)).toContain("引き継ぎ済み");
+    expect(await snapshotText(p)).toContain("チケット済み");
+    expect(await snapshotText(p)).toContain("引き継ぎ済み");
 
     // 引き継いだ PR はレビューから、Issue のチケットは実装から。Issue のチケットの PR には Closes が付く
     const harness = new FakeHarness(async (req, c) => {
@@ -79,7 +79,7 @@ describe("既存のリポジトリの続きから(ADR-0030)", () => {
     await new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: ws }).drain();
     expect(harness.calls.find((x) => x.prompt.includes("PR #42"))).toBeTruthy();
     expect(ws.published.find((x) => x.title.includes("保存に失敗"))!.body).toContain("Closes #7");
-    expect(p.ticket(adopted.id).stage).toBe("merge");
+    expect((await p.ticket(adopted.id)).stage).toBe("merge");
     expect(all(p.db, "SELECT 1 FROM pull_requests WHERE number = 42")).toHaveLength(1);
   });
 });

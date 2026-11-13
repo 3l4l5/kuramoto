@@ -48,7 +48,7 @@ export type TimelineItem =
   | { type: "rule"; at: string; rule: string; handled: string; detail: string; resolvedAt: string | null };
 
 export async function ticketView(p: Project, ticketId: number) {
-  const t = p.ticket(ticketId);
+  const t = await p.ticket(ticketId);
   const refs = JSON.parse(t.plan_refs || "{}") as { requirement?: string; screens?: string[]; design?: string[]; repo?: string };
   // 読むものは表ごとに 1 文で取り、結び付けは JS でやる(IN でまとめる)
   const [row, prRows, runRows, evs, reviewRows, decisionRows, aboutRuns] = await Promise.all([
@@ -76,12 +76,12 @@ export async function ticketView(p: Project, ticketId: number) {
   const causePrs = causeIds.length ? await inScope(p.pdb, "pull_requests").where("id", "in", causeIds).execute() : [];
   const causeRepos = causePrs.length ? await inScope(p.pdb, "repos").execute() : [];
   const tok = (r: { input_tokens: number | null; output_tokens: number | null; cache_read_tokens: number | null }) => (r.input_tokens ?? 0) + (r.output_tokens ?? 0) + (r.cache_read_tokens ?? 0);
-  const name = (memberId: number) => p.member(memberId).name;
+  const name = async (memberId: number) => (await p.member(memberId)).name;
   const items: TimelineItem[] = [{ type: "created", at: t.created_at, title: t.title }];
   // メモは、同じ時刻の起動より先に並べる(メモを書いた直後に担当が起こされることがあるため)
-  for (const n of p.notes(ticketId)) items.push({ type: "note", at: n.at, who: n.who === "lead" ? p.fixedMember("lead").name + "(リーダー)" : "あなた", body: n.body });
+  for (const n of await p.notes(ticketId)) items.push({ type: "note", at: n.at, who: n.who === "lead" ? (await p.fixedMember("lead")).name + "(リーダー)" : "あなた", body: n.body });
 
-  for (const h of p.handoffs(ticketId)) items.push({ type: "handoff", at: h.at, role: ROLE_LABEL[h.role] ?? h.role, body: h.body });
+  for (const h of await p.handoffs(ticketId)) items.push({ type: "handoff", at: h.at, role: ROLE_LABEL[h.role] ?? h.role, body: h.body });
   for (const e of evs.filter((e) => e.type === "kind_changed")) {
     const d = JSON.parse(e.data) as { from: string; to: string };
     items.push({ type: "kind_change", at: e.at, who: e.actor === "owner" ? "あなた" : e.actor, from: TICKET_KIND_LABEL[d.from as keyof typeof TICKET_KIND_LABEL] ?? d.from, to: TICKET_KIND_LABEL[d.to as keyof typeof TICKET_KIND_LABEL] ?? d.to });
@@ -95,7 +95,7 @@ export async function ticketView(p: Project, ticketId: number) {
       type: "run",
       // 終わった起動は終わった時刻に並べる(PR やレビューの結果は起動の終わりに記録されるため)
       at: r.ended_at ?? r.started_at,
-      who: name(r.member_id),
+      who: await name(r.member_id),
       role: ROLE_LABEL[r.role as Role] ?? r.role,
       kind: KIND_LABEL[r.kind] ?? r.kind,
       model: MODELS[model as keyof typeof MODELS]?.label ?? model,
@@ -116,7 +116,7 @@ export async function ticketView(p: Project, ticketId: number) {
     items.push({
       type: "review",
       at: rv.created_at,
-      who: name(rv.member_id),
+      who: await name(rv.member_id),
       role: ROLE_LABEL[rv.role as Role] ?? rv.role,
       round: rv.round,
       verdict: VERDICT[rv.verdict] ?? rv.verdict,
@@ -152,13 +152,13 @@ export async function ticketView(p: Project, ticketId: number) {
     items.push({
       type: "question",
       at: q.asked_at,
-      from: q.from_member_id ? name(q.from_member_id) : "メンバー",
+      from: q.from_member_id ? await name(q.from_member_id) : "メンバー",
       to: q.to_target === LEAD_TARGET ? "リーダー" : q.to_target,
       body: q.body,
       routedToLead: !!q.routed_to_lead,
       noRoute: !!q.routed_to_lead && q.to_target !== LEAD_TARGET,
       answer: q.answer,
-      answeredBy: q.answered_by_member_id ? name(q.answered_by_member_id) : null,
+      answeredBy: q.answered_by_member_id ? await name(q.answered_by_member_id) : null,
       answeredAt: q.answered_at,
     });
   }
@@ -185,20 +185,20 @@ export async function ticketView(p: Project, ticketId: number) {
     kind: t.kind,
     kindLabel: TICKET_KIND_LABEL[t.kind] ?? t.kind,
     /** このチケットの今の流れ(次の工程から進む順)。開発を通ったあとは、開発より前を含まない */
-    flow: (() => {
-      const pipeline = pipelineOf(p.currentFormation(), t.kind, { devDone: !!t.dev_done });
+    flow: await (async () => {
+      const pipeline = pipelineOf(await p.currentFormation(), t.kind, { devDone: !!t.dev_done });
       return pipeline.map((r) => ({ key: r, label: ROLE_LABEL[r], preDev: !t.dev_done && isPreDev(pipeline, r) }));
     })(),
     rounds: t.rounds,
-    owner: t.owner_member_id ? name(t.owner_member_id) : null,
+    owner: t.owner_member_id ? await name(t.owner_member_id) : null,
     requirement: requirement ?? null,
     screens: refs.screens ?? [],
     design: refs.design ?? [],
     prs,
     costUsd: cost?.cost ?? 0,
-    budgetUsd: ticketBudgetUsd(p, t.id),
-    ownBudget: hasOwnBudget(p, t.id),
-    defaultBudgetUsd: defaultTicketBudgetUsd(p),
+    budgetUsd: await ticketBudgetUsd(p, t.id),
+    ownBudget: await hasOwnBudget(p, t.id),
+    defaultBudgetUsd: await defaultTicketBudgetUsd(p),
     tokens: cost?.tokens ?? 0,
     dropped: await droppedInfo(p, t.id),
     // 「直すまで進めない」ルールに反して止まっているか(ボードの赤い札)

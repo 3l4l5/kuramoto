@@ -59,10 +59,10 @@ class RecordingGitHub implements GitHub {
 }
 
 async function setup() {
-  const p = new Project(":memory:", new ManualClock());
-  p.addRepo("acme/shop", "API");
+  const p = await Project.open(":memory:", new ManualClock());
+  await p.addRepo("acme/shop", "API");
   const t = await createTicket(p, { title: "CSV 書き出し" });
-  run(p.db, "INSERT INTO pull_requests (ticket_id, repo_id, number, head) VALUES (?, ?, 44, 'kuramoto/44')", [t.id, p.repos()[0]!.id]);
+  run(p.db, "INSERT INTO pull_requests (ticket_id, repo_id, number, head) VALUES (?, ?, 44, 'kuramoto/44')", [t.id, (await p.repos())[0]!.id]);
   const gh = new RecordingGitHub();
   const tools = githubReadTools(p, gh);
   const call = (name: string, args: Record<string, unknown>) => tools.find((x) => x.name === name)!.handler(args as never);
@@ -98,7 +98,7 @@ describe("PR の merge の可否(#56)", () => {
 
   it("Kuramoto が merge を止めた理由(GitHub に残らないもの)も付く", async () => {
     const { p, t, call } = await setup();
-    p.event("system", "merge_blocked", t.id, { reason: "確認が済んでいません: QA" });
+    await p.event("system", "merge_blocked", t.id, { reason: "確認が済んでいません: QA" });
     const out = await call("pr_merge_status", { ticket: t.number });
     expect(out).toContain("Kuramoto の記録");
     expect(out).toContain("merge_blocked: 確認が済んでいません: QA");
@@ -151,7 +151,7 @@ describe("リーダーは GitHub に書けない(#56)", () => {
       return { finalText: out.includes("merge できます") ? "merge できます" : out };
     });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp"), github: gh });
-    sayToLead(p, "#1 はなぜ merge できないの?");
+    await sayToLead(p, "#1 はなぜ merge できないの?");
     await d.drain();
     expect(gh.reads.length).toBeGreaterThan(0);
     expect(gh.writes).toEqual([]);

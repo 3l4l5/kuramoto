@@ -43,14 +43,14 @@ function runText(r: CiRun): string {
     .join("\n")}`;
 }
 
-export function ciTools(p: Project, gh: GitHub | undefined, ctx: { ticket?: TicketRow; rerun?: boolean }): KuramotoTool[] {
+export async function ciTools(p: Project, gh: GitHub | undefined, ctx: { ticket?: TicketRow; rerun?: boolean }): Promise<KuramotoTool[]> {
   // チームの CI を使うなら、GitHub Actions は止めてあり、merge にも使わない。調べる道具も渡さない(ADR-0028)
-  if (!gh?.ciDetail || teamCiEnabled(p)) return [];
+  if (!gh?.ciDetail || await teamCiEnabled(p)) return [];
   const target = async (number?: number): Promise<TicketRow | string> => {
     if (number === undefined) return ctx.ticket ?? "チケット番号を指定してください";
     return ((await p.pdb.from("tickets").where("number", "=", number).executeTakeFirst()) as TicketRow | undefined) ?? `#${number} はありません`;
   };
-  const repoOf = async (t?: TicketRow) => ((t ? (await prsOf(p, t.id))[0]?.full_name : undefined) ?? p.repos()[0]?.full_name) || "";
+  const repoOf = async (t?: TicketRow) => ((t ? (await prsOf(p, t.id))[0]?.full_name : undefined) ?? (await p.repos())[0]?.full_name) || "";
   const tools: KuramotoTool[] = [
     defineTool({
       name: "ci_status",
@@ -120,7 +120,7 @@ export function ciTools(p: Project, gh: GitHub | undefined, ctx: { ticket?: Tick
         handler: async (a) => {
           const t = await target(a.number);
           const key = `ci_rerun_by_lead:${typeof t === "string" ? 0 : t.id}`;
-          const recent = (JSON.parse(p.setting(key) || "[]") as string[]).filter((x) => p.clock.now().getTime() - new Date(x).getTime() < 3_600_000);
+          const recent = (JSON.parse(await p.setting(key) || "[]") as string[]).filter((x) => p.clock.now().getTime() - new Date(x).getTime() < 3_600_000);
           if (recent.length >= 3) return "この 1 時間で 3 回やり直しました。原因を見立ててから手を打ってください";
           const repo = await repoOf(typeof t === "string" ? undefined : t);
           try {
@@ -128,8 +128,8 @@ export function ciTools(p: Project, gh: GitHub | undefined, ctx: { ticket?: Tick
           } catch (e) {
             return `やり直せませんでした: ${errText(e)}`;
           }
-          p.setSetting(key, JSON.stringify([...recent, p.now()]));
-          p.event(p.fixedMember("lead").name, "ci_rerun", typeof t === "string" ? null : t.id, { runId: a.run_id, checks: [] });
+          await p.setSetting(key, JSON.stringify([...recent, p.now()]));
+          await p.event((await p.fixedMember("lead")).name, "ci_rerun", typeof t === "string" ? null : t.id, { runId: a.run_id, checks: [] });
           return `実行 ${a.run_id} の落ちたジョブをやり直しました。`;
         },
       }),

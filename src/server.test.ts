@@ -89,7 +89,7 @@ describe("ローカルサーバー", () => {
 
     // 始業したら、リーダーがまずボードを見回る(ADR-0026)
     const p = app.project(created.id);
-    expect(p.setting("patrol_last_at")).toBeTruthy();
+    expect(await p.setting("patrol_last_at")).toBeTruthy();
     for (let i = 0; i < 50 && !(await leadSaid(p, "【見回り】")); i++) await new Promise((r) => setTimeout(r, 20));
     expect(await leadSaid(p, "【見回り】")).toBe(true);
     // 見回りの間隔はプロジェクトの設定で変えられる
@@ -134,7 +134,7 @@ describe("ローカルサーバー", () => {
     expect((await call("POST", `${base}/formation`, { pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300 }], flows: { bugfix: ["qa"] } })).status).toBe(400);
 
     const t = (await call("POST", `${base}/tickets`, { title: "落ちる", kind: "bugfix" })).json;
-    expect(p.ticket(t.id)).toMatchObject({ kind: "bugfix", stage: "qa" });
+    expect(await p.ticket(t.id)).toMatchObject({ kind: "bugfix", stage: "qa" });
     const changed = await call("POST", `${base}/tickets/${t.id}/kind`, { kind: "feature" });
     expect(changed.json).toMatchObject({ kind: "feature", stage: "qa" });
     expect(changed.json.timeline.some((i: { type: string }) => i.type === "kind_change")).toBe(true);
@@ -169,8 +169,8 @@ describe("ローカルサーバー", () => {
     const { json: created } = await call("POST", "/api/projects", { name: "会話", repos: [{ fullName: "acme/shop", role: "API" }] });
     const base = `/api/projects/${created.id}`;
     const p = app.project(created.id);
-    p.fillSeats();
-    const idle = p.membersOfUnit(p.currentFormation().units[0]!.id)[0]!;
+    await p.fillSeats();
+    const idle = (await p.membersOfUnit((await p.currentFormation()).units[0]!.id))[0]!;
     // まだチケットを持っていないメンバーには話せない
     expect((await call("GET", `${base}/members/${idle.id}/now`)).json).toMatchObject({ state: "idle", ticket: null, last: null });
     expect((await call("POST", `${base}/members/${idle.id}/chat`, { body: "やあ" })).json.error).toMatch(/まだチケットを受け持っていない/);
@@ -180,7 +180,7 @@ describe("ローカルサーバー", () => {
     await call("POST", `${base}/run`, { running: true });
     for (let i = 0; i < 50 && (await app.projectView(created.id)).mergeOrder.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
     await call("POST", `${base}/run`, { running: false });
-    const ticket = p.tickets()[0]!;
+    const ticket = (await p.tickets())[0]!;
     const memberId = ticket.owner_member_id!;
     expect((await call("GET", `${base}/members/${memberId}/now`)).json).toMatchObject({ state: "idle", ticket: { number: ticket.number, title: "CSV" }, last: { number: ticket.number } });
 
@@ -197,9 +197,9 @@ describe("ローカルサーバー", () => {
     const { call, app } = await boot();
     const { json: created } = await call("POST", "/api/projects", { name: "続き", repos: [{ fullName: "acme/shop", role: "API" }], mode: "existing", issueLabel: "" });
     const p = app.project(created.id);
-    expect(p.setting("origin")).toBe("existing");
-    expect(p.setting("issue_label")).toBe("*");
-    expect(p.setting("onboard_github")).toContain("途中の PR");
+    expect(await p.setting("origin")).toBe("existing");
+    expect(await p.setting("issue_label")).toBe("*");
+    expect(await p.setting("onboard_github")).toContain("途中の PR");
   });
 
   it("プロジェクトを作ると企画スタジオが始まり、オフィスを止めていても企画の担当は答える", async () => {
@@ -310,8 +310,8 @@ describe("ローカルサーバー", () => {
     const { json: created } = await call("POST", "/api/projects", { name: "書き出し", repos: [{ fullName: "acme/shop", role: "API" }] });
     const p = app.project(created.id);
     const { putScreen, putArtifact } = await import("./project/planning.js");
-    putArtifact(p, "screen", "designsystem", "main", { principles: ["青 1 色"], tokens: [{ group: "color", name: "--color-primary", value: "#2f67d4", use: "主ボタン" }], components: [{ name: "主ボタン", use: "確定", states: ["通常"], html: "<button>保存</button>" }] });
-    putScreen(p, "list", { name: "メモ一覧", device: "phone", requirements: [], variants: [{ id: "A", html: "<p>一覧</p>" }], chosen: "A", agreed: true });
+    await putArtifact(p, "screen", "designsystem", "main", { principles: ["青 1 色"], tokens: [{ group: "color", name: "--color-primary", value: "#2f67d4", use: "主ボタン" }], components: [{ name: "主ボタン", use: "確定", states: ["通常"], html: "<button>保存</button>" }] });
+    await putScreen(p, "list", { name: "メモ一覧", device: "phone", requirements: [], variants: [{ id: "A", html: "<p>一覧</p>" }], chosen: "A", agreed: true });
     const res = await fetch(`http://localhost:${port}/api/projects/${created.id}/studio/export.zip`);
     expect(res.headers.get("content-type")).toBe("application/zip");
     const dir = mkdtempSync(join(tmpdir(), "kuramoto-zip-"));

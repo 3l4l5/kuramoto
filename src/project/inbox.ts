@@ -1,6 +1,5 @@
 import { iso } from "../clock.js";
 import { sql, type SqlBool } from "kysely";
-import { run } from "../db/sqlite.js";
 import type { Pull } from "../domain/formation.js";
 import type { Role } from "../domain/roles.js";
 import type { Project } from "./project.js";
@@ -43,20 +42,17 @@ export type MessageRow = {
 export type InboxScope = Pick<Project, "pdb" | "projectId" | "now" | "clock" | "currentFormation" | "settingNumber">;
 
 /**
- * 受信箱に 1 通入れる。
- * 同期のまま(まだ非同期に移していない workflow などの書き込みの途中から呼ばれるため)。非同期への移行の 2/2 で async にする。
- * project_id は書く側で入れる(ADR-0037)。
+ * 受信箱に 1 通入れる。呼び出し側のトランザクション(p.pdb.transaction)の中なら、そのトランザクションに入る。
+ * project_id は pdb.insert が入れる(ADR-0037)。
  */
-export function send(
-  p: Project,
+export async function send(
+  p: Pick<Project, "pdb" | "clock" | "now">,
   m: { ticketId: number | null; toRole: Role; toMemberId?: number | null; kind: MessageKind; payload?: Record<string, unknown>; delayMs?: number },
-): number {
+): Promise<number> {
   const at = iso(new Date(p.clock.now().getTime() + (m.delayMs ?? 0)));
-  return run(
-    p.db,
-    "INSERT INTO messages (project_id, ticket_id, to_role, to_member_id, kind, payload, available_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    [p.projectId, m.ticketId, m.toRole, m.toMemberId ?? null, m.kind, JSON.stringify(m.payload ?? {}), at, p.now()],
-  ).lastId;
+  return p.pdb.dialect.insertedId(
+    p.pdb.insert("messages", { ticket_id: m.ticketId, to_role: m.toRole, to_member_id: m.toMemberId ?? null, kind: m.kind, payload: JSON.stringify(m.payload ?? {}), available_at: at, created_at: p.now() }),
+  );
 }
 
 /**
@@ -92,7 +88,7 @@ export const AREA_BUSY_SQL = `EXISTS (
  * 同じ場所を触るチケットが先に進んでいれば、まだ取りかかっていないチケットの実装は始めない(ADR-0024)。
  */
 export async function claimNext(p: InboxScope, opts: { exclude?: number[]; planningOnly?: boolean; triage?: boolean; noPlan?: boolean } = {}): Promise<MessageRow | undefined> {
-  const pull = p.currentFormation().pull;
+  const pull = (await p.currentFormation()).pull;
   const exclude = opts.exclude ?? [];
   const now = p.now();
   const k = p.pdb.k;
@@ -133,7 +129,7 @@ export async function release(p: InboxScope, id: number, delayMs: number): Promi
  * @returns 再試行が尽きたら true
  */
 export async function fail(p: InboxScope, msg: MessageRow, error: string): Promise<boolean> {
-  const max = p.settingNumber("max_attempts", 3);
+  const max = await p.settingNumber("max_attempts", 3);
   if (msg.attempts >= max) {
     await p.pdb.update("messages", { status: "failed", last_error: error }).where("id", "=", msg.id).execute();
     return true;
