@@ -148,7 +148,7 @@ export async function ticketView(p: Project, ticketId: number) {
   }
 
   // 他の島への質問と答え(R16)
-  for (const q of questionsOf(p, ticketId)) {
+  for (const q of await questionsOf(p, ticketId)) {
     items.push({
       type: "question",
       at: q.asked_at,
@@ -164,7 +164,7 @@ export async function ticketView(p: Project, ticketId: number) {
   }
 
   // 開発ルールの違反(R15)。自動で直した記録も残す
-  for (const v of violationsOf(p, ticketId)) items.push({ type: "rule", at: v.created_at, rule: v.name, handled: v.handled, detail: v.detail, resolvedAt: v.resolved_at });
+  for (const v of await violationsOf(p, ticketId)) items.push({ type: "rule", at: v.created_at, rule: v.name, handled: v.handled, detail: v.detail, resolvedAt: v.resolved_at });
 
   // 同じ時刻なら、記録した順(配列の順)を保つ
   const timeline = items.map((x, i) => [x, i] as const).sort((a, b) => a[0].at.localeCompare(b[0].at) || a[1] - b[1]).map(([x]) => x);
@@ -202,7 +202,7 @@ export async function ticketView(p: Project, ticketId: number) {
     tokens: cost?.tokens ?? 0,
     dropped: await droppedInfo(p, t.id),
     // 「直すまで進めない」ルールに反して止まっているか(ボードの赤い札)
-    ruleBlocked: openViolations(p, t.id, "blocked").map((v) => v.name),
+    ruleBlocked: (await openViolations(p, t.id, "blocked")).map((v) => v.name),
     // 画面ごとの最新の見比べ(お手本・実装・違いの画像と、違いの割合。ADR-0034)
     designCompare: await (async () => {
       const scr = await screens(p);

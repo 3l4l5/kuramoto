@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { all, get, run, tx } from "../db/sqlite.js";
+import { inScope, scopeIds } from "../db/count.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
 import { send } from "./inbox.js";
@@ -26,8 +26,9 @@ function toMessage(r: MessageSql): MemberMessage {
   return { id: r.id, who: r.who, body: r.body, at: r.at, ticketId: r.ticket_id };
 }
 
-export function memberMessages(p: Project, memberId: number, limit = 200): MemberMessage[] {
-  return all<MessageSql>(p.db, "SELECT id, who, body, at, ticket_id FROM (SELECT * FROM member_messages WHERE member_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id", [memberId, limit]).map(toMessage);
+export async function memberMessages(p: Project, memberId: number, limit = 200): Promise<MemberMessage[]> {
+  const rows = await inScope(p.pdb, "member_messages").where("member_id", "=", memberId).orderBy("id", "desc").limit(limit).execute();
+  return (rows as unknown as MessageSql[]).reverse().map(toMessage);
 }
 
 /** 終わったチケット(merge 済み・取り下げ済み)。話しかけられても、メモは足さず答えるだけにする。 */
@@ -36,15 +37,16 @@ export function isFinishedTicket(t: Pick<TicketRow, "stage">): boolean {
 }
 
 /** メンバーが「今」持っているチケット: 起動中ならその起動のチケット、手すきなら直前に動いたチケット。話しかけた内容はここにひも付く。 */
-export function currentTicketOf(p: Project, memberId: number): { ticketId: number; role: Role } | null {
-  const r = get<{ ticket_id: number; role: Role }>(
-    p.db,
-    `SELECT COALESCE(ticket_id, about_ticket_id) AS ticket_id, role FROM runs
-     WHERE member_id = ? AND COALESCE(ticket_id, about_ticket_id) IS NOT NULL
-     ORDER BY (ended_at IS NULL) DESC, id DESC LIMIT 1`,
-    [memberId],
-  );
-  return r ? { ticketId: r.ticket_id, role: r.role } : null;
+export async function currentTicketOf(p: Project, memberId: number): Promise<{ ticketId: number; role: Role } | null> {
+  // 起動中のものを先に、無ければ直前の起動(チケットか、聞かれたチケットを持つもの)
+  const withTicket = () =>
+    inScope(p.pdb, "runs")
+      .where("member_id", "=", memberId)
+      .where((eb) => eb.or([eb("ticket_id", "is not", null), eb("about_ticket_id", "is not", null)]))
+      .orderBy("id", "desc")
+      .limit(1);
+  const r = (await withTicket().where("ended_at", "is", null).executeTakeFirst()) ?? (await withTicket().where("ended_at", "is not", null).executeTakeFirst());
+  return r ? { ticketId: (r.ticket_id ?? r.about_ticket_id)!, role: r.role as Role } : null;
 }
 
 function chatMember(p: Project, memberId: number): MemberRow {
@@ -56,42 +58,46 @@ function chatMember(p: Project, memberId: number): MemberRow {
 const readKey = (memberId: number) => `member_chat_read:${memberId}`;
 
 /** メンバーがまだ読んでいない責任者のメッセージ。 */
-export function unreadForMember(p: Project, memberId: number): MemberMessage[] {
+export async function unreadForMember(p: Project, memberId: number): Promise<MemberMessage[]> {
   const read = Number(p.setting(readKey(memberId)) ?? 0);
-  return memberMessages(p, memberId).filter((m) => m.who === "owner" && m.id > read);
+  return (await memberMessages(p, memberId)).filter((m) => m.who === "owner" && m.id > read);
 }
 
+const pendingMemberChat = (p: Project, memberId: number) =>
+  inScope(p.pdb, "messages").where("kind", "=", "member_chat").where("status", "=", "pending").where("to_member_id", "=", memberId).executeTakeFirst();
+
 /** 責任者がメンバーに話しかける。メッセージを残し、受信箱でメンバーを起こす。 */
-export function sayToMember(p: Project, memberId: number, body: string): void {
+export async function sayToMember(p: Project, memberId: number, body: string): Promise<void> {
   const text = body.trim();
   if (!text) throw new Error("メッセージがありません");
   const m = chatMember(p, memberId);
   if (m.left_at !== null) throw new Error(`${m.name} は今は席にいません`);
-  const cur = currentTicketOf(p, m.id);
+  const cur = await currentTicketOf(p, m.id);
   if (!cur) throw new Error(`${m.name} はまだチケットを受け持っていないので、話しかけられません`);
-  tx(p.db, () => {
-    run(p.db, "INSERT INTO member_messages (member_id, ticket_id, who, body, at) VALUES (?, ?, 'owner', ?, ?)", [m.id, cur.ticketId, text, p.now()]);
-    // まだ取り出されていない呼び出しがあれば、そこにまとめる(何通書いても、メンバーは 1 回で読む)
-    const pending = all<{ id: number }>(p.db, "SELECT id FROM messages WHERE kind = 'member_chat' AND status = 'pending' AND to_member_id = ?", [m.id]);
-    if (!pending.length) send(p, { ticketId: null, toRole: cur.role, toMemberId: m.id, kind: "member_chat", payload: { memberId: m.id } satisfies MemberChatPayload });
+  await p.pdb.transaction(async () => {
+    await p.pdb.insert("member_messages", { member_id: m.id, ticket_id: cur.ticketId, who: "owner", body: text, at: p.now() }).execute();
+    // まだ取り出されていない呼び出しがあれば、そこにまとめる(何通書いても、メンバーは 1 回で読む。読んでから書くので tx の中で)
+    if (!(await pendingMemberChat(p, m.id))) send(p, { ticketId: null, toRole: cur.role, toMemberId: m.id, kind: "member_chat", payload: { memberId: m.id } satisfies MemberChatPayload });
   });
 }
 
 /** 返事を書き終えた(チケットのメモに残すところまで)。 */
-export function finishMemberChat(p: Project, member: MemberRow, unread: MemberMessage[], reply: string, handedOver: boolean): void {
+export async function finishMemberChat(p: Project, member: MemberRow, unread: MemberMessage[], reply: string, handedOver: boolean): Promise<void> {
   const ticket = unread[0]?.ticketId ?? null;
-  if (reply.trim()) run(p.db, "INSERT INTO member_messages (member_id, ticket_id, who, body, at) VALUES (?, ?, 'member', ?, ?)", [member.id, ticket, reply.trim(), p.now()]);
-  // 終わったチケットには、もう次の仕事が無いのでメモを足さない(足しても誰にも読まれない)。答えるだけ
-  if (ticket !== null && !handedOver && !isFinishedTicket(p.ticket(ticket))) {
-    // 伝えたことは、そのチケットのメモに残る。次に仕事を始める担当(この人も)が読む
-    for (const m of unread) p.addNote(m.ticketId ?? ticket, m.body, "owner", "member");
-    run(p.db, "INSERT INTO member_messages (member_id, ticket_id, who, body, at) VALUES (?, ?, 'system', ?, ?)", [member.id, ticket, `#${p.ticket(ticket).number} のメモに書き足しました`, p.now()]);
-  }
-  const last = Math.max(...unread.map((m) => m.id));
-  if (last > Number(p.setting(readKey(member.id)) ?? 0)) p.setSetting(readKey(member.id), String(last));
-  // 返事の最中に書き足されたメッセージがあれば、続けて起こす
-  if (unreadForMember(p, member.id).length && !get(p.db, "SELECT 1 AS x FROM messages WHERE kind = 'member_chat' AND status = 'pending' AND to_member_id = ?", [member.id]))
-    send(p, { ticketId: null, toRole: currentTicketOf(p, member.id)?.role ?? "dev", toMemberId: member.id, kind: "member_chat", payload: { memberId: member.id } satisfies MemberChatPayload });
+  await p.pdb.transaction(async () => {
+    if (reply.trim()) await p.pdb.insert("member_messages", { member_id: member.id, ticket_id: ticket, who: "member", body: reply.trim(), at: p.now() }).execute();
+    // 終わったチケットには、もう次の仕事が無いのでメモを足さない(足しても誰にも読まれない)。答えるだけ
+    if (ticket !== null && !handedOver && !isFinishedTicket(p.ticket(ticket))) {
+      // 伝えたことは、そのチケットのメモに残る。次に仕事を始める担当(この人も)が読む
+      for (const m of unread) p.addNote(m.ticketId ?? ticket, m.body, "owner", "member");
+      await p.pdb.insert("member_messages", { member_id: member.id, ticket_id: ticket, who: "system", body: `#${p.ticket(ticket).number} のメモに書き足しました`, at: p.now() }).execute();
+    }
+    const last = Math.max(...unread.map((m) => m.id));
+    if (last > Number(p.setting(readKey(member.id)) ?? 0)) p.setSetting(readKey(member.id), String(last));
+    // 返事の最中に書き足されたメッセージがあれば、続けて起こす
+    if ((await unreadForMember(p, member.id)).length && !(await pendingMemberChat(p, member.id)))
+      send(p, { ticketId: null, toRole: (await currentTicketOf(p, member.id))?.role ?? "dev", toMemberId: member.id, kind: "member_chat", payload: { memberId: member.id } satisfies MemberChatPayload });
+  });
 }
 
 export function memberChatSystem(p: Project, member: MemberRow, unit: { name: string | null; focus: string | null }, finished = false): string {
@@ -109,15 +115,19 @@ ${
 }
 
 /** メンバーへの指示。今のチケットの様子と、まだ返事をしていない責任者のメッセージを渡す。 */
-export function memberChatPrompt(p: Project, member: MemberRow, ticket: TicketRow, unread: MemberMessage[]): string {
+export async function memberChatPrompt(p: Project, member: MemberRow, ticket: TicketRow, unread: MemberMessage[]): Promise<string> {
   const notes = p.notes(ticket.id).slice(-12);
   const first = unread[0]?.id ?? Infinity;
-  const history = memberMessages(p, member.id, 40).filter((m) => m.id < first && m.who !== "system").slice(-10);
-  const steps = all<{ text: string }>(
-    p.db,
-    "SELECT s.text FROM run_steps s JOIN runs r ON r.id = s.run_id WHERE COALESCE(r.ticket_id, r.about_ticket_id) = ? AND r.member_id = ? ORDER BY s.id DESC LIMIT 8",
-    [ticket.id, member.id],
-  )
+  const history = (await memberMessages(p, member.id, 40)).filter((m) => m.id < first && m.who !== "system").slice(-10);
+  // このメンバーが、このチケットのために動いた起動(チケットの起動か、聞かれて答えた起動)の手順
+  const runIds = (
+    await inScope(p.pdb, "runs")
+      .where("member_id", "=", member.id)
+      .where((eb) => eb.or([eb("ticket_id", "=", ticket.id), eb.and([eb("ticket_id", "is", null), eb("about_ticket_id", "=", ticket.id)])]))
+      .execute()
+  ).map((r) => r.id);
+  const stepRows = runIds.length ? await inScope(p.pdb, "run_steps").where("run_id", "in", runIds).orderBy("id", "desc").limit(8).execute() : [];
+  const steps = stepRows
     .reverse()
     .map((s) => `- ${s.text}`)
     .join("\n");
@@ -152,11 +162,11 @@ export function memberChatTools(p: Project, member: MemberRow, ticket: TicketRow
       name: "hand_to_lead",
       description: "責任者に頼まれた、今のチケットの外の新しい仕事を、リーダーに回す(リーダーがチケットにして、順番と担当を決める)。自分では引き受けない。",
       input: { title: z.string().describe("頼まれた仕事を一言で"), body: z.string().describe("頼まれたことの中身・理由・分かっていること") },
-      handler: (a) => {
+      handler: async (a) => {
         const title = a.title.trim();
         if (!title) return "仕事の名前がありません";
-        tx(p.db, () => {
-          sayToLead(p, `【${member.name} から回ってきた新しい仕事】(#${ticket.number} について話しているときに、責任者から頼まれました。${member.name} は引き受けていません)\n${title}\n${a.body.trim()}`);
+        await p.pdb.transaction(async () => {
+          await sayToLead(p, `【${member.name} から回ってきた新しい仕事】(#${ticket.number} について話しているときに、責任者から頼まれました。${member.name} は引き受けていません)\n${title}\n${a.body.trim()}`);
           p.event(member.name, "handed_to_lead", ticket.id, { title });
         });
         done.handedOver = true;
@@ -186,29 +196,32 @@ export type MemberNow = {
 export async function memberNow(p: Project, memberId: number, steps = 8): Promise<MemberNow> {
   const m = p.member(memberId);
   if (!m) throw new Error(`メンバー ${memberId} はいません`);
-  const unit = m.unit_id === null ? null : get<{ name: string }>(p.db, "SELECT name FROM units WHERE id = ?", [m.unit_id]);
-  const open = get<{ id: number; role: string; model: string | null; started_at: string; about: number | null; ticket_id: number | null; kind: string }>(
-    p.db,
-    "SELECT r.id, r.role, r.model, r.started_at, r.about_ticket_id AS about, r.ticket_id, msg.kind FROM runs r JOIN messages msg ON msg.id = r.message_id WHERE r.member_id = ? AND r.ended_at IS NULL ORDER BY r.id DESC LIMIT 1",
-    [memberId],
-  );
+  const unit = m.unit_id === null ? null : ((await inScope(p.pdb, "units").where("id", "=", m.unit_id).executeTakeFirst()) ?? null);
+  const open = await p.pdb.k
+    .selectFrom("runs as r")
+    .innerJoin("messages as msg", "msg.id", "r.message_id")
+    .select(["r.id as id", "r.role as role", "r.model as model", "r.started_at as started_at", "r.about_ticket_id as about", "r.ticket_id as ticket_id", "msg.kind as kind"])
+    .where("r.project_id", "in", scopeIds(p.pdb))
+    .where("r.member_id", "=", memberId)
+    .where("r.ended_at", "is", null)
+    .orderBy("r.id", "desc")
+    .limit(1)
+    .executeTakeFirst();
   // 起動中でないとき(手すき)は、直前に終えたチケットの仕事
   const lastRun = open
     ? null
-    : get<{ id: number; ticket_id: number; ended_at: string; outcome: string | null }>(
-        p.db,
-        "SELECT id, ticket_id, ended_at, outcome FROM runs WHERE member_id = ? AND ticket_id IS NOT NULL AND ended_at IS NOT NULL ORDER BY id DESC LIMIT 1",
-        [memberId],
-      );
+    : ((await inScope(p.pdb, "runs").where("member_id", "=", memberId).where("ticket_id", "is not", null).where("ended_at", "is not", null).orderBy("id", "desc").limit(1).executeTakeFirst()) as unknown as
+        | { id: number; ticket_id: number; ended_at: string; outcome: string | null }
+        | undefined) ?? null;
   const ticketId = open ? (open.ticket_id ?? open.about) : (lastRun?.ticket_id ?? null);
   const t = ticketId ? p.ticket(ticketId) : null;
-  const kindOf = get<{ kind: string }>(p.db, "SELECT kind FROM tickets WHERE id = ?", [ticketId ?? -1])?.kind ?? "feature";
-  const tokens = t ? (get<{ n: number | null }>(p.db, "SELECT SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0)) AS n FROM runs WHERE ticket_id = ?", [t.id])?.n ?? 0) : 0;
+  const kindOf = (await inScope(p.pdb, "tickets").where("id", "=", ticketId ?? -1).executeTakeFirst())?.kind ?? "feature";
+  const tokens = t ? (await inScope(p.pdb, "runs").where("ticket_id", "=", t.id).execute()).reduce((s, r) => s + (r.input_tokens ?? 0) + (r.output_tokens ?? 0), 0) : 0;
   const w = open ? await runWork(p, open.id, steps) : null;
   const stepRunId = open?.id ?? lastRun?.id;
-  const stepRows = stepRunId ? all<{ at: string; kind: string; text: string }>(p.db, "SELECT at, kind, text FROM run_steps WHERE run_id = ? ORDER BY id DESC LIMIT ?", [stepRunId, steps]).reverse() : [];
+  const stepRows = stepRunId ? (await inScope(p.pdb, "run_steps").where("run_id", "=", stepRunId).orderBy("id", "desc").limit(steps).execute()).reverse() : [];
   const elapsedMs = open ? Math.max(0, p.clock.now().getTime() - Date.parse(open.started_at)) : 0;
-  const events = all<{ at: string; type: string; ticket_id: number | null }>(p.db, "SELECT at, type, ticket_id FROM events WHERE actor = ? ORDER BY id DESC LIMIT 10", [m.name]).reverse();
+  const events = (await inScope(p.pdb, "events").where("actor", "=", m.name).orderBy("id", "desc").limit(10).execute()).reverse();
   const numberOf = new Map<number, number>();
   for (const e of events) if (e.ticket_id !== null && !numberOf.has(e.ticket_id)) numberOf.set(e.ticket_id, p.ticket(e.ticket_id).number);
   return {
@@ -233,15 +246,13 @@ export async function memberNow(p: Project, memberId: number, steps = 8): Promis
 /** 引き出しの「話す欄」: 会話の記録と、返事を待っている・書いている最中かどうか。 */
 export async function memberChatView(p: Project, memberId: number) {
   const m = chatMember(p, memberId);
-  const pending = get<{ id: number; status: string }>(p.db, "SELECT id, status FROM messages WHERE kind = 'member_chat' AND to_member_id = ? AND status IN ('pending','claimed') ORDER BY id LIMIT 1", [m.id]);
-  const open = pending
-    ? get<{ id: number }>(p.db, "SELECT id FROM runs WHERE message_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1", [pending.id])
-    : undefined;
+  const pending = await inScope(p.pdb, "messages").where("kind", "=", "member_chat").where("to_member_id", "=", m.id).where("status", "in", ["pending", "claimed"]).orderBy("id").limit(1).executeTakeFirst();
+  const open = pending ? await inScope(p.pdb, "runs").where("message_id", "=", pending.id).where("ended_at", "is", null).orderBy("id", "desc").limit(1).executeTakeFirst() : undefined;
   const w = open ? await runWork(p, open.id, 3) : null;
   return {
     member: { id: m.id, name: m.name },
     now: await memberNow(p, m.id),
-    messages: memberMessages(p, m.id),
+    messages: await memberMessages(p, m.id),
     // typing: 返事を書いている最中(startedAt から数えられる)。queued: メンバーの今の仕事が終わるのを待っている
     work: w ? { state: "typing" as const, startedAt: w.startedAt, live: w.live } : pending ? { state: "queued" as const } : null,
   };

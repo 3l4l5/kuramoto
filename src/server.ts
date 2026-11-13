@@ -309,7 +309,7 @@ export class KuramotoServer {
       }
     }
     p.event("owner", "ci_mode", null, { mode, done, failed });
-    leadReply(
+    await leadReply(
       p,
       mode === "team"
         ? `【チームの CI に切り替えました】これからは、担当が PR を出すたびに Kuramoto が閉じ込めの中で確認を流し、通ったものだけをレビューに回します。merge の直前にも、main が進んでいれば流し直します。GitHub の CI は待ちません。${done.length ? `\n${done.join("・")} の GitHub Actions を止めました。` : ""}${failed.length ? `\nGitHub Actions を止められませんでした: ${failed.join("・")}。リポジトリの Settings > Actions で止めてください。` : ""}\nリポジトリのブランチ保護で「CI の確認が通ること」を必須にしていると、GitHub が merge を断ります。そのときは必須の確認を外してください。`
@@ -473,9 +473,9 @@ export class KuramotoServer {
     }
     if (b === "team" && method === "GET") return teamView(p);
     if (b === "productivity" && method === "GET") return productivity(p);
-    if (b === "dev-rules" && !c && method === "GET") return devRulesView(p);
+    if (b === "dev-rules" && !c && method === "GET") return await devRulesView(p);
     if (b === "dev-rules" && !c && method === "POST") {
-      addDevRule(p, {
+      await addDevRule(p, {
         ...(typeof body.template === "string" ? { template: body.template } : {}),
         ...(typeof body.name === "string" ? { name: body.name } : {}),
         ...(typeof body.body === "string" ? { body: body.body } : {}),
@@ -484,10 +484,10 @@ export class KuramotoServer {
         ...(typeof body.pattern === "string" ? { pattern: body.pattern } : {}),
         ...(typeof body.onFail === "string" ? { onFail: body.onFail as never } : {}),
       });
-      return devRulesView(p);
+      return await devRulesView(p);
     }
     if (b === "dev-rules" && c && !parts[4] && method === "POST") {
-      updateDevRule(p, Number(c), {
+      await updateDevRule(p, Number(c), {
         ...(typeof body.name === "string" ? { name: body.name } : {}),
         ...(typeof body.body === "string" ? { body: body.body } : {}),
         ...(Array.isArray(body.appliesTo) ? { appliesTo: body.appliesTo as never } : {}),
@@ -495,22 +495,22 @@ export class KuramotoServer {
         ...(typeof body.pattern === "string" ? { pattern: body.pattern } : {}),
         ...(typeof body.onFail === "string" ? { onFail: body.onFail as never } : {}),
       });
-      return devRulesView(p);
+      return await devRulesView(p);
     }
     if (b === "dev-rules" && c && parts[4] === "delete" && method === "POST") {
-      deleteDevRule(p, Number(c));
-      return devRulesView(p);
+      await deleteDevRule(p, Number(c));
+      return await devRulesView(p);
     }
     if (b === "dev-rules" && c && parts[4] === "enabled" && method === "POST") {
-      setDevRuleEnabled(p, Number(c), body.enabled === true);
-      return devRulesView(p);
+      await setDevRuleEnabled(p, Number(c), body.enabled === true);
+      return await devRulesView(p);
     }
     if (b === "office" && method === "GET") return { ...(await officeView(p)), running: this.running.has(id) };
     // メンバーの今していること・話す欄(オフィスでメンバーを押して開く引き出し)
     if (b === "members" && c && parts[4] === "now" && method === "GET") return memberNow(p, Number(c));
     if (b === "members" && c && parts[4] === "chat" && method === "GET") return memberChatView(p, Number(c));
     if (b === "members" && c && parts[4] === "chat" && method === "POST") {
-      sayToMember(p, Number(c), String(body.body ?? ""));
+      await sayToMember(p, Number(c), String(body.body ?? ""));
       this.poke(id);
       return memberChatView(p, Number(c));
     }
@@ -518,7 +518,7 @@ export class KuramotoServer {
     if (b === "units" && c && method === "GET") return await unitView(p, Number(c), await officeView(p));
     if (b === "lead-chat" && method === "GET") return leadChatView(p);
     if (b === "lead-chat" && method === "POST") {
-      sayToLead(p, String(body.body ?? ""));
+      await sayToLead(p, String(body.body ?? ""));
       this.poke(id);
       return leadChatView(p);
     }
@@ -706,7 +706,7 @@ export class KuramotoServer {
         // 取りやめたとき: 誰が・なぜ・いつ(ボードの「取りやめ」に出す)
         dropped: await droppedInfo(p, t.id),
         // 「直すまで進めない」ルールに反して止まっているルールの名前(ボードの赤い札)
-        ruleBlocked: openViolations(p, t.id, "blocked").map((v) => v.name),
+        ruleBlocked: (await openViolations(p, t.id, "blocked")).map((v) => v.name),
       };
     }));
     const decisions = (await pendingOwnerDecisions(p)).map((d) => {

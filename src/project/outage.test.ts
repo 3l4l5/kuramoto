@@ -73,8 +73,8 @@ describe("GitHub に入れない(認証切れ)とき(ADR-0027)", () => {
     // 失敗に数えない・保留にしない・リーダーの手助けも頼まない
     expect(all(p.db, "SELECT 1 FROM messages WHERE (status = 'failed' AND ticket_id <> ?) OR kind = 'unstick'", [held.id])).toEqual([]);
     expect((await pendingOwnerDecisions(p)).length).toBe(1); // 前からある C の保留だけ
-    expect(leadMessages(p).filter((m) => m.body.includes("【GitHub に入れません】")).length).toBe(1);
-    expect(leadMessages(p).at(-1)!.body).toContain("gh auth login");
+    expect((await leadMessages(p)).filter((m) => m.body.includes("【GitHub に入れません】")).length).toBe(1);
+    expect((await leadMessages(p)).at(-1)!.body).toContain("gh auth login");
     // 入れない間は、チケットの仕事を起こさない
     const runs = all(p.db, "SELECT id FROM runs").length;
     clock.advance(30_000);
@@ -86,7 +86,7 @@ describe("GitHub に入れない(認証切れ)とき(ADR-0027)", () => {
     clock.advance(61_000);
     await d.drain();
     expect(githubDown(p)).toBeNull();
-    expect(leadMessages(p).some((m) => m.body.includes("【GitHub に戻れました】"))).toBe(true);
+    expect((await leadMessages(p)).some((m) => m.body.includes("【GitHub に戻れました】"))).toBe(true);
     expect(await pendingOwnerDecisions(p)).toEqual([]);
     expect(p.tickets().map((t) => t.stage)).toEqual(["merge", "merge", "merge"]);
     expect(workspace.published.length).toBe(3);
@@ -180,8 +180,8 @@ describe("CI が落ちたとき(ADR-0027)", () => {
     expect(await ownerMerge(p, gh, b.id)).toMatchObject({ result: "blocked" });
     expect([p.ticket(a.id).stage, p.ticket(b.id).stage]).toEqual(["merge", "merge"]);
     expect(p.tickets().some((t) => t.title.includes("CI を直す"))).toBe(false);
-    expect(leadMessages(p).filter((m) => m.body.includes("CI が動いていません")).length).toBe(1);
-    expect(leadMessages(p).at(-1)!.body).toContain("spending limit");
+    expect((await leadMessages(p)).filter((m) => m.body.includes("CI が動いていません")).length).toBe(1);
+    expect((await leadMessages(p)).at(-1)!.body).toContain("spending limit");
     expect(gh.reruns).toEqual([]);
 
     // 間を空けて、直ったかを確かめにやり直す
@@ -192,7 +192,7 @@ describe("CI が落ちたとき(ADR-0027)", () => {
     // 責任者が直して、CI が通った
     gh.ci = "success";
     expect(await ownerMerge(p, gh, a.id)).toEqual({ result: "merged" });
-    expect(leadMessages(p).at(-1)!.body).toContain("CI が動き出しました");
+    expect((await leadMessages(p)).at(-1)!.body).toContain("CI が動き出しました");
     const { ciBlocked } = await import("./outage.js");
     expect(ciBlocked(p)).toEqual([]);
   });

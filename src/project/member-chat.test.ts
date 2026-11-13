@@ -45,7 +45,7 @@ describe("メンバーとの会話", () => {
     const devSession = get<{ harness_session_id: string }>(p.db, "SELECT harness_session_id FROM sessions WHERE member_id = ? AND ticket_id = ?", [member.id, ticket.id])!.harness_session_id;
     const before = p.ticket(ticket.id);
 
-    sayToMember(p, member.id, "いま何をやってる?");
+    await sayToMember(p, member.id, "いま何をやってる?");
     await d.drain();
 
     const call = harness.calls.find(isChat)!;
@@ -63,7 +63,7 @@ describe("メンバーとの会話", () => {
     expect(r).toEqual({ ticket_id: null, about_ticket_id: ticket.id });
     expect(p.ticket(ticket.id)).toMatchObject({ stage: before.stage, owner_member_id: before.owner_member_id, rounds: before.rounds });
     // 同じ人にもう一度話しかけても、読んだ分は読み直さない
-    sayToMember(p, member.id, "ありがとう");
+    await sayToMember(p, member.id, "ありがとう");
     await d.drain();
     const second = harness.calls.filter(isChat)[1]!;
     expect(second.prompt.split("## 責任者のメッセージ(まだ返事をしていないもの)")[1]).not.toContain("いま何をやってる?");
@@ -74,7 +74,7 @@ describe("メンバーとの会話", () => {
     const { member } = await worked(p, d);
     // 終業した状態の起こし方で、会話だけが取り出される
     const closed = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp"), ticketsAllowed: () => false });
-    sayToMember(p, member.id, "調子はどう?");
+    await sayToMember(p, member.id, "調子はどう?");
     await closed.drain();
     expect((await memberChatView(p, member.id)).messages.map((m) => m.who)).toContain("member");
   });
@@ -84,7 +84,7 @@ describe("メンバーとの会話", () => {
     const { ticket, member } = await worked(p, d);
     const before = p.ticket(ticket.id);
 
-    sayToMember(p, member.id, "区切り文字を変えたときも見てね");
+    await sayToMember(p, member.id, "区切り文字を変えたときも見てね");
     await d.drain();
 
     const notes = p.notes(ticket.id).filter((n) => n.kind === "member");
@@ -109,10 +109,10 @@ describe("メンバーとの会話", () => {
     });
     const { ticket, member } = await worked(p, d);
 
-    sayToMember(p, member.id, "ついでに PDF 出力もお願い");
+    await sayToMember(p, member.id, "ついでに PDF 出力もお願い");
     await d.drain();
 
-    const handed = leadMessages(p).find((m) => m.who === "owner")!;
+    const handed = (await leadMessages(p)).find((m) => m.who === "owner")!;
     expect(handed.body).toContain(`${member.name} から回ってきた新しい仕事`);
     expect(handed.body).toContain("PDF 出力も欲しい");
     expect(handed.body).toContain("請求書を PDF で出したい");
@@ -143,7 +143,7 @@ describe("メンバーとの会話", () => {
           said = true;
           const t = p.tickets()[0]!;
           const m = get<{ member_id: number }>(p.db, "SELECT member_id FROM runs WHERE ticket_id = ? AND ended_at IS NULL", [t.id])!.member_id;
-          sayToMember(p, m, "どう?");
+          await sayToMember(p, m, "どう?");
           expect((await memberNow(p, m)).state).toBe("working");
         }
         await call("submit_pr", { summary: "", responses: fixedAll(req.prompt) });
@@ -160,10 +160,10 @@ describe("メンバーとの会話", () => {
     const { p, d } = setup(() => undefined);
     p.fillSeats();
     const idle = p.membersOfUnit(p.currentFormation().units[0]!.id)[0]!;
-    expect(() => sayToMember(p, idle.id, "やあ")).toThrow("まだチケットを受け持っていない");
-    expect(() => sayToMember(p, p.fixedMember("lead").id, "やあ")).toThrow("島のメンバーだけ");
+    await expect(sayToMember(p, idle.id, "やあ")).rejects.toThrow("まだチケットを受け持っていない");
+    await expect(sayToMember(p, p.fixedMember("lead").id, "やあ")).rejects.toThrow("島のメンバーだけ");
     const { member } = await worked(p, d);
-    expect(() => sayToMember(p, member.id, "  ")).toThrow("メッセージがありません");
+    await expect(sayToMember(p, member.id, "  ")).rejects.toThrow("メッセージがありません");
   });
 });
 
@@ -194,7 +194,7 @@ describe("終わったチケット(done・dropped)について話しかける", 
       p.db.prepare("DELETE FROM sessions WHERE member_id = ? AND ticket_id = ?").run(member.id, ticket.id);
       const notesBefore = p.notes(ticket.id).length;
 
-      sayToMember(p, member.id, "あれってどうなった?");
+      await sayToMember(p, member.id, "あれってどうなった?");
       await d.drain();
 
       const call = harness.calls.find(isChat)!;

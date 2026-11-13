@@ -16,61 +16,61 @@ const projectWith = () => {
   p.addRepo("acme/shop", "API");
   return p;
 };
-const template = (p: Project, key: string) => addDevRule(p, { template: key });
+const template = async (p: Project, key: string) => await addDevRule(p, { template: key });
 
 describe("開発ルール: 一覧・追加・有効 / 無効", () => {
   it("ひな形 4 つから足せる。足したものは 2 度目を断り、一覧では足した印が付く", async () => {
     const p = projectWith();
     expect(TEMPLATES.map((t) => t.name)).toEqual(["Jira 番号をそろえる", "PR 本文の先頭に対象", "マイグレーションは単独の PR", "コミット 1 行目 50 字以内"]);
-    const r = template(p, "jira");
+    const r = await template(p, "jira");
     expect(r).toMatchObject({ name: "Jira 番号をそろえる", appliesTo: ["branch", "pr_title", "commit"], check: "pattern", onFail: "autofix", enabled: true, template: "jira" });
-    expect(() => template(p, "jira")).toThrow("もう足してあります");
-    const v = devRulesView(p);
+    await expect(template(p, "jira")).rejects.toThrow("もう足してあります");
+    const v = await devRulesView(p);
     expect(v.rules).toHaveLength(1);
     expect(v.templates.map((t) => [t.key, t.added])).toEqual([["jira", true], ["pr-body-target", false], ["migration-alone", false], ["commit-50", false]]);
   });
 
   it("名前・何を守るか・どこに効くか・確かめ方・違反時の扱いを決めて足せる。足りない・読めない入力は断る", async () => {
     const p = projectWith();
-    const r = addDevRule(p, { name: "console.log を残さない", body: "デバッグ出力を残さない", appliesTo: ["code"], check: "pattern", pattern: "!console\\.log", onFail: "review" });
+    const r = await addDevRule(p, { name: "console.log を残さない", body: "デバッグ出力を残さない", appliesTo: ["code"], check: "pattern", pattern: "!console\\.log", onFail: "review" });
     expect(r).toMatchObject({ appliesTo: ["code"], pattern: "!console\\.log", onFail: "review", template: null });
-    const ai = addDevRule(p, { name: "テストの名前が読める", body: "テストの名前が何を確かめるか分かる", appliesTo: ["code", "files"], check: "ai", onFail: "review" });
+    const ai = await addDevRule(p, { name: "テストの名前が読める", body: "テストの名前が何を確かめるか分かる", appliesTo: ["code", "files"], check: "ai", onFail: "review" });
     expect(ai.pattern).toBeNull();
-    expect(() => addDevRule(p, { name: "", body: "x", appliesTo: ["code"], check: "pattern", pattern: "x", onFail: "review" })).toThrow("名前");
-    expect(() => addDevRule(p, { name: "a", body: "x", appliesTo: [], check: "pattern", pattern: "x", onFail: "review" })).toThrow("どこに効くか");
-    expect(() => addDevRule(p, { name: "a", body: "x", appliesTo: ["code"], check: "pattern", pattern: "(", onFail: "review" })).toThrow("正規表現");
-    expect(() => addDevRule(p, { name: "a", body: "x", appliesTo: ["code"], check: "pattern", onFail: "review" })).toThrow("正規表現が要ります");
-    expect(() => addDevRule(p, { name: "a", body: "x", appliesTo: ["code"], check: "ai", onFail: "stop" as never })).toThrow("違反したときの扱い");
-    expect(() => addDevRule(p, { template: "nothing" })).toThrow("ひな形がありません");
+    await expect(addDevRule(p, { name: "", body: "x", appliesTo: ["code"], check: "pattern", pattern: "x", onFail: "review" })).rejects.toThrow("名前");
+    await expect(addDevRule(p, { name: "a", body: "x", appliesTo: [], check: "pattern", pattern: "x", onFail: "review" })).rejects.toThrow("どこに効くか");
+    await expect(addDevRule(p, { name: "a", body: "x", appliesTo: ["code"], check: "pattern", pattern: "(", onFail: "review" })).rejects.toThrow("正規表現");
+    await expect(addDevRule(p, { name: "a", body: "x", appliesTo: ["code"], check: "pattern", onFail: "review" })).rejects.toThrow("正規表現が要ります");
+    await expect(addDevRule(p, { name: "a", body: "x", appliesTo: ["code"], check: "ai", onFail: "stop" as never })).rejects.toThrow("違反したときの扱い");
+    await expect(addDevRule(p, { template: "nothing" })).rejects.toThrow("ひな形がありません");
   });
 
   it("有効 / 無効を切り替えられる", async () => {
     const p = projectWith();
-    const r = template(p, "commit-50");
-    expect(setDevRuleEnabled(p, r.id, false).enabled).toBe(false);
-    expect(devRulesView(p).rules[0]!.enabled).toBe(false);
-    expect(setDevRuleEnabled(p, r.id, true).enabled).toBe(true);
-    expect(() => setDevRuleEnabled(p, 999, true)).toThrow("ありません");
+    const r = await template(p, "commit-50");
+    expect((await setDevRuleEnabled(p, r.id, false)).enabled).toBe(false);
+    expect((await devRulesView(p)).rules[0]!.enabled).toBe(false);
+    expect((await setDevRuleEnabled(p, r.id, true)).enabled).toBe(true);
+    await expect(setDevRuleEnabled(p, 999, true)).rejects.toThrow("ありません");
   });
 });
 
 describe("開発ルール: 版・直す・消す", () => {
   it("足す・直す・消す・有効 / 無効のたびに版が 1 つ上がり、そのときのルールの一覧が残る", async () => {
     const p = projectWith();
-    expect(devRulesView(p).version).toBe(1);
-    const r = template(p, "jira");
-    expect(devRulesView(p).version).toBe(2);
-    updateDevRule(p, r.id, { name: "Jira 番号" });
-    expect(devRulesView(p).version).toBe(3);
-    setDevRuleEnabled(p, r.id, false);
-    expect(devRulesView(p).version).toBe(4);
-    deleteDevRule(p, r.id);
-    expect(devRulesView(p).version).toBe(5);
+    expect((await devRulesView(p)).version).toBe(1);
+    const r = await template(p, "jira");
+    expect((await devRulesView(p)).version).toBe(2);
+    await updateDevRule(p, r.id, { name: "Jira 番号" });
+    expect((await devRulesView(p)).version).toBe(3);
+    await setDevRuleEnabled(p, r.id, false);
+    expect((await devRulesView(p)).version).toBe(4);
+    await deleteDevRule(p, r.id);
+    expect((await devRulesView(p)).version).toBe(5);
     // 断った操作では上がらない
-    expect(() => updateDevRule(p, r.id, { name: "x" })).toThrow("ありません");
-    expect(() => updateDevRule(p, 999, { name: "x" })).toThrow("ありません");
-    expect(devRulesView(p).version).toBe(5);
-    expect(devRulesVersions(p).map((v) => [v.version, v.rules.map((x) => [x.name, x.enabled])])).toEqual([
+    await expect(updateDevRule(p, r.id, { name: "x" })).rejects.toThrow("ありません");
+    await expect(updateDevRule(p, 999, { name: "x" })).rejects.toThrow("ありません");
+    expect((await devRulesView(p)).version).toBe(5);
+    expect((await devRulesVersions(p)).map((v) => [v.version, v.rules.map((x) => [x.name, x.enabled])])).toEqual([
       [1, []],
       [2, [["Jira 番号をそろえる", true]]],
       [3, [["Jira 番号", true]]],
@@ -81,68 +81,68 @@ describe("開発ルール: 版・直す・消す", () => {
 
   it("直せるのは渡した項目だけ。足すときと同じ確かめで断り、断ったら中身も版も変わらない", async () => {
     const p = projectWith();
-    const r = template(p, "jira");
-    const u = updateDevRule(p, r.id, { onFail: "review", appliesTo: ["pr_title"] });
+    const r = await template(p, "jira");
+    const u = await updateDevRule(p, r.id, { onFail: "review", appliesTo: ["pr_title"] });
     expect(u).toMatchObject({ id: r.id, name: "Jira 番号をそろえる", pattern: r.pattern, onFail: "review", appliesTo: ["pr_title"], template: "jira" });
     // 確かめ方を AI に変えると、正規表現は外れる
-    expect(updateDevRule(p, r.id, { check: "ai" })).toMatchObject({ check: "ai", pattern: null });
-    expect(() => updateDevRule(p, r.id, { name: " " })).toThrow("名前");
-    expect(() => updateDevRule(p, r.id, { appliesTo: [] })).toThrow("どこに効くか");
-    expect(() => updateDevRule(p, r.id, { check: "pattern" })).toThrow("正規表現が要ります");
-    expect(() => updateDevRule(p, r.id, { check: "pattern", pattern: "(" })).toThrow("正規表現");
-    expect(devRulesView(p)).toMatchObject({ version: 4, rules: [{ check: "ai", pattern: null }] });
+    expect(await updateDevRule(p, r.id, { check: "ai" })).toMatchObject({ check: "ai", pattern: null });
+    await expect(updateDevRule(p, r.id, { name: " " })).rejects.toThrow("名前");
+    await expect(updateDevRule(p, r.id, { appliesTo: [] })).rejects.toThrow("どこに効くか");
+    await expect(updateDevRule(p, r.id, { check: "pattern" })).rejects.toThrow("正規表現が要ります");
+    await expect(updateDevRule(p, r.id, { check: "pattern", pattern: "(" })).rejects.toThrow("正規表現");
+    expect(await devRulesView(p)).toMatchObject({ version: 4, rules: [{ check: "ai", pattern: null }] });
   });
 
   it("直したルールで確かめる", async () => {
     const p = projectWith();
-    const r = template(p, "jira");
+    const r = await template(p, "jira");
     const bad = subject({ branch: "kuramoto/7", title: "CSV", commits: ["x"] });
     expect((await checkRules(p, bad)).found).toHaveLength(1);
-    updateDevRule(p, r.id, { pattern: "^" });
+    await updateDevRule(p, r.id, { pattern: "^" });
     expect((await checkRules(p, bad)).found).toHaveLength(0);
   });
 
   it("消したルールは一覧に出ず、確かめず、同じひな形をもう一度足せる。違反の記録は残る", async () => {
     const p = projectWith();
-    const r = template(p, "jira");
+    const r = await template(p, "jira");
     const t = await createTicket(p, { title: "CSV の書き出し" });
-    recordViolations(p, t.id, null, await checkRules(p, subject({ branch: "kuramoto/7", title: "CSV", commits: ["x"] })));
-    expect(devRulesView(p).rules[0]).toMatchObject({ violations: 1 });
-    deleteDevRule(p, r.id);
-    expect(devRulesView(p).rules).toEqual([]);
-    expect(devRulesView(p).templates.find((x) => x.key === "jira")!.added).toBe(false);
+    await recordViolations(p, t.id, null, await checkRules(p, subject({ branch: "kuramoto/7", title: "CSV", commits: ["x"] })));
+    expect((await devRulesView(p)).rules[0]).toMatchObject({ violations: 1 });
+    await deleteDevRule(p, r.id);
+    expect((await devRulesView(p)).rules).toEqual([]);
+    expect((await devRulesView(p)).templates.find((x) => x.key === "jira")!.added).toBe(false);
     expect((await checkRules(p, subject({ branch: "kuramoto/7", title: "CSV", commits: ["x"] }))).found).toEqual([]);
-    expect(openViolations(p, t.id)).toEqual([]);
-    expect(violationsOf(p, t.id)).toMatchObject([{ name: "Jira 番号をそろえる" }]);
-    expect(violationTotals(p).total).toBe(1);
-    expect(() => setDevRuleEnabled(p, r.id, true)).toThrow("ありません");
-    expect(template(p, "jira").id).not.toBe(r.id);
-    expect(devRulesView(p).rules).toHaveLength(1);
+    expect(await openViolations(p, t.id)).toEqual([]);
+    expect(await violationsOf(p, t.id)).toMatchObject([{ name: "Jira 番号をそろえる" }]);
+    expect((await violationTotals(p)).total).toBe(1);
+    await expect(setDevRuleEnabled(p, r.id, true)).rejects.toThrow("ありません");
+    expect((await template(p, "jira")).id).not.toBe(r.id);
+    expect((await devRulesView(p)).rules).toHaveLength(1);
   });
 });
 
 describe("開発ルール: 版はプロジェクトごと(dev_rule_versions)", () => {
-  it("版の番号は自分のプロジェクトの行だけで決め、project_id を書いて残す。ほかのプロジェクトの版は混ざらない", () => {
+  it("版の番号は自分のプロジェクトの行だけで決め、project_id を書いて残す。ほかのプロジェクトの版は混ざらない", async () => {
     const p = new Project(":memory:", new ManualClock(new Date("2026-11-12T00:00:00Z")), 7);
     // ほかのプロジェクト(99)が、もっと先の版まで進んでいる
     run(p.db, "INSERT INTO dev_rule_versions (project_id, version, rules, created_at) VALUES (99, 50, '[]', '')");
-    addDevRule(p, { template: "jira" });
-    addDevRule(p, { template: "commit-50" });
-    expect(devRulesView(p).version).toBe(3);
+    await addDevRule(p, { template: "jira" });
+    await addDevRule(p, { template: "commit-50" });
+    expect((await devRulesView(p)).version).toBe(3);
     expect(all<{ project_id: number; version: number }>(p.db, "SELECT project_id, version FROM dev_rule_versions ORDER BY project_id, version")).toEqual([
       { project_id: 7, version: 1 },
       { project_id: 7, version: 2 },
       { project_id: 7, version: 3 },
       { project_id: 99, version: 50 },
     ]);
-    expect(devRulesVersions(p).map((v) => v.version)).toEqual([1, 2, 3]);
+    expect((await devRulesVersions(p)).map((v) => v.version)).toEqual([1, 2, 3]);
   });
 });
 
 describe("開発ルール: 形式での確かめ(AI を使わない)", () => {
   it("ひな形 4 つが、守れているものを通し、守れていないものを見つける", async () => {
     const p = projectWith();
-    for (const t of TEMPLATES) template(p, t.key);
+    for (const t of TEMPLATES) await template(p, t.key);
     const names = async (s: RuleSubject) => (await checkRules(p, s)).found.map((f) => f.rule.name);
 
     expect(await names(subject())).toEqual([]);
@@ -159,17 +159,17 @@ describe("開発ルール: 形式での確かめ(AI を使わない)", () => {
 
   it("「!」で始まる正規表現は、当てはまったら違反。コードは足した行を 1 行ずつ見る", async () => {
     const p = projectWith();
-    addDevRule(p, { name: "console.log を残さない", body: "x", appliesTo: ["code"], check: "pattern", pattern: "!console\\.log", onFail: "review" });
+    await addDevRule(p, { name: "console.log を残さない", body: "x", appliesTo: ["code"], check: "pattern", pattern: "!console\\.log", onFail: "review" });
     expect((await checkRules(p, subject({ code: "const a = 1;\nconsole.log(a);" }))).found).toHaveLength(1);
     expect((await checkRules(p, subject({ code: "const a = 1;" }))).found).toHaveLength(0);
   });
 
   it("無効のルールは確かめられない", async () => {
     const p = projectWith();
-    const r = template(p, "jira");
+    const r = await template(p, "jira");
     const bad = subject({ branch: "kuramoto/7", title: "CSV", commits: ["x"] });
     expect((await checkRules(p, bad)).found).toHaveLength(1);
-    setDevRuleEnabled(p, r.id, false);
+    await setDevRuleEnabled(p, r.id, false);
     const off = await checkRules(p, bad);
     expect(off.found).toEqual([]);
     expect(off.evaluated.size).toBe(0);
@@ -237,7 +237,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
 
     expect((await productivity(p)).totals.ruleViolations).toEqual({ total: 1, autofixed: 1 });
     expect((await ticketView(p, t.id)).timeline.find((x) => x.type === "rule")).toMatchObject({ rule: "Jira 番号をそろえる", handled: "autofixed" });
-    expect(devRulesView(p).rules[0]).toMatchObject({ violations: 1, autofixed: 1 });
+    expect((await devRulesView(p)).rules[0]).toMatchObject({ violations: 1, autofixed: 1 });
   });
 
   it("レビューで指摘: PR は出て、レビューの指摘に載る。直せば解決する", async () => {
@@ -315,7 +315,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
 
   it("ブランチ名だけに効く「自動で直す」ルールは、戻さずに、レビューで指摘に回す", async () => {
     const { p, d, toolReplies } = setup([{}]);
-    addDevRule(p, { name: "ブランチは SHOP- で始める", body: "x", appliesTo: ["branch"], check: "pattern", pattern: "^SHOP-", onFail: "autofix" });
+    await addDevRule(p, { name: "ブランチは SHOP- で始める", body: "x", appliesTo: ["branch"], check: "pattern", pattern: "^SHOP-", onFail: "autofix" });
     await createTicket(p, { title: "CSV の書き出し" });
     await d.drain();
 
@@ -337,7 +337,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
 
   it("無効のルールは確かめられず、違反も残らない", async () => {
     const { p, d, workspace, toolReplies } = setup([{ title: "CSV", files: ["db/migrations/001.sql", "src/a.ts"], commits: ["あ".repeat(80)], body: "本文" }]);
-    for (const t of TEMPLATES) setDevRuleEnabled(p, template(p, t.key).id, false);
+    for (const t of TEMPLATES) await setDevRuleEnabled(p, (await template(p, t.key)).id, false);
     const t = await createTicket(p, { title: "CSV の書き出し" });
     await d.drain();
 
@@ -350,7 +350,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
 
   it("AI が読むルールだけ、エージェントに確かめさせる。形式のルールには使わない", async () => {
     const { p, d, order } = setup([{}], { judge: () => [{ rule_id: 1, ok: false, detail: "テストの名前が分かりにくい" }] });
-    addDevRule(p, { name: "テストの名前が読める", body: "テストの名前が何を確かめるか分かる", appliesTo: ["code"], check: "ai", onFail: "review" });
+    await addDevRule(p, { name: "テストの名前が読める", body: "テストの名前が何を確かめるか分かる", appliesTo: ["code"], check: "ai", onFail: "review" });
     template(p, "commit-50");
     const t = await createTicket(p, { title: "CSV の書き出し" });
     await d.drain();

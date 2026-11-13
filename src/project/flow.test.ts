@@ -654,7 +654,7 @@ describe("ノンストップ(ADR-0022)", () => {
     expect(replies[0]).toContain("責任者に上げません");
     expect(await pendingOwnerDecisions(p)).toEqual([]);
     expect(p.notes(t.id).map((n) => n.body)).toContain("MySQL は 8.4 で進める");
-    expect(leadMessages(p).at(-1)!.body).toContain("【#1 の判断】");
+    expect((await leadMessages(p)).at(-1)!.body).toContain("【#1 の判断】");
     expect(p.ticket(t.id).stage).toBe("merge");
   });
 

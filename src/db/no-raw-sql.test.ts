@@ -15,13 +15,8 @@ const files = [join(ROOT, "hq.ts"), join(ROOT, "server.ts"), ...readdirSync(join
 /** 同期の生 SQL をまだ使っているファイル(src からの相対)。移したら消す。移す単位は ADR-0040 の A〜D(別チケット)。D が済んだら空にする。 */
 const NOT_MIGRATED = new Set([
   "server.ts",
-  "project/dev-rules.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
   "project/inbox.ts",
-  "project/leadchat.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
-  "project/member-chat.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
   "project/project.ts",
-  "project/prompts.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
-  "project/questions.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
 ]);
 
 const rel = (f: string) => f.slice(ROOT.length + 1);

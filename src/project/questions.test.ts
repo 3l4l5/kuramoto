@@ -114,15 +114,15 @@ describe("島への質問・相談(R16)", () => {
     const before = state(p, ticket.id);
     const spent = await ticketSpentUsd(p, ticket.id);
 
-    const said = askQuestion(p, owner, p.ticket(ticket.id), "レビュー", "CSV の空のときはどう確かめる?");
+    const said = await askQuestion(p, owner, p.ticket(ticket.id), "レビュー", "CSV の空のときはどう確かめる?");
     expect(said).toContain("レビュー に送りました");
     // 経路があるのでリーダーには回らない。受信箱の ask が、チケットを持たずに入る
-    expect(leadMessages(p)).toEqual([]);
+    expect(await leadMessages(p)).toEqual([]);
     expect(all(p.db, "SELECT ticket_id, kind, to_role FROM messages WHERE kind = 'ask'")).toEqual([{ ticket_id: null, kind: "ask", to_role: "review" }]);
 
     await d.drain();
 
-    const q = questionsOf(p, ticket.id)[0]!;
+    const q = (await questionsOf(p, ticket.id))[0]!;
     expect(q).toMatchObject({ to_target: "レビュー", routed_to_lead: 0, answer: "境界値は 0 件と 1 件を見て", from_member_id: owner.id });
     // 答えたのは、レビューの島のメンバー
     const answerer = p.member(q.answered_by_member_id!);
@@ -153,10 +153,10 @@ describe("島への質問・相談(R16)", () => {
     const before = state(p, ticket.id);
 
     // 開発 ↔ QA は結んでいない
-    const said = askQuestion(p, owner, p.ticket(ticket.id), "QA", "受け入れの観点は?");
+    const said = await askQuestion(p, owner, p.ticket(ticket.id), "QA", "受け入れの観点は?");
     expect(said).toContain("経路が無い");
     expect(all(p.db, "SELECT 1 FROM messages WHERE kind = 'ask'")).toEqual([]);
-    expect(leadMessages(p).map((m) => m.body)[0]).toContain("経路が無いのでリーダーに回ってきました");
+    expect((await leadMessages(p)).map((m) => m.body)[0]).toContain("経路が無いのでリーダーに回ってきました");
     expect(all(p.db, "SELECT 1 FROM messages WHERE kind = 'chat' AND status = 'pending'")).toHaveLength(1);
 
     await d.drain();
@@ -164,7 +164,7 @@ describe("島への質問・相談(R16)", () => {
     const item = (await ticketView(p, ticket.id)).timeline.find((x) => x.type === "question");
     expect(item).toMatchObject({ type: "question", to: "QA", routedToLead: true, noRoute: true, answer: null });
     // 質問は ticket_questions に残る
-    expect(questionsOf(p, ticket.id)).toHaveLength(1);
+    expect(await questionsOf(p, ticket.id)).toHaveLength(1);
   });
 
   it("リーダーに回った質問(経路なし・リーダー宛て)にリーダーが answer_question で答えると、やりとりに残り、「答えを待っています」が消えて、次の担当の指示に載る", async () => {
@@ -179,7 +179,7 @@ describe("島への質問・相談(R16)", () => {
       if (req.tools.some((t) => t.name === "answer_question")) {
         leadPrompt = req.prompt;
         leadTools = req.tools.map((t) => t.name);
-        const [noRoute, toLead] = questionsOf(p, p.tickets()[0]!.id);
+        const [noRoute, toLead] = await questionsOf(p, p.tickets()[0]!.id);
         expect(await call("answer_question", { question_id: noRoute!.id, answer: "QA の観点は、受け入れ条件のとおり" })).toContain("やりとりに残しました");
         // 答えた質問をもう一度・リーダーに回っていない質問・空の答え・無い質問は受けない
         expect(await call("answer_question", { question_id: noRoute!.id, answer: "二度目" })).toContain("もう答えが残っています");
@@ -192,8 +192,8 @@ describe("島への質問・相談(R16)", () => {
     });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp") });
     const { ticket, owner } = await worked(p, d);
-    askQuestion(p, owner, p.ticket(ticket.id), "QA", "受け入れの観点は?");
-    askQuestion(p, owner, p.ticket(ticket.id), "リーダー", "優先度を教えて");
+    await askQuestion(p, owner, p.ticket(ticket.id), "QA", "受け入れの観点は?");
+    await askQuestion(p, owner, p.ticket(ticket.id), "リーダー", "優先度を教えて");
     // 答えを待っている間は、やりとりでは答え無し
     expect((await ticketView(p, ticket.id)).timeline.filter((x) => x.type === "question")).toMatchObject([{ answer: null }, { answer: null }]);
 
@@ -201,14 +201,14 @@ describe("島への質問・相談(R16)", () => {
 
     // リーダーの指示に、答えを待っている質問が番号つきで載り、道具が渡る
     expect(leadTools).toContain("answer_question");
-    const [noRoute, toLead] = questionsOf(p, ticket.id);
+    const [noRoute, toLead] = await questionsOf(p, ticket.id);
     expect(leadPrompt).toContain(`質問 ${noRoute!.id}`);
     expect(leadPrompt).toContain(`質問 ${toLead!.id}`);
     // 答えた質問だけ、リーダーの答えが残る。答えていない方は待ちのまま
     const lead = p.fixedMember("lead");
     expect(noRoute).toMatchObject({ answer: "QA の観点は、受け入れ条件のとおり", answered_by_member_id: lead.id, routed_to_lead: 1 });
     expect(toLead).toMatchObject({ answer: null, answered_by_member_id: null });
-    expect(leadPendingQuestions(p).map((q) => q.id)).toEqual([toLead!.id]);
+    expect((await leadPendingQuestions(p)).map((q) => q.id)).toEqual([toLead!.id]);
     const items = (await ticketView(p, ticket.id)).timeline.filter((x) => x.type === "question");
     expect(items[0]).toMatchObject({ noRoute: true, answer: "QA の観点は、受け入れ条件のとおり", answeredBy: lead.name });
     expect(items[1]).toMatchObject({ answer: null });
@@ -224,11 +224,11 @@ describe("島への質問・相談(R16)", () => {
   it("リーダーへの質問は経路が無くてもリーダーに届く(「経路が無い」とは残さない)。自分の島や空の質問は受けない", async () => {
     const { p, d } = setup(undefined, []);
     const { ticket, owner } = await worked(p, d);
-    askQuestion(p, owner, p.ticket(ticket.id), "リーダー", "優先度を教えて");
+    await askQuestion(p, owner, p.ticket(ticket.id), "リーダー", "優先度を教えて");
     expect((await ticketView(p, ticket.id)).timeline.find((x) => x.type === "question")).toMatchObject({ to: "リーダー", routedToLead: true, noRoute: false });
-    expect(askQuestion(p, owner, p.ticket(ticket.id), "開発", "自分たちに")).toContain("自分の島");
-    expect(askQuestion(p, owner, p.ticket(ticket.id), "レビュー", "  ")).toContain("質問の中身がありません");
-    expect(questionsOf(p, ticket.id)).toHaveLength(1);
+    expect(await askQuestion(p, owner, p.ticket(ticket.id), "開発", "自分たちに")).toContain("自分の島");
+    expect(await askQuestion(p, owner, p.ticket(ticket.id), "レビュー", "  ")).toContain("質問の中身がありません");
+    expect(await questionsOf(p, ticket.id)).toHaveLength(1);
   });
 
   it("開発の起動に「質問する」道具(ask_island)が渡り、呼ぶと経路のある島に届いて、作業は止まらずに答えが返る", async () => {
@@ -253,7 +253,7 @@ describe("島への質問・相談(R16)", () => {
     expect(tools[0]).toContain("ask_island");
     // 質問しても、チケットはそのまま流れ(レビューも QA も通って merge 待ち)、答えも返っている
     expect(p.ticket(t.id).stage).toBe("merge");
-    expect(questionsOf(p, t.id)[0]).toMatchObject({ answer: "レビューの観点: 空のとき", to_target: "レビュー" });
+    expect((await questionsOf(p, t.id))[0]).toMatchObject({ answer: "レビューの観点: 空のとき", to_target: "レビュー" });
     // チケットの起動は、質問で増えない(1 チケット 1 起動)
     expect(all<{ role: string }>(p.db, "SELECT role FROM runs WHERE ticket_id = ? ORDER BY id", [t.id]).map((r) => r.role)).toEqual(["dev", "review", "qa"]);
   });
@@ -261,10 +261,10 @@ describe("島への質問・相談(R16)", () => {
   it("答える島が編成の変更で無くなっていたら、経路が無いものとしてリーダーに回す", async () => {
     const { p, d } = setup();
     const { ticket, owner } = await worked(p, d);
-    askQuestion(p, owner, p.ticket(ticket.id), "レビュー", "いま空いてる?");
+    await askQuestion(p, owner, p.ticket(ticket.id), "レビュー", "いま空いてる?");
     p.saveFormation({ pull: "down", units: [unit("開発", ["dev"]), unit("QA", ["qa"])] });
     await d.drain();
-    expect(questionsOf(p, ticket.id)[0]).toMatchObject({ routed_to_lead: 1, answer: null });
+    expect((await questionsOf(p, ticket.id))[0]).toMatchObject({ routed_to_lead: 1, answer: null });
     expect(all(p.db, "SELECT status FROM messages WHERE kind = 'ask'")).toEqual([{ status: "done" }]);
   });
 });

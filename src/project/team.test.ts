@@ -323,7 +323,7 @@ describe("リーダーとのチャット", () => {
     expect((await leadChatView(p)).work).toBeNull();
     expect(p.tickets().map((x) => x.title)).toEqual(["CSV", "ログイン画面"]);
     expect(p.notes(t.id)).toMatchObject([{ who: "lead", body: "文字コードは UTF-8" }]);
-    expect(() => sayToLead(p, " ")).toThrow(/メッセージがありません/);
+    await expect(sayToLead(p, " ")).rejects.toThrow(/メッセージがありません/);
   });
 });
 
@@ -408,7 +408,7 @@ describe("並列と交通整理", () => {
     expect(peak).toBe(3);
     expect(await blockers(p, p.tickets()[1]!.id)).toEqual([1]);
     expect(p.notes(p.tickets()[1]!.id)).toMatchObject([{ who: "lead", body: "土台の DB 接続を使う" }]);
-    expect(leadMessages(p).at(-1)!.body).toContain("【交通整理 #1, #2, #3, #4】");
+    expect((await leadMessages(p)).at(-1)!.body).toContain("【交通整理 #1, #2, #3, #4】");
     release();
     await drained;
   });

@@ -15,14 +15,14 @@ describe("リーダーとのチャット: 読んだところを覚える", () =>
       prompts.push(req.prompt);
       // 1 回目の返事を書いている最中に、責任者が続けて書き、交通整理の報告も入る
       if (prompts.length === 1) {
-        sayToLead(p, "#13 は僕が merge しておいた");
-        leadReply(p, "【交通整理 #20】順番を決めたわ");
+        await sayToLead(p, "#13 は僕が merge しておいた");
+        await leadReply(p, "【交通整理 #20】順番を決めたわ");
       }
       return { finalText: `返事 ${prompts.length}` };
     });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp") });
 
-    sayToLead(p, "#13 はどうなってる?");
+    await sayToLead(p, "#13 はどうなってる?");
     await d.drain();
 
     expect(prompts).toHaveLength(2);
@@ -35,7 +35,7 @@ describe("リーダーとのチャット: 読んだところを覚える", () =>
     // 前の会話は引き継がない代わりに、最近のやりとりとして渡す
     expect(harness.calls[1]!.resumeSessionId).toBeUndefined();
     expect(prompts[1]!.split("## 最近のやりとり")[1]).toContain("責任者: #13 はどうなってる?");
-    expect(leadMessages(p).filter((m) => m.who === "lead").map((m) => m.body)).toEqual(["【交通整理 #20】順番を決めたわ", "返事 1", "返事 2"]);
+    expect((await leadMessages(p)).filter((m) => m.who === "lead").map((m) => m.body)).toEqual(["【交通整理 #20】順番を決めたわ", "返事 1", "返事 2"]);
 
     // 読んでいないメッセージが無ければ、チャットの担当を起こさない
     p.db.prepare("INSERT INTO messages (ticket_id, to_role, kind, payload, available_at, created_at) VALUES (NULL, 'lead', 'chat', '{}', ?, ?)").run(p.now(), p.now());

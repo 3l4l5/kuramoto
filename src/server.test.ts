@@ -15,7 +15,7 @@ import { createTicket } from "./project/workflow.js";
 import { run } from "./db/sqlite.js";
 import { DbHealth } from "./db/mysql-health.js";
 
-const leadSaid = (p: Project, text: string) => leadMessages(p).some((m) => m.body.includes(text));
+const leadSaid = async (p: Project, text: string) => (await leadMessages(p)).some((m) => m.body.includes(text));
 
 const cleanups: (() => void)[] = [];
 afterEach(() => cleanups.splice(0).forEach((f) => f()));
@@ -90,8 +90,8 @@ describe("ローカルサーバー", () => {
     // 始業したら、リーダーがまずボードを見回る(ADR-0026)
     const p = app.project(created.id);
     expect(p.setting("patrol_last_at")).toBeTruthy();
-    for (let i = 0; i < 50 && !leadSaid(p, "【見回り】"); i++) await new Promise((r) => setTimeout(r, 20));
-    expect(leadSaid(p, "【見回り】")).toBe(true);
+    for (let i = 0; i < 50 && !(await leadSaid(p, "【見回り】")); i++) await new Promise((r) => setTimeout(r, 20));
+    expect(await leadSaid(p, "【見回り】")).toBe(true);
     // 見回りの間隔はプロジェクトの設定で変えられる
     expect((await call("GET", `/api/projects/${created.id}/settings`)).json.patrolMin).toBe(5);
     await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], patrolMin: 10 });
@@ -100,7 +100,7 @@ describe("ローカルサーバー", () => {
     expect((await call("GET", `/api/projects/${created.id}/settings`)).json.ciMode).toBe("github");
     await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], ciMode: "team", ciCommands: { "acme/shop": "npm ci\nnpm test" } });
     expect((await call("GET", `/api/projects/${created.id}/settings`)).json).toMatchObject({ ciMode: "team", ciCommands: { "acme/shop": "npm ci\nnpm test" } });
-    expect(leadSaid(p, "【チームの CI に切り替えました】")).toBe(true);
+    expect(await leadSaid(p, "【チームの CI に切り替えました】")).toBe(true);
     await call("POST", `/api/projects/${created.id}/settings`, { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }], ciMode: "github" });
     expect(github.actions).toEqual(["acme/shop:false", "acme/shop:true"]);
 
@@ -255,7 +255,7 @@ describe("ローカルサーバー", () => {
     const p = app.project(created.id);
     const t = await createTicket(p, { title: "A" });
     const other = await createTicket(p, { title: "B" });
-    const rule = addDevRule(p, { template: "migration-alone" });
+    const rule = await addDevRule(p, { template: "migration-alone" });
     run(p.db, "INSERT INTO rule_violations (rule_id, ticket_id, handled, created_at, detail) VALUES (?, ?, 'blocked', ?, '')", [rule.id, t.id, p.now()]);
     const tickets = (await call("GET", `/api/projects/${created.id}`)).json.tickets as { id: number; ruleBlocked: string[] }[];
     expect(tickets.find((x) => x.id === t.id)!.ruleBlocked).toEqual(["マイグレーションは単独の PR"]);

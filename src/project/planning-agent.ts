@@ -484,7 +484,7 @@ async function snapshot(p: Project, stage: Stage | "handoff"): Promise<string> {
 }
 
 /** チケットの依存を 1 本足す(あれば何もしない。読んでから書くので、トランザクションの中で)。 */
-async function addDependency(p: Project, ticketId: number, dependsOn: number): Promise<void> {
+export async function addDependency(p: Project, ticketId: number, dependsOn: number): Promise<void> {
   await p.pdb.transaction(async () => {
     const has = await inScope(p.pdb, "ticket_deps").where("ticket_id", "=", ticketId).where("depends_on", "=", dependsOn).executeTakeFirst();
     if (!has) await p.pdb.insert("ticket_deps", { ticket_id: ticketId, depends_on: dependsOn }).execute();
