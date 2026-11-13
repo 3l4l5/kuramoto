@@ -95,7 +95,7 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
       expect(replies[0]).toContain("お手本との違い: 50.0%");
       expect(replies[0]).toContain("違いが大きい");
       expect(replies[1]).toContain("お手本はありません");
-      const v = ticketView(p, t.id);
+      const v = (await ticketView(p, t.id));
       expect(v.designCompare).toMatchObject([{ screen: "list", name: "メモ一覧", ratio: 0.5 }]);
       expect(v.designCompare[0]!.reference).toBeTruthy();
     } finally {
@@ -104,7 +104,7 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
     }
   });
 
-  it("画面デザインの段階は、デザインシステムが無いと合意できない。引き渡しでは土台のチケットを先に並べられる", () => {
+  it("画面デザインの段階は、デザインシステムが無いと合意できない。引き渡しでは土台のチケットを先に並べられる", async () => {
     const p = new Project(":memory:", new ManualClock());
     p.addRepo("acme/shop", "API");
     putScreen(p, "list", { name: "一覧", device: "phone", requirements: [], variants: [{ id: "A", html: "<p>x</p>" }], chosen: "A", agreed: true });
@@ -113,8 +113,8 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
     expect(agreeBlocker(p, "screen")).toBeNull();
 
     const tool = (name: string) => planningTools(p, "handoff").find((x) => x.name === name)!;
-    void tool("create_ticket").handler({ title: "デザインシステムの土台", body: "トークン・部品・/_design", screens: [], design: [], design_system: true } as never);
-    void tool("create_ticket").handler({ title: "一覧の画面", body: "部品で組み立てる", screens: ["list"], design: [], after: [1] } as never);
+    await tool("create_ticket").handler({ title: "デザインシステムの土台", body: "トークン・部品・/_design", screens: [], design: [], design_system: true } as never);
+    await tool("create_ticket").handler({ title: "一覧の画面", body: "部品で組み立てる", screens: ["list"], design: [], after: [1] } as never);
     const [base, screen] = p.tickets();
     expect(blockers(p, screen!.id)).toEqual([base!.number]);
   });

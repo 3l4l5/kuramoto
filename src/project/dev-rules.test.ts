@@ -218,7 +218,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
     expect(rows[0]!.detail).toContain("PR タイトル");
 
     expect((await productivity(p)).totals.ruleViolations).toEqual({ total: 1, autofixed: 1 });
-    expect(ticketView(p, t.id).timeline.find((x) => x.type === "rule")).toMatchObject({ rule: "Jira 番号をそろえる", handled: "autofixed" });
+    expect((await ticketView(p, t.id)).timeline.find((x) => x.type === "rule")).toMatchObject({ rule: "Jira 番号をそろえる", handled: "autofixed" });
     expect(devRulesView(p).rules[0]).toMatchObject({ violations: 1, autofixed: 1 });
   });
 
@@ -270,7 +270,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
     // 開発の最初の 1 回だけ動かす
     await d.drain({ maxRuns: 1 });
     expect(p.ticket(t.id).stage).toBe("dev");
-    expect(ticketView(p, t.id).ruleBlocked).toEqual(["マイグレーションは単独の PR"]);
+    expect((await ticketView(p, t.id)).ruleBlocked).toEqual(["マイグレーションは単独の PR"]);
   });
 
   it("ブランチ名は持ち主が直せない: Jira の番号が無いチケットで「Jira 番号をそろえる」を有効にしても、止まらない", async () => {

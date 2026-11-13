@@ -253,7 +253,7 @@ describe("チケットの中身とやりとり", () => {
     expect(devCalls[0]!.systemPrompt).toContain("コード・コミット・PR の本文");
     expect(harness.calls.find((c) => c.tools.some((x) => x.name === "submit_review"))!.systemPrompt).not.toContain("テストを先に書く");
 
-    const v = ticketView(p, t.id);
+    const v = (await ticketView(p, t.id));
     expect(v.timeline.map((x) => (x.type === "run" ? `run:${x.kind}` : x.type === "review" ? `review:${x.verdict}` : x.type))).toEqual([
       "created",
       "note",
@@ -274,7 +274,7 @@ describe("チケットの中身とやりとり", () => {
     expect(v.prs).toMatchObject([{ number: 9, full_name: "acme/shop" }]);
 
     p.editTicket(t.id, { title: "CSV を書き出す(UTF-8)", body: "注文履歴" });
-    expect(ticketView(p, t.id)).toMatchObject({ title: "CSV を書き出す(UTF-8)", body: "注文履歴" });
+    expect((await ticketView(p, t.id))).toMatchObject({ title: "CSV を書き出す(UTF-8)", body: "注文履歴" });
     expect(() => p.addNote(t.id, "  ")).toThrow(/メモがありません/);
   });
 });

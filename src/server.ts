@@ -728,7 +728,7 @@ export class KuramotoServer {
   /** 要件と技術的な設計を Markdown でダウンロードさせる。 */
   /** 画面の画像(お手本・実装・違い)を返す(ADR-0034)。 */
   private async sendDesignImage(id: number, imageId: number, res: ServerResponse): Promise<void> {
-    const row = imageRow(await this.open(id), imageId);
+    const row = await imageRow(await this.open(id), imageId);
     const data = row ? await this.designStoreFor(id).get(row.store_key) : null;
     if (!data) return send(res, 404, { error: "画像がありません" });
     res.writeHead(200, { "content-type": "image/png", "cache-control": "private, max-age=86400" });
@@ -805,7 +805,7 @@ export type DevRulesView = ReturnType<typeof devRulesView>;
 export type ProductivityView = ReturnType<typeof productivity>;
 export type OfficeView = ReturnType<typeof officeView> & { running: boolean };
 export type { MemberView, UnitView };
-export type TicketView = ReturnType<typeof ticketView>;
+export type TicketView = Awaited<ReturnType<typeof ticketView>>;
 export type LeadChatView = ReturnType<typeof leadChatView>;
 export type { MemberChatView, MemberNow } from "./project/member-chat.js";
 

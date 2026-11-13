@@ -47,7 +47,7 @@ export type TimelineItem =
   | { type: "question"; at: string; from: string; to: string; body: string; routedToLead: boolean; noRoute: boolean; answer: string | null; answeredBy: string | null; answeredAt: string | null }
   | { type: "rule"; at: string; rule: string; handled: string; detail: string; resolvedAt: string | null };
 
-export function ticketView(p: Project, ticketId: number) {
+export async function ticketView(p: Project, ticketId: number) {
   const t = p.ticket(ticketId);
   const refs = JSON.parse(t.plan_refs || "{}") as { requirement?: string; screens?: string[]; design?: string[]; repo?: string };
   const requirement = get<{ code: string; name: string; acceptance: string }>(
@@ -207,9 +207,9 @@ export function ticketView(p: Project, ticketId: number) {
     // 「直すまで進めない」ルールに反して止まっているか(ボードの赤い札)
     ruleBlocked: openViolations(p, t.id, "blocked").map((v) => v.name),
     // 画面ごとの最新の見比べ(お手本・実装・違いの画像と、違いの割合。ADR-0034)
-    designCompare: latestComparisons(p, t.id).map((c) => ({ ...c, name: screens(p).get(c.screen)?.name ?? c.screen })),
+    designCompare: (await latestComparisons(p, t.id)).map((c) => ({ ...c, name: screens(p).get(c.screen)?.name ?? c.screen })),
     timeline,
   };
 }
 
-export type TicketView = ReturnType<typeof ticketView>;
+export type TicketView = Awaited<ReturnType<typeof ticketView>>;

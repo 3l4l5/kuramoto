@@ -17,7 +17,6 @@ const NOT_MIGRATED = new Set([
   "server.ts",
   "project/budget.ts",
   "project/ci-tools.ts",
-  "project/design-visual.ts",
   "project/dev-rules.ts",
   "project/dispatcher.ts",
   "project/inbox.ts",

@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { PNG } from "pngjs";
 import pixelmatch from "pixelmatch";
-import { all, get, run } from "../db/sqlite.js";
+import { inScope } from "../db/count.js";
+import { dialect } from "../db/dialect/index.js";
 import type { Project } from "./project.js";
 
 /**
@@ -58,24 +59,15 @@ function size(png: Buffer): { width: number; height: number } {
   return { width: p.width, height: p.height };
 }
 
-function record(p: Project, r: Omit<DesignImage, "id" | "created_at">): number {
-  return run(p.db, "INSERT INTO design_images (ticket_id, screen_key, kind, store_key, width, height, diff_ratio, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
-    r.ticket_id,
-    r.screen_key,
-    r.kind,
-    r.store_key,
-    r.width,
-    r.height,
-    r.diff_ratio,
-    p.now(),
-  ]).lastId;
+async function record(p: Project, r: Omit<DesignImage, "id" | "created_at">): Promise<number> {
+  return dialect.insertedId(p.pdb.insert("design_images", { ticket_id: r.ticket_id, screen_key: r.screen_key, kind: r.kind, store_key: r.store_key, width: r.width, height: r.height, diff_ratio: r.diff_ratio, created_at: p.now() }));
 }
 
 /** 試作のお手本の画像。同じ試作(HTML と端末)なら、前に描いたものを使う。 */
 export async function referenceImage(p: Project, store: DesignStore, render: Renderer, s: { key: string; html: string; device: "phone" | "desktop" }): Promise<{ id: number; png: Buffer } | null> {
   const hash = createHash("sha1").update(`${s.device}|${s.html}`).digest("hex").slice(0, 12);
   const key = `reference/${s.key}-${hash}.png`;
-  const known = get<{ id: number }>(p.db, "SELECT id FROM design_images WHERE kind = 'reference' AND store_key = ?", [key]);
+  const known = await inScope(p.pdb, "design_images").where("kind", "=", "reference").where("store_key", "=", key).executeTakeFirst();
   const cached = await store.get(key);
   if (known && cached) return { id: known.id, png: cached };
   let png: Buffer;
@@ -86,7 +78,7 @@ export async function referenceImage(p: Project, store: DesignStore, render: Ren
     return null;
   }
   await store.put(key, png);
-  const id = known?.id ?? record(p, { ticket_id: null, screen_key: s.key, kind: "reference", store_key: key, ...size(png), diff_ratio: null });
+  const id = known?.id ?? (await record(p, { ticket_id: null, screen_key: s.key, kind: "reference", store_key: key, ...size(png), diff_ratio: null }));
   return { id, png };
 }
 
@@ -130,20 +122,25 @@ export async function recordComparison(
   const diffKey = `tickets/${a.ticketId}/${a.screenKey}-${stamp}-diff.png`;
   await store.put(actualKey, a.actual);
   await store.put(diffKey, c.diff);
-  const actualId = record(p, { ticket_id: a.ticketId, screen_key: a.screenKey, kind: "actual", store_key: actualKey, ...size(a.actual), diff_ratio: c.ratio });
-  const diffId = record(p, { ticket_id: a.ticketId, screen_key: a.screenKey, kind: "diff", store_key: diffKey, ...size(c.diff), diff_ratio: c.ratio });
+  const actualId = await record(p, { ticket_id: a.ticketId, screen_key: a.screenKey, kind: "actual", store_key: actualKey, ...size(a.actual), diff_ratio: c.ratio });
+  const diffId = await record(p, { ticket_id: a.ticketId, screen_key: a.screenKey, kind: "diff", store_key: diffKey, ...size(c.diff), diff_ratio: c.ratio });
   p.event("system", "design_compared", a.ticketId, { screen: a.screenKey, ratio: c.ratio, reference: a.reference.id, actual: actualId, diff: diffId });
   return { ...c, actualId, diffId };
 }
 
 /** チケットの画面ごとの、最新の見比べ(お手本・実装・違い)。 */
-export function latestComparisons(p: Project, ticketId: number): { screen: string; ratio: number; at: string; reference: number | null; actual: number; diff: number }[] {
-  const rows = all<{ screen_key: string; diff_ratio: number; created_at: string; data: string }>(
-    p.db,
-    `SELECT screen_key, diff_ratio, created_at, (SELECT data FROM events e WHERE e.ticket_id = ? AND e.type = 'design_compared' AND json_extract(e.data, '$.actual') = d.id) AS data
-     FROM design_images d WHERE d.ticket_id = ? AND d.kind = 'actual' ORDER BY d.id DESC`,
-    [ticketId, ticketId],
-  );
+export async function latestComparisons(p: Project, ticketId: number): Promise<{ screen: string; ratio: number; at: string; reference: number | null; actual: number; diff: number }[]> {
+  // 画像と、見比べたときの出来事を、それぞれ 1 文で取って突き合わせる
+  const [images, events] = await Promise.all([
+    inScope(p.pdb, "design_images").where("ticket_id", "=", ticketId).where("kind", "=", "actual").orderBy("id", "desc").execute(),
+    inScope(p.pdb, "events").where("ticket_id", "=", ticketId).where("type", "=", "design_compared").orderBy("id").execute(),
+  ]);
+  const dataOf = new Map<number, string>();
+  for (const e of events) {
+    const actual = (JSON.parse(e.data || "{}") as { actual?: number }).actual;
+    if (actual !== undefined && !dataOf.has(actual)) dataOf.set(actual, e.data);
+  }
+  const rows = images.map((d) => ({ screen_key: d.screen_key, diff_ratio: d.diff_ratio as number, created_at: d.created_at, data: dataOf.get(d.id) ?? "" }));
   const seen = new Set<string>();
   const out: { screen: string; ratio: number; at: string; reference: number | null; actual: number; diff: number }[] = [];
   for (const r of rows) {
@@ -155,6 +152,6 @@ export function latestComparisons(p: Project, ticketId: number): { screen: strin
   return out;
 }
 
-export function imageRow(p: Project, id: number): DesignImage | undefined {
-  return get<DesignImage>(p.db, "SELECT * FROM design_images WHERE id = ?", [id]);
+export async function imageRow(p: Project, id: number): Promise<DesignImage | undefined> {
+  return (await inScope(p.pdb, "design_images").where("id", "=", id).executeTakeFirst()) as DesignImage | undefined;
 }

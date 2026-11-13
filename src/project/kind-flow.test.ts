@@ -98,7 +98,7 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
     expect(harness.calls[2]!.prompt).toContain("git diff");
 
     // やりとりに申し送りが残る
-    expect(ticketView(p, t.id).timeline.some((i) => i.type === "handoff" && i.role === "QA")).toBe(true);
+    expect((await ticketView(p, t.id)).timeline.some((i) => i.type === "handoff" && i.role === "QA")).toBe(true);
   });
 
   it("開発より前に複数の工程があれば、その順に申し送りを残してから開発へ", async () => {
@@ -129,9 +129,9 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
     const t = mk(p, "feature");
     setTicketKind(p, t.id, "bugfix");
     expect(p.ticket(t.id).stage).toBe("dev");
-    const item = ticketView(p, t.id).timeline.find((i) => i.type === "kind_change");
+    const item = (await ticketView(p, t.id)).timeline.find((i) => i.type === "kind_change");
     expect(item).toMatchObject({ from: "機能", to: "バグ修正", who: "あなた" });
-    expect(ticketView(p, t.id).kind).toBe("bugfix");
+    expect((await ticketView(p, t.id)).kind).toBe("bugfix");
     await d.drain();
     expect(trail(p, t.id)).toEqual(["dev"]);
     expect(() => setTicketKind(p, t.id, "chore")).toThrow("知らないチケットの種類");

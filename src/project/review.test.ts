@@ -69,7 +69,7 @@ describe("レビューの往復(実際の PR レビューのモデル)", () => {
       [true, "fixed", ["raised", "fixed", "resolved"]],
       [false, "open", ["raised"]],
     ]);
-    expect(ticketView(p, t.id).timeline.filter((x) => x.type === "review").map((x) => (x as { verdict: string }).verdict)).toEqual(["差し戻し", "承認", "承認"]); // レビュー 2 回とセキュリティ 1 回
+    expect((await ticketView(p, t.id)).timeline.filter((x) => x.type === "review").map((x) => (x as { verdict: string }).verdict)).toEqual(["差し戻し", "承認", "承認"]); // レビュー 2 回とセキュリティ 1 回
   });
 
   it("開発が理由を添えて「直さない」と返し、レビュアーが納得すれば通る。納得しなければリーダーが裁定する", async () => {
