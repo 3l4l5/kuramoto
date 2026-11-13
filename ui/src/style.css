@@ -1108,7 +1108,9 @@ body { background: var(--surface); }
 /* ---- 見方の切り替え(オフィス / ボード / ツリー)。パソコンでは右寄せの並び ---- */
 .viewhead { display: flex; align-items: center; gap: var(--sp-2); }
 .viewsw { display: flex; gap: var(--sp-1); margin-left: auto; }
-.stagetabs, .tk-tabs, .phonebar, .phonemenu { display: none; }
+.stagetabs, .tk-tabs, .phonebar, .phonemenu, .tk-phone, .tk-short, .tk-kindsheet { display: none; }
+/* 共通ヘッダーの引き出しのボタン: 包みは並びに影響させず、親(.bar)の gap でそのまま並べる */
+.drawerbtns { display: contents; }
 
 /* ---- スマホ(幅 390px、未決 #21): あなたの対応・ボード・チケットの詳細。同じ画面を組み替える ---- */
 @media (max-width: 700px) {
@@ -1177,6 +1179,16 @@ body { background: var(--surface); }
   .ticketpage > .tk-band .num { order: 2; margin-left: auto; font-weight: var(--fw-bold); }
   .ticketpage > .tk-band h2 { order: 3; flex: 1 0 100%; font-size: var(--fs-lg); line-height: var(--lh-tight); }
   .ticketpage > .tk-band > :not(.back, .num, h2) { order: 4; }
+  .ticketpage > .tk-band .tk-desk, .ticketpage > .tk-band .tk-long { display: none; }
+  .ticketpage > .tk-band .tk-short { display: inline; }
+  .ticketpage > .tk-band .tk-phone { display: contents; }
+  .ticketpage > .tk-band .tk-phone > * { order: 5; }
+  .tk-kindbtn { order: 3; display: inline-flex; align-items: center; gap: var(--sp-1); height: var(--h-chip); padding: 0 var(--sp-2); border: 1px solid var(--dev); border-radius: var(--r-sm); background: var(--dev-soft); color: var(--dev); font: inherit; font-size: var(--fs-sm); font-weight: var(--fw-medium); cursor: pointer; }
+  .tk-prchip { display: inline-flex; align-items: center; height: var(--h-chip); padding: 0 var(--sp-2); border-radius: var(--r-sm); background: var(--bg); color: var(--dev); font-family: var(--f-mono); font-size: var(--fs-xs); text-decoration: none; }
+  .ticketpage > .tk-band .tk-kindbtn { order: 3; }
+  .ticketpage .tk-kindsheet { display: block; padding: var(--sp-3); margin-bottom: var(--sp-2); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+  /* 新しいチケット・出来事・指標・編成は、スマホのオフィスには出さない(試作に無い。編成はメニューから開く) */
+  .pview[data-phone-tab="office"] > .two-col { display: none; }
   .ticketpage .tk-tabs { display: flex; margin: 0 calc(-1 * var(--sp-4)); padding: 0 var(--sp-4); border-bottom: 1px solid var(--line); }
   .ticketpage .tk-tabs button { flex: 1 1 0; height: var(--h-tab, 40px); border: 0; border-bottom: 3px solid transparent; background: none; color: var(--muted); font: inherit; cursor: pointer; }
   .ticketpage .tk-tabs button[aria-selected="true"] { color: var(--ink); font-weight: var(--fw-bold); border-bottom-color: var(--dev); }

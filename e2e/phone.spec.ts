@@ -178,6 +178,14 @@ test("幅 390px: 下のタブで あなたの対応 / オフィスを切り替�
     const box = (await memo.boundingBox())!;
     expect(box.y + box.height).toBeGreaterThan(700);
     await fits(page, "phone-ticket");
+    // 帯の種類のチップを押すと、種類を選べる(金額・要件・PR のチップも帯に出る)
+    await expect(tk.getByRole("button", { name: /^種類: バグ修正/ })).toBeVisible();
+    await expect(tk.locator(".tk-phone")).toContainText("$");
+    await tk.getByRole("button", { name: /^種類: バグ修正/ }).click();
+    await expect(tk.locator(".tk-kindsheet").getByRole("radiogroup", { name: "チケットの種類" })).toBeVisible();
+    await tk.locator(".tk-kindsheet").getByRole("radio", { name: "機能" }).click();
+    await expect(tk.locator(".tk-kindsheet")).toBeHidden();
+    await expect(tk.getByRole("button", { name: /^種類: 機能/ })).toBeVisible();
     await tk.getByRole("tab", { name: "中身" }).click();
     await expect(tk.getByRole("region", { name: "チケットの中身" })).toBeVisible();
     await expect(tk.getByRole("region", { name: "やりとり" })).toBeHidden();
@@ -186,7 +194,7 @@ test("幅 390px: 下のタブで あなたの対応 / オフィスを切り替�
     await expect(tk.getByRole("button", { name: "決める" })).toBeVisible();
     await fits(page, "phone-ticket-details");
     // ボードへ戻ると、見ていた工程・オフィスのタブのまま
-    await tk.getByRole("button", { name: "← ボードに戻る" }).click();
+    await tk.getByRole("button", { name: "‹ ボード" }).click();
     await expect(page.getByRole("region", { name: "ボード" })).toBeVisible();
   });
 });
