@@ -571,6 +571,29 @@ test("チームの方針の開発ルール: ひな形から足す・空のルー
     await expect(drawer.getByLabel("名前")).toHaveValue("Jira 番号を入れる");
   });
 
+  await test.step("直している途中でほかの画面(生産性・設定・本部)へ移っても、下書きは残り、オフィスへ戻ると続きから直せる", async () => {
+    const screens = page.getByRole("group", { name: "プロジェクトの画面" });
+    await drawer.getByLabel("名前").fill("画面を移る前の名前");
+    await screens.getByRole("button", { name: "生産性" }).click();
+    await expect(drawer).toHaveCount(0);
+    await screens.getByRole("button", { name: "設定" }).click();
+    await page.getByRole("navigation", { name: "場所" }).getByRole("button", { name: "本部" }).click();
+    await expect(drawer).toHaveCount(0);
+    await page.goBack();
+    await page.goBack();
+    await page.goBack();
+    // 戻ると、引き出しは開いたまま、開発ルールのタブに下書きが残っている
+    await expect(drawer.getByRole("tab", { name: /開発ルール/ })).toContainText("1");
+    await expect(drawer.getByLabel("名前")).toHaveValue("画面を移る前の名前");
+    // 確かめて捨てると、元のルールに戻る
+    await drawer.getByRole("button", { name: "閉じる" }).click();
+    await drawer.getByRole("alert").getByRole("button", { name: "捨てて移る" }).click();
+    await expect(drawer).toHaveCount(0);
+    await page.getByRole("button", { name: "チームの方針", exact: true }).click();
+    await drawer.getByRole("tab", { name: "開発ルール" }).click();
+    await expect(drawer.getByLabel("名前")).toHaveValue("Jira 番号を入れる");
+  });
+
   await test.step("「このルールを消す」で、確かめたあとに一覧から消え、版が上がる", async () => {
     await drawer.getByRole("button", { name: "このルールを消す" }).click();
     await drawer.getByRole("button", { name: "消して v7 にする" }).click();

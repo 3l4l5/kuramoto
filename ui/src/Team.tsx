@@ -36,15 +36,26 @@ export type RuleGuard = {
   stay: () => void;
 };
 
-export function useDrawerState(resetKey: string): { drawer: Drawer | null; moveTo: (to: Drawer | null) => void; guard: RuleGuard } {
+/**
+ * `projectId` は今見ているプロジェクト(ホームなどプロジェクトの外では null)。
+ * 企画スタジオ・生産性・設定・本部へ移っても、引き出しと下書きはそのまま残し、オフィスへ戻ると続きから直せる
+ * (移る操作は戻る・進む・アドレスの書き換えでも起きるので、確かめるのではなく残す)。
+ * 別のプロジェクトを開いたときだけ、前のプロジェクトの引き出し・下書きを空にする(本部を経由しても同じ)。
+ */
+export function useDrawerState(projectId: number | null): { drawer: Drawer | null; moveTo: (to: Drawer | null) => void; guard: RuleGuard } {
   const [drawer, setDrawer] = useState<Drawer | null>(null);
   const [draft, setDraft] = useState<RuleDraft | null>(null);
   const [pending, setPending] = useState<{ to: Drawer | null } | null>(null);
-  useEffect(() => {
-    setDrawer(null);
-    setDraft(null);
-    setPending(null);
-  }, [resetKey]);
+  const [owner, setOwner] = useState<number | null>(null);
+  if (projectId !== null && projectId !== owner) {
+    // 描画の途中で state を直す(React 公認の書き方)。前のプロジェクトの下書きを 1 フレームも見せない
+    setOwner(projectId);
+    if (owner !== null) {
+      setDrawer(null);
+      setDraft(null);
+      setPending(null);
+    }
+  }
   const open = (to: Drawer | null) => {
     setPending(null);
     if (to !== "policy") setDraft(null);
@@ -78,8 +89,9 @@ type PolicyTab = "models" | "rules";
 
 /** チームの方針: 役割ごとのモデル(R11)と開発ルール(R15)の 2 つのタブ。 */
 function PolicyDrawer({ id, team, close, guard }: { id: number; team: TeamView | undefined; close: () => void; guard: RuleGuard }) {
-  const [tab, setTab] = useState<PolicyTab>("models");
   const { draft, setDraft } = guard;
+  // 別の画面から戻ってきたときは、直していた開発ルールの続きから
+  const [tab, setTab] = useState<PolicyTab>(draft && draftDirty(draft) ? "rules" : "models");
   const rules = useDevRules(id);
   return (
     <DsDrawer
