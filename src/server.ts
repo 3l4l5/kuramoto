@@ -11,6 +11,7 @@ import { ROLE_LABEL } from "./domain/roles.js";
 import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import type { Harness } from "./harness/types.js";
 import { GhCli, type GitHub } from "./github/github.js";
+import { ConfigError, loadStartupConfig } from "./config.js";
 import { Hq, kuramotoHome, workDirFor } from "./hq.js";
 import { Dispatcher } from "./project/dispatcher.js";
 import { recoverStale } from "./project/inbox.js";
@@ -770,6 +771,13 @@ async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> 
 
 // 直接起動したとき
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  try {
+    loadStartupConfig();
+  } catch (e) {
+    if (!(e instanceof ConfigError)) throw e;
+    console.error(e.message);
+    process.exit(1);
+  }
   const port = Number(process.env.KURAMOTO_PORT ?? 4300);
   const open = process.env.KURAMOTO_PUBLIC === "1";
   const token = open ? publicToken() : undefined;
