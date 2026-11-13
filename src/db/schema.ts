@@ -232,4 +232,32 @@ CREATE TABLE IF NOT EXISTS design_images (id INTEGER PRIMARY KEY, ticket_id INTE
   diff_ratio REAL, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS design_images_ticket ON design_images(ticket_id, screen_key);
 `,
+  // 19: R15(開発ルール)・R16(島どうしの連絡経路と質問)・R17(チケットの種類ごとの流れ)・メンバーとの会話。
+  // 前の版のコードでも開けるよう、表・列・索引を足すだけにする(RENAME・列の削除・表の作り直しはしない)。新しい列に CHECK は付けない。
+  // メッセージの kind には CHECK が無いので、ask / reply / member_chat はそのまま使える。
+  // dev_done: 開発を一度でも通ったか。開発の起動があるか、開発より後の工程にいる既存のチケットは 1 にする。
+  `
+ALTER TABLE formations ADD COLUMN routes TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE formations ADD COLUMN flows TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE tickets ADD COLUMN kind TEXT NOT NULL DEFAULT 'feature';
+ALTER TABLE tickets ADD COLUMN dev_done INTEGER NOT NULL DEFAULT 0;
+UPDATE tickets SET dev_done = 1
+  WHERE stage IN ('review','sec','qa','decision','merge','done')
+     OR EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id = tickets.id AND r.role = 'dev');
+ALTER TABLE dev_rules ADD COLUMN template TEXT;
+ALTER TABLE dev_rules ADD COLUMN created_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE rule_violations ADD COLUMN detail TEXT NOT NULL DEFAULT '';
+ALTER TABLE rule_violations ADD COLUMN run_id INTEGER REFERENCES runs(id);
+ALTER TABLE rule_violations ADD COLUMN resolved_at TEXT;
+CREATE TABLE IF NOT EXISTS ticket_questions (id INTEGER PRIMARY KEY, ticket_id INTEGER NOT NULL REFERENCES tickets(id),
+  from_member_id INTEGER REFERENCES members(id), to_target TEXT NOT NULL, body TEXT NOT NULL,
+  routed_to_lead INTEGER NOT NULL DEFAULT 0, answer TEXT, answered_by_member_id INTEGER REFERENCES members(id),
+  asked_at TEXT NOT NULL, answered_at TEXT);
+CREATE INDEX IF NOT EXISTS ticket_questions_ticket ON ticket_questions(ticket_id);
+CREATE TABLE IF NOT EXISTS member_messages (id INTEGER PRIMARY KEY, member_id INTEGER NOT NULL REFERENCES members(id),
+  ticket_id INTEGER REFERENCES tickets(id), who TEXT NOT NULL, body TEXT NOT NULL, at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS member_messages_member ON member_messages(member_id, id);
+ALTER TABLE ticket_notes ADD COLUMN kind TEXT NOT NULL DEFAULT 'note';
+ALTER TABLE runs ADD COLUMN about_ticket_id INTEGER REFERENCES tickets(id);
+`,
 ];
