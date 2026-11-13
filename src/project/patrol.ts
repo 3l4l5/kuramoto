@@ -11,7 +11,7 @@ import { githubDown, isGithubAuthError, markGithubDown } from "./outage.js";
 import { lastTeamCi, teamCiEnabled } from "./team-ci.js";
 import { areaWait, areasOf, blockers, dependsOn, dropAsDuplicate, teamStatus } from "./triage.js";
 import type { Workspace } from "./workspace.js";
-import { advance, createTicket, dropTicket, holdTicket, ticketSpentUsd, type ResumeMessage } from "./workflow.js";
+import { advance, createTicket, dropTicket, holdTicket, inheritFromParent, ticketSpentUsd, type ResumeMessage } from "./workflow.js";
 
 /**
  * リーダーの見回り(ADR-0026)。始業中は、始業したときと、間隔(設定 patrol_min、既定 5 分。"0" で止める)ごとにボードを見て、
@@ -701,20 +701,19 @@ export function patrolTools(p: Project, ws: { closePrs?: (t: TicketRow, reason: 
       description: "大きすぎて終わらないチケットの残りを別チケットに切り出し、今のチケットの範囲を絞る。切り出したチケットは交通整理で順番と担当が決まる。",
       input: {
         number: z.number().int().describe("チケット番号"),
-        tickets: z.array(z.object({ title: z.string().min(1), body: z.string().describe("やること・受け入れ条件・なぜ切り出したか") })).min(1),
+        tickets: z.array(z.object({ title: z.string().min(1), body: z.string().describe("やること・受け入れ条件・なぜ切り出したか"), all_screens: z.boolean().optional().describe("全画面を試作と見比べるチケットなら true。親の画面・要件は自動で引き継ぐ") })).min(1),
         advice: z.string().min(1).describe("今のチケットでどこまでをやるか(担当とレビュアーが読む)"),
       },
       handler: async (a) => {
         const t = await byNumber(p, a.number);
         if (!t || t.stage === "done" || t.stage === "dropped") return `#${a.number} は開いていません`;
-        const refs = JSON.parse((await p.pdb.from("tickets").select("plan_refs").where("id", "=", t.id).executeTakeFirst())?.plan_refs ?? "{}") as { repo?: string };
         const made: TicketRow[] = [];
         for (const x of a.tickets) {
           made.push(
             await createTicket(p, {
               title: x.title,
               body: `${x.body}\n\n---\n#${t.number}「${t.title}」が回り続けていたため、リーダーが見回りで切り出しました。`,
-              planRefs: { splitFrom: t.number, ...(refs.repo ? { repo: refs.repo } : {}) },
+              ...(await inheritFromParent(p, t, { splitFrom: t.number, allScreens: x.all_screens })),
             }),
           );
         }

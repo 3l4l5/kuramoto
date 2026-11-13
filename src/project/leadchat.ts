@@ -138,6 +138,7 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
         screens: z.array(z.string()).optional().describe("ひも付ける企画の画面の key(下の「企画の画面」から)"),
         requirement: z.string().optional().describe("ひも付ける要件の code(例: R1)"),
         design_system: z.boolean().optional().describe("デザインシステムの土台のチケットなら true"),
+        all_screens: z.boolean().optional().describe("全画面を試作と見比べるチケットなら true(全画面の試作が担当に渡る)"),
         after: z.array(z.number().int()).optional().describe("先に merge されている必要があるチケットの番号(画面のチケットは、デザインシステムの土台のチケットを書く)"),
       },
       handler: async (a) => {
@@ -151,7 +152,7 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
           body: a.body,
           kind: a.kind ?? "feature",
           ...(item ? { requirementItemId: item.id } : {}),
-          planRefs: { ...(a.screens?.length ? { screens: a.screens } : {}), ...(a.requirement ? { requirement: a.requirement } : {}), ...(a.design_system ? { designSystem: true } : {}) },
+          planRefs: { ...(a.screens?.length ? { screens: a.screens } : {}), ...(a.requirement ? { requirement: a.requirement } : {}), ...(a.design_system ? { designSystem: true } : {}), ...(a.all_screens ? { allScreens: true } : {}) },
         });
         for (const n of a.after ?? []) {
           const dep = (await p.tickets()).find((x) => x.number === n);
