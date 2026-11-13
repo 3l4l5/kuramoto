@@ -12,6 +12,7 @@ import { MemberDrawer } from "./MemberDrawer";
 import { KIND_SHAPE, KINDS } from "./kind";
 import { Button, Segmented } from "./ds";
 import { requestFormationTab, useFormationUi } from "./formationUi";
+import { LEG_GAP, linePath } from "./linePath";
 import { MAX_UNITS } from "../../src/domain/formation";
 
 /**
@@ -155,37 +156,9 @@ function Station({ loc, data, stopsOf, children }: { loc: string; data: OfficeVi
 
 type Geo = { w: number; h: number; pos: Record<string, { x: number; top: number; bottom: number }>; rowBottom: number };
 
-/** 駅の下に取る、路線を通すための帯の高さ(style.css の .of-st > section の padding-bottom と同じ)。 */
+/** 駅の下に取る、路線を通すための帯の最小の高さ(style.css の .of-st > section の padding-bottom の既定値と同じ)。 */
 const BAND = 136;
 const LANE_GAP = 30;
-const LEG_GAP = 9;
-
-/**
- * 路線の通り道。止まる駅を順に結び、あとの駅が左にあるときは折り返す(折り返しは 1 本下の線に移る)。
- * 例: バグ修正(QA → 開発 → レビュー)は、受け口から QA へ進み、開発へ戻り、レビュー・merge 待ちへ進む。
- */
-export function linePath(xs: number[], y0: number): { d: string; ys: number[]; turns: { x1: number; x2: number; y: number }[] } {
-  const ys = [y0];
-  const turns: { x1: number; x2: number; y: number }[] = [];
-  let d = `M ${xs[0]} ${y0}`;
-  let y = y0;
-  let dir = 0;
-  let leg = 0;
-  for (let i = 1; i < xs.length; i++) {
-    const step = Math.sign(xs[i]! - xs[i - 1]!) || dir || 1;
-    if (dir !== 0 && step !== dir) {
-      leg++;
-      y = y0 + leg * LEG_GAP;
-      d += ` L ${xs[i - 1]} ${y}`;
-      turns.push({ x1: xs[i - 1]!, x2: xs[i]!, y });
-    }
-    dir = step;
-    d += ` L ${xs[i]} ${y}`;
-    ys.push(y);
-  }
-  return { d, ys, turns };
-}
-
 /**
  * 路線図。駅(島・受け口・merge 待ち)を通るように、種類ごとの路線を 1 本ずつ引く(駅の下側の帯)。
  * 路線は止まる駅に丸を置き、開発より前の「申し送りだけ」の停車は点線の丸にする。選んだ種類の路線だけが濃くなる。
@@ -223,7 +196,17 @@ function RouteMap({ data, kind, children }: { data: OfficeView; kind: string; ch
     for (const c of m.querySelectorAll("[data-loc]")) ro.observe(c);
     return () => ro.disconnect();
   });
-  const lane = (i: number) => (geo ? geo.rowBottom - BAND + 20 + i * LANE_GAP : 0);
+  // 路線ごとの高さ: 折り返しがあると、その分だけ下の路線を下げる。駅の下の帯(band)も、その分だけ広げる
+  const order = new Map<string, number>([["lead", 0], ...data.units.map((u, i): [string, number] => [`unit:${u.id}`, i + 1]), ["merge", data.units.length + 1]]);
+  const stopsAt = (l: OfficeView["lines"][number]) => ["lead", ...l.stops.map((s) => `unit:${s.unitId}`), "merge"];
+  let acc = 20;
+  const laneAt = data.lines.map((l) => {
+    const at = acc;
+    acc += linePath(stopsAt(l).filter((x) => order.has(x)).map((x) => order.get(x)!), 0).turns.length * LEG_GAP + LANE_GAP;
+    return at;
+  });
+  const band = Math.max(BAND, acc - LANE_GAP + 56);
+  const lane = (i: number) => (geo ? geo.rowBottom - band + (laneAt[i] ?? 20) : 0);
   const ask = (a: string, b: string): string | null => {
     const pa = geo?.pos[a], pb = geo?.pos[b];
     if (!pa || !pb) return null;
@@ -246,7 +229,7 @@ function RouteMap({ data, kind, children }: { data: OfficeView; kind: string; ch
   };
   const built = geo
     ? data.lines.map((l, i) => {
-        const locs = ["lead", ...l.stops.map((s) => `unit:${s.unitId}`), "merge"].filter((x) => geo.pos[x]);
+        const locs = stopsAt(l).filter((x) => geo.pos[x]);
         return { l, i, locs, ...linePath(locs.map((x) => geo.pos[x]!.x), lane(i)) };
       })
     : [];
@@ -265,37 +248,44 @@ function RouteMap({ data, kind, children }: { data: OfficeView; kind: string; ch
       })
     : [];
   return (
-    <div className="of-map" ref={map} data-kind={kind}>
+    <div className="of-map" ref={map} data-kind={kind} style={{ "--of-band": `${band}px` } as React.CSSProperties}>
       {children}
       {geo && (
         <svg className="of-rails" width={geo.w} height={geo.h} role="img" aria-label={`路線図: ${data.lines.map((l) => `${lineName(l)}は${["受け口", ...l.stops.map((s) => data.units.find((u) => u.id === s.unitId)?.name ?? s.role), "merge 待ち"].join("→")}`).join("、")}`}>
           {routes.map((r) => (
             <path key={`${r.a}-${r.b}`} className={`of-route${draft ? " of-route-draft" : ""}`} data-route={`${r.a}|${r.b}`} d={r.d} />
           ))}
-          {built.map(({ l, locs, d, ys, turns, i }) => {
+          {built.map(({ l, locs, d, stops, i }) => {
             const on = kind === "all" || l.kinds.some((x) => x.kind === kind);
-            const first = geo.pos[locs[0]!]!.x;
             return (
               <g key={i} className={`of-line ${on ? "of-line-on" : "of-line-dim"}`} data-line={l.kinds.map((k) => k.kind).join(" ")}>
                 <path d={d} className="of-track" />
                 <path d={d} className="of-sleepers" />
                 {locs.map((loc, at) => {
                   const pre = at > 0 && at < locs.length - 1 && l.stops[at - 1]?.pre;
-                  return <circle key={`${loc}-${at}`} className={pre ? "of-stop of-stop-pre" : "of-stop"} cx={geo.pos[loc]!.x} cy={ys[at]} r={7} />;
+                  return <circle key={`${loc}-${at}`} className={pre ? "of-stop of-stop-pre" : "of-stop"} cx={stops[at]!.x} cy={stops[at]!.y} r={7} />;
                 })}
-                {l.stops.some((s) => s.pre) && turns[0] && (
-                  <text className="of-turnlabel" x={(turns[0].x1 + turns[0].x2) / 2} y={turns[0].y + 17} textAnchor="middle">
-                    申し送りを書いて開発へ戻る
-                  </text>
-                )}
-                <text className="of-linelabel" x={first + 14} y={lane(i) + 4}>
-                  {lineName(l)}
-                </text>
               </g>
             );
           })}
         </svg>
       )}
+      {built.flatMap(({ l, i, locs, turns }) => {
+        const on = kind === "all" || l.kinds.some((x) => x.kind === kind);
+        const dim = on ? "" : " of-lbl-dim";
+        return [
+          <span key={`lbl-${i}`} className={`of-lbl${dim}`} style={{ left: geo!.pos[locs[0]!]!.x + 30, top: lane(i) - 22 }}>
+            {lineName(l)}
+          </span>,
+          ...(l.stops.some((s) => s.pre) && turns[0]
+            ? [
+                <span key={`turn-${i}`} className={`of-lbl of-lbl-turn${dim}`} style={{ left: (turns[0].x1 + turns[0].x2) / 2, top: turns[0].y - 10 }}>
+                  申し送りを書いて開発へ戻る
+                </span>,
+              ]
+            : []),
+        ];
+      })}
       {tickets.map((t) => (
         <span key={t.n} className={`of-tk ${t.on ? "" : "of-tk-dim"}`} data-ticket={t.n} data-kind-of={t.k} style={{ left: t.x, top: t.y - 12 }}>
           <span aria-hidden="true">{KIND_SHAPE[t.k]}</span>#{t.n}
@@ -345,6 +335,7 @@ function Island({ u, running, onEdit, onOpen, onMember }: { u: OfficeView["units
         onClick={onOpen}
       >
         <Papers n={u.waiting} queued={u.queued} />
+        <span className="of-wait">待ち {u.waiting.length}</span>
         <span className="of-mug" aria-hidden="true" />
         <span className="of-plant" aria-hidden="true" />
       </button>
@@ -421,6 +412,12 @@ function Person({ m, below, title, running, waitingFor, onOpen }: { m: { id: num
       {say && (
         <div className="of-bubble">
           <span>{say}</span>
+        </div>
+      )}
+      {/* 手すきのメンバーは、直前の仕事の代わりに「♪ 手すき」を話す(パソコン。スマホは名札の「手すき」で出す) */}
+      {!w && !asleep && (
+        <div className="of-bubble of-bubble-free">
+          <span>♪ 手すき</span>
         </div>
       )}
       <Avatar name={m.name} asleep={asleep} className={`of-r-${role}`} />

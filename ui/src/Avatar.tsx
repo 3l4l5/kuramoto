@@ -36,6 +36,8 @@ export function Avatar({ name, asleep, className }: { name: string; asleep?: boo
   const shade = `color-mix(in srgb, ${l.hair} 78%, var(--art-shade))`;
   return (
     <svg className={`of-avatar ${className ?? ""}`} viewBox="0 0 64 72" aria-hidden="true">
+      {/* 選ばれたときの青い輪(パソコン)。頭のまわりに出る */}
+      <circle className="of-ring" cx="32" cy="28" r="21" />
       {/* 後ろ髪 */}
       {l.style === "long" && <path d="M14 28 Q12 58 20 62 L44 62 Q52 58 50 28 Z" fill={shade} />}
       {l.style === "bob" && <path d="M14 26 Q12 46 20 46 L44 46 Q52 46 50 26 Z" fill={shade} />}
