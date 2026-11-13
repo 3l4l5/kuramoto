@@ -1,9 +1,10 @@
-import { Chip } from "./ds";
+import { Chip, Select } from "./ds";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type ProductivityView } from "./api";
 import { usd } from "./format";
 import { Btn } from "./ui";
+import { KINDS, KindChip } from "./kind";
 
 /**
  * 開発生産性(docs/design.md 8 章)。トークン・金額・PR・手戻り・人間に助けを求めた数を、記録から数えて見せる。
@@ -270,24 +271,44 @@ function Cost({ data, mode }: P) {
 }
 
 function Tickets({ data, mode }: P) {
+  // 種類で絞り込む(R17)
+  const [kind, setKind] = useState("all");
+  const rows = kind === "all" ? data.tickets : data.tickets.filter((x) => x.kind === kind);
   if (data.tickets.length === 0) return <p className="hint">まだチケットがありません。</p>;
+  const bar = (
+    <div className="kindfilter-row">
+      <label htmlFor="pt-kind">種類で絞り込み</label>
+      <Select id="pt-kind" size="sm" value={kind} onChange={(e) => setKind(e.target.value)}>
+        <option value="all">すべて</option>
+        {KINDS.map((k) => (
+          <option key={k.key} value={k.key}>
+            {k.label}
+          </option>
+        ))}
+      </Select>
+      <span className="hint">{rows.length} 件</span>
+    </div>
+  );
   if (mode === "graph")
     return (
       <>
-        <p className="hint">チケットごとの金額(多い順)。</p>
-        <CostBars
-          rows={[...data.tickets].sort((a, b) => b.costUsd - a.costUsd).map((x) => ({ key: String(x.id), label: `#${x.number} ${x.title}`, costUsd: x.costUsd, tokens: x.tokens, runs: x.runs }))}
-          total={data.tickets.reduce((s, x) => s + x.costUsd, 0)}
+        {bar}
+        <p className="hint">{rows.length === 0 ? "この種類のチケットはまだありません。" : "チケットごとの金額(多い順)。"}</p>
+        {rows.length > 0 && <CostBars
+          rows={[...rows].sort((a, b) => b.costUsd - a.costUsd).map((x) => ({ key: String(x.id), label: `#${x.number} ${x.title}`, costUsd: x.costUsd, tokens: x.tokens, runs: x.runs }))}
+          total={rows.reduce((s, x) => s + x.costUsd, 0)}
           label="チケットごとの金額"
-        />
+        />}
       </>
     );
   return (
     <div className="tablewrap">
+      {bar}
       <table className="tickets" aria-label="チケットごとの指標">
         <thead>
           <tr>
             <th>チケット</th>
+            <th>種類</th>
             <th>状態</th>
             <th>金額</th>
             <th>トークン</th>
@@ -301,11 +322,14 @@ function Tickets({ data, mode }: P) {
           </tr>
         </thead>
         <tbody>
-          {data.tickets.map((x) => (
+          {rows.map((x) => (
             <tr key={x.id}>
               <th>
                 #{x.number} {x.title}
               </th>
+              <td>
+                <KindChip kind={x.kind} label={KINDS.find((k) => k.key === x.kind)?.label ?? x.kind} />
+              </td>
               <td>{STAGE[x.stage] ?? x.stage}</td>
               <td>{usd(x.costUsd)}</td>
               <td>{tok(x.tokens)}</td>

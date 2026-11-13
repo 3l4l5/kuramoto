@@ -864,3 +864,16 @@ body { background: var(--surface); }
 .rules__foot { flex: 1 0 100%; display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line); }
 .rules__note { flex: 1; font-size: var(--fs-sm); color: var(--muted); }
 .viol { display: inline-flex; flex-wrap: wrap; gap: var(--sp-1); }
+
+/* ---- チケットの種類(R17) ---- */
+.kindchip .shp { font-size: var(--fs-xs); }
+.kindfilter { margin-bottom: var(--sp-2); }
+.col.pre { border-style: dashed; border-color: var(--design); }
+.col .premark { font-size: var(--fs-xs); color: var(--design); font-weight: 700; }
+.card .chips { display: flex; flex-wrap: wrap; gap: var(--sp-1); }
+.kindsel { display: flex; flex-direction: column; gap: var(--sp-2); align-items: flex-start; }
+.kindsel .kindflow { font-size: var(--fs-sm); color: var(--muted); display: flex; flex-wrap: wrap; gap: var(--sp-1); align-items: center; }
+.kindfilter-row { display: flex; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-2); font-size: var(--fs-sm); }
+.tr-node .tr-pre { font-size: var(--fs-xs); padding: 0 6px; border-radius: var(--r-sm); border: 1px dashed var(--design); color: var(--design); }
+.tr-node .tr-viol { font-size: var(--fs-sm); font-weight: 700; color: var(--danger-ink); }
+.tr-blocked { border-color: var(--danger); background: var(--danger-soft); }
