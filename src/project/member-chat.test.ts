@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ManualClock } from "../clock.js";
 import { all, get } from "../db/sqlite.js";
@@ -7,7 +11,7 @@ import { leadMessages } from "./leadchat.js";
 import { memberChatView, memberNow, sayToMember } from "./member-chat.js";
 import { Project } from "./project.js";
 import { createTicket } from "./workflow.js";
-import { StaticWorkspace } from "./workspace.js";
+import { GitWorkspace, StaticWorkspace, type WorkspaceRequest } from "./workspace.js";
 
 /** 開発・レビューは普通に進め、メンバーとの会話(hand_to_lead だけを持つ起動)とリーダーのチャットは台本で答える。 */
 function setup(chat: FakeStep, opts: { open?: boolean } = {}) {
@@ -161,6 +165,77 @@ describe("メンバーとの会話", () => {
     const { member } = await worked(p, d);
     expect(() => sayToMember(p, member.id, "  ")).toThrow("メッセージがありません");
   });
+});
+
+describe("終わったチケット(done・dropped)について話しかける", () => {
+  for (const stage of ["done", "dropped"] as const) {
+    it(`${stage}: メモは書かず答えるだけ。作業場所は既定のブランチ(チケットのブランチを取り出さない)`, async () => {
+      const prepared: WorkspaceRequest[] = [];
+      class Recording extends StaticWorkspace {
+        override async prepare(req?: WorkspaceRequest) {
+          if (req) prepared.push(req);
+          return super.prepare();
+        }
+      }
+      const clock = new ManualClock();
+      const p = new Project(":memory:", clock);
+      p.addRepo("acme/shop", "API");
+      const harness = new FakeHarness(async (req, call) => {
+        clock.advance(60_000);
+        if (req.tools.some((t) => t.name === "submit_pr")) await call("submit_pr", { summary: "実装した", responses: fixedAll(req.prompt) });
+        else if (req.tools.some((t) => t.name === "submit_review")) await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] }));
+        else return { finalText: "もう終わったチケットだよ" };
+      });
+      const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new Recording("/tmp") });
+      const { ticket, member } = await worked(p, d);
+      p.db.prepare("UPDATE tickets SET stage = ? WHERE id = ?").run(stage, ticket.id);
+      prepared.length = 0;
+      const notesBefore = p.notes(ticket.id).length;
+
+      sayToMember(p, member.id, "あれってどうなった?");
+      await d.drain();
+
+      const call = harness.calls.find(isChat)!;
+      expect(call.systemPrompt).toContain("もう終わっています");
+      expect(call.prompt).toContain("メモに残りません");
+      expect(prepared.map((r) => [r.role, r.branch])).toEqual([[member.role ?? "dev", ""]]);
+      // 答えは残るが、メモは増えず、「メモに書き足しました」も出ない
+      expect(memberChatView(p, member.id).messages.map((m) => [m.who, m.body])).toEqual([
+        ["owner", "あれってどうなった?"],
+        ["member", "もう終わったチケットだよ"],
+      ]);
+      expect(p.notes(ticket.id)).toHaveLength(notesBefore);
+      expect(p.ticket(ticket.id).stage).toBe(stage);
+      // 既定のブランチで動いた起動は、チケットのブランチを覚えない
+      expect(get<{ branch: string | null }>(p.db, "SELECT branch FROM sessions WHERE member_id = ? AND ticket_id = ?", [member.id, ticket.id])!.branch).not.toBe("");
+    });
+  }
+
+  it("GitWorkspace: ブランチが消えていても、ブランチなしなら既定のブランチで作業場所を用意できる(開発・レビュー・QA の島とも)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kuramoto-ws-"));
+    const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, ...a], { encoding: "utf8" });
+    execFileSync("git", ["init", "--bare", "-b", "main", join(dir, "o.git")]);
+    const seed = join(dir, "seed");
+    execFileSync("git", ["clone", join(dir, "o.git"), seed], { stdio: "ignore" });
+    git(seed, "config", "user.email", "t@example.com");
+    git(seed, "config", "user.name", "t");
+    git(seed, "commit", "--allow-empty", "-m", "init");
+    git(seed, "push", "origin", "HEAD:main");
+    // 元の clone は、GitWorkspace の置き場所(<workDir>/repos/<owner>__<repo>)に置く
+    execFileSync("git", ["clone", join(dir, "o.git"), join(dir, "repos", "acme__shop")], { stdio: "ignore" });
+    const ws = new GitWorkspace(dir);
+    // チケットのブランチ(kuramoto/7)は origin に無い(merge 後に消えた)
+    for (const role of ["dev", "review", "qa"] as const) {
+      const first = await ws.prepare({ repo: "acme/shop", ticketNumber: 7, role, memberName: "m", branch: "" });
+      expect(first.base).toBe("main");
+      // 二度目(作業場所がすでにあるとき)も失敗しない
+      const again = await ws.prepare({ repo: "acme/shop", ticketNumber: 7, role, memberName: "m", branch: "" });
+      expect(again.path).toBe(first.path);
+      expect(git(first.path, "rev-parse", "HEAD").trim()).toBe(git(first.path, "rev-parse", "origin/main").trim());
+    }
+    // 開発の場所に、チケットのブランチ(kuramoto/7)は作られていない
+    expect(git(join(dir, "repos", "acme__shop"), "branch", "--list", "kuramoto/7").trim()).toBe("");
+  }, 30_000);
 });
 
 describe("メンバーの今していること", () => {

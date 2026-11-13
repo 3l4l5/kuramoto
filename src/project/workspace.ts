@@ -11,7 +11,7 @@ export type WorkspaceRequest = {
   ticketNumber: number;
   role: Role;
   memberName: string;
-  /** 開発のブランチ。レビュー側はこのブランチを読むだけ。 */
+  /** 開発のブランチ。レビュー側はこのブランチを読むだけ。空なら既定のブランチ(終わったチケットの話をするときなど。ブランチは消えていてもよい)。 */
   branch: string;
 };
 
@@ -110,7 +110,10 @@ export class GitWorkspace implements Workspace {
       else if (!req.branch) await git(path, "checkout", "--detach", `origin/${await defaultBranch(base)}`);
       return realpathSync(path);
     }
-    if (req.role === "dev") {
+    if (!req.branch) {
+      // ブランチを使わない: 既定のブランチを読むだけの場所(開発のブランチは作らない)
+      await git(base, "worktree", "add", "--detach", path, `origin/${await defaultBranch(base)}`);
+    } else if (req.role === "dev") {
       const remoteHasBranch = await git(base, "ls-remote", "--heads", "origin", req.branch).then((o) => o.trim() !== "");
       const start = remoteHasBranch ? `origin/${req.branch}` : `origin/${await defaultBranch(base)}`;
       await git(base, "worktree", "add", "-B", req.branch, path, start);
