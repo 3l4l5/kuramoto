@@ -74,6 +74,23 @@ describe("ローカルサーバー", () => {
     expect(app.hq.project(created.id).status).toBe("running");
   });
 
+  it("チケットに種類を付けて作り、責任者が API で変えると、やりとりに残り、次の工程から新しい流れになる(R17)", async () => {
+    const { call, app } = await boot();
+    const { json: created } = await call("POST", "/api/projects", { name: "種類", repos: [{ fullName: "acme/shop", role: "API" }] });
+    const base = `/api/projects/${created.id}`;
+    const p = app.project(created.id);
+    const saved = await call("POST", `${base}/formation`, { pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300 }, { name: "QA", roles: ["qa"], maxMembers: 2, summonAt: 2, idleSec: 300 }], flows: { bugfix: ["qa", "dev"] } });
+    expect(saved.status).toBe(200);
+    expect((await call("POST", `${base}/formation`, { pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300 }], flows: { bugfix: ["qa"] } })).status).toBe(400);
+
+    const t = (await call("POST", `${base}/tickets`, { title: "落ちる", kind: "bugfix" })).json;
+    expect(p.ticket(t.id)).toMatchObject({ kind: "bugfix", stage: "qa" });
+    const changed = await call("POST", `${base}/tickets/${t.id}/kind`, { kind: "feature" });
+    expect(changed.json).toMatchObject({ kind: "feature", stage: "qa" });
+    expect(changed.json.timeline.some((i: { type: string }) => i.type === "kind_change")).toBe(true);
+    expect((await call("POST", `${base}/tickets/${t.id}/kind`, { kind: "chore" })).status).toBe(400);
+  });
+
   it("既存のリポジトリの続きから作ると、GitHub の途中の仕事を取ってきて、担当に現状を読ませる(ADR-0030)", async () => {
     const { call, app } = await boot();
     const { json: created } = await call("POST", "/api/projects", { name: "続き", repos: [{ fullName: "acme/shop", role: "API" }], mode: "existing", issueLabel: "" });

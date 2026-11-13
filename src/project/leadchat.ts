@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { KIND_LABEL, TICKET_KINDS } from "../domain/flow.js";
 import { all, run, tx } from "../db/sqlite.js";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
 import { send } from "./inbox.js";
@@ -125,6 +126,7 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
       input: {
         title: z.string(),
         body: z.string().describe("やること・受け入れ条件"),
+        kind: z.enum(TICKET_KINDS).default("feature").describe(`チケットの種類。必ず 1 つ選ぶ(${TICKET_KINDS.map((k) => `${k}: ${KIND_LABEL[k]}`).join(" / ")})。種類ごとに工程の流れが違う`),
         screens: z.array(z.string()).optional().describe("ひも付ける企画の画面の key(下の「企画の画面」から)"),
         requirement: z.string().optional().describe("ひも付ける要件の code(例: R1)"),
         design_system: z.boolean().optional().describe("デザインシステムの土台のチケットなら true"),
@@ -139,6 +141,7 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
         const t = createTicket(p, {
           title: a.title,
           body: a.body,
+          kind: a.kind ?? "feature",
           ...(item ? { requirementItemId: item.id } : {}),
           planRefs: { ...(a.screens?.length ? { screens: a.screens } : {}), ...(a.requirement ? { requirement: a.requirement } : {}), ...(a.design_system ? { designSystem: true } : {}) },
         });

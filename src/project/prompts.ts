@@ -77,7 +77,13 @@ export function promptFor(p: Project, msg: MessageRow, ticket: TicketRow | null,
   const base = `origin/${ctx.base ?? "main"}`;
   const payload = JSON.parse(msg.payload) as Record<string, unknown>;
   const notes = ticket ? p.notes(ticket.id) : [];
-  const head = ticket ? ticketBlock(ticket) + (notes.length ? `\n\n### メモ(責任者・リーダーから)\n${notes.map((n) => `- ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.body}`).join("\n")}` : "") : "";
+  // 開発より前の確認(R17)が残した申し送りは、メモとは分けて載せる。開発は読んでから着手する
+  const handoffs = ticket ? p.handoffs(ticket.id) : [];
+  const head = ticket
+    ? ticketBlock(ticket) +
+      (notes.length ? `\n\n### メモ(責任者・リーダーから)\n${notes.map((n) => `- ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.body}`).join("\n")}` : "") +
+      (handoffs.length ? `\n\n### 申し送り(開発より前の確認から。着手の前に読んでください)\n${handoffs.map((h) => `- ${ROLE_LABEL[h.role] ?? h.role}: ${h.body}`).join("\n")}` : "")
+    : "";
   switch (msg.kind) {
     case "implement":
       return `${head}\n\nこのチケットを実装してください。リポジトリは ${ctx.repo}、ブランチは ${ctx.branch}(作業場所で取り出し済み)です。終わったら変更をコミットし、submit_pr で報告してください(PR のタイトルと本文も渡せます)。push と PR の作成は Kuramoto が行います。${teamCiNote(p, ctx.repo)}`;
@@ -109,6 +115,7 @@ ${nits.map(threadText).join("\n") || "(なし)"}
     case "review":
     case "sec":
     case "qa": {
+      if (payload.preDev) return preDevPrompt(p, msg.kind, ticket, head);
       const prior = ticket ? mustResolve(p, ticket.id, msg.kind) : [];
       const criteria = ticket ? acceptanceBlock(p, ticket) : "";
       const how = `${criteria}## 何を止めるか(必須にしてよいのは 3 つだけ)
@@ -168,6 +175,30 @@ ${how}`;
       return `${head}\n\nチームから判断が上がりました。\n${d.question}\n選択肢:\n${options}\n推奨の理由: ${d.why}\n間違えると: ${d.impact}\n戻せるか: ${d.reversible ? "戻せる" : "戻せない"}\n\ndecide で決めるか、escalate_to_owner で責任者に上げてください。`;
     }
   }
+}
+
+/** 開発より前の確認(R17)の指示に足す、システムプロンプトの注意。 */
+export const PRE_DEV_NOTE = `
+## 今回の仕事: 開発より前の申し送り
+- 今回は開発より前の確認です。PR も差分もありません。コードは見ず、指示にあるチケットの中身だけを読みます。
+- 結果は submit_review ではなく leave_handoff で報告します。差し戻しはありません(往復にも数えません)。`;
+
+/** 開発より前の確認(R17)の指示。コードは見ず、チケットの中身を読んで、開発への申し送りを残す。 */
+function preDevPrompt(p: Project, role: "review" | "sec" | "qa", ticket: TicketRow | null, head: string): string {
+  const refs = ticket ? (JSON.parse(ticket.plan_refs || "{}") as { screens?: string[]; design?: string[] }) : {};
+  const refLines = [refs.screens?.length ? `- ひも付く画面: ${refs.screens.join("・")}` : "", refs.design?.length ? `- ひも付く設計の節: ${refs.design.join("・")}` : ""].filter(Boolean).join("\n");
+  const view: Record<"review" | "sec" | "qa", string> = {
+    review: "設計や進め方で、あとのレビューで引っかかりそうな点(責務の置き場所・既存の作りとのそろえ方・範囲の切り方)",
+    sec: "認証・認可・入力の扱い・秘密情報の観点で、実装の前に気をつけておくべき点",
+    qa: "受け入れ条件をどう確かめるか(確かめる観点・再現の手順・境界の条件・見落としやすい点)",
+  };
+  return `${head}
+
+${ticket ? acceptanceBlock(p, ticket) : ""}${refLines ? `${refLines}\n\n` : ""}このチケットは開発より前の${ROLE_LABEL[role]}です。コードは見ずに、上のチケットの中身(本文・要件の受け入れ条件・画面・設計)だけを読んでください。
+開発が着手する前に知っておくべきこととして、特に次を、開発への申し送りにまとめます。
+- ${view[role]}
+- チケットの本文だけでは曖昧な点(あれば、どう解釈して進めるとよいか)
+- 結果は leave_handoff で 1 回報告してください。差し戻しはなく、往復にも数えません。開発はこの申し送りを読んでから着手します。`;
 }
 
 /**

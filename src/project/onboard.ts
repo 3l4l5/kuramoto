@@ -137,7 +137,9 @@ export function adoptPull(p: Project, a: { repo: string; number: number; title?:
     });
     run(p.db, "INSERT INTO pull_requests (ticket_id, repo_id, number, head) VALUES (?, ?, ?, ?)", [t.id, repo.id, pr.number, pr.head]);
     run(p.db, "UPDATE tickets SET triaged = 1 WHERE id = ?", [t.id]);
-    const first = pipelineOf(p.currentFormation()).find((r) => r !== "dev");
+    // 引き継いだ PR は開発が済んでいる。開発より前の工程には戻らない
+    run(p.db, "UPDATE tickets SET dev_done = 1 WHERE id = ?", [t.id]);
+    const first = pipelineOf(p.currentFormation(), p.ticket(t.id).kind, { devDone: true }).find((r) => r !== "dev");
     enterStage(p, p.ticket(t.id), first ?? "merge");
     p.setSetting("onboard_adopted_pulls", JSON.stringify([...new Set([...adoptedPulls(p), `${a.repo}#${a.number}`])]));
     p.event(p.fixedMember("lead").name, "pr_adopted", t.id, { pr: pr.number, repo: a.repo });

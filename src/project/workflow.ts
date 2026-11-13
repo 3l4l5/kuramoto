@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { isExhausted } from "./budget.js";
 import { iso } from "../clock.js";
 import { all, get, run, tx } from "../db/sqlite.js";
-import { nextStage, pipelineOf } from "../domain/formation.js";
+import { isPreDev, nextStage, pipelineOf } from "../domain/formation.js";
+import { isTicketKind, KIND_LABEL, type TicketKind } from "../domain/flow.js";
 import { WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
 import { send, type MessageKind, type MessageRow } from "./inbox.js";
 import type { Project, TicketRow } from "./project.js";
@@ -76,18 +77,44 @@ export function enterStage(p: Project, ticket: TicketRow, stage: WorkRole | "mer
     return;
   }
   const kind: MessageKind = stage === "dev" ? (ticket.owner_member_id ? "fix" : "implement") : stage;
+  // 開発より前の工程(開発を通る前で、今の流れで開発より前にある)は、受信箱は review/sec/qa のまま preDev を付ける。
+  // コードを見ずにチケットの中身を読んで申し送りを残すだけで、差し戻しは無い
+  const now = p.ticket(ticket.id);
+  const preDev = stage !== "dev" && !now.dev_done && isPreDev(pipelineOf(p.currentFormation(), now.kind), stage);
   // 再レビューは、前にこのチケットを見た同じレビュアーに頼む(実際の PR と同じく、文脈を持っている人が見る)
   const toMemberId = extra.toMemberId !== undefined ? extra.toMemberId : stage === "dev" ? ticket.owner_member_id : lastReviewer(p, ticket.id, stage);
-  send(p, { ticketId: ticket.id, toRole: stage, kind, toMemberId, payload: extra.payload ?? {} });
+  send(p, { ticketId: ticket.id, toRole: stage, kind, toMemberId, payload: { ...(extra.payload ?? {}), ...(preDev ? { preDev: true } : {}) } });
 }
 
-/** 工程を通ったので次へ。編成から工程を組み立て直すので、途中で編成が変わっても正しく流れる。 */
-export function advance(p: Project, ticket: TicketRow, from: WorkRole): void {
-  const pipeline = pipelineOf(p.currentFormation());
+/** チケットが最初に入る工程。種類の流れの先頭(開発より前の工程があればそれ。島が無い・省略の工程は飛ばす)。 */
+export function firstStage(p: Project, ticket: TicketRow): WorkRole {
+  return pipelineOf(p.currentFormation(), ticket.kind, { devDone: !!ticket.dev_done })[0] ?? "dev";
+}
+
+/**
+ * 工程を通ったので次へ。工程を進むたびに、今の編成の版と、チケットの今の種類の流れから組み立て直すので、
+ * 途中で編成の版や種類が変わっても、次の工程から新しい流れで進む。開発を通ったチケットは、開発より前へ戻らない。
+ * preDev: 開発より前の工程として動いていた(終えたら、流れが変わっていても開発へ進む)。
+ */
+export function advance(p: Project, ticket: TicketRow, from: WorkRole, opts: { preDev?: boolean } = {}): void {
+  const t = p.ticket(ticket.id);
+  const pipeline = pipelineOf(p.currentFormation(), t.kind, { devDone: !!t.dev_done });
   const to = pipeline.includes(from)
-    ? nextStage(pipeline, from)
-    : (pipeline.find((r) => WORK_ROLES.indexOf(r) > WORK_ROLES.indexOf(from)) ?? "merge");
-  enterStage(p, ticket, to);
+    ? nextStage(pipeline, from, opts)
+    : opts.preDev && !t.dev_done && pipeline.includes("dev")
+      ? "dev"
+      : (pipeline.find((r) => WORK_ROLES.indexOf(r) > WORK_ROLES.indexOf(from)) ?? "merge");
+  enterStage(p, t, to);
+}
+
+/** 責任者がチケットの種類を変える。変えたことをやりとりに残し、次の工程から新しい種類の流れで進む(今いる工程はそのまま)。 */
+export function setTicketKind(p: Project, ticketId: number, kind: unknown, by = "owner"): TicketRow {
+  if (!isTicketKind(kind)) throw new Error(`知らないチケットの種類です: ${String(kind)}`);
+  const t = p.ticket(ticketId);
+  if (t.kind === kind) return t;
+  run(p.db, "UPDATE tickets SET kind = ? WHERE id = ?", [kind, ticketId]);
+  p.event(by, "kind_changed", ticketId, { from: t.kind, to: kind, fromLabel: KIND_LABEL[t.kind] ?? t.kind, toLabel: KIND_LABEL[kind] });
+  return p.ticket(ticketId);
 }
 
 /**
@@ -108,6 +135,7 @@ export function applyReport(p: Project, ctx: { msg: MessageRow; runId: number; m
       case "review":
       case "sec":
       case "qa":
+        if ((JSON.parse(msg.payload) as { preDev?: boolean }).preDev) return applyHandoff(p, ticket, REVIEW_KINDS[msg.kind]!, report);
         return applyReview(p, ticket, REVIEW_KINDS[msg.kind]!, ctx.runId, report);
       case "decide":
         return applyLead(p, ticket, JSON.parse(msg.payload) as { decision_id: number }, report);
@@ -119,6 +147,14 @@ export function applyReport(p: Project, ctx: { msg: MessageRow; runId: number; m
         return undefined;
     }
   });
+}
+
+/** 開発より前の確認(R17)の報告。申し送りを残して次の工程へ。差し戻しは無く、往復(rounds)にも数えない。 */
+function applyHandoff(p: Project, ticket: TicketRow, role: WorkRole, report: RunReport): string | undefined {
+  if (!report.handoff) return "leave_handoff が呼ばれませんでした。チケットの中身を読んで、申し送りを残してください";
+  p.addHandoff(ticket.id, role, report.handoff.body);
+  advance(p, ticket, role, { preDev: true });
+  return undefined;
 }
 
 function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunReport, payload: { from?: WorkRole; conflict?: boolean; ci?: boolean; sha?: string } = {}): string | undefined {
@@ -146,6 +182,9 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
      ON CONFLICT(ticket_id, repo_id) DO UPDATE SET number = excluded.number, head = excluded.head`,
     [ticket.id, repo.id, report.pr.number, report.pr.head],
   );
+  // 開発を通った。これより前の工程には戻らない
+  run(p.db, "UPDATE tickets SET dev_done = 1 WHERE id = ?", [ticket.id]);
+  ticket = p.ticket(ticket.id);
   p.event(p.member(memberId).name, "pr_submitted", ticket.id, { number: report.pr.number, repo: report.pr.repo });
   if (report.pr.sha) p.setSetting(`pr_sha:${ticket.id}`, report.pr.sha);
   // 指摘への返事をスレッドに残す
@@ -175,7 +214,7 @@ function applyDev(p: Project, ticket: TicketRow, memberId: number, report: RunRe
       return undefined;
     }
   }
-  const pipeline = pipelineOf(p.currentFormation());
+  const pipeline = pipelineOf(p.currentFormation(), ticket.kind, { devDone: true });
   // 確認がすべて済んだあとに(衝突・CI の失敗などで)戻ってきた。確認を最初からやり直さない
   const approved = p.setting(`approved_sha:${ticket.id}`);
   if (approved && !payload.from) {
@@ -635,7 +674,8 @@ export function createTicket(p: Project, t: Parameters<Project["addTicket"]>[0])
     const ticket = p.addTicket(t);
     // リーダーの交通整理を待つ(交通整理をしない設定なら、そのまま取られる)
     run(p.db, "UPDATE tickets SET triaged = 0 WHERE id = ?", [ticket.id]);
-    enterStage(p, ticket, "dev");
+    // 種類の流れの先頭から始める(開発より前の工程があれば、そこから)
+    enterStage(p, ticket, firstStage(p, ticket));
     return p.ticket(ticket.id);
   });
 }
