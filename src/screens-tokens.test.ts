@@ -104,13 +104,18 @@ describe("既存の画面をトークンにそろえる", () => {
     expect(style).toMatch(/\.tr-node \.tr-blocks \{[^}]*color: var\(--ink\)/);
   });
 
-  it("ツリーの状態は札の形(高さ --h-chip・角丸 --r-sm・状態ごとの淡色の地)(試作 tree の .st)", () => {
-    expect(style).toMatch(/\.tr-node \.tr-state \{[^}]*display: inline-flex[^}]*align-items: center[^}]*height: var\(--h-chip\)[^}]*padding: 0 var\(--sp-2\)[^}]*border-radius: var\(--r-sm\)/);
-    expect(style).toMatch(/\.tr-work \.tr-state \{[^}]*background: var\(--dev-soft\)/);
-    expect(style).toMatch(/\.tr-you \.tr-state \{[^}]*background: var\(--warn-soft\)/);
-    expect(style).toMatch(/\.tr-blocked \.tr-state \{[^}]*background: var\(--danger-soft\)/);
-    expect(style).toMatch(/\.tr-wait \.tr-state \{[^}]*background: var\(--bg\)/);
-    expect(style).toMatch(/\.tr-idle \.tr-state \{[^}]*background: var\(--bg\)/);
+  it("ツリーの状態は札の形(高さ --h-chip・角丸 --r-sm・枠付き)。作業中のほかは、地を行の地と変えて(白)枠の色で札の形を出す(試作 tree の .st)", () => {
+    expect(style).toMatch(/\.tr-node \.tr-state \{[^}]*display: inline-flex[^}]*align-items: center[^}]*height: var\(--h-chip\)[^}]*padding: 0 var\(--sp-2\)[^}]*border-radius: var\(--r-sm\)[^}]*border: 1px solid transparent/);
+    expect(style).toMatch(/\.tr-work \.tr-state \{[^}]*background: var\(--dev-soft\)[^}]*border-color: var\(--dev\)/);
+    // 行の地が --warn-soft・--danger-soft・--bg なので、札の地を同じにすると形が見えない(描画で確かめた)
+    for (const [tone, line] of [["you", "--warn"], ["blocked", "--danger"], ["wait", "--line-strong"], ["idle", "--line-strong"]]) {
+      expect(style).toMatch(new RegExp(`\\.tr-${tone} \\.tr-state \\{[^}]*background: var\\(--surface\\)[^}]*border-color: var\\(${line}\\)`));
+    }
+  });
+
+  it("生産性の種類の絞り込みは、狭い幅で折り返して、画面の幅からはみ出さない", () => {
+    expect(style).toMatch(/\.prod \.types \{[^}]*flex-wrap: wrap/);
+    expect(style).toMatch(/\.prod \.types \.ds-seg\.pills \{[^}]*flex-wrap: wrap/);
   });
 
   it("ボードのカードの往復は、黄の札(Chip warn)で種類の札の横に出す(試作 board)", () => {
