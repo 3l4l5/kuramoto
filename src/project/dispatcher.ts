@@ -13,6 +13,7 @@ import { advance, applyReport, decision, expireDecisions, holdTicket, nonstop, r
 import { leftUsd, projectExhausted, projectLeftUsd, unitExhausted, unitLeftUsd } from "./budget.js";
 import { askLeadToUnstick, resetUnstick, unstickPrompt, unstickTools, type StuckPayload } from "./unstick.js";
 import type { Workspace } from "./workspace.js";
+import { releaseFinishedWorktrees } from "./cleanup.js";
 import type { GitHub } from "../github/github.js";
 import { ciTools } from "./ci-tools.js";
 import { githubReadTools } from "./github-read.js";
@@ -118,6 +119,7 @@ export class Dispatcher {
   async dispatchOnce(): Promise<boolean> {
     await this.checkGithub();
     await this.refreshMergedWaits();
+    await releaseFinishedWorktrees(this.p, this.deps.workspace);
     await this.p.pdb.transaction(async () => await this.housekeep());
     const job = await this.next();
     if (!job) return false;
