@@ -1,7 +1,7 @@
 import { iso, systemClock, type Clock } from "../clock.js";
-import { sql, type Kysely } from "kysely";
+import { sql } from "kysely";
 import { openDb, type Db } from "../db/sqlite.js";
-import { PROJECT_ID_TABLES, PROJECT_MIGRATIONS } from "../db/schema.js";
+import { PROJECT_MIGRATIONS } from "../db/schema.js";
 import { ProjectDb } from "../db/conn.js";
 import { isTicketKind, parseFlows, type FlowsSpec, type TicketKind } from "../domain/flow.js";
 import { parseRoutes, normalizeRoutes, routesAmong, type RouteSpec } from "../domain/route.js";
@@ -86,18 +86,11 @@ export class Project {
   private constructor(path: string, readonly clock: Clock, projectId?: number) {
     this.db = openDb(path, PROJECT_MIGRATIONS, { projectId });
     this.pdb = new ProjectDb(this.db, projectId ?? 0);
-    // server.ts などの、まだ移していない同期の INSERT は project_id を書かない(0 のまま)。移した側(pdb)は project_id で絞るので、
-    // 入れた行を見失わないよう、この接続の間だけ、0 で入った行をこのプロジェクトの id に直す(同期の書き込みが無くなったら外す)
-    if (projectId) {
-      for (const t of PROJECT_ID_TABLES)
-        this.db.exec(`CREATE TEMP TRIGGER IF NOT EXISTS fill_project_id_${t} AFTER INSERT ON ${t} WHEN NEW.project_id = 0 BEGIN UPDATE ${t} SET project_id = ${Number(projectId)} WHERE rowid = NEW.rowid; END`);
-    }
   }
 
-  /** projectId: 本部でのこのプロジェクトの id。マイグレーションと、開くときの埋め直しが各表の project_id を埋めるのに使う。渡されなければ 0。 */
+  /** projectId: 本部でのこのプロジェクトの id。マイグレーションが各表の project_id を埋めるのに使う。渡されなければ 0。 */
   static async open(path: string, clock: Clock = systemClock, projectId?: number): Promise<Project> {
     const p = new Project(path, clock, projectId);
-    await p.backfillProjectId();
     await p.seed();
     await p.fillSeats();
     return p;
@@ -113,18 +106,6 @@ export class Project {
 
   get projectId(): number {
     return this.pdb.projectId;
-  }
-
-  /**
-   * 版 21 より後に入った行(seed・まだ移していない書き方の INSERT)は project_id が 0 のまま。
-   * 開くたびに、残っている 0 の行をこのファイルのプロジェクトの id で埋める(ADR-0037)。
-   */
-  private async backfillProjectId(): Promise<void> {
-    const id = this.pdb.projectId;
-    if (id === 0) return;
-    await this.pdb.transaction(async () => {
-      for (const t of PROJECT_ID_TABLES) await (this.pdb.k as Kysely<any>).updateTable(t).set({ project_id: id }).where("project_id", "=", 0).execute();
-    });
   }
 
   private async seed(): Promise<void> {

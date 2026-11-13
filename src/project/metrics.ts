@@ -1,5 +1,5 @@
 import { sql } from "kysely";
-import { countFrom, countOf, inScope, scopeIds } from "../db/count.js";
+import { countFrom, countOf, inScope } from "../db/count.js";
 import type { Project } from "./project.js";
 
 export type Metrics = {
@@ -25,13 +25,13 @@ export async function metrics(p: Project, filter: { formationId?: number } = {})
   const k = p.pdb.k;
   const fid = filter.formationId;
   let doneQ = inScope(p.pdb, "tickets").select(["id", "created_at", "done_at", "active_ms", "rounds"]).where("done_at", "is not", null);
-  if (fid) doneQ = doneQ.where((eb) => eb.exists(eb.selectFrom("runs as r").select("r.id").whereRef("r.ticket_id", "=", "tickets.id").where("r.project_id", "in", scopeIds(p.pdb)).where("r.formation_id", "=", fid)));
+  if (fid) doneQ = doneQ.where((eb) => eb.exists(eb.selectFrom("runs as r").select("r.id").whereRef("r.ticket_id", "=", "tickets.id").where("r.project_id", "=", p.pdb.projectId).where("r.formation_id", "=", fid)));
   const completed = (await doneQ.execute()) as { id: number; created_at: string; done_at: string; active_ms: number; rounds: number }[];
   const n = completed.length;
   let usageQ = k
     .selectFrom("runs as r")
     .select([sql<number | null>`SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0) + COALESCE(cache_read_tokens,0))`.as("tokens"), sql<number | null>`SUM(cost_usd)`.as("cost")])
-    .where("r.project_id", "in", scopeIds(p.pdb));
+    .where("r.project_id", "=", p.pdb.projectId);
   if (fid) usageQ = usageQ.where("r.formation_id", "=", fid);
   const [usage, decisions, waitingRows, recurred, conflictCount] = await Promise.all([
     usageQ.executeTakeFirst(),
@@ -39,7 +39,7 @@ export async function metrics(p: Project, filter: { formationId?: number } = {})
     k
       .selectFrom("messages")
       .select(["to_role as stage", sql<number>`COUNT(*)`.as("n")])
-      .where("project_id", "in", scopeIds(p.pdb))
+      .where("project_id", "=", p.pdb.projectId)
       .where("status", "=", "pending")
       .groupBy("to_role")
       .orderBy("n", "desc")

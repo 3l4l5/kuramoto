@@ -1,5 +1,5 @@
 import { iso } from "../clock.js";
-import { inScope, scopeIds } from "../db/count.js";
+import { inScope } from "../db/count.js";
 import { pipelineOf } from "../domain/formation.js";
 import type { GitHub } from "../github/github.js";
 import type { Project, TicketRow } from "./project.js";
@@ -36,7 +36,7 @@ export async function snapshotOf(p: Project): Promise<GithubSnapshot | null> {
 export async function markExisting(p: Project, label: string): Promise<void> {
   await p.setSetting("origin", "existing");
   await p.setSetting("issue_label", label.trim() || "*");
-  await p.pdb.k.updateTable("plan_stages").set({ mode: "skip" }).where("project_id", "in", scopeIds(p.pdb)).where("stage", "=", "screen").execute();
+  await p.pdb.k.updateTable("plan_stages").set({ mode: "skip" }).where("project_id", "=", p.pdb.projectId).where("stage", "=", "screen").execute();
 }
 
 /** 開いている PR と Issue を GitHub から取ってきて控える。取れなかったリポジトリは理由を残し、続ける。 */
@@ -137,7 +137,7 @@ export async function adoptPull(p: Project, a: { repo: string; number: number; t
     });
     await p.pdb.insert("pull_requests", { ticket_id: t.id, repo_id: repo.id, number: pr.number, head: pr.head }).execute();
     // 引き継いだ PR は開発が済んでいる(開発より前の工程には戻らない)ので、交通整理も済み。addTicket の行はまだ project_id が 0 かもしれない
-    await p.pdb.k.updateTable("tickets").set({ triaged: 1, dev_done: 1 }).where("project_id", "in", scopeIds(p.pdb)).where("id", "=", t.id).execute();
+    await p.pdb.k.updateTable("tickets").set({ triaged: 1, dev_done: 1 }).where("project_id", "=", p.pdb.projectId).where("id", "=", t.id).execute();
     const first = pipelineOf(await p.currentFormation(), (await p.ticket(t.id)).kind, { devDone: true }).find((r) => r !== "dev");
     await enterStage(p, await p.ticket(t.id), first ?? "merge");
     await p.setSetting("onboard_adopted_pulls", JSON.stringify([...new Set([...await adoptedPulls(p), `${a.repo}#${a.number}`])]));

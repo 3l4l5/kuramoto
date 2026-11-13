@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { KIND_LABEL, TICKET_KINDS } from "../domain/flow.js";
-import { inScope, scopeIds } from "../db/count.js";
+import { inScope } from "../db/count.js";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
 import { send } from "./inbox.js";
 import { runWork } from "./progress.js";
@@ -37,7 +37,7 @@ export async function sayToLead(p: Project, body: string): Promise<void> {
 export async function leadChatView(p: Project) {
   const r = await inScope(p.pdb, "messages").where("kind", "=", "chat").where("status", "in", ["pending", "claimed"]).orderBy("id").limit(1).executeTakeFirst();
   const open = r
-    ? await p.pdb.k.selectFrom("runs").select("id").where("project_id", "in", scopeIds(p.pdb)).where("message_id", "=", r.id).where("ended_at", "is", null).orderBy("id", "desc").limit(1).executeTakeFirst()
+    ? await p.pdb.k.selectFrom("runs").select("id").where("project_id", "=", p.pdb.projectId).where("message_id", "=", r.id).where("ended_at", "is", null).orderBy("id", "desc").limit(1).executeTakeFirst()
     : undefined;
   const run_id = open?.id ?? null;
   const w = run_id ? await runWork(p, run_id) : null;

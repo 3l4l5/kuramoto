@@ -15,7 +15,7 @@ ADR-0036 の土台と ADR-0037 のスコープ(workspace_id・project_id)の上�
 - **同期の `tx()` は、まだ移していない書き方のためだけに残す**(2/2 で無くす)。非同期トランザクションの中(同じ流れ)から呼ぶのは外側に相乗りする。他の流れが開いている非同期トランザクションの最中に呼ばれたら、黙って混ざらないよう投げる。ディスパッチャの `housekeep()` のように、同期の書き込みを並列の起動と同じ接続で流すところは、`transaction()` の中で呼んで順番待ちにする。
 - **受信箱の取り出し**は `dialect.claimMessage`(SQLite は 1 文の UPDATE ... WHERE id = (候補) RETURNING)。`claimNext` は候補の SELECT を Kysely で組み、project_id で絞る。
 - **repos**。本部の `repos` には書かない。プロジェクトの `repos` だけを正にする(本部の表は残す。読む側はもともと無い)。
-- **project_id の埋め直し**(ADR-0037 の「結果」の続き)。移した書き込み(messages・runs)は project_id を書く。そのほかで 0 のまま入った行(seed・まだ同期の書き込み)は、`Project` を開くたびに、全部の表の project_id=0 の行をそのファイルのプロジェクトの id で埋める。
+- **project_id の埋め直し**(ADR-0037 の「結果」の続き)。移した書き込み(messages・runs)は project_id を書く。そのほかで 0 のまま入った行(seed・まだ同期の書き込み)は、`Project` を開くたびに、全部の表の project_id=0 の行をそのファイルのプロジェクトの id で埋める。(D2 の #64 で外した。ADR-0040)
 
 ## 結果
 
