@@ -17,19 +17,19 @@ const NOT_MIGRATED = new Set([
   "server.ts",
   "project/budget.ts",
   "project/ci-tools.ts",
-  "project/dev-rules.ts",
+  "project/dev-rules.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
   "project/dispatcher.ts",
   "project/inbox.ts",
-  "project/leadchat.ts",
-  "project/member-chat.ts",
+  "project/leadchat.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
+  "project/member-chat.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
   "project/merge.ts",
   "project/outage.ts",
   "project/patrol.ts",
-  "project/planning.ts",
+  "project/planning.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
   "project/progress.ts",
   "project/project.ts",
-  "project/prompts.ts",
-  "project/questions.ts",
+  "project/prompts.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
+  "project/questions.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
   "project/review.ts",
   "project/triage.ts",
   "project/unstick.ts",
