@@ -16,5 +16,9 @@ ADR-0039(1/2)の続き。残りの src/project・server を async + Kysely に�
 
 ## 結果
 
-- 見張りは土台のみ。工程・レビュー・merge・企画スタジオ・生産性などの async 化は、一覧のファイルを 1 つずつ移して外していく。
+- 見張りは土台のみ。#17 は土台で閉じ、async 化は NOT_MIGRATED の一覧を減らす単位で別チケットに分けた(いずれも「対象を async + Kysely に移し、一覧から外し、npm test・e2e が通る」が受け入れ条件。「読んでから書く」は tx か 1 文に、画面の取得は IN (…) でまとめる):
+  - A. 工程・交通整理・見回り(workflow・progress・unstick・patrol・triage・dispatcher の残り)
+  - B. レビュー・merge・チームの CI(review・merge・ci-tools・outage・budget)
+  - C. 企画スタジオ・生産性・R15〜R17(planning・planning-agent・design・design-visual・productivity・metrics・ticket・transfer・questions・member-chat・leadchat ほか)
+  - D. server・Project 本体(最後。「project / hq が node:sqlite を直接 import しない」を満たし、同期の run() の見張りを本番でも有効にする、または同期の書き込みを無くす。#16 レビューの「同期の書き込みが他の流れの非同期トランザクションに混ざる」はここで閉じる)
 - **同じ database に 2 つのプロジェクトを置くとき**、版 21 は前の版の UNIQUE(tickets.number・settings.key など)を残している。SQLite のままでは、別のプロジェクトでも同じ number・key は入らない。MySQL の最初の版で project_id 込みの UNIQUE だけにするか、SQLite 側で前の UNIQUE を外すかは、同じ database に置く段で決める。

@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 const ROOT = join(import.meta.dirname, "..");
 const files = [join(ROOT, "hq.ts"), join(ROOT, "server.ts"), ...readdirSync(join(ROOT, "project")).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts")).map((f) => join(ROOT, "project", f))];
 
-/** 同期の生 SQL をまだ使っているファイル(src からの相対)。移したら消す。 */
+/** 同期の生 SQL をまだ使っているファイル(src からの相対)。移したら消す。移す単位は ADR-0040 の A〜D(別チケット)。D が済んだら空にする。 */
 const NOT_MIGRATED = new Set([
   "server.ts",
   "project/budget.ts",
