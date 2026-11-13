@@ -7,6 +7,7 @@ import { HqDb } from "./db/conn.js";
 import type { MysqlHandle } from "./db/mysql.js";
 import { deleteProjectRows } from "./db/delete-project.js";
 import { HQ_MIGRATIONS } from "./db/schema.js";
+import { isRepoFullName } from "./domain/repo-name.js";
 import { Project } from "./project/project.js";
 import { pendingOwnerDecisions } from "./project/workflow.js";
 
@@ -33,8 +34,6 @@ export function workDirFor(dataDir: string): string {
 
 export type ProjectRecord = { id: number; name: string; data_dir: string; status: string; created_at: string };
 export type RepoInput = { fullName: string; role: string };
-
-const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 /** 本部 DB の既定のワークスペース(id=1。版 2 が入れる)。 */
 export const DEFAULT_WORKSPACE_ID = 1;
@@ -89,7 +88,7 @@ export class Hq {
   async createProject(name: string, repos: RepoInput[]): Promise<ProjectRecord> {
     if (!name.trim()) throw new Error("名前がありません");
     if (repos.length === 0) throw new Error("リポジトリを 1 つ以上登録してください");
-    for (const r of repos) if (!REPO_RE.test(r.fullName)) throw new Error(`owner/repo の形ではありません: ${r.fullName}`);
+    for (const r of repos) if (!isRepoFullName(r.fullName)) throw new Error(`owner/repo の形ではありません: ${r.fullName}`);
     const [owner, repo] = repos[0]!.fullName.split("/") as [string, string];
     // 同じリポジトリから 2 つ目のプロジェクトを作る(設計書から復元するなど)ときは、置き場所を分ける
     let dataDir = join(this.home, owner, repo);
@@ -126,7 +125,7 @@ export class Hq {
     const name = input.name.trim();
     if (!name) throw new Error("名前がありません");
     if (input.repos.length === 0) throw new Error("リポジトリを 1 つ以上登録してください");
-    for (const r of input.repos) if (!REPO_RE.test(r.fullName)) throw new Error(`owner/repo の形ではありません: ${r.fullName}`);
+    for (const r of input.repos) if (!isRepoFullName(r.fullName)) throw new Error(`owner/repo の形ではありません: ${r.fullName}`);
     if (new Set(input.repos.map((r) => r.fullName)).size !== input.repos.length) throw new Error("同じリポジトリが 2 回入っています");
     await this.project(id); // ワークスペースの外のプロジェクトは変えない
     const before = await p.repos();

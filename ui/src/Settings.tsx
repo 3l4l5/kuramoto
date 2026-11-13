@@ -9,7 +9,7 @@ import { BudgetInput, budgetOk as totalOk } from "./BudgetInput";
 import { usd } from "./format";
 
 const REPO_ROLES = ["フロント", "API", "インフラ", "その他"];
-const repoOk = (r: string) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r);
+const repoOk = (r: string) => /^(?!\.{1,2}\/)(?!.*\/\.{1,2}$)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r);
 type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean; resumeChecks: boolean; patrolMin: number; planWeb: boolean; planWebDomains: string; ciMode: "team" | "github"; ciCommands: Record<string, string> };
 
 /** プロジェクトの設定: 名前とリポジトリ(足す・外す・役割を変える)。 */

@@ -110,4 +110,28 @@ describe("プロジェクトの編集", () => {
     p.close();
     hq.close();
   });
+
+  it("'.' や '..' だけの owner・repo は断る(置き場所が home の外や owner ディレクトリを指さない)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "kuramoto-"));
+    dirs.push(home);
+    const hq = new Hq(home);
+    for (const bad of ["acme/.", "acme/..", "./acme", "../acme", "../..", "./.", ".././.."]) {
+      await expect(hq.createProject("x", [{ fullName: bad, role: "API" }])).rejects.toThrow(/owner\/repo/);
+    }
+    expect(await hq.projects()).toEqual([]);
+
+    // '.' を含んでいても、'.' や '..' だけでなければ通り、置き場所は home/<owner>/<repo> のまま
+    const ok = await hq.createProject("ok", [{ fullName: "acme/.github", role: "API" }, { fullName: "a.b/c..d", role: "API" }]);
+    expect(ok.data_dir).toBe(join(home, "acme", ".github"));
+
+    // 更新でも同じ(2 つ目以降のリポジトリも含めて)
+    const p = await hq.openProject(ok.id);
+    for (const bad of ["acme/.", "acme/..", "./acme", "../.."]) {
+      await expect(hq.updateProject(p, ok.id, { name: "ok", repos: [{ fullName: "acme/.github", role: "API" }, { fullName: bad, role: "API" }] })).rejects.toThrow(/owner\/repo/);
+      await expect(p.addRepo(bad, "API")).rejects.toThrow(/owner\/repo/);
+    }
+    expect((await p.repos()).map((r) => r.full_name)).toEqual(["acme/.github", "a.b/c..d"]);
+    p.close();
+    hq.close();
+  });
 });
