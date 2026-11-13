@@ -39,7 +39,7 @@ const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 export const DEFAULT_WORKSPACE_ID = 1;
 
 /**
- * いまのワークスペース。server / cli の入口で 1 回だけこれで決め、本部(Hq)へ渡す(ADR-0038)。
+ * いまのワークスペース。server / cli の入口で 1 回だけこれで決め、本部(Hq)へ渡す(ADR-0039)。
  * 今は常に既定の 1 つ。複数のワークスペースを選べるようになったら、ここで決める。
  */
 export function currentWorkspaceId(): number {

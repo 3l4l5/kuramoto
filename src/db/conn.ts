@@ -6,7 +6,7 @@ import { registerAsyncOwner } from "./tx.js";
 import type { HqDatabase, ProjectDatabase } from "./tables.js";
 
 /**
- * 1 本の接続の上の Kysely と、非同期のトランザクションの口(ADR-0038)。
+ * 1 本の接続の上の Kysely と、非同期のトランザクションの口(ADR-0039)。
  *  - 接続ごとに順番待ちする。Kysely は接続を 1 本しか持たず、トランザクションの間はほかのクエリを待たせる。
  *  - 入れ子は AsyncLocalStorage で外側にまとめる。transaction() の中で k を使うと、いまのトランザクションの上で動く。
  */
