@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { drawerFromUrl } from "./phoneNav";
 import { setDraftRoutes, takeRequestedTab, useFormationUi } from "./formationUi";
 import { post, type TeamView } from "./api";
 import { useAct } from "./hooks";
@@ -48,7 +49,10 @@ export function FormationDrawer({ id, t, close }: { id: number; t: TeamView; clo
   const currentV = t.formation.versions.find((v) => v.version === t.formation.current)!;
   const current = toFullSpec(currentV);
   const [{ spec: draft, ids }, setState] = useState<Draft>(() => loadDraft(currentV));
-  const [tab, setTab] = useState<Tab>("islands");
+  const [tab, setTab] = useState<Tab>(() => {
+    const u = drawerFromUrl();
+    return u.drawer === "formation" && (u.tab === "routes" || u.tab === "flows") ? u.tab : "islands";
+  });
   const req = useFormationUi().request;
   // 床の凡例の「経路を変える」「流れを変える」から開かれたら、そのタブに切り替える
   useEffect(() => {

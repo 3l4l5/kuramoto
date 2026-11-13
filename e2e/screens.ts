@@ -1,8 +1,8 @@
 /**
  * 画面の見た目を撮り直すためのフェイクのデータ(E2E_SCREENS=1 で e2e/server.ts が使う)。
- * プロジェクトとチケット 5 件を API で作り、ツリー・ボードに出る 5 つの状態(作業中・あなたの番・止まっている・待ち・手すき)は
+ * プロジェクトとチケット 5 件・開発ルール 4 件を API で作り、ツリー・ボードに出る 5 つの状態(作業中・あなたの番・止まっている・待ち・手すき)は
  * 画面データ(GET /api/projects/:id)の tickets を差し替えて作る。担当を動かさずに、いつでも同じ絵を撮れる。
- * 撮り方は docs/screenshots/78/README.md。
+ * 撮り方は docs/screenshots/80/README.md。
  */
 import type { ProjectView } from "../src/server.js";
 
@@ -28,6 +28,11 @@ export async function seedScreens(base: string): Promise<number> {
   const { id } = await post(base, "/api/projects", { name: "予約サイト", repos: [{ fullName: "acme/shop", role: "API" }, { fullName: "acme/web", role: "フロント" }] });
   if (id === undefined) throw new Error("プロジェクトを作れませんでした");
   for (const t of TICKETS) await post(base, `/api/projects/${id}/tickets`, t);
+  // 開発ルール(R15): 試作と同じ 4 件(ひな形)。4 つ目は無効にして、「押せない」見た目も撮れるようにする
+  for (const template of ["jira", "pr-body-target", "commit-50", "migration-alone"]) await post(base, `/api/projects/${id}/dev-rules`, { template });
+  const rules = (await (await fetch(`${base}/api/projects/${id}/dev-rules`)).json()) as { rules: { id: number; template: string | null }[] };
+  const off = rules.rules.find((r) => r.template === "migration-alone");
+  if (off) await post(base, `/api/projects/${id}/dev-rules/${off.id}/enabled`, { enabled: false });
   return id;
 }
 

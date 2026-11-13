@@ -859,7 +859,9 @@ body { background: var(--surface); }
 .drawer.formation .ds-drawer__title { font-size: var(--fs-lg); }
 .drawer.formation .pol { padding: 0; }
 .drawer.formation .ds-drawer__body { display: flex; flex-direction: column; gap: var(--sp-5); }
-.drawer.formation .ds-drawer__foot .msg { flex: 1; font-size: var(--fs-sm); color: var(--muted); }
+/* 引き出しの幅が狭いと、メッセージが 1 文字幅まで潰れて縦に折れる。帯を折り返し、メッセージは 1 行目を使い切る */
+.drawer.formation .ds-drawer__foot { flex-wrap: wrap; }
+.drawer.formation .ds-drawer__foot .msg { flex: 1 1 12em; font-size: var(--fs-sm); color: var(--muted); }
 .drawer.formation .ds-drawer__foot .msg.bad { color: var(--danger-ink); }
 .drawer.formation .pair { display: inline-flex; align-items: center; gap: var(--sp-2); color: var(--muted); font-weight: var(--fw-regular); }
 .drawer.formation .ds-list__meta { display: inline-flex; align-items: center; }
@@ -894,9 +896,15 @@ body { background: var(--surface); }
 .ds-list__item[aria-disabled="true"] .stagectl .fixed { color: var(--muted); }
 /* スマホ(幅 390px、未決 #21): 引き出し(編成・チームの方針)は全画面。保存ボタンは下に固定 */
 @media (max-width: 700px) {
-  aside.drawer { position: fixed; inset: 0; z-index: 30; flex: none; max-width: none; border-radius: 0; overflow: auto; }
+  /* 下のタブ(高さ 57px)は引き出しの上でも使うので、引き出しはその上までにして、下の保存ボタンを隠さない */
+  aside.drawer, section.drawer { position: fixed; inset: 0 0 calc(57px + env(safe-area-inset-bottom, 0px)) 0; z-index: 30; flex: none; max-width: none; border-radius: 0; overflow: auto; }
   aside.drawer > .ds-drawer { min-height: 100%; border: 0; border-radius: 0; box-shadow: none; }
-  aside.drawer .ds-drawer__foot { position: sticky; bottom: 0; background: var(--surface); flex-wrap: wrap; }
+  /* チームの方針は部品(ds/Drawer)の section がそのまま引き出しなので、自分が全画面・枠なしになる */
+  section.drawer { border: 0; box-shadow: none; }
+  section.drawer > .ds-drawer__body { flex: 1; display: flex; flex-direction: column; }
+  /* 開発ルールの「足す」ボタンの帯は、一覧が短くても画面の下に固定する */
+  section.drawer .rules { flex: 1; align-content: space-between; }
+  aside.drawer .ds-drawer__foot, section.drawer > .ds-drawer__foot { position: sticky; bottom: 0; background: var(--surface); flex-wrap: wrap; }
   aside.drawer .ds-drawer__tabs { overflow-x: auto; }
   .drawer.wide, .drawer--wide { flex-basis: auto; max-width: none; }
   .flowtab { flex-direction: column; align-self: stretch; }
@@ -1131,7 +1139,9 @@ body { background: var(--surface); }
   .tabs > * { flex: 1 1 0; min-width: 0; padding-inline: var(--sp-1); }
   .ds-seg { max-width: 100%; overflow-x: auto; }
   .ds-seg__opt { flex: none; white-space: nowrap; padding: 0 var(--sp-2); }
-  .officefloor .of-filter .ds-seg { flex: 1; min-width: 0; }
+  .officefloor .of-filter .ds-seg { flex: 1 1 100%; min-width: 0; flex-wrap: wrap; overflow-x: visible; }
+  /* 種類の切り替えは横にすべらせず、狭ければ折り返してどの種類も見えるようにする */
+  .officefloor .of-filter .ds-seg__opt { flex: 1 1 auto; }
   .form .rrow { grid-template-columns: 1fr; }
   .form { max-width: none; }
   .desk { width: 100%; max-width: 488px; height: auto; aspect-ratio: 1.6; }
@@ -1175,7 +1185,7 @@ body { background: var(--surface); }
   .phonebar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; padding-bottom: env(safe-area-inset-bottom, 0px); background: var(--surface); border-top: 1px solid var(--line); }
   .phonebar button { position: relative; flex: 1 1 0; min-width: 0; height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 0; border-top: 3px solid transparent; background: none; color: var(--muted); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
   .phonebar button[aria-current="page"] { color: var(--ink); font-weight: var(--fw-bold); border-top-color: var(--dev); }
-  .phonebar__n { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 18px; padding: 0 5px; border-radius: var(--r-pill); background: var(--design); color: var(--surface); font-style: normal; font-size: var(--fs-xs); font-weight: var(--fw-bold); }
+  .phonebar__n { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 18px; padding: 0 5px; border-radius: var(--r-pill); background: var(--lead); color: var(--surface); font-style: normal; font-size: var(--fs-xs); font-weight: var(--fw-bold); }
   .phonebar button .phonebar__n { position: absolute; top: 6px; left: calc(50% + 8px); }
   .phonemenu { display: block; position: fixed; inset: 0; z-index: 45; }
   .phonemenu__scrim { position: absolute; inset: 0; width: 100%; border: 0; background: var(--ink); opacity: .4; }

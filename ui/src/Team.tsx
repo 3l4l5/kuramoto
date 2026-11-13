@@ -6,6 +6,7 @@ import { MAX_MEMBERS_PER_UNIT, type FormationSpec, type UnitSpec } from "../../s
 import { EFFORTS, MODELS, ROLE_LABEL, WORK_ROLES, type WorkRole } from "../../src/domain/roles";
 import { Btn } from "./ui";
 import { LeadChat } from "./LeadChat";
+import { clearDrawerFromUrl, drawerFromUrl } from "./phoneNav";
 import { FormationDrawer } from "./Formation";
 import { Button, Checkbox, Input, Select, Textarea } from "./ds";
 import { BudgetInput } from "./BudgetInput";
@@ -43,7 +44,7 @@ export type RuleGuard = {
  * 別のプロジェクトを開いたときだけ、前のプロジェクトの引き出し・下書きを空にする(本部を経由しても同じ)。
  */
 export function useDrawerState(projectId: number | null): { drawer: Drawer | null; moveTo: (to: Drawer | null) => void; guard: RuleGuard } {
-  const [drawer, setDrawer] = useState<Drawer | null>(null);
+  const [drawer, setDrawer] = useState<Drawer | null>(() => drawerFromUrl().drawer);
   const [draft, setDraft] = useState<RuleDraft | null>(null);
   const [pending, setPending] = useState<{ to: Drawer | null } | null>(null);
   const [owner, setOwner] = useState<number | null>(null);
@@ -57,6 +58,7 @@ export function useDrawerState(projectId: number | null): { drawer: Drawer | nul
     }
   }
   const open = (to: Drawer | null) => {
+    clearDrawerFromUrl();
     setPending(null);
     if (to !== "policy") setDraft(null);
     setDrawer(to);
@@ -91,7 +93,7 @@ type PolicyTab = "models" | "rules";
 function PolicyDrawer({ id, team, close, guard }: { id: number; team: TeamView | undefined; close: () => void; guard: RuleGuard }) {
   const { draft, setDraft } = guard;
   // 別の画面から戻ってきたときは、直していた開発ルールの続きから
-  const [tab, setTab] = useState<PolicyTab>(draft && draftDirty(draft) ? "rules" : "models");
+  const [tab, setTab] = useState<PolicyTab>(() => (draft && draftDirty(draft)) || (drawerFromUrl().drawer === "policy" && drawerFromUrl().tab === "rules") ? "rules" : "models");
   const rules = useDevRules(id);
   return (
     <DsDrawer
