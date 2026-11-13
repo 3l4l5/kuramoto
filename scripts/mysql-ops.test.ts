@@ -140,6 +140,27 @@ esac
     expect(readFileSync(env.FAKE_LOG!, "utf8")).toMatch(/exec -i kuramoto-mysql sh -c .*mysql/);
   });
 
+  it("戻しは、壊れた gz なら docker を呼ばずに失敗する", () => {
+    const good = gzipSync("CREATE TABLE t (id int);\n".repeat(200));
+    const broken = join(work, "trunc.sql.gz");
+    writeFileSync(broken, good.subarray(0, 20));
+    const r = run("mysql-restore.sh", [broken]);
+    expect(r.status).toBe(2);
+    expect(r.stdout).not.toContain("戻しました");
+    expect(() => readFileSync(env.FAKE_LOG!)).toThrow();
+  });
+
+  it("戻しは、流し込む前に database を作り直して空にする", () => {
+    expect(run("mysql-backup.sh").status).toBe(0);
+    const file = join(backups, readdirSync(backups)[0]!);
+    expect(run("mysql-restore.sh", [file]).status).toBe(0);
+    const log = readFileSync(env.FAKE_LOG!, "utf8");
+    const drop = log.indexOf("DROP DATABASE");
+    expect(drop).toBeGreaterThanOrEqual(0);
+    expect(log).toContain("CREATE DATABASE");
+    expect(log.indexOf("exec -i")).toBeGreaterThan(drop);
+  });
+
   it("戻しは、引数が無い・ファイルが読めないときは何もせず失敗する", () => {
     expect(run("mysql-restore.sh").status).toBe(2);
     expect(run("mysql-restore.sh", [join(work, "none.sql.gz")]).status).toBe(2);

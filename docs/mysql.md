@@ -57,10 +57,12 @@ database:
   port: 3306
   name: kuramoto              # mysql.env の MYSQL_DATABASE
   user: kuramoto              # mysql.env の MYSQL_USER
-  passwordFile: ~/.kuramoto/mysql.env   # MYSQL_PASSWORD を読む
+  passwordFile: ~/.kuramoto/mysql.env   # 読むのは MYSQL_PASSWORD の 1 行だけ
 ```
 
 テスト用は同じ書き方で、`port: 3307`・`name: kuramoto_test`・`user: kuramoto_test` にします(パスワードは `compose.yaml` の `mysql-test` に書いてあるテスト専用のものです)。
+
+`mysql.env` には `MYSQL_ROOT_PASSWORD` も入っています。Kuramoto は `MYSQL_PASSWORD` の行だけを読み、root のパスワードは使いません(root で繋がない)。root のパスワードまで Kuramoto に見せたくない場合は、`MYSQL_PASSWORD` だけを書いた別のファイル(0600)を作って `passwordFile` で指します。
 
 > この節のキー名は、`config.yaml` を読む側の実装と合わせてください。この手順書の範囲は、MySQL を立てて、バックアップを取り、戻すところまでです。
 
@@ -114,13 +116,13 @@ launchctl kickstart "gui/$(id -u)/com.kuramoto.mysql-backup"   # 今すぐ 1 回
 
 ## 4. 戻し方
 
-Kuramoto を止めてから戻します。dump にはテーブルを作り直す文が入っているので、いまの中身は上書きされます。
+Kuramoto を止めてから戻します。戻す前に Kuramoto の database を `DROP DATABASE` / `CREATE DATABASE`(utf8mb4 / utf8mb4_bin)で作り直して空にするので、いまの中身は消えます。dump のあとにマイグレーションで増えたテーブルも残りません。壊れた gz(`gzip -t` に通らないもの)のときは、何も消さずに失敗します。
 
 ```sh
 scripts/mysql-restore.sh ~/.kuramoto/backups/mysql/kuramoto-20261113T030000Z.sql.gz
 ```
 
-`mysql` コンテナの Kuramoto ユーザーで、`MYSQL_DATABASE` に流し込みます。次のように、戻しが通ったか確かめます。
+`mysql` コンテナの Kuramoto ユーザー(`kuramoto.*` の全権限を持つ)で、`MYSQL_DATABASE` に流し込みます。次のように、戻しが通ったか確かめます。
 
 ```sh
 docker exec kuramoto-mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_USER" "$MYSQL_DATABASE" -e "SHOW TABLES"'
