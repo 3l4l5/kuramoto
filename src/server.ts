@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { networkInterfaces } from "node:os";
-import { extname, join, normalize } from "node:path";
+import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { all, get } from "./db/sqlite.js";
 import { pipelineOf } from "./domain/formation.js";
@@ -11,7 +11,8 @@ import { ROLE_LABEL } from "./domain/roles.js";
 import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import type { Harness } from "./harness/types.js";
 import { GhCli, type GitHub } from "./github/github.js";
-import { Hq, kuramotoHome, workDirFor } from "./hq.js";
+import { Hq, kuramotoHome, kuramotoWorkHome, workDirFor } from "./hq.js";
+import { DiskGuard, maxRunsFromEnv, minFreeGbFromEnv, Slots, sweepWorktrees } from "./project/upkeep.js";
 import { Dispatcher } from "./project/dispatcher.js";
 import { recoverStale } from "./project/inbox.js";
 import { autoMerge, autoMergeEnabled, ownerMerge, suggestedMergeOrder, type TeamCiHook } from "./project/merge.js";
@@ -63,6 +64,8 @@ const BUILD_ID = String(Date.now());
 const POLL_MS = 3_000;
 /** 自動 merge で merge 待ちを見回る間隔。 */
 const MERGE_POLL_MS = 20_000;
+/** 終わったチケットの作業場所を片付ける間隔。 */
+const SWEEP_MS = 10 * 60_000;
 
 export type ServerDeps = {
   hq: Hq;
@@ -83,6 +86,10 @@ export type ServerDeps = {
    * 合言葉は URL の ?token= で一度渡すと Cookie に入り、以後はそれで通る。この PC 自身(localhost)からは合言葉なしで使える。
    */
   publicToken?: string;
+  /** 同時に起こせるエージェントの数(すべてのプロジェクトの合計)。既定は KURAMOTO_MAX_RUNS か 3。 */
+  maxRuns?: number;
+  /** ディスクの空きの見張り。既定は作業場所のディスクを見て、KURAMOTO_MIN_FREE_GB(既定 15GB)を切ったら新しい仕事を止める。 */
+  disk?: DiskGuard;
 };
 
 /**
@@ -92,7 +99,16 @@ export type ServerDeps = {
  */
 export class KuramotoServer {
   private readonly projects = new Map<number, Project>();
-  private readonly runners = new Map<number, { timer: NodeJS.Timeout; mergeTimer: NodeJS.Timeout; busy: boolean; dispatcher: Dispatcher; tick: () => Promise<void>; teamCi: TeamCiHook }>();
+  private readonly runners = new Map<
+    number,
+    { timer: NodeJS.Timeout; mergeTimer: NodeJS.Timeout; sweepTimer: NodeJS.Timeout; busy: boolean; dispatcher: Dispatcher; tick: () => Promise<void>; teamCi: TeamCiHook; sweep: () => Promise<void> }
+  >();
+  /** 同時に起こせるエージェントの枠(すべてのプロジェクトで分け合う)。 */
+  private readonly slots: Slots;
+  /** ディスクの空きの見張り(すべてのプロジェクトで 1 つ)。 */
+  readonly disk: DiskGuard;
+  /** 空きが足りないと知らせたプロジェクト(足りるようになったら、また知らせる)。 */
+  private readonly diskWarned = new Set<number>();
   /** チームの CI のコマンドを閉じ込めの中で流す(プロセスで 1 つ。1 度に 1 つずつ流す)。 */
   private readonly checkRunner: CommandRunner;
   /** オフィス(チケットの仕事)を動かしているプロジェクト。企画スタジオの担当は止めていても動く。 */
@@ -108,6 +124,32 @@ export class KuramotoServer {
     this.mergePollMs = deps.mergePollMs ?? MERGE_POLL_MS;
     this.workspaceFor = deps.workspaceFor ?? ((d) => new GitWorkspace(workDirFor(d)));
     this.checkRunner = deps.checkRunner ?? new SandboxRunner();
+    const maxRuns = deps.maxRuns ?? maxRunsFromEnv();
+    this.slots = new Slots(() => maxRuns);
+    this.disk = deps.disk ?? new DiskGuard({ path: existingParent(kuramotoWorkHome()), minFreeGb: minFreeGbFromEnv() });
+  }
+
+  /**
+   * 空き容量が少ないか。少なければ、そのプロジェクトのリーダーのチャットで一度だけ知らせ、作業場所の片付けを急がせる。
+   * 足りるようになったら、再開したことを知らせる。
+   */
+  private diskHold(id: number): string | undefined {
+    const low = this.disk.low();
+    const p = this.project(id);
+    if (low && !this.diskWarned.has(id)) {
+      this.diskWarned.add(id);
+      p.event("system", "disk_low", null, { freeGb: Number(this.disk.freeGb().toFixed(1)) });
+      leadReply(
+        p,
+        `【新しい仕事を止めています】${low}。このまま作業場所が増えると PC ごと止まるおそれがあるので、空きが戻るまで新しいチケットの仕事を始めません(企画スタジオとチャットは動きます)。\n終わったチケットの作業場所は自動で片付けます。それでも足りなければ、ディスクの空きを作ってください。`,
+      );
+      void this.runners.get(id)?.sweep();
+    } else if (!low && this.diskWarned.has(id)) {
+      this.diskWarned.delete(id);
+      p.event("system", "disk_ok", null, { freeGb: Number(this.disk.freeGb().toFixed(1)) });
+      leadReply(p, "【仕事を再開しました】ディスクの空きが戻ったので、チケットの仕事を再開します。");
+    }
+    return low;
   }
 
   get hq(): Hq {
@@ -178,7 +220,23 @@ export class KuramotoServer {
       ticketsAllowed: () => this.running.has(id),
       triage: true,
       github: this.github,
+      slots: this.slots,
+      // 始業中だけ見張る(止めている間は、どのみちチケットの仕事を取らない)
+      hold: () => (this.running.has(id) ? this.diskHold(id) : undefined),
     });
+    // 終わったチケットの作業場所を片付ける(ディスクが埋まって PC が止まらないように)
+    let sweeping = false;
+    const sweep = async (): Promise<void> => {
+      if (sweeping) return;
+      sweeping = true;
+      try {
+        if (await sweepWorktrees(p, workspace)) this.disk.recheck();
+      } catch (e) {
+        p.event("system", "dispatcher_error", null, { error: e instanceof Error ? e.message : String(e) });
+      } finally {
+        sweeping = false;
+      }
+    };
     // チームが自動で merge する(ADR-0022)。始業中だけ。merge できたら、待っていた後のチケットが動けるように受信箱を見直す
     let merging = false;
     const merge = async (): Promise<void> => {
@@ -198,7 +256,9 @@ export class KuramotoServer {
       teamCi,
       timer: setInterval(() => void tick(), POLL_MS),
       mergeTimer: setInterval(() => void merge(), this.mergePollMs),
+      sweepTimer: setInterval(() => void sweep(), SWEEP_MS),
       tick: async () => tick(),
+      sweep,
     };
     let again = false;
     const tick = async (): Promise<void> => {
@@ -221,6 +281,7 @@ export class KuramotoServer {
       }
     };
     this.runners.set(id, r);
+    void sweep();
     void tick();
   }
 
@@ -267,6 +328,7 @@ export class KuramotoServer {
     for (const r of this.runners.values()) {
       clearInterval(r.timer);
       clearInterval(r.mergeTimer);
+      clearInterval(r.sweepTimer);
     }
     for (const p of this.projects.values()) p.close();
     if (this.checkRunner instanceof SandboxRunner) void this.checkRunner.close();
@@ -744,6 +806,13 @@ function publicToken(): string {
   return t;
 }
 
+/** まだ無いかもしれない場所なら、あるところまで親をたどる(空き容量はそのディスクで調べる)。 */
+function existingParent(path: string): string {
+  let p = path;
+  while (!existsSync(p) && dirname(p) !== p) p = dirname(p);
+  return p;
+}
+
 /** 他の PC から開ける URL(この PC の LAN の IPv4 アドレス)。 */
 function lanUrls(port: number): string[] {
   return Object.values(networkInterfaces())
@@ -778,6 +847,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const server = createServer((req, res) => void app.handle(req, res));
   server.listen(port, open ? "0.0.0.0" : "127.0.0.1", () => {
     console.log(`Kuramoto: http://localhost:${port}`);
+    const low = app.disk.low();
+    if (low) console.log(`注意: ${low}。空きが戻るまで、新しいチケットの仕事は始めません(KURAMOTO_MIN_FREE_GB で下限を変えられます)。`);
     if (!token) return;
     console.log("他の PC からは、次の URL を開いてください(合言葉つき。一度開けば、そのブラウザでは以後合言葉なしで入れます):");
     for (const u of lanUrls(port)) console.log(`  ${u}/?token=${token}`);

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { Role } from "../domain/roles.js";
@@ -67,6 +68,11 @@ export interface Workspace {
   baseSha?(repo: string): Promise<string>;
   /** 画面の試作を作業場所に置く(ADR-0033)。git には入れない(info/exclude に足す)。 */
   writeDesign?(path: string, gitDir: string, files: { file: string; data: string | Buffer }[]): Promise<void>;
+  /**
+   * 終わったチケットの作業場所(worktrees/<番号>-<役割>)を消し、消した場所を返す。
+   * keepUnpushedDev のときは、開発の作業場所に push していないコミットか、コミットしていない変更があれば残す(node_modules だけ消す)。
+   */
+  cleanup?(req: { ticketNumber: number; keepUnpushedDev: boolean }): Promise<string[]>;
 }
 
 export type CheckWorkspace = PreparedWorkspace & { sha: string; baseSha: string; conflict?: string };
@@ -211,6 +217,30 @@ export class GitWorkspace implements Workspace {
     }
   }
 
+  async cleanup(req: { ticketNumber: number; keepUnpushedDev: boolean }): Promise<string[]> {
+    const dir = join(this.workDir, "worktrees");
+    if (!existsSync(dir)) return [];
+    const prefix = `${req.ticketNumber}-`;
+    const removed: string[] = [];
+    for (const name of readdirSync(dir)) {
+      // 企画の担当の場所(plan-<役割>)は、チケットを持たないので消さない
+      if (!name.startsWith(prefix) || !/^[a-z]+$/.test(name.slice(prefix.length))) continue;
+      const path = join(dir, name);
+      if (req.keepUnpushedDev && name === `${prefix}dev` && !(await pushedAndClean(path))) {
+        await rm(join(path, "node_modules"), { recursive: true, force: true });
+        continue;
+      }
+      await rm(path, { recursive: true, force: true });
+      removed.push(path);
+    }
+    // 消した worktree の記録を、元の clone から外す
+    if (removed.length) {
+      const repos = join(this.workDir, "repos");
+      for (const r of existsSync(repos) ? readdirSync(repos) : []) await git(join(repos, r), "worktree", "prune").catch(() => undefined);
+    }
+    return removed;
+  }
+
   async baseSha(repo: string): Promise<string> {
     const clone = this.clonePath(repo);
     const base = await defaultBranch(clone);
@@ -243,6 +273,16 @@ export class GitWorkspace implements Workspace {
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const { stdout } = await exec("git", ["-C", cwd, ...args]);
   return stdout;
+}
+
+/** コミットしていない変更が無く、すべてのコミットが origin のどこかのブランチに入っているか。調べられなければ false(残す)。 */
+async function pushedAndClean(path: string): Promise<boolean> {
+  try {
+    if ((await git(path, "status", "--porcelain")).trim()) return false;
+    return Number((await git(path, "rev-list", "--count", "HEAD", "--not", "--remotes=origin")).trim()) === 0;
+  } catch {
+    return false;
+  }
 }
 
 async function defaultBranch(base: string): Promise<string> {

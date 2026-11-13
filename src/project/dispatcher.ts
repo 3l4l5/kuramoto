@@ -28,6 +28,7 @@ import { giveUpTriage, markTriaged, requestTriage, triagePrompt, triageTools, un
 import { LEAD_CHAT_SYSTEM, leadChatPrompt, leadChatTools, leadReply, markOwnerMessagesRead, unreadOwnerMessages } from "./leadchat.js";
 import { dropGithubCiTickets, githubCheckDue, githubDown, githubStillDown, isGithubAuthError, markGithubDown, markGithubUp } from "./outage.js";
 import { finishPatrol, loopSignals, patrolPrompt, patrolTools, requestPatrol, type LoopSignal } from "./patrol.js";
+import type { Slots } from "./upkeep.js";
 
 export type DispatcherDeps = {
   harnesses: Record<string, Harness>;
@@ -45,6 +46,10 @@ export type DispatcherDeps = {
   /** 画面の画像(お手本・実装・違い)の置き場所と、試作を画像にする描き手(ADR-0034)。無ければ画像では見比べない。 */
   designStore?: DesignStore;
   renderer?: Renderer;
+  /** すべてのプロジェクトで分け合う、同時に起こせるエージェントの枠。無ければ concurrency だけで絞る。 */
+  slots?: Slots;
+  /** 空き容量が少ないなどで、新しいチケットの仕事を始めないときの理由。無ければ始めてよい。 */
+  hold?: () => string | undefined;
 };
 
 type Job = { msg: MessageRow; member: MemberRow; role: Role; ticket: TicketRow | null };
@@ -66,7 +71,10 @@ export class Dispatcher {
   constructor(
     private readonly p: Project,
     private readonly deps: DispatcherDeps,
-  ) {}
+  ) {
+    // 他のプロジェクトの仕事が終わって枠が空いたら、待っていた仕事を始められるように受信箱を見直す
+    deps.slots?.onFree(() => this.wake());
+  }
 
   /** 期限切れの判断を片付け、島の席を最大人数ぶん埋めておく(メンバーはずっといる。ADR-0023)。 */
   housekeep(): void {
@@ -91,7 +99,8 @@ export class Dispatcher {
     const released: number[] = [];
     for (;;) {
       // GitHub に入れない間は、チケットの仕事を取らない(企画・チャットなど、チケットを持たない仕事だけ動かす)
-      const planningOnly = (this.deps.ticketsAllowed ? !this.deps.ticketsAllowed() : false) || !!githubDown(this.p);
+      // ディスクの空きが少ない間も、新しいチケットの仕事は始めない(作業場所が増えて PC が止まらないように)
+      const planningOnly = (this.deps.ticketsAllowed ? !this.deps.ticketsAllowed() : false) || !!githubDown(this.p) || !!this.deps.hold?.();
       // 企画スタジオを止めている間は、企画の担当を起こさない
       const msg = claimNext(this.p, { exclude: released, planningOnly, triage: !!this.deps.triage, noPlan: !!studioPaused(this.p) });
       if (!msg) return null;
@@ -169,11 +178,16 @@ export class Dispatcher {
     for (;;) {
       await this.checkGithub();
       this.housekeep();
-      while (inflight.size < limit() && started < maxRuns) {
+      const slots = this.deps.slots;
+      while (inflight.size < limit() && started < maxRuns && (slots?.free() ?? true)) {
         const job = this.next();
         if (!job) break;
         started++;
-        const pr: Promise<void> = this.execute(job).finally(() => inflight.delete(pr));
+        slots?.take();
+        const pr: Promise<void> = this.execute(job).finally(() => {
+          inflight.delete(pr);
+          slots?.give();
+        });
         inflight.add(pr);
       }
       if (inflight.size === 0) return started;
