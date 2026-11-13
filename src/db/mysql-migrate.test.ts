@@ -9,7 +9,7 @@ import { all, openDb } from "./sqlite.js";
 
 /**
  * 空の MySQL(compose.yaml の mysql-test。127.0.0.1:3307)に流す試験。
- * 接続先は KURAMOTO_MYSQL_TEST_URL で変えられる。繋がらないときは飛ばす(docker compose up -d mysql-test で立てる)。
+ * 接続先は KURAMOTO_MYSQL_TEST_URL で変えられる。npm test の SQLite の回では飛ばし、MySQL の回では繋がらなければ落とす(docker compose up -d mysql-test で立てる。ADR-0042)。
  */
 const conn = await connectTest();
 afterAll(async () => {

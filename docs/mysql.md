@@ -46,6 +46,17 @@ docker compose ps --format '{{.Name}} {{.Ports}}'
 
 `0.0.0.0` や `:::` が見えたら、`compose.yaml` の `ports` が書き換わっています。
 
+`~/.kuramoto/mysql.env` が無い環境(CI など)でも、テスト用だけなら `docker compose up -d mysql-test` で立てられます(`mysql` の `env_file` は `required: false`。`mysql.env` が無いまま `mysql` は立てないでください)。
+
+### テスト(npm test)
+
+`npm test` は SQLite の回と MySQL の回を流します(ADR-0042)。MySQL の回は mysql-test に、回ごとの使い捨ての database(`kuramoto_test_…`)を作って流し、終わったら消すので、複数の worktree から同時に流しても混ざりません。
+
+- 先に `docker compose up -d mysql-test` が要ります。繋がらなければ、飛ばさずにそう出して落ちます。
+- MySQL の回を飛ばしてよいときだけ、`KURAMOTO_SKIP_MYSQL_TESTS=1 npm test` と明示します。
+- database を作るのは mysql-test の root(テスト専用のパスワード)です。別の接続先は `KURAMOTO_MYSQL_TEST_URL`(試験)と `KURAMOTO_MYSQL_TEST_ADMIN_URL`(database を作る側)で変えられます。
+- チームの CI も `npm test` を流すので、MySQL の回が落ちる・mysql-test が立っていないと、merge 待ちに進みません。
+
 ## 2. config.yaml の書き方
 
 Kuramoto が使う DB は `config.yaml` で選びます。パスワードは `config.yaml` に書かず、`mysql.env` のファイルを指します。

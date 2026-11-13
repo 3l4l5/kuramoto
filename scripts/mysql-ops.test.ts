@@ -30,6 +30,8 @@ describe("compose.yaml", () => {
     expect(s).toContain("image: mysql:8.4");
     expect(s).toContain("restart: unless-stopped");
     expect(s).toContain("${HOME}/.kuramoto/mysql.env");
+    // mysql.env が無い環境(CI)でも、mysql-test だけ立てられる(プロジェクトの読み込みで失敗しない)
+    expect(s).toMatch(/env_file:\n\s+- path: \$\{HOME\}\/\.kuramoto\/mysql\.env\n\s+required: false/);
     expect(s).toContain("--character-set-server=utf8mb4");
     expect(s).toContain("--collation-server=utf8mb4_bin");
     expect(s).toContain("--default-time-zone=+00:00");
