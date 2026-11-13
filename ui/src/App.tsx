@@ -14,7 +14,7 @@ import { WorkSwitch } from "./WorkSwitch";
 export function App() {
   const route = useRoute();
   const inProject = route.name === "project" || route.name === "studio" || route.name === "metrics" || route.name === "settings";
-  const { drawer, moveTo, guard } = useDrawerState(route.name);
+  const { drawer, moveTo, guard } = useDrawerState("id" in route ? route.id : null);
   return (
     <div className="app">
       <header className="bar dads-bar">
