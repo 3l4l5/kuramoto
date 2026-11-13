@@ -1,3 +1,4 @@
+import { openViolations, violationsOf } from "./dev-rules.js";
 import { latestComparisons } from "./design-visual.js";
 import { screens } from "./planning.js";
 import { all, get } from "../db/sqlite.js";
@@ -31,7 +32,8 @@ export type TimelineItem =
   | { type: "decision"; at: string; question: string; options: string[]; recommended: number; why: string; escalated: boolean; answer: string | null; decidedBy: string | null; decidedAt: string | null }
   | { type: "conflict"; at: string; cause: string | null; resolution: string | null }
   | { type: "merge"; at: string; result: string }
-  | { type: "note"; at: string; who: string; body: string };
+  | { type: "note"; at: string; who: string; body: string }
+  | { type: "rule"; at: string; rule: string; handled: string; detail: string; resolvedAt: string | null };
 
 export function ticketView(p: Project, ticketId: number) {
   const t = p.ticket(ticketId);
@@ -127,6 +129,9 @@ export function ticketView(p: Project, ticketId: number) {
     items.push({ type: "merge", at: m.created_at, result: m.result });
   }
 
+  // 開発ルールの違反(R15)。自動で直した記録も残す
+  for (const v of violationsOf(p, ticketId)) items.push({ type: "rule", at: v.created_at, rule: v.name, handled: v.handled, detail: v.detail, resolvedAt: v.resolved_at });
+
   // 同じ時刻なら、記録した順(配列の順)を保つ
   const timeline = items.map((x, i) => [x, i] as const).sort((a, b) => a[0].at.localeCompare(b[0].at) || a[1] - b[1]).map(([x]) => x);
   const cost = get<{ cost: number | null; tokens: number | null }>(
@@ -158,6 +163,8 @@ export function ticketView(p: Project, ticketId: number) {
     defaultBudgetUsd: defaultTicketBudgetUsd(p),
     tokens: cost?.tokens ?? 0,
     dropped: droppedInfo(p, t.id),
+    // 「直すまで進めない」ルールに反して止まっているか(ボードの赤い札)
+    ruleBlocked: openViolations(p, t.id, "blocked").map((v) => v.name),
     // 画面ごとの最新の見比べ(お手本・実装・違いの画像と、違いの割合。ADR-0034)
     designCompare: latestComparisons(p, t.id).map((c) => ({ ...c, name: screens(p).get(c.screen)?.name ?? c.screen })),
     timeline,

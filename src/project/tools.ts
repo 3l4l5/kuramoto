@@ -54,6 +54,8 @@ export type ToolContext = {
   checkReady?: () => Promise<string | undefined>;
   /** 「すでに main に入っている」を確かめる。本当なら undefined、違えばその理由。 */
   checkLanded?: (commit: string) => Promise<string | undefined>;
+  /** submit_pr を受ける前に、有効な開発ルールを確かめる(R15)。「自動で直す」ルールに反していれば、直して出し直すための指示。 */
+  checkRules?: (draft: { title?: string; body?: string; summary: string }) => Promise<string | undefined>;
 };
 
 export type Question = {
@@ -127,6 +129,8 @@ export function toolsFor(kind: MessageKind, report: RunReport, ctx: ToolContext 
       if (empty.length) return `直さない指摘(${empty.map((r) => r.finding_id).join(", ")})には理由を書いてください。`;
       const notReady = await ctx.checkReady?.();
       if (notReady) return notReady;
+      const broken = await ctx.checkRules?.({ summary, ...(title?.trim() ? { title: title.trim() } : {}), ...(body?.trim() ? { body: body.trim() } : {}) });
+      if (broken) return broken;
       report.draft = { summary, ...(title?.trim() ? { title: title.trim() } : {}), ...(body?.trim() ? { body: body.trim() } : {}), ...(conflict_resolution ? { conflictResolution: conflict_resolution } : {}) };
       report.responses = responses.map((r) => ({ findingId: r.finding_id, action: r.action, comment: r.comment }));
       return "受け付けました。Kuramoto が push して PR に反映し、次の工程に回します。";

@@ -2,7 +2,7 @@ import { FIXED_CAST, speechNote } from "../domain/cast.js";
 import { mustAnswer, mustResolve } from "./review.js";
 import { all, get, isUniqueViolation, run, tx } from "../db/sqlite.js";
 import { WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
-import type { Harness, HarnessResult } from "../harness/types.js";
+import type { Harness, HarnessResult, HarnessUsage } from "../harness/types.js";
 import { claimNext, complete, fail, pendingCount, release, send, type MessageKind, type MessageRow } from "./inbox.js";
 import type { MemberRow, Project, TicketRow } from "./project.js";
 import { promptFor, systemPromptFor } from "./prompts.js";
@@ -19,6 +19,7 @@ import { compareScreenTools } from "./design-tools.js";
 import { referenceImage, type DesignStore, type Renderer } from "./design-visual.js";
 import { designSystem } from "./planning.js";
 import { canResume, noteSession } from "./sessions.js";
+import { agentJudge, checkBeforePr } from "./dev-rules.js";
 import { runTeamCi, teamCiEnabled, type CommandRunner } from "./team-ci.js";
 import { confinementFor } from "./confine.js";
 import { afterPlanningRun, planningPrompt, planningSystemPrompt, planningTools, type PlanPayload } from "./planning-agent.js";
@@ -361,6 +362,8 @@ export class Dispatcher {
 
     const started = p.clock.now().getTime();
     const report: RunReport = {};
+    // 開発ルールの「AI が読む」確かめに使った分(submit_pr の中で動く)。この起動の使用量に足す
+    const judged: HarnessUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, costUsd: 0 };
     let result: HarnessResult | undefined;
     let error: string | undefined;
     try {
@@ -402,6 +405,26 @@ export class Dispatcher {
           mustResolve: ["review", "sec", "qa"].includes(msg.kind) ? mustResolve(p, ticket.id, msg.kind).map((t) => t.id) : [],
           checkReady: () => this.deps.workspace.checkReady(ws.path, ws.base),
           checkLanded: (commit) => this.deps.workspace.landed(ws.path, ws.base, commit),
+          // PR を出す前に、有効な開発ルールを確かめる(形式はコードで、AI が読むものだけエージェントで。ADR-0011)
+          ...(role === "dev"
+            ? {
+                checkRules: (draft: { title?: string; body?: string; summary: string }) =>
+                  checkBeforePr(p, {
+                    ticket,
+                    runId,
+                    branch,
+                    draft,
+                    defaultTitle: defaultPrTitle(ticket),
+                    changes: async () => (await this.deps.workspace.changes?.(ws.path, ws.base)) ?? { commits: [], files: [], code: "" },
+                    judge: agentJudge(p, harness, ws.path, (u) => {
+                      judged.inputTokens += u.inputTokens;
+                      judged.outputTokens += u.outputTokens;
+                      judged.cacheReadTokens += u.cacheReadTokens;
+                      judged.costUsd += u.costUsd;
+                    }),
+                  }),
+              }
+            : {}),
           // ノンストップでは、戻せる判断はリーダーが決める(戻せない判断だけ責任者へ)
           ...(msg.kind === "decide" ? { escalateAllowed: !nonstop(p) || !decision(p, Number(JSON.parse(msg.payload).decision_id)).reversible } : {}),
           }),
@@ -421,7 +444,7 @@ export class Dispatcher {
           path: ws.path,
           branch,
           base: ws.base,
-          title: d.title ?? `${ticket.jira_key ? `${ticket.jira_key} ` : ""}${ticket.title}`,
+          title: d.title ?? defaultPrTitle(ticket),
           body: `${d.body ?? d.summary}\n\n---\nKuramoto のチケット #${ticket.number}${issueOf(p, ticket) ? `\nCloses #${issueOf(p, ticket)}` : ""}`,
         });
         // 承認済みのチケットが(衝突・CI などで)戻ってきたなら、承認のあとに自分で足した変更があるかを数える
@@ -450,10 +473,10 @@ export class Dispatcher {
       const u = result?.usage;
       run(p.db, "UPDATE runs SET ended_at = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cost_usd = ?, outcome = ?, error = ?, summary = ? WHERE id = ?", [
         p.now(),
-        u?.inputTokens ?? 0,
-        u?.outputTokens ?? 0,
-        u?.cacheReadTokens ?? 0,
-        u?.costUsd ?? 0,
+        (u?.inputTokens ?? 0) + judged.inputTokens,
+        (u?.outputTokens ?? 0) + judged.outputTokens,
+        (u?.cacheReadTokens ?? 0) + judged.cacheReadTokens,
+        (u?.costUsd ?? 0) + judged.costUsd,
         error ? "error" : (result?.status ?? "error"),
         error ?? null,
         (report.pr?.summary || report.draft?.summary || result?.finalText || "").trim() || null,
@@ -939,6 +962,11 @@ function devBranch(p: Project, t: TicketRow, repoId: number): string {
   if (existing) return existing.branch;
   const pr = get<{ head: string }>(p.db, "SELECT head FROM pull_requests WHERE ticket_id = ? AND repo_id = ?", [t.id, repoId]);
   return pr?.head ?? `kuramoto/${t.jira_key ?? t.number}`;
+}
+
+/** PR のタイトルの既定(Jira の番号があれば先頭に付ける)。 */
+function defaultPrTitle(t: TicketRow): string {
+  return `${t.jira_key ? `${t.jira_key} ` : ""}${t.title}`;
 }
 
 function prNumber(p: Project, ticketId: number, repoId: number): { prNumber?: number } {
