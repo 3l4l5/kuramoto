@@ -473,7 +473,7 @@ export class KuramotoServer {
       setDevRuleEnabled(p, Number(c), body.enabled === true);
       return devRulesView(p);
     }
-    if (b === "office" && method === "GET") return { ...officeView(p), running: this.running.has(id) };
+    if (b === "office" && method === "GET") return { ...(await officeView(p)), running: this.running.has(id) };
     // メンバーの今していること・話す欄(オフィスでメンバーを押して開く引き出し)
     if (b === "members" && c && parts[4] === "now" && method === "GET") return memberNow(p, Number(c));
     if (b === "members" && c && parts[4] === "chat" && method === "GET") return memberChatView(p, Number(c));

@@ -77,6 +77,20 @@ describe("ローカルサーバー", () => {
     expect((await app.hq.project(created.id)).status).toBe("running");
   });
 
+  it("オフィスの取得は、島・merge 待ちなどの中身と running を返す(async にした officeView を展開する)", async () => {
+    const { call } = await boot();
+    const { json: created } = await call("POST", "/api/projects", { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }] });
+    const office = (await call("GET", `/api/projects/${created.id}/office`)).json;
+    expect(office.running).toBe(false);
+    expect(Array.isArray(office.units)).toBe(true);
+    expect(office.units.length).toBeGreaterThan(0);
+    expect(office.units[0].budget).toMatchObject({ spentUsd: 0, exhausted: false });
+    expect(Array.isArray(office.mergeQueue)).toBe(true);
+    // 島を指す口(officeView を引数に取る)も中身を返す
+    const unit = (await call("GET", `/api/projects/${created.id}/units/${office.units[0].id}`)).json;
+    expect(unit).toMatchObject({ id: office.units[0].id });
+  });
+
   it("チケットに種類を付けて作り、責任者が API で変えると、やりとりに残り、次の工程から新しい流れになる(R17)", async () => {
     const { call, app } = await boot();
     const { json: created } = await call("POST", "/api/projects", { name: "種類", repos: [{ fullName: "acme/shop", role: "API" }] });
