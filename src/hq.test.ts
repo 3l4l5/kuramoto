@@ -21,7 +21,7 @@ describe("本部", () => {
 
     const p = await hq.openProject(rec.id);
     expect(p.repos().map((r) => r.full_name)).toEqual(["acme/shop-api", "acme/shop-web"]);
-    createTicket(p, { title: "x" });
+    await createTicket(p, { title: "x" });
     p.close();
 
     expect((await hq.ownerQueue())).toEqual([{ project: rec, decisions: 0, merges: 0 }]);
@@ -101,7 +101,7 @@ describe("プロジェクトの編集", () => {
     expect((await hq.ownerQueue())[0]!.project.name).toBe("お試し 2");
 
     // PR のあるリポジトリは外さない(何も変えずに止める)
-    const t = createTicket(p, { title: "x" });
+    const t = await createTicket(p, { title: "x" });
     run(p.db, "INSERT INTO pull_requests (ticket_id, repo_id, number, head) VALUES (?, ?, 1, 'b')", [t.id, p.repos()[1]!.id]);
     await expect(hq.updateProject(p, rec.id, { name: "変える", repos: [{ fullName: "acme/web", role: "API" }] })).rejects.toThrow(/acme\/new には PR や作業の記録があるので外せません/);
     expect((await hq.project(rec.id)).name).toBe("お試し 2");

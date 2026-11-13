@@ -53,7 +53,7 @@ describe("レビューの往復(実際の PR レビューのモデル)", () => {
         }
       }
     });
-    const t = createTicket(p, { title: "CSV" });
+    const t = await createTicket(p, { title: "CSV" });
     await d.drain();
     expect(p.ticket(t.id).stage).toBe("merge");
     expect(reviewers).toEqual(["first", "re"]);
@@ -91,14 +91,14 @@ describe("レビューの往復(実際の PR レビューのモデル)", () => {
       }
     });
     // 1) レビュアーが納得する
-    const a = createTicket(p, { title: "A" });
+    const a = await createTicket(p, { title: "A" });
     await d.drain();
     expect(p.ticket(a.id).stage).toBe("merge");
     expect(threads(p, a.id)[0]).toMatchObject({ status: "wontfix", comments: [{ action: "raised" }, { action: "wontfix" }, { action: "accepted" }] });
 
     // 2) レビュアーが納得しない → リーダーが「開発の言い分を通す」と裁定 → 次の工程へ
     insist = true;
-    const b = createTicket(p, { title: "B" });
+    const b = await createTicket(p, { title: "B" });
     await d.drain();
     expect(get(p.db, "SELECT decided_by, choice FROM decisions WHERE ticket_id = ?", [b.id])).toEqual({ decided_by: "lead", choice: 1 });
     expect(threads(p, b.id)[0]!.comments.map((c) => c.action)).toEqual(["raised", "wontfix", "reopened", "ruled"]);
@@ -120,7 +120,7 @@ describe("レビューの往復(実際の PR レビューのモデル)", () => {
         else await call("submit_review", { resolutions: id ? [{ finding_id: Number(id), result: "resolved" }] : [] });
       }
     });
-    const t = createTicket(p, { title: "検索" });
+    const t = await createTicket(p, { title: "検索" });
     await d.drain();
     expect(seen).toEqual(["dev", "review", "sec", "dev", "sec"]);
     expect(p.ticket(t.id).stage).toBe("merge");
@@ -161,10 +161,10 @@ describe("何を止めるか(受け入れ条件・セキュリティ・この差
       );
     });
     upsertRequirement(p, { name: "一覧", acceptance: "すべてのメモが更新順で表示される" });
-    const t = createTicket(p, { title: "一覧の外枠", body: "## 受け入れ条件\n- R1: 一覧が出る" });
+    const t = await createTicket(p, { title: "一覧の外枠", body: "## 受け入れ条件\n- R1: 一覧が出る" });
     run(p.db, "UPDATE tickets SET triaged = 1 WHERE id = ?", [t.id]);
     // 別に開いているチケット(まだ着手しない)
-    const search = createTicket(p, { title: "検索" });
+    const search = await createTicket(p, { title: "検索" });
     run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ?", [search.id]);
     await d.drain();
 

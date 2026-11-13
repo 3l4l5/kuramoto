@@ -19,7 +19,7 @@ const projectWith = () => {
 const template = (p: Project, key: string) => addDevRule(p, { template: key });
 
 describe("開発ルール: 一覧・追加・有効 / 無効", () => {
-  it("ひな形 4 つから足せる。足したものは 2 度目を断り、一覧では足した印が付く", () => {
+  it("ひな形 4 つから足せる。足したものは 2 度目を断り、一覧では足した印が付く", async () => {
     const p = projectWith();
     expect(TEMPLATES.map((t) => t.name)).toEqual(["Jira 番号をそろえる", "PR 本文の先頭に対象", "マイグレーションは単独の PR", "コミット 1 行目 50 字以内"]);
     const r = template(p, "jira");
@@ -30,7 +30,7 @@ describe("開発ルール: 一覧・追加・有効 / 無効", () => {
     expect(v.templates.map((t) => [t.key, t.added])).toEqual([["jira", true], ["pr-body-target", false], ["migration-alone", false], ["commit-50", false]]);
   });
 
-  it("名前・何を守るか・どこに効くか・確かめ方・違反時の扱いを決めて足せる。足りない・読めない入力は断る", () => {
+  it("名前・何を守るか・どこに効くか・確かめ方・違反時の扱いを決めて足せる。足りない・読めない入力は断る", async () => {
     const p = projectWith();
     const r = addDevRule(p, { name: "console.log を残さない", body: "デバッグ出力を残さない", appliesTo: ["code"], check: "pattern", pattern: "!console\\.log", onFail: "review" });
     expect(r).toMatchObject({ appliesTo: ["code"], pattern: "!console\\.log", onFail: "review", template: null });
@@ -44,7 +44,7 @@ describe("開発ルール: 一覧・追加・有効 / 無効", () => {
     expect(() => addDevRule(p, { template: "nothing" })).toThrow("ひな形がありません");
   });
 
-  it("有効 / 無効を切り替えられる", () => {
+  it("有効 / 無効を切り替えられる", async () => {
     const p = projectWith();
     const r = template(p, "commit-50");
     expect(setDevRuleEnabled(p, r.id, false).enabled).toBe(false);
@@ -55,7 +55,7 @@ describe("開発ルール: 一覧・追加・有効 / 無効", () => {
 });
 
 describe("開発ルール: 版・直す・消す", () => {
-  it("足す・直す・消す・有効 / 無効のたびに版が 1 つ上がり、そのときのルールの一覧が残る", () => {
+  it("足す・直す・消す・有効 / 無効のたびに版が 1 つ上がり、そのときのルールの一覧が残る", async () => {
     const p = projectWith();
     expect(devRulesView(p).version).toBe(1);
     const r = template(p, "jira");
@@ -79,7 +79,7 @@ describe("開発ルール: 版・直す・消す", () => {
     ]);
   });
 
-  it("直せるのは渡した項目だけ。足すときと同じ確かめで断り、断ったら中身も版も変わらない", () => {
+  it("直せるのは渡した項目だけ。足すときと同じ確かめで断り、断ったら中身も版も変わらない", async () => {
     const p = projectWith();
     const r = template(p, "jira");
     const u = updateDevRule(p, r.id, { onFail: "review", appliesTo: ["pr_title"] });
@@ -105,7 +105,7 @@ describe("開発ルール: 版・直す・消す", () => {
   it("消したルールは一覧に出ず、確かめず、同じひな形をもう一度足せる。違反の記録は残る", async () => {
     const p = projectWith();
     const r = template(p, "jira");
-    const t = createTicket(p, { title: "CSV の書き出し" });
+    const t = await createTicket(p, { title: "CSV の書き出し" });
     recordViolations(p, t.id, null, await checkRules(p, subject({ branch: "kuramoto/7", title: "CSV", commits: ["x"] })));
     expect(devRulesView(p).rules[0]).toMatchObject({ violations: 1 });
     deleteDevRule(p, r.id);
@@ -215,7 +215,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
   it("自動で直す: 持ち主が直してから PR が出る。違反は残り、直した数に数えられ、やりとりに出る", async () => {
     const { p, d, workspace, toolReplies, harness } = setup([{ title: "CSV" }, { title: "SHOP-1 CSV" }]);
     template(p, "jira");
-    const t = createTicket(p, { title: "CSV の書き出し" });
+    const t = await createTicket(p, { title: "CSV の書き出し" });
     run(p.db, "UPDATE tickets SET jira_key = 'SHOP-1' WHERE id = ?", [t.id]);
     await d.drain();
 
@@ -244,7 +244,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
     const long = "あ".repeat(60);
     const { p, d, workspace, order } = setup([{ commits: [long] }, { commits: ["短くした"] }]);
     template(p, "commit-50");
-    const t = createTicket(p, { title: "CSV の書き出し" });
+    const t = await createTicket(p, { title: "CSV の書き出し" });
     // 台本のレビューは常に承認するが、ルール違反が指摘として足される。2 回目の開発の直しで短くする
     await d.drain();
 
@@ -265,7 +265,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
     const bad = ["db/migrations/001.sql", "src/a.ts"];
     const { p, d, workspace, order, harness } = setup([{ files: bad }, { files: bad }, { files: ["db/migrations/001.sql"] }]);
     template(p, "migration-alone");
-    const t = createTicket(p, { title: "列を足す" });
+    const t = await createTicket(p, { title: "列を足す" });
     await d.drain();
 
     // 直るまでレビューには回らない
@@ -284,7 +284,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
     const bad = ["db/migrations/001.sql", "src/a.ts"];
     const { p, d } = setup([{ files: bad }]);
     template(p, "migration-alone");
-    const t = createTicket(p, { title: "列を足す" });
+    const t = await createTicket(p, { title: "列を足す" });
     // 開発の最初の 1 回だけ動かす
     await d.drain({ maxRuns: 1 });
     expect(p.ticket(t.id).stage).toBe("dev");
@@ -295,7 +295,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
     // jira_key が無いので、ブランチは kuramoto/<番号> のまま。タイトルとコミットだけ直せる
     const { p, d, workspace, toolReplies, order } = setup([{ title: "CSV", commits: ["書き出し"] }, { title: "SHOP-1 CSV", commits: ["SHOP-1 書き出し"] }]);
     template(p, "jira");
-    const t = createTicket(p, { title: "CSV の書き出し" });
+    const t = await createTicket(p, { title: "CSV の書き出し" });
     await d.drain();
 
     // 1 回目はタイトルとコミットだけを直すよう戻し、ブランチ名は直せとは言わない
@@ -316,7 +316,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
   it("ブランチ名だけに効く「自動で直す」ルールは、戻さずに、レビューで指摘に回す", async () => {
     const { p, d, toolReplies } = setup([{}]);
     addDevRule(p, { name: "ブランチは SHOP- で始める", body: "x", appliesTo: ["branch"], check: "pattern", pattern: "^SHOP-", onFail: "autofix" });
-    createTicket(p, { title: "CSV の書き出し" });
+    await createTicket(p, { title: "CSV の書き出し" });
     await d.drain();
 
     // 直して出し直すよう戻すことは一度も無い(直せないので)
@@ -327,7 +327,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
   it("レビューの指摘は違反ごとに 1 件。違反の中身が変わっても、同じ違反の指摘を足さない", async () => {
     const { p, d } = setup([{ commits: ["あ".repeat(60)] }, { commits: ["い".repeat(70)] }, { commits: ["う".repeat(80)] }]);
     template(p, "commit-50");
-    createTicket(p, { title: "CSV の書き出し" });
+    await createTicket(p, { title: "CSV の書き出し" });
     await d.drain();
 
     // 直しの出し直しのたびにコミットは変わるが、違反は 1 件のまま、指摘も 1 件
@@ -338,7 +338,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
   it("無効のルールは確かめられず、違反も残らない", async () => {
     const { p, d, workspace, toolReplies } = setup([{ title: "CSV", files: ["db/migrations/001.sql", "src/a.ts"], commits: ["あ".repeat(80)], body: "本文" }]);
     for (const t of TEMPLATES) setDevRuleEnabled(p, template(p, t.key).id, false);
-    const t = createTicket(p, { title: "CSV の書き出し" });
+    const t = await createTicket(p, { title: "CSV の書き出し" });
     await d.drain();
 
     expect(toolReplies).toHaveLength(1);
@@ -352,7 +352,7 @@ describe("開発ルール: PR を出す前の確かめと違反時の扱い", ()
     const { p, d, order } = setup([{}], { judge: () => [{ rule_id: 1, ok: false, detail: "テストの名前が分かりにくい" }] });
     addDevRule(p, { name: "テストの名前が読める", body: "テストの名前が何を確かめるか分かる", appliesTo: ["code"], check: "ai", onFail: "review" });
     template(p, "commit-50");
-    const t = createTicket(p, { title: "CSV の書き出し" });
+    const t = await createTicket(p, { title: "CSV の書き出し" });
     await d.drain();
 
     expect(order.filter((x) => x === "judge")).toHaveLength(2);

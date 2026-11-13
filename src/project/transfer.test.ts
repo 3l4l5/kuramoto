@@ -73,7 +73,7 @@ async function fullProject(hq: Hq) {
     frontend: { rendering: "SPA", state: "" },
     stack: [],
   });
-  createTicket(p, { title: "予約の表を足す", body: "R2", planRefs: { fromPlan: true, requirement: "R2", screens: [], design: [] } });
+  await createTicket(p, { title: "予約の表を足す", body: "R2", planRefs: { fromPlan: true, requirement: "R2", screens: [], design: [] } });
   return { rec, p };
 }
 
@@ -119,8 +119,8 @@ describe("設計書からの復元", () => {
     expect(strip(await collectTransfer(q, "予約サイト"))).toEqual(strip(await collectTransfer(p, "予約サイト")));
 
     // 画面に出す状態も同じ
-    const view = (x: typeof p) => {
-      const v = studioView(x);
+    const view = async (x: typeof p) => {
+      const v = await studioView(x);
       return {
         stages: v.stages.map((s) => ({ key: s.key, mode: s.mode, version: s.version, agreedVersion: s.agreedVersion, status: s.status, done: s.done })),
         screens: v.screens.map((s) => ({ key: s.key, chosen: s.chosen, agreed: s.agreed, comments: s.comments.map((c) => [c.body, c.variant, c.x, c.y, c.resolved_in !== null]) })),
@@ -128,19 +128,19 @@ describe("設計書からの復元", () => {
         requirements: v.requirements.map((r) => [r.code, r.acceptance]),
       };
     };
-    expect(view(q)).toEqual(view(p));
-    expect(view(q).stages.find((s) => s.key === "req")).toMatchObject({ version: 2, agreedVersion: 1 });
+    expect(await view(q)).toEqual(await view(p));
+    expect((await view(q)).stages.find((s) => s.key === "req")).toMatchObject({ version: 2, agreedVersion: 1 });
     expect(q.tickets().map((t) => [t.title, t.stage, t.jira_key])).toEqual([["予約の表を足す", "dev", "RSV-1"]]);
-    expect(studioView(q).messages.at(-1)!.body).toContain("復元しました");
+    expect((await studioView(q)).messages.at(-1)!.body).toContain("復元しました");
   });
 
   it("チケットの種類と、開発を通ったかを持ち越す。古い書き出し(種類なし)は feature として読む", async () => {
     const hq = newHq();
     const rec = await hq.createProject("種類", [{ fullName: "acme/kind", role: "API" }]);
     const p = await hq.openProject(rec.id);
-    const bug = createTicket(p, { title: "直す", kind: "bugfix" });
-    const doc = createTicket(p, { title: "書く", kind: "docs" });
-    createTicket(p, { title: "機能", kind: "feature" });
+    const bug = await createTicket(p, { title: "直す", kind: "bugfix" });
+    const doc = await createTicket(p, { title: "書く", kind: "docs" });
+    await createTicket(p, { title: "機能", kind: "feature" });
     run(p.db, "UPDATE tickets SET dev_done = 1 WHERE id = ?", [doc.id]);
     const data = extractTransfer(await exportDesignDoc(p, "種類"));
     expect(data.tickets.map((t) => [t.kind, t.devDone])).toEqual([["bugfix", false], ["docs", true], ["feature", false]]);

@@ -62,7 +62,7 @@ describe("既存のリポジトリの続きから(ADR-0030)", () => {
     const adopted = p.tickets().find((t) => t.title === "メモの検索")!;
     // 企画スタジオの引き渡しの表に出しても落ちないよう、ひも付けは空で埋めて渡す
     const { studioView } = await import("./planning.js");
-    expect(studioView(p).tickets.find((t) => t.number === adopted.number)!.refs).toMatchObject({ adoptedPr: 42, screens: [], design: [], modes: {} });
+    expect((await studioView(p)).tickets.find((t) => t.number === adopted.number)!.refs).toMatchObject({ adoptedPr: 42, screens: [], design: [], modes: {} });
     expect(adopted.stage).toBe("review");
     expect(get(p.db, "SELECT number, head FROM pull_requests WHERE ticket_id = ?", [adopted.id])).toEqual({ number: 42, head: "feature/search" });
 

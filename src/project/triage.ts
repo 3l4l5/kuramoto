@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { all, get, run, tx } from "../db/sqlite.js";
 import { ROLE_LABEL, type WorkRole } from "../domain/roles.js";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
 import { send } from "./inbox.js";
@@ -15,21 +14,30 @@ import { dropTicket } from "./workflow.js";
  * 交通整理が済むまで、そのチケットの実装は始めない。
  */
 
-export function untriaged(p: Project): TicketRow[] {
-  return all<TicketRow>(p.db, "SELECT * FROM tickets WHERE triaged = 0 AND stage NOT IN ('done','dropped') ORDER BY number");
+export async function untriaged(p: Project): Promise<TicketRow[]> {
+  return (await p.pdb.from("tickets").where("triaged", "=", 0).where("stage", "not in", ["done", "dropped"]).orderBy("number").execute()) as TicketRow[];
 }
 
-export function dependsOn(p: Project, ticketId: number): number[] {
-  return all<{ number: number }>(p.db, "SELECT t.number FROM ticket_deps d JOIN tickets t ON t.id = d.depends_on WHERE d.ticket_id = ? ORDER BY t.number", [ticketId]).map((r) => r.number);
+/** チケットが待っているチケット(先に終わらせるもの)を、条件つきで選ぶ(番号順)。 */
+function depNumbers(p: Project, ticketId: number, stage?: { in?: TicketRow["stage"][]; notIn?: TicketRow["stage"][] }): Promise<number[]> {
+  let q = p.pdb.k
+    .selectFrom("ticket_deps as d")
+    .innerJoin("tickets as t", "t.id", "d.depends_on")
+    .select("t.number")
+    .where("d.project_id", "=", p.pdb.projectId)
+    .where("d.ticket_id", "=", ticketId);
+  if (stage?.in) q = q.where("t.stage", "in", stage.in);
+  if (stage?.notIn) q = q.where("t.stage", "not in", stage.notIn);
+  return q.orderBy("t.number").execute().then((rows) => rows.map((r) => r.number));
+}
+
+export function dependsOn(p: Project, ticketId: number): Promise<number[]> {
+  return depNumbers(p, ticketId);
 }
 
 /** 先に終わらせるチケットのうち、まだ merge されていないもの。 */
-export function blockers(p: Project, ticketId: number): number[] {
-  return all<{ number: number }>(
-    p.db,
-    "SELECT t.number FROM ticket_deps d JOIN tickets t ON t.id = d.depends_on WHERE d.ticket_id = ? AND t.stage NOT IN ('done','dropped') ORDER BY t.number",
-    [ticketId],
-  ).map((r) => r.number);
+export function blockers(p: Project, ticketId: number): Promise<number[]> {
+  return depNumbers(p, ticketId, { notIn: ["done", "dropped"] });
 }
 
 /**
@@ -39,40 +47,43 @@ export function normalizeArea(a: string): string {
   return a.trim().toLowerCase().replace(/^\.\//, "").replace(/\/+$/, "");
 }
 
-export function areasOf(p: Project, ticketId: number): string[] {
-  return all<{ area: string }>(p.db, "SELECT area FROM ticket_areas WHERE ticket_id = ? ORDER BY area", [ticketId]).map((r) => r.area);
+export async function areasOf(p: Project, ticketId: number): Promise<string[]> {
+  return (await p.pdb.from("ticket_areas").select("area").where("ticket_id", "=", ticketId).orderBy("area").execute()).map((r) => r.area);
 }
 
 /** 同じ場所を触っていて、先に進んでいるチケット(番号と、重なっている場所)。 */
-export function areaBlockers(p: Project, ticketId: number): { number: number; areas: string[] }[] {
-  const rows = all<{ number: number; area: string }>(
-    p.db,
-    `SELECT o.number, a.area FROM ticket_areas a JOIN ticket_areas b ON b.area = a.area AND b.ticket_id <> a.ticket_id
-     JOIN tickets o ON o.id = b.ticket_id
-     WHERE a.ticket_id = ? AND o.stage NOT IN ('done','dropped')
-       AND (EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id = o.id AND r.role = 'dev')
-         OR EXISTS (SELECT 1 FROM messages mm WHERE mm.ticket_id = o.id AND mm.kind = 'implement' AND mm.status = 'claimed'))
-     ORDER BY o.number, a.area`,
-    [ticketId],
-  );
+export async function areaBlockers(p: Project, ticketId: number): Promise<{ number: number; areas: string[] }[]> {
+  const rows = await p.pdb.k
+    .selectFrom("ticket_areas as a")
+    .innerJoin("ticket_areas as b", (j) => j.onRef("b.area", "=", "a.area").onRef("b.ticket_id", "<>", "a.ticket_id").onRef("b.project_id", "=", "a.project_id"))
+    .innerJoin("tickets as o", "o.id", "b.ticket_id")
+    .select(["o.number", "a.area"])
+    .where("a.project_id", "=", p.pdb.projectId)
+    .where("a.ticket_id", "=", ticketId)
+    .where("o.stage", "not in", ["done", "dropped"])
+    .where((eb) =>
+      eb.or([
+        eb.exists(eb.selectFrom("runs as r").select("r.id").whereRef("r.ticket_id", "=", "o.id").where("r.role", "=", "dev")),
+        eb.exists(eb.selectFrom("messages as mm").select("mm.id").whereRef("mm.ticket_id", "=", "o.id").where("mm.kind", "=", "implement").where("mm.status", "=", "claimed")),
+      ]),
+    )
+    .orderBy("o.number")
+    .orderBy("a.area")
+    .execute();
   const by = new Map<number, string[]>();
   for (const r of rows) by.set(r.number, [...(by.get(r.number) ?? []), r.area]);
   return [...by].map(([number, areas]) => ({ number, areas }));
 }
 
 /** まだ開発に取りかかっていないチケットが、同じ場所を触るチケットを待っているか(取りかかった後は待たない)。 */
-export function areaWait(p: Project, ticketId: number): { number: number; areas: string[] }[] {
-  if (get(p.db, "SELECT 1 AS x FROM runs WHERE ticket_id = ? AND role = 'dev'", [ticketId])) return [];
+export async function areaWait(p: Project, ticketId: number): Promise<{ number: number; areas: string[] }[]> {
+  if (await p.pdb.from("runs").select("id").where("ticket_id", "=", ticketId).where("role", "=", "dev").limit(1).executeTakeFirst()) return [];
   return areaBlockers(p, ticketId);
 }
 
 /** 先に終わらせるチケットのうち、merge 待ちの棚にあるもの(責任者が merge を押せば外れる)。 */
-export function mergeBlockers(p: Project, ticketId: number): number[] {
-  return all<{ number: number }>(
-    p.db,
-    "SELECT t.number FROM ticket_deps d JOIN tickets t ON t.id = d.depends_on WHERE d.ticket_id = ? AND t.stage = 'merge' ORDER BY t.number",
-    [ticketId],
-  ).map((r) => r.number);
+export function mergeBlockers(p: Project, ticketId: number): Promise<number[]> {
+  return depNumbers(p, ticketId, { in: ["merge"] });
 }
 
 export type Unblocks = {
@@ -86,13 +97,13 @@ export type Unblocks = {
  * merge 待ちのチケットごとに、merge すると動き出すチケット。責任者に「何を押せば進むか」を見せるのに使う。
  * 終わっていない(done・dropped でない)チケットだけを数える。止めているものが無ければ載せない。
  */
-export function mergeUnblocks(p: Project): Map<number, Unblocks> {
-  const open = all<{ id: number; number: number; stage: string }>(p.db, "SELECT id, number, stage FROM tickets WHERE stage NOT IN ('done','dropped')");
+export async function mergeUnblocks(p: Project): Promise<Map<number, Unblocks>> {
+  const open = await p.pdb.from("tickets").select(["id", "number", "stage"]).where("stage", "not in", ["done", "dropped"]).execute();
   const byId = new Map(open.map((t) => [t.id, t]));
   // 待っている側 → 待たれている側(どちらも終わっていないもの)
   const waits = new Map<number, number[]>();
   const waitedBy = new Map<number, number[]>();
-  for (const d of all<{ ticket_id: number; depends_on: number }>(p.db, "SELECT ticket_id, depends_on FROM ticket_deps")) {
+  for (const d of await p.pdb.from("ticket_deps").select(["ticket_id", "depends_on"]).execute()) {
     if (!byId.has(d.ticket_id) || !byId.has(d.depends_on)) continue;
     waits.set(d.ticket_id, [...(waits.get(d.ticket_id) ?? []), d.depends_on]);
     waitedBy.set(d.depends_on, [...(waitedBy.get(d.depends_on) ?? []), d.ticket_id]);
@@ -120,33 +131,37 @@ export function mergeUnblocks(p: Project): Map<number, Unblocks> {
 }
 
 /** 交通整理を待っているチケットがあり、まだ頼んでいなければリーダーに頼む。 */
-export function requestTriage(p: Project): boolean {
-  if (!untriaged(p).length) return false;
-  const open = get<{ n: number }>(p.db, "SELECT COUNT(*) AS n FROM messages WHERE kind = 'triage' AND status IN ('pending','claimed')")?.n ?? 0;
+export async function requestTriage(p: Project): Promise<boolean> {
+  if (!(await untriaged(p)).length) return false;
+  const open = await p.pdb.from("messages").select("id").where("kind", "=", "triage").where("status", "in", ["pending", "claimed"]).limit(1).executeTakeFirst();
   if (open) return false;
   send(p, { ticketId: null, toRole: "lead", kind: "triage", payload: {} });
   return true;
 }
 
 /** 交通整理を終えた(または諦めた)チケットを、着手できる状態にする。 */
-export function markTriaged(p: Project, ticketIds: number[]): void {
-  for (const id of ticketIds) run(p.db, "UPDATE tickets SET triaged = 1 WHERE id = ?", [id]);
+export async function markTriaged(p: Project, ticketIds: number[]): Promise<void> {
+  if (!ticketIds.length) return;
+  await p.pdb.update("tickets", { triaged: 1 }).where("id", "in", ticketIds).execute();
 }
 
-export function triagePrompt(p: Project, targets: TicketRow[]): string {
-  const repoOf = (t: TicketRow) => ticketRepo(p, t)?.full_name ?? "";
-  const list = targets
-    .map((t) => `### #${t.number} ${t.title}\nリポジトリ: ${repoOf(t)}\n${t.body.trim().slice(0, 800) || "(中身なし)"}`)
-    .join("\n\n");
-  const inflight = all<TicketRow>(p.db, "SELECT * FROM tickets WHERE triaged = 1 AND stage NOT IN ('done','dropped') ORDER BY number")
-    .map((t) => {
-      const owner = t.owner_member_id ? p.member(t.owner_member_id).name : "未着手";
-      const after = dependsOn(p, t.id);
-      const areas = areasOf(p, t.id);
-      return `- #${t.number} ${t.title} [${t.stage}] 担当: ${owner}${after.length ? ` / 先に: #${after.join(", #")}` : ""}${areas.length ? ` / 触る場所: ${areas.join(", ")}` : ""}`;
-    })
-    .join("\n");
-  const islands = teamStatus(p);
+export async function triagePrompt(p: Project, targets: TicketRow[]): Promise<string> {
+  const blocks: string[] = [];
+  for (const t of targets) {
+    const repo = (await ticketRepo(p, t))?.full_name ?? "";
+    blocks.push(`### #${t.number} ${t.title}\nリポジトリ: ${repo}\n${t.body.trim().slice(0, 800) || "(中身なし)"}`);
+  }
+  const list = blocks.join("\n\n");
+  const running = (await p.pdb.from("tickets").where("triaged", "=", 1).where("stage", "not in", ["done", "dropped"]).orderBy("number").execute()) as TicketRow[];
+  const lines: string[] = [];
+  for (const t of running) {
+    const owner = t.owner_member_id ? p.member(t.owner_member_id).name : "未着手";
+    const after = await dependsOn(p, t.id);
+    const areas = await areasOf(p, t.id);
+    lines.push(`- #${t.number} ${t.title} [${t.stage}] 担当: ${owner}${after.length ? ` / 先に: #${after.join(", #")}` : ""}${areas.length ? ` / 触る場所: ${areas.join(", ")}` : ""}`);
+  }
+  const inflight = lines.join("\n");
+  const islands = await teamStatus(p);
   return `新しいチケットが入りました。誰がどの順で取りかかるか、交通整理をしてください。
 
 ## 交通整理するチケット
@@ -205,23 +220,23 @@ export function triageTools(p: Project): KuramotoTool[] {
 }
 
 /** 重複したチケットを片付ける。まだ開発に取りかかっていないものだけ。中身は残す方のメモに移す。 */
-export function dropAsDuplicate(p: Project, number: number, sameAs: number): string {
-  const t = get<TicketRow>(p.db, "SELECT * FROM tickets WHERE number = ?", [number]);
-  const keep = get<TicketRow>(p.db, "SELECT * FROM tickets WHERE number = ?", [sameAs]);
+export async function dropAsDuplicate(p: Project, number: number, sameAs: number): Promise<string> {
+  const t = (await p.pdb.from("tickets").where("number", "=", number).executeTakeFirst()) as TicketRow | undefined;
+  const keep = (await p.pdb.from("tickets").where("number", "=", sameAs).executeTakeFirst()) as TicketRow | undefined;
   if (!t || !keep) return `#${!t ? number : sameAs} はありません`;
   if (t.id === keep.id) return "同じチケットです";
   if (t.stage === "done" || t.stage === "dropped") return `#${number} はもう終わっています`;
   if (keep.stage === "dropped") return `#${sameAs} は取りやめになっています。残す方には、開いているチケットを選んでください`;
-  if (get(p.db, "SELECT 1 AS x FROM runs WHERE ticket_id = ? AND role = 'dev'", [t.id])) return `#${number} はもう開発に取りかかっているので、重複として片付けられません`;
-  tx(p.db, () => {
+  if (await p.pdb.from("runs").select("id").where("ticket_id", "=", t.id).where("role", "=", "dev").limit(1).executeTakeFirst()) return `#${number} はもう開発に取りかかっているので、重複として片付けられません`;
+  await p.pdb.transaction(async () => {
     p.addNote(keep.id, `【重複していた #${number} から】${t.title}\n${t.body.trim().slice(0, 1500)}`, "lead");
     // 片付けたチケットを待っていたものは、残す方を待つ
-    dropTicket(p, t.id, { by: "lead", reason: `#${sameAs}「${keep.title}」と重複していたため`, sameAs: keep });
+    await dropTicket(p, t.id, { by: "lead", reason: `#${sameAs}「${keep.title}」と重複していたため`, sameAs: keep });
   });
   return `#${number} を #${sameAs} の重複として片付けました。`;
 }
 
-export function planWork(p: Project, items: { number: number; after?: number[]; areas?: string[]; assignee?: string; note?: string }[]): string {
+export async function planWork(p: Project, items: { number: number; after?: number[]; areas?: string[]; assignee?: string; note?: string }[]): Promise<string> {
   const byNumber = new Map(p.tickets().map((t) => [t.number, t]));
   const problems: string[] = [];
   for (const it of items) {
@@ -234,7 +249,9 @@ export function planWork(p: Project, items: { number: number; after?: number[]; 
   if (problems.length) return `直してください: ${problems.join(" / ")}`;
   // 新しい順番で循環しないか確かめる
   const edges = new Map<number, number[]>();
-  for (const t of byNumber.values()) edges.set(t.number, dependsOn(p, t.id));
+  const numberOf = new Map(p.tickets().map((t) => [t.id, t.number]));
+  const deps = await p.pdb.from("ticket_deps").select(["ticket_id", "depends_on"]).execute();
+  for (const t of byNumber.values()) edges.set(t.number, deps.filter((d) => d.ticket_id === t.id).map((d) => numberOf.get(d.depends_on)!).sort((x, y) => x - y));
   for (const it of items) edges.set(it.number, it.after ?? []);
   const state = new Map<number, number>();
   const cyclic = (n: number): boolean => {
@@ -248,14 +265,16 @@ export function planWork(p: Project, items: { number: number; after?: number[]; 
   if ([...edges.keys()].some(cyclic)) return "順番が循環しています(A は B を待ち、B は A を待つ)。after を見直してください。";
 
   const out: string[] = [];
-  tx(p.db, () => {
+  await p.pdb.transaction(async () => {
     for (const it of items) {
       const t = byNumber.get(it.number)!;
-      run(p.db, "DELETE FROM ticket_deps WHERE ticket_id = ?", [t.id]);
-      for (const n of it.after ?? []) run(p.db, "INSERT INTO ticket_deps (ticket_id, depends_on) VALUES (?, ?)", [t.id, byNumber.get(n)!.id]);
+      await p.pdb.deleteFrom("ticket_deps").where("ticket_id", "=", t.id).execute();
+      const after = [...new Set(it.after ?? [])];
+      if (after.length) await p.pdb.insert("ticket_deps", after.map((n) => ({ ticket_id: t.id, depends_on: byNumber.get(n)!.id }))).execute();
       if (it.areas) {
-        run(p.db, "DELETE FROM ticket_areas WHERE ticket_id = ?", [t.id]);
-        for (const a of new Set(it.areas.map(normalizeArea).filter(Boolean))) run(p.db, "INSERT INTO ticket_areas (ticket_id, area) VALUES (?, ?)", [t.id, a]);
+        await p.pdb.deleteFrom("ticket_areas").where("ticket_id", "=", t.id).execute();
+        const areas = [...new Set(it.areas.map(normalizeArea).filter(Boolean))];
+        if (areas.length) await p.pdb.insert("ticket_areas", areas.map((area) => ({ ticket_id: t.id, area }))).execute();
       }
       let who = "手すきの人";
       if (it.assignee) {
@@ -264,36 +283,49 @@ export function planWork(p: Project, items: { number: number; after?: number[]; 
         let m = devUnits.flatMap((u) => p.membersOfUnit(u.id)).find((x) => x.name === it.assignee);
         if (island) {
           // 島を指定: 手すき(まだ割り当てのない人)がいればその人。いなければ、島の誰かが空いたら取る
-          const busy = new Set(
-            all<{ id: number }>(p.db, "SELECT member_id AS id FROM runs WHERE ended_at IS NULL UNION SELECT to_member_id AS id FROM messages WHERE status = 'pending' AND kind = 'implement' AND to_member_id IS NOT NULL").map((r) => r.id),
-          );
+          const runningNow = await p.pdb.from("runs").select("member_id").where("ended_at", "is", null).execute();
+          const queued = await p.pdb.from("messages").select("to_member_id").where("status", "=", "pending").where("kind", "=", "implement").where("to_member_id", "is not", null).execute();
+          const busy = new Set<number>([...runningNow.map((r) => r.member_id), ...queued.map((r) => r.to_member_id!)]);
           m = p.membersOfUnit(island.id).find((x) => !busy.has(x.id));
           if (!m) out.push(`${island.name} に手すきの人がいないので、#${it.number} は ${island.name} の誰かが空いたら取ります`);
         }
         if (m) {
-          run(p.db, "UPDATE messages SET to_member_id = ? WHERE ticket_id = ? AND kind = 'implement' AND status = 'pending'", [m.id, t.id]);
+          await p.pdb.update("messages", { to_member_id: m.id }).where("ticket_id", "=", t.id).where("kind", "=", "implement").where("status", "=", "pending").execute();
           who = m.name;
         } else if (!island) out.push(`${it.assignee} は開発の島にいません。#${it.number} は手すきの人が取ります`);
       }
       if (it.note?.trim()) p.addNote(t.id, it.note, "lead");
-      p.event(p.fixedMember("lead").name, "ticket_planned", t.id, { after: it.after ?? [], areas: areasOf(p, t.id), assignee: who });
+      p.event(p.fixedMember("lead").name, "ticket_planned", t.id, { after: it.after ?? [], areas: await areasOf(p, t.id), assignee: who });
     }
   });
   return [`${items.length} 件を決めました。`, ...out].join("\n");
 }
 
 /** リーダーに渡す、チームの今。島ごとの役割・受け持ち・最大人数・メンバー(作業中のチケット / 割り当て待ち / 手すき)・待ちの件数。 */
-export function teamStatus(p: Project): string {
-  const running = new Map(
-    all<{ member_id: number; number: number | null; kind: string }>(
-      p.db,
-      "SELECT r.member_id, t.number, m.kind FROM runs r JOIN messages m ON m.id = r.message_id LEFT JOIN tickets t ON t.id = r.ticket_id WHERE r.ended_at IS NULL",
-    ).map((r) => [r.member_id, r]),
-  );
-  const assigned = all<{ to_member_id: number; number: number }>(
-    p.db,
-    "SELECT m.to_member_id, t.number FROM messages m JOIN tickets t ON t.id = m.ticket_id WHERE m.status = 'pending' AND m.to_member_id IS NOT NULL",
-  );
+export async function teamStatus(p: Project): Promise<string> {
+  const runningRows = await p.pdb.k
+    .selectFrom("runs as r")
+    .innerJoin("messages as m", "m.id", "r.message_id")
+    .leftJoin("tickets as t", "t.id", "r.ticket_id")
+    .select(["r.member_id", "t.number", "m.kind"])
+    .where("r.project_id", "=", p.pdb.projectId)
+    .where("r.ended_at", "is", null)
+    .execute();
+  const running = new Map(runningRows.map((r) => [r.member_id, r]));
+  const assigned = (
+    await p.pdb.k
+      .selectFrom("messages as m")
+      .innerJoin("tickets as t", "t.id", "m.ticket_id")
+      .select(["m.to_member_id", "t.number"])
+      .where("m.project_id", "=", p.pdb.projectId)
+      .where("m.status", "=", "pending")
+      .where("m.to_member_id", "is not", null)
+      .execute()
+  ).map((r) => ({ to_member_id: r.to_member_id!, number: r.number }));
+  // 待ち(宛先の人が決まっていない・取り出していない仕事)の宛先の役割ごとの件数。島ごとの合計は下で出す
+  const waitingRows = await p.pdb.from("messages").select("to_role").where("status", "=", "pending").where("to_member_id", "is", null).execute();
+  const waitingBy = new Map<string, number>();
+  for (const w of waitingRows) waitingBy.set(w.to_role, (waitingBy.get(w.to_role) ?? 0) + 1);
   return p
     .currentFormation()
     .units.map((u) => {
@@ -303,17 +335,13 @@ export function teamStatus(p: Project): string {
         const state = r ? `#${r.number ?? "?"} の${r.kind}中` : "手すき";
         return `${m.name}: ${state}${queue.length ? ` / 次に ${queue.join("・")}` : ""}`;
       });
-      const waiting = get<{ n: number }>(
-        p.db,
-        `SELECT COUNT(*) AS n FROM messages WHERE status = 'pending' AND to_member_id IS NULL AND to_role IN (${u.roles.map(() => "?").join(",") || "''"})`,
-        [...u.roles],
-      )?.n ?? 0;
+      const waiting = u.roles.reduce((n, r) => n + (waitingBy.get(r) ?? 0), 0);
       return `- ${u.name}(${u.roles.map((r) => ROLE_LABEL[r]).join("・")}): ${p.membersOfUnit(u.id).length}/${u.max_members} 人${u.repos.length ? ` / 受け持ち ${u.repos.join("・")}` : ""}${u.focus ? ` / 重視: ${u.focus}` : ""} / 待ち ${waiting} 件\n  ${ms.join("\n  ") || "(まだ誰もいません)"}`;
     })
     .join("\n");
 }
 
 /** 交通整理の起動に失敗し続けたら、止めずに流す(手すきの人が番号順に取る)。 */
-export function giveUpTriage(p: Project): void {
-  tx(p.db, () => markTriaged(p, untriaged(p).map((t) => t.id)));
+export async function giveUpTriage(p: Project): Promise<void> {
+  await p.pdb.transaction(async () => markTriaged(p, (await untriaged(p)).map((t) => t.id)));
 }

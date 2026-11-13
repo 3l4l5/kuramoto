@@ -39,7 +39,7 @@ function setup(answer: FakeStep = (_req, call) => call("reply", { answer: "境�
 
 /** チケットを 1 枚作って、QA まで通して merge 待ちにする。持ち主(開発のメンバー)も返す。 */
 async function worked(p: Project, d: Dispatcher) {
-  createTicket(p, { title: "CSV 出力" });
+  await createTicket(p, { title: "CSV 出力" });
   await d.drain();
   const ticket = p.tickets()[0]!;
   return { ticket, owner: p.member(ticket.owner_member_id!) };
@@ -64,7 +64,7 @@ describe("連絡経路の保存(R16)", () => {
     expect((await teamView(p)).formation.versions.slice(-2).map((v) => [v.version, v.routes.length])).toEqual([[v1.version, 0], [v2.version, 1]]);
   });
 
-  it("経路を渡さない保存は、前の版の経路を引き継ぐ。無くなった島の経路は外す", () => {
+  it("経路を渡さない保存は、前の版の経路を引き継ぐ。無くなった島の経路は外す", async () => {
     const p = new Project(":memory:", new ManualClock());
     p.addRepo("acme/shop", "API");
     p.saveFormation({ pull: "down", units: UNITS, routes: [...ROUTES, { from: "QA", to: "レビュー", mode: "ask" }, { from: "開発", to: "lead", mode: "ask" }] });
@@ -77,7 +77,7 @@ describe("連絡経路の保存(R16)", () => {
     expect(p.currentFormation().routes).toEqual([]);
   });
 
-  it("島に無い端・自分自身との経路は保存できず、版も上がらない", () => {
+  it("島に無い端・自分自身との経路は保存できず、版も上がらない", async () => {
     const p = new Project(":memory:", new ManualClock());
     p.addRepo("acme/shop", "API");
     const base = p.saveFormation({ pull: "down", units: UNITS }).version;
@@ -112,7 +112,7 @@ describe("島への質問・相談(R16)", () => {
     const { p, d, harness } = setup();
     const { ticket, owner } = await worked(p, d);
     const before = state(p, ticket.id);
-    const spent = ticketSpentUsd(p, ticket.id);
+    const spent = await ticketSpentUsd(p, ticket.id);
 
     const said = askQuestion(p, owner, p.ticket(ticket.id), "レビュー", "CSV の空のときはどう確かめる?");
     expect(said).toContain("レビュー に送りました");
@@ -136,7 +136,7 @@ describe("島への質問・相談(R16)", () => {
     // 担当・工程・往復・種類は変わらない
     expect(state(p, ticket.id)).toEqual(before);
     // 答える起動の金額は、聞かれたチケットに数える
-    expect(ticketSpentUsd(p, ticket.id)).toBeCloseTo(spent + run.cost_usd, 6);
+    expect(await ticketSpentUsd(p, ticket.id)).toBeCloseTo(spent + run.cost_usd, 6);
     expect((await ticketView(p, ticket.id)).costUsd).toBeCloseTo(spent + run.cost_usd, 6);
     // チケットのやりとりに、質問と答えが並ぶ
     const item = (await ticketView(p, ticket.id)).timeline.find((x) => x.type === "question");
@@ -144,7 +144,7 @@ describe("島への質問・相談(R16)", () => {
     // 次にこのチケットの仕事をする担当の指示に、答えが入る
     const { promptFor } = await import("./prompts.js");
     const msg = { id: 0, ticket_id: ticket.id, to_role: "dev", to_member_id: owner.id, kind: "fix", payload: "{}", status: "pending", available_at: "", attempts: 0, created_at: "", claimed_at: null, last_error: null } as const;
-    expect(promptFor(p, msg, p.ticket(ticket.id), {})).toContain("境界値は 0 件と 1 件を見て");
+    expect(await promptFor(p, msg, p.ticket(ticket.id), {})).toContain("境界値は 0 件と 1 件を見て");
   });
 
   it("経路なし: 相手に届かず、リーダーに回る。「経路が無いのでリーダーに回した」がやりとりに残り、担当・工程は変わらない", async () => {
@@ -193,7 +193,7 @@ describe("島への質問・相談(R16)", () => {
       } else if (req.tools.some((t) => t.name === "submit_review")) await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] }));
     });
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp") });
-    createTicket(p, { title: "CSV 出力" });
+    await createTicket(p, { title: "CSV 出力" });
     await d.drain();
     const t = p.tickets()[0]!;
     expect(tools[0]).toContain("ask_island");

@@ -389,7 +389,7 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
             if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
             const modes = Object.fromEntries(STAGES.map((s) => [s, stageRow(p, s).mode]));
             const versions = Object.fromEntries(STAGES.map((s) => [s, stageRow(p, s).version]));
-            const t = createTicket(p, {
+            const t = await createTicket(p, {
               title: a.title,
               body: a.body,
               kind: a.kind ?? "feature",

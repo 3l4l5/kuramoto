@@ -3,7 +3,7 @@ import { inScope } from "../db/count.js";
 import type { RunsTable } from "../db/tables.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
 import { unitExhausted, unitSpentUsd } from "./budget.js";
-import { KIND_LABEL, openRuns, workFrom, workOf } from "./office.js";
+import { KIND_LABEL, workOf, workOfMany } from "./office.js";
 import type { Project } from "./project.js";
 
 /**
@@ -135,9 +135,10 @@ export async function memberView(p: Project, memberId: number) {
 export async function unitView(p: Project, unitId: number, office: { units: { id: number; waiting: number[]; queued: { number: number; why: string }[] }[] }) {
   const u = p.currentFormation().units.find((x) => x.id === unitId);
   if (!u) throw new Error(`島 ${unitId} は今の編成にありません`);
-  const open = await openRuns(p);
-  const members = p.membersOfUnit(u.id).map((m) => {
-    const w = workFrom(p, open.get(m.id));
+  const unitMembers = p.membersOfUnit(u.id);
+  const works = await workOfMany(p, unitMembers);
+  const members = unitMembers.map((m) => {
+    const w = works.get(m.id) ?? null;
     return { id: m.id, name: m.name, helper: !m.is_base, work: w ? { ticket: w.ticket, title: w.title, kind: w.kind, startedAt: w.startedAt, lastStep: w.lastStep } : null };
   });
   const o = office.units.find((x) => x.id === u.id);

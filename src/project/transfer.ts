@@ -145,7 +145,7 @@ export async function restoreTransfer(p: Project, d: TransferData): Promise<void
         const row = p.addTicket(base);
         p.setStage(row.id, t.stage as TicketStage);
       } else {
-        createTicket(p, base);
+        await createTicket(p, base);
       }
     }
     // 書き出したときに担当が作業中・順番待ちだった依頼は持ち越していない。

@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { iso } from "../clock.js";
-import { all, get, run, tx } from "../db/sqlite.js";
 import { ROLE_LABEL, type Role, type WorkRole } from "../domain/roles.js";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
 import { send } from "./inbox.js";
@@ -27,10 +26,21 @@ function seenOf(p: Project, ticketId: number): Seen {
 }
 
 /** リーダーが見た(手を打った・様子を見ると決めた)ので、ここから数え直す。 */
-export function markSeen(p: Project, ticketId: number): void {
-  const r = get<{ n: number | null }>(p.db, "SELECT MAX(id) AS n FROM runs")?.n ?? 0;
-  const e = get<{ n: number | null }>(p.db, "SELECT MAX(id) AS n FROM events")?.n ?? 0;
+export async function markSeen(p: Project, ticketId: number): Promise<void> {
+  const r = await maxOf(p, "runs", "id");
+  const e = await maxOf(p, "events", "id");
   p.setSetting(`patrol_seen:${ticketId}`, JSON.stringify({ run: r, event: e } satisfies Seen));
+}
+
+/** プロジェクトの行のうち、列の最大値(無ければ 0)。 */
+async function maxOf(p: Project, table: "runs" | "events" | "tickets", column: "id" | "number"): Promise<number> {
+  const row = await p.pdb.from(table).clearSelect().select((eb) => eb.fn.max<number | null>(column).as("n")).executeTakeFirst();
+  return Number(row?.n ?? 0);
+}
+
+/** 未完了(完了・取りやめ以外)のチケット。番号順。 */
+function openTickets(p: Project) {
+  return p.pdb.from("tickets").where("stage", "not in", ["done", "dropped"]).orderBy("number");
 }
 
 export type LoopSignal = {
@@ -58,18 +68,26 @@ function limits(p: Project) {
 }
 
 /** 開いているチケットのうち、同じところを回っていそうなもの。 */
-export function loopSignals(p: Project): LoopSignal[] {
+export async function loopSignals(p: Project): Promise<LoopSignal[]> {
   const lim = limits(p);
-  const open = all<TicketRow>(p.db, "SELECT * FROM tickets WHERE stage NOT IN ('done','dropped') ORDER BY number");
+  const open = (await openTickets(p).execute()) as TicketRow[];
+  // 責任者の対応待ち(保留・予算切れ)は、もう止まっているので見ない(まとめて 1 回で引く)
+  const waiting = new Set(
+    open.length
+      ? (await p.pdb.from("decisions").select("ticket_id").where("ticket_id", "in", open.map((t) => t.id)).where("escalated", "=", 1).where("decided_at", "is", null).execute()).map((d) => d.ticket_id)
+      : [],
+  );
   const out: LoopSignal[] = [];
   for (const t of open) {
-    // 責任者の対応待ち(保留・予算切れ)は、もう止まっているので見ない
-    if (get(p.db, "SELECT 1 AS x FROM decisions WHERE ticket_id = ? AND escalated = 1 AND decided_at IS NULL", [t.id])) continue;
+    if (waiting.has(t.id)) continue;
     const seen = seenOf(p, t.id);
-    const runs = all<{ error: string | null; outcome: string | null }>(p.db, "SELECT error, outcome FROM runs WHERE ticket_id = ? AND id > ? ORDER BY id DESC", [t.id, seen.run]);
-    const count = (type: string) => get<{ n: number }>(p.db, "SELECT COUNT(*) AS n FROM events WHERE ticket_id = ? AND id > ? AND type = ?", [t.id, seen.event, type])?.n ?? 0;
-    const changes = count("changes_requested");
-    const readyToMerge = count("ready_to_merge");
+    const runs = await p.pdb.from("runs").select(["error", "outcome"]).where("ticket_id", "=", t.id).where("id", ">", seen.run).orderBy("id", "desc").execute();
+    const count = async (type: string) => {
+      const row = await p.pdb.from("events").clearSelect().select((eb) => eb.fn.countAll<number>().as("n")).where("ticket_id", "=", t.id).where("id", ">", seen.event).where("type", "=", type).executeTakeFirst();
+      return Number(row?.n ?? 0);
+    };
+    const changes = await count("changes_requested");
+    const readyToMerge = await count("ready_to_merge");
     // 新しい方から、同じエラーが何回続いたか
     let sameError: LoopSignal["sameError"] = null;
     const first = runs[0]?.error?.trim();
@@ -92,13 +110,19 @@ export function loopSignals(p: Project): LoopSignal[] {
 }
 
 /** 前回の見回りのあとに入ったチケット(重複が増えていないかを見る)。交通整理がまだのものは、交通整理が先に見るので数えない。 */
-function newTickets(p: Project): TicketRow[] {
+async function newTickets(p: Project): Promise<TicketRow[]> {
   const after = p.settingNumber("patrol_last_ticket", 0);
-  return all<TicketRow>(p.db, "SELECT * FROM tickets WHERE number > ? AND triaged = 1 AND stage NOT IN ('done','dropped') ORDER BY number", [after]);
+  return (await openTickets(p).where("number", ">", after).where("triaged", "=", 1).execute()) as TicketRow[];
 }
 
-function openCount(p: Project): number {
-  return get<{ n: number }>(p.db, "SELECT COUNT(*) AS n FROM tickets WHERE stage NOT IN ('done','dropped')")?.n ?? 0;
+async function openCount(p: Project): Promise<number> {
+  const row = await p.pdb.from("tickets").clearSelect().select((eb) => eb.fn.countAll<number>().as("n")).where("stage", "not in", ["done", "dropped"]).executeTakeFirst();
+  return Number(row?.n ?? 0);
+}
+
+/** 見回りの依頼(受信箱)が、まだ取られていない・取られて動いているか。 */
+async function patrolPending(p: Project): Promise<boolean> {
+  return !!(await p.pdb.from("messages").select("id").where("kind", "=", "patrol").where("status", "in", ["pending", "claimed"]).limit(1).executeTakeFirst());
 }
 
 /** 見回りの間隔(分)。0 なら見回らない。 */
@@ -113,10 +137,10 @@ export function setPatrolMinutes(p: Project, min: number): void {
 }
 
 /** 始業したとき。見るものがあってもなくても、必ず 1 回見回る(見回りを止めていなければ)。 */
-export function startPatrol(p: Project): boolean {
+export async function startPatrol(p: Project): Promise<boolean> {
   if (patrolMinutes(p) <= 0) return false;
   p.setSetting("patrol_last_at", iso(p.clock.now()));
-  if (get(p.db, "SELECT 1 AS x FROM messages WHERE kind = 'patrol' AND status IN ('pending','claimed')")) return false;
+  if (await patrolPending(p)) return false;
   send(p, { ticketId: null, toRole: "lead", kind: "patrol", payload: { start: true } });
   return true;
 }
@@ -125,7 +149,7 @@ export function startPatrol(p: Project): boolean {
  * 間隔が過ぎていて、見るもの(回っていそうなチケット・前回の後に入ったチケット)があれば、リーダーに見回りを頼む。
  * 何も無ければ起こさない(トークンを使わない)。
  */
-export function requestPatrol(p: Project): boolean {
+export async function requestPatrol(p: Project): Promise<boolean> {
   const min = patrolMinutes(p);
   if (min <= 0) return false;
   const last = p.setting("patrol_last_at");
@@ -135,19 +159,19 @@ export function requestPatrol(p: Project): boolean {
     return false;
   }
   if (p.clock.now().getTime() - new Date(last).getTime() < min * 60_000) return false;
-  if (get(p.db, "SELECT 1 AS x FROM messages WHERE kind = 'patrol' AND status IN ('pending','claimed')")) return false;
-  const fresh = newTickets(p);
+  if (await patrolPending(p)) return false;
+  const fresh = await newTickets(p);
   // 重複は 2 枚以上ないと起きない。回っているものが無く、新しいチケットも無ければ見回らない
-  if (!loopSignals(p).length && !(fresh.length && openCount(p) >= 2)) return false;
+  if (!(await loopSignals(p)).length && !(fresh.length && (await openCount(p)) >= 2)) return false;
   p.setSetting("patrol_last_at", iso(p.clock.now()));
   send(p, { ticketId: null, toRole: "lead", kind: "patrol", payload: {} });
   return true;
 }
 
 /** 見回りを終えた。見せたチケットは見たことにして、同じものを次の見回りで繰り返し見せない。 */
-export function finishPatrol(p: Project, shown: LoopSignal[]): void {
-  for (const s of shown) markSeen(p, s.ticket.id);
-  const max = get<{ n: number | null }>(p.db, "SELECT MAX(number) AS n FROM tickets")?.n ?? 0;
+export async function finishPatrol(p: Project, shown: LoopSignal[]): Promise<void> {
+  for (const s of shown) await markSeen(p, s.ticket.id);
+  const max = await maxOf(p, "tickets", "number");
   p.setSetting("patrol_last_ticket", String(max));
 }
 
@@ -155,44 +179,48 @@ function stageText(t: TicketRow): string {
   return { dev: "開発", review: "レビュー", sec: "セキュリティ", qa: "QA", decision: "判断待ち", merge: "merge 待ち", done: "完了", dropped: "取りやめ" }[t.stage];
 }
 
-function hasPr(p: Project, ticketId: number): number | undefined {
-  return get<{ number: number }>(p.db, "SELECT number FROM pull_requests WHERE ticket_id = ? AND COALESCE(gh_state, 'OPEN') = 'OPEN' LIMIT 1", [ticketId])?.number;
+/** チケットごとの、開いている PR の番号(まとめて 1 回で引く。無ければ入らない)。 */
+async function openPrNumbers(p: Project, ticketIds: number[]): Promise<Map<number, number>> {
+  const out = new Map<number, number>();
+  if (!ticketIds.length) return out;
+  const rows = await p.pdb.from("pull_requests").select(["ticket_id", "number", "gh_state"]).where("ticket_id", "in", ticketIds).orderBy("id").execute();
+  for (const r of rows) if ((r.gh_state ?? "OPEN") === "OPEN" && !out.has(r.ticket_id)) out.set(r.ticket_id, r.number);
+  return out;
 }
 
-export function patrolPrompt(p: Project, signals: LoopSignal[], opts: { start?: boolean } = {}): string {
-  const open = all<TicketRow>(p.db, "SELECT * FROM tickets WHERE stage NOT IN ('done','dropped') ORDER BY number");
-  const fresh = new Set(newTickets(p).map((t) => t.id));
-  const list = open
-    .map((t) => {
-      const owner = t.owner_member_id ? p.member(t.owner_member_id).name : "未着手";
-      const after = dependsOn(p, t.id);
-      const areas = areasOf(p, t.id);
-      const pr = hasPr(p, t.id);
-      const body = t.body.trim().replace(/\s+/g, " ").slice(0, 160);
-      return `- #${t.number}${fresh.has(t.id) ? "(新)" : ""} ${t.title} [${stageText(t)}] 担当: ${owner}${pr ? ` / PR #${pr}` : ""}${after.length ? ` / 先に: #${after.join(", #")}` : ""}${areas.length ? ` / 触る場所: ${areas.join(", ")}` : ""}${body ? `\n  ${body}` : ""}`;
-    })
-    .join("\n");
-  const loops = signals
-    .map((s) => {
+export async function patrolPrompt(p: Project, signals: LoopSignal[], opts: { start?: boolean } = {}): Promise<string> {
+  const open = (await openTickets(p).execute()) as TicketRow[];
+  const fresh = new Set((await newTickets(p)).map((t) => t.id));
+  const prs = await openPrNumbers(p, open.map((t) => t.id));
+  const listLines: string[] = [];
+  for (const t of open) {
+    const owner = t.owner_member_id ? p.member(t.owner_member_id).name : "未着手";
+    const after = await dependsOn(p, t.id);
+    const areas = await areasOf(p, t.id);
+    const pr = prs.get(t.id);
+    const body = t.body.trim().replace(/\s+/g, " ").slice(0, 160);
+    listLines.push(`- #${t.number}${fresh.has(t.id) ? "(新)" : ""} ${t.title} [${stageText(t)}] 担当: ${owner}${pr ? ` / PR #${pr}` : ""}${after.length ? ` / 先に: #${after.join(", #")}` : ""}${areas.length ? ` / 触る場所: ${areas.join(", ")}` : ""}${body ? `\n  ${body}` : ""}`);
+  }
+  const list = listLines.join("\n");
+  const loopBlocks: string[] = [];
+  for (const s of signals) {
       const t = s.ticket;
-      const recent = all<{ role: string; outcome: string | null; error: string | null; summary: string | null }>(
-        p.db,
-        "SELECT role, outcome, error, summary FROM runs WHERE ticket_id = ? ORDER BY id DESC LIMIT 6",
-        [t.id],
-      );
+      const recent = await p.pdb.from("runs").select(["role", "outcome", "error", "summary"]).where("ticket_id", "=", t.id).orderBy("id", "desc").limit(6).execute();
+      const spent = await ticketSpentUsd(p, t.id);
       const findings = (["review", "sec", "qa"] as const).flatMap((r) => mustResolve(p, t.id, r).map((f) => `  - [${ROLE_LABEL[r]}] 指摘 ${f.id}(${f.status}): ${f.body.slice(0, 200)}`));
       const notes = p.notes(t.id).slice(-3);
-      return `### #${t.number} ${t.title} [${stageText(t)}]
+      loopBlocks.push(`### #${t.number} ${t.title} [${stageText(t)}]
 - 引っかかったところ: ${s.reasons.join("、")}
-- 使った額: $${ticketSpentUsd(p, t.id).toFixed(2)} / 差し戻しの往復(通算): ${t.rounds} 回
+- 使った額: $${spent.toFixed(2)} / 差し戻しの往復(通算): ${t.rounds} 回
 - 最近の起動(新しい順):
 ${recent.map((r) => `  - ${ROLE_LABEL[r.role as Role] ?? r.role}: ${r.outcome ?? "?"}${r.error ? ` / ${r.error.slice(0, 200)}` : ""}${r.summary ? ` / ${r.summary.slice(0, 160)}` : ""}`).join("\n") || "  (なし)"}
 ${findings.length ? `- 残っている指摘:\n${findings.join("\n")}` : "- 残っている指摘: なし"}
 ${lastCiFailure(p, t.id, 1500)}
 ${lastTeamCi(p, t.id, 1500)}
-${notes.length ? `- 最近のメモ:\n${notes.map((n) => `  - ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.body.slice(0, 200)}`).join("\n")}` : ""}`;
-    })
-    .join("\n\n");
+${notes.length ? `- 最近のメモ:\n${notes.map((n) => `  - ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.body.slice(0, 200)}`).join("\n")}` : ""}`);
+  }
+  const loops = loopBlocks.join("\n\n");
+  const status = await teamStatus(p);
   return `${opts.start ? "始業したので、最初の見回りです" : "定期の見回りです"}。ボードを見て、重複しているチケット・いらなくなったチケットと、同じところを回り続けているチケットに手を打ってください。
 
 ## 開いているチケット
@@ -202,7 +230,7 @@ ${list || "(なし)"}
 ${loops || "(なし)"}
 
 ## チームの今
-${teamStatus(p)}
+${status}
 
 ## 進め方
 - 重複: 同じことを扱うチケットが 2 枚以上あれば、drop_duplicate で 1 枚にまとめます。残す方は、進んでいる方(merge 待ち・PR がある・担当がいる)にします。片付ける方の中身は残す方のメモに移り、開いている PR は閉じます。似ているだけで別のこと(画面と API など)は重複にしません。
@@ -219,22 +247,23 @@ ${teamCiEnabled(p) ? "- CI はチームの CI(Kuramoto が手元で流す確認)
 }
 
 /** 起動中なら手を打てない(リーダー自身がそのチケットを調べている起動は数えない)。 */
-function runningNow(p: Project, ticketId: number): boolean {
-  return !!get(p.db, "SELECT 1 AS x FROM runs WHERE ticket_id = ? AND ended_at IS NULL AND role <> 'lead'", [ticketId]);
+async function runningNow(p: Project, ticketId: number): Promise<boolean> {
+  return !!(await p.pdb.from("runs").select("id").where("ticket_id", "=", ticketId).where("ended_at", "is", null).where("role", "<>", "lead").limit(1).executeTakeFirst());
 }
 
-function byNumber(p: Project, n: number): TicketRow | undefined {
-  return get<TicketRow>(p.db, "SELECT * FROM tickets WHERE number = ?", [n]);
+async function byNumber(p: Project, n: number): Promise<TicketRow | undefined> {
+  return (await p.pdb.from("tickets").where("number", "=", n).executeTakeFirst()) as TicketRow | undefined;
+}
+
+/** 責任者の対応を待つ判断があるか。 */
+async function waitingOwner(p: Project, ticketId: number): Promise<boolean> {
+  return !!(await p.pdb.from("decisions").select("id").where("ticket_id", "=", ticketId).where("escalated", "=", 1).where("decided_at", "is", null).limit(1).executeTakeFirst());
 }
 
 /** 待っている仕事(取り出していないメッセージ)のうち、最後のもの。止めたあとに続きから再開するのに使う。 */
-function pendingWork(p: Project, ticketId: number): ResumeMessage | undefined {
-  const m = get<{ to_role: Role; to_member_id: number | null; kind: ResumeMessage["kind"]; payload: string }>(
-    p.db,
-    "SELECT to_role, to_member_id, kind, payload FROM messages WHERE ticket_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1",
-    [ticketId],
-  );
-  return m ? { toRole: m.to_role, toMemberId: m.to_member_id, kind: m.kind, payload: JSON.parse(m.payload) as Record<string, unknown> } : undefined;
+async function pendingWork(p: Project, ticketId: number): Promise<ResumeMessage | undefined> {
+  const m = await p.pdb.from("messages").select(["to_role", "to_member_id", "kind", "payload"]).where("ticket_id", "=", ticketId).where("status", "=", "pending").orderBy("id", "desc").limit(1).executeTakeFirst();
+  return m ? { toRole: m.to_role as Role, toMemberId: m.to_member_id, kind: m.kind as ResumeMessage["kind"], payload: JSON.parse(m.payload) as Record<string, unknown> } : undefined;
 }
 
 /**
@@ -247,24 +276,24 @@ export async function dropDuplicate(
   sameAs: number,
   closePrs: (t: TicketRow, reason: string) => Promise<void> = async () => {},
 ): Promise<string> {
-  const t = byNumber(p, number);
-  const keep = byNumber(p, sameAs);
+  const t = await byNumber(p, number);
+  const keep = await byNumber(p, sameAs);
   if (!t || !keep) return `#${!t ? number : sameAs} はありません`;
   if (t.id === keep.id) return "同じチケットです";
   if (t.stage === "done" || t.stage === "dropped") return `#${number} はもう終わっています`;
   if (keep.stage === "dropped") return `#${sameAs} は取りやめになっています。残す方には、開いているチケットを選んでください`;
   if (t.stage === "merge") return `#${number} は merge 待ちです。こちらを残す方にしてください`;
-  if (runningNow(p, t.id)) return `#${number} は今動いています。次の見回りで片付けてください`;
-  if (!get(p.db, "SELECT 1 AS x FROM runs WHERE ticket_id = ? AND role = 'dev'", [t.id])) {
-    const r = dropAsDuplicate(p, number, sameAs);
-    touch(p, t.id);
+  if (await runningNow(p, t.id)) return `#${number} は今動いています。次の見回りで片付けてください`;
+  if (!(await p.pdb.from("runs").select("id").where("ticket_id", "=", t.id).where("role", "=", "dev").limit(1).executeTakeFirst())) {
+    const r = await dropAsDuplicate(p, number, sameAs);
+    await touch(p, t.id);
     return r;
   }
-  tx(p.db, () => {
+  await p.pdb.transaction(async () => {
     p.addNote(keep.id, `【重複していた #${number} から(取りかかった後に片付け)】${t.title}\n${t.body.trim().slice(0, 1500)}`, "lead");
-    dropTicket(p, t.id, { by: "lead", reason: `#${sameAs}「${keep.title}」と重複していたため`, sameAs: keep });
+    await dropTicket(p, t.id, { by: "lead", reason: `#${sameAs}「${keep.title}」と重複していたため`, sameAs: keep });
   });
-  touch(p, t.id);
+  await touch(p, t.id);
   await closePrs(t, `#${sameAs}「${keep.title}」と重複していたため、リーダーがこちらを片付けました。`);
   return `#${number} を #${sameAs} の重複として片付けました(開いていた PR は閉じます)。`;
 }
@@ -274,13 +303,13 @@ export async function dropDuplicate(
  * 記録は消さず、取りやめた理由をボードとチケットに残す。開いている PR は閉じる。起動中のものは取りやめない。
  */
 export async function dropUnneeded(p: Project, number: number, reason: string, closePrs: (t: TicketRow, reason: string) => Promise<void> = async () => {}): Promise<string> {
-  const t = byNumber(p, number);
+  const t = await byNumber(p, number);
   if (!t) return `#${number} はありません`;
   if (t.stage === "done") return `#${number} はもう merge されています。取りやめられません(戻すなら、元に戻すチケットを作ってください)`;
   if (t.stage === "dropped") return `#${number} はもう取りやめになっています`;
   if (!reason.trim()) return "取りやめる理由を書いてください";
-  if (runningNow(p, t.id)) return `#${number} は今動いています。起動が終わってから取りやめてください(見回りなら次の見回りで)`;
-  dropTicket(p, t.id, { by: "lead", reason: reason.trim() });
+  if (await runningNow(p, t.id)) return `#${number} は今動いています。起動が終わってから取りやめてください(見回りなら次の見回りで)`;
+  await dropTicket(p, t.id, { by: "lead", reason: reason.trim() });
   await closePrs(t, `リーダーがこのチケットを取りやめました: ${reason.trim()}`);
   return `#${number} を取りやめました(ボードの「取りやめ」に理由つきで残ります)。`;
 }
@@ -302,19 +331,19 @@ export function dropTicketTool(p: Project, closePrs?: (t: TicketRow, reason: str
 /**
  * 差し戻しの往復を止める。最後に差し戻した工程の、残っている指摘を直さずに通し(リーダーの裁定)、次の工程へ進める。
  */
-export function passAsIs(p: Project, number: number, reason: string): string {
-  const t = byNumber(p, number);
+export async function passAsIs(p: Project, number: number, reason: string): Promise<string> {
+  const t = await byNumber(p, number);
   if (!t) return `#${number} はありません`;
   if (t.stage === "done" || t.stage === "dropped" || t.stage === "merge") return `#${number} は${stageText(t)}です。通すものがありません`;
-  if (runningNow(p, t.id)) return `#${number} は今動いています。次の見回りで手を打ってください`;
-  if (get(p.db, "SELECT 1 AS x FROM decisions WHERE ticket_id = ? AND escalated = 1 AND decided_at IS NULL", [t.id])) return `#${number} は責任者の対応を待っています`;
-  const last = get<{ role: WorkRole }>(p.db, "SELECT role FROM reviews WHERE ticket_id = ? AND verdict = 'changes' ORDER BY id DESC LIMIT 1", [t.id]);
+  if (await runningNow(p, t.id)) return `#${number} は今動いています。次の見回りで手を打ってください`;
+  if (await waitingOwner(p, t.id)) return `#${number} は責任者の対応を待っています`;
+  const last = (await p.pdb.from("reviews").select("role").where("ticket_id", "=", t.id).where("verdict", "=", "changes").orderBy("id", "desc").limit(1).executeTakeFirst()) as { role: WorkRole } | undefined;
   if (!last) return `#${number} には差し戻しがありません。advise か split を使ってください`;
   const from = last.role;
   const lead = p.fixedMember("lead");
-  tx(p.db, () => {
-    run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ? AND status = 'pending'", [t.id]);
-    run(p.db, "UPDATE decisions SET decided_by = 'lead', decided_at = ? WHERE ticket_id = ? AND decided_at IS NULL", [p.now(), t.id]);
+  await p.pdb.transaction(async () => {
+    await p.pdb.update("messages", { status: "done" }).where("ticket_id", "=", t.id).where("status", "=", "pending").execute();
+    await p.pdb.update("decisions", { decided_by: "lead", decided_at: p.now() }).where("ticket_id", "=", t.id).where("decided_at", "is", null).execute();
     for (const f of mustResolve(p, t.id, from)) {
       setStatus(p, f.id, "wontfix");
       comment(p, f.id, { memberId: lead.id, role: "lead" }, "ruled", `見回りで裁定: 直さずに通す。${reason}`);
@@ -323,7 +352,7 @@ export function passAsIs(p: Project, number: number, reason: string): string {
     p.event(lead.name, "loop_passed", t.id, { from, reason });
     advance(p, p.ticket(t.id), from);
   });
-  touch(p, t.id);
+  await touch(p, t.id);
   return `#${number} の${ROLE_LABEL[from]}の残りの指摘を通し、次の工程へ進めました。`;
 }
 
@@ -360,12 +389,12 @@ export function patrolTools(p: Project, ws: { closePrs?: (t: TicketRow, reason: 
         number: z.number().int().describe("チケット番号"),
         advice: z.string().min(1).describe("なぜ回っているかの見立てと、どこをどう直すか・何をやめるか"),
       },
-      handler: (a) => {
-        const t = byNumber(p, a.number);
+      handler: async (a) => {
+        const t = await byNumber(p, a.number);
         if (!t || t.stage === "done" || t.stage === "dropped") return `#${a.number} は開いていません`;
         p.addNote(t.id, `【見回り】${a.advice}`, "lead");
         p.event(p.fixedMember("lead").name, "loop_advised", t.id, {});
-        touch(p, t.id);
+        await touch(p, t.id);
         return `#${a.number} にメモを書きました。`;
       },
     }),
@@ -377,20 +406,23 @@ export function patrolTools(p: Project, ws: { closePrs?: (t: TicketRow, reason: 
         tickets: z.array(z.object({ title: z.string().min(1), body: z.string().describe("やること・受け入れ条件・なぜ切り出したか") })).min(1),
         advice: z.string().min(1).describe("今のチケットでどこまでをやるか(担当とレビュアーが読む)"),
       },
-      handler: (a) => {
-        const t = byNumber(p, a.number);
+      handler: async (a) => {
+        const t = await byNumber(p, a.number);
         if (!t || t.stage === "done" || t.stage === "dropped") return `#${a.number} は開いていません`;
-        const refs = JSON.parse((get<{ plan_refs: string }>(p.db, "SELECT plan_refs FROM tickets WHERE id = ?", [t.id])?.plan_refs ?? "{}")) as { repo?: string };
-        const made = a.tickets.map((x) =>
-          createTicket(p, {
-            title: x.title,
-            body: `${x.body}\n\n---\n#${t.number}「${t.title}」が回り続けていたため、リーダーが見回りで切り出しました。`,
-            planRefs: { splitFrom: t.number, ...(refs.repo ? { repo: refs.repo } : {}) },
-          }),
-        );
+        const refs = JSON.parse((await p.pdb.from("tickets").select("plan_refs").where("id", "=", t.id).executeTakeFirst())?.plan_refs ?? "{}") as { repo?: string };
+        const made: TicketRow[] = [];
+        for (const x of a.tickets) {
+          made.push(
+            await createTicket(p, {
+              title: x.title,
+              body: `${x.body}\n\n---\n#${t.number}「${t.title}」が回り続けていたため、リーダーが見回りで切り出しました。`,
+              planRefs: { splitFrom: t.number, ...(refs.repo ? { repo: refs.repo } : {}) },
+            }),
+          );
+        }
         p.addNote(t.id, `【見回り・切り出し】#${made.map((m) => m.number).join("・#")} に切り出しました。このチケットでは: ${a.advice}`, "lead");
         p.event(p.fixedMember("lead").name, "loop_split", t.id, { into: made.map((m) => m.number) });
-        touch(p, t.id);
+        await touch(p, t.id);
         return `#${made.map((m) => m.number).join("・#")} に切り出しました。`;
       },
     }),
@@ -402,21 +434,21 @@ export function patrolTools(p: Project, ws: { closePrs?: (t: TicketRow, reason: 
         reason: z.string().min(1).describe("何が原因で回っているか"),
         owner_action: z.string().min(1).describe("責任者にしてほしいこと(具体的に)"),
       },
-      handler: (a) => {
-        const t = byNumber(p, a.number);
+      handler: async (a) => {
+        const t = await byNumber(p, a.number);
         if (!t || t.stage === "done" || t.stage === "dropped") return `#${a.number} は開いていません`;
-        if (runningNow(p, t.id)) return `#${a.number} は今動いています。次の見回りで手を打ってください`;
-        const resume: ResumeMessage = pendingWork(p, t.id) ?? {
+        if (await runningNow(p, t.id)) return `#${a.number} は今動いています。次の見回りで手を打ってください`;
+        const resume: ResumeMessage = (await pendingWork(p, t.id)) ?? {
           toRole: "dev",
           toMemberId: t.owner_member_id,
           kind: t.owner_member_id ? "fix" : "implement",
           payload: {},
         };
-        tx(p.db, () => {
-          run(p.db, "UPDATE messages SET status = 'done' WHERE ticket_id = ? AND status = 'pending'", [t.id]);
-          holdTicket(p, t.id, { reason: a.reason, ownerAction: a.owner_action, resume });
+        await p.pdb.transaction(async () => {
+          await p.pdb.update("messages", { status: "done" }).where("ticket_id", "=", t.id).where("status", "=", "pending").execute();
+          await holdTicket(p, t.id, { reason: a.reason, ownerAction: a.owner_action, resume });
         });
-        touch(p, t.id);
+        await touch(p, t.id);
         return `#${a.number} を保留して、責任者に対応を頼みました。`;
       },
     }),
