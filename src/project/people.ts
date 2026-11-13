@@ -123,5 +123,5 @@ export async function unitView(p: Project, unitId: number, office: { units: { id
   };
 }
 
-export type MemberView = ReturnType<typeof memberView>;
+export type MemberView = Awaited<ReturnType<typeof memberView>>;
 export type UnitView = Awaited<ReturnType<typeof unitView>>;
