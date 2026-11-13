@@ -324,27 +324,42 @@ async function openCount(p: Project): Promise<number> {
   return Number(row?.n ?? 0);
 }
 
+/** 1 回の見回りで PR を取り直す merge 待ちチケットの数の既定の上限(設定 patrol_pr_check_max、0 以下で既定に戻す)。 */
+const PR_CHECK_MAX = 10;
+
 /**
- * 待たれている merge 待ちチケットの PR を GitHub から取り直し、外(GitHub の画面など)で merge 済みなら、merge の確認(外部 merge の道)で done にする。
+ * merge 待ちチケットの PR を GitHub から取り直し、外(GitHub の画面など)で merge 済みなら、merge の確認(外部 merge の道)で done にする。
  * pull_requests.gh_state は merge の確認の中でしか更新されないので、自動 merge を切っていると、外で merge されてもボードは merge 待ちのまま、
  * それを待つチケットも止まる。見回りの間隔ごとに 1 回だけ問い合わせる。GitHub に入れない間は何もしない。
+ * 問い合わせは 1 回に patrol_pr_check_max 件(既定 10)まで。ほかのチケットに待たれているもの(止まっているものが出る)を先にし、
+ * 残りは番号順に、前回の続きから 1 周するように回す(patrol_pr_check_cursor)。
  * @returns done にしたチケットの数
  */
 export async function refreshMergedWaits(p: Project, gh: GitHub): Promise<number> {
   if (patrolMinutes(p) <= 0 || githubDown(p)) return 0;
-  const waiting = await p.pdb.from("tickets").select("id").where("stage", "=", "merge").execute();
+  const waiting = (await p.pdb.from("tickets").select("id").where("stage", "=", "merge").execute()).map((t) => t.id).sort((a, b) => a - b);
   if (!waiting.length) return 0;
-  const waited = await p.pdb
-    .from("ticket_deps")
-    .select("depends_on")
-    .where("depends_on", "in", waiting.map((t) => t.id))
-    .where("ticket_id", "in", (await openTickets(p).clearSelect().select("id").execute()).map((t) => t.id))
-    .execute();
-  const ids = [...new Set(waited.map((d) => d.depends_on))].sort((a, b) => a - b);
-  if (!ids.length) return 0;
   const last = p.setting("patrol_pr_check_at");
   if (last && p.clock.now().getTime() - Date.parse(last) < patrolMinutes(p) * 60_000) return 0;
+  const waited = new Set(
+    (
+      await p.pdb
+        .from("ticket_deps")
+        .select("depends_on")
+        .where("depends_on", "in", waiting)
+        .where("ticket_id", "in", (await openTickets(p).clearSelect().select("id").execute()).map((t) => t.id))
+        .execute()
+    ).map((d) => d.depends_on),
+  );
+  const cursor = p.settingNumber("patrol_pr_check_cursor", 0);
+  const rest = waiting.filter((id) => !waited.has(id));
+  const rotated = [...rest.filter((id) => id > cursor), ...rest.filter((id) => id <= cursor)];
+  const configured = p.settingNumber("patrol_pr_check_max", PR_CHECK_MAX);
+  const max = configured > 0 ? configured : PR_CHECK_MAX;
+  const ids = [...waiting.filter((id) => waited.has(id)), ...rotated].slice(0, max);
   p.setSetting("patrol_pr_check_at", iso(p.clock.now()));
+  const lastRest = ids.filter((id) => !waited.has(id)).at(-1);
+  if (lastRest !== undefined) p.setSetting("patrol_pr_check_cursor", String(lastRest));
   let done = 0;
   for (const id of ids) {
     try {
