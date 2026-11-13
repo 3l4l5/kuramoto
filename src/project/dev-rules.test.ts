@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ManualClock } from "../clock.js";
 import { all, run } from "../db/sqlite.js";
 import { fixedAll, FakeHarness, withResolutions, type FakeStep } from "../harness/fake.js";
-import { addDevRule, checkRules, devRulesView, setDevRuleEnabled, TEMPLATES, type RuleSubject } from "./dev-rules.js";
+import { addDevRule, checkRules, deleteDevRule, devRulesVersions, devRulesView, openViolations, recordViolations, setDevRuleEnabled, TEMPLATES, updateDevRule, violationsOf, violationTotals, type RuleSubject } from "./dev-rules.js";
 import { Dispatcher } from "./dispatcher.js";
 import { productivity } from "./productivity.js";
 import { Project } from "./project.js";
@@ -51,6 +51,73 @@ describe("開発ルール: 一覧・追加・有効 / 無効", () => {
     expect(devRulesView(p).rules[0]!.enabled).toBe(false);
     expect(setDevRuleEnabled(p, r.id, true).enabled).toBe(true);
     expect(() => setDevRuleEnabled(p, 999, true)).toThrow("ありません");
+  });
+});
+
+describe("開発ルール: 版・直す・消す", () => {
+  it("足す・直す・消す・有効 / 無効のたびに版が 1 つ上がり、そのときのルールの一覧が残る", () => {
+    const p = projectWith();
+    expect(devRulesView(p).version).toBe(1);
+    const r = template(p, "jira");
+    expect(devRulesView(p).version).toBe(2);
+    updateDevRule(p, r.id, { name: "Jira 番号" });
+    expect(devRulesView(p).version).toBe(3);
+    setDevRuleEnabled(p, r.id, false);
+    expect(devRulesView(p).version).toBe(4);
+    deleteDevRule(p, r.id);
+    expect(devRulesView(p).version).toBe(5);
+    // 断った操作では上がらない
+    expect(() => updateDevRule(p, r.id, { name: "x" })).toThrow("ありません");
+    expect(() => updateDevRule(p, 999, { name: "x" })).toThrow("ありません");
+    expect(devRulesView(p).version).toBe(5);
+    expect(devRulesVersions(p).map((v) => [v.version, v.rules.map((x) => [x.name, x.enabled])])).toEqual([
+      [1, []],
+      [2, [["Jira 番号をそろえる", true]]],
+      [3, [["Jira 番号", true]]],
+      [4, [["Jira 番号", false]]],
+      [5, []],
+    ]);
+  });
+
+  it("直せるのは渡した項目だけ。足すときと同じ確かめで断り、断ったら中身も版も変わらない", () => {
+    const p = projectWith();
+    const r = template(p, "jira");
+    const u = updateDevRule(p, r.id, { onFail: "review", appliesTo: ["pr_title"] });
+    expect(u).toMatchObject({ id: r.id, name: "Jira 番号をそろえる", pattern: r.pattern, onFail: "review", appliesTo: ["pr_title"], template: "jira" });
+    // 確かめ方を AI に変えると、正規表現は外れる
+    expect(updateDevRule(p, r.id, { check: "ai" })).toMatchObject({ check: "ai", pattern: null });
+    expect(() => updateDevRule(p, r.id, { name: " " })).toThrow("名前");
+    expect(() => updateDevRule(p, r.id, { appliesTo: [] })).toThrow("どこに効くか");
+    expect(() => updateDevRule(p, r.id, { check: "pattern" })).toThrow("正規表現が要ります");
+    expect(() => updateDevRule(p, r.id, { check: "pattern", pattern: "(" })).toThrow("正規表現");
+    expect(devRulesView(p)).toMatchObject({ version: 4, rules: [{ check: "ai", pattern: null }] });
+  });
+
+  it("直したルールで確かめる", async () => {
+    const p = projectWith();
+    const r = template(p, "jira");
+    const bad = subject({ branch: "kuramoto/7", title: "CSV", commits: ["x"] });
+    expect((await checkRules(p, bad)).found).toHaveLength(1);
+    updateDevRule(p, r.id, { pattern: "^" });
+    expect((await checkRules(p, bad)).found).toHaveLength(0);
+  });
+
+  it("消したルールは一覧に出ず、確かめず、同じひな形をもう一度足せる。違反の記録は残る", async () => {
+    const p = projectWith();
+    const r = template(p, "jira");
+    const t = createTicket(p, { title: "CSV の書き出し" });
+    recordViolations(p, t.id, null, await checkRules(p, subject({ branch: "kuramoto/7", title: "CSV", commits: ["x"] })));
+    expect(devRulesView(p).rules[0]).toMatchObject({ violations: 1 });
+    deleteDevRule(p, r.id);
+    expect(devRulesView(p).rules).toEqual([]);
+    expect(devRulesView(p).templates.find((x) => x.key === "jira")!.added).toBe(false);
+    expect((await checkRules(p, subject({ branch: "kuramoto/7", title: "CSV", commits: ["x"] }))).found).toEqual([]);
+    expect(openViolations(p, t.id)).toEqual([]);
+    expect(violationsOf(p, t.id)).toMatchObject([{ name: "Jira 番号をそろえる" }]);
+    expect(violationTotals(p).total).toBe(1);
+    expect(() => setDevRuleEnabled(p, r.id, true)).toThrow("ありません");
+    expect(template(p, "jira").id).not.toBe(r.id);
+    expect(devRulesView(p).rules).toHaveLength(1);
   });
 });
 

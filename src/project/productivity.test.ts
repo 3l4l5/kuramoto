@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ManualClock } from "../clock.js";
 import { run } from "../db/sqlite.js";
+import { addDevRule } from "./dev-rules.js";
 import { productivity } from "./productivity.js";
 import { Project } from "./project.js";
 import { createTicket, dropTicket } from "./workflow.js";
@@ -64,5 +65,27 @@ describe("生産性: 流れとメンバー(ADR-0029)", () => {
     const m = productivity(p).members;
     expect(m.list).toMatchObject([{ runs: 1, costUsd: 0.5, merged: 0 }]);
     expect(m.roles).toMatchObject([{ role: "dev", runs: 1, median: 30 * 60_000, errorRate: 0 }]);
+  });
+});
+
+describe("生産性: ルール違反(R15)", () => {
+  it("合計に加え、チケットごとの違反の数とうち自動で直した数が出る", () => {
+    const p = new Project(":memory:", new ManualClock(new Date("2026-11-12T00:00:00Z")));
+    p.addRepo("acme/shop", "API");
+    const a = createTicket(p, { title: "A" });
+    const b = createTicket(p, { title: "B" });
+    const fix = addDevRule(p, { template: "jira" });
+    const block = addDevRule(p, { template: "migration-alone" });
+    const add = (rule: number, ticket: number, handled: string) =>
+      run(p.db, "INSERT INTO rule_violations (rule_id, ticket_id, handled, created_at, detail) VALUES (?, ?, ?, ?, '')", [rule, ticket, handled, p.now()]);
+    add(fix.id, a.id, "autofixed");
+    add(fix.id, a.id, "autofixed");
+    add(block.id, a.id, "blocked");
+
+    const v = productivity(p);
+    expect(v.totals.ruleViolations).toEqual({ total: 3, autofixed: 2 });
+    const row = (id: number) => v.tickets.find((t) => t.id === id)!;
+    expect(row(a.id)).toMatchObject({ violations: 3, autofixed: 2, reviewed: 0, blocked: 1 });
+    expect(row(b.id)).toMatchObject({ violations: 0, autofixed: 0 });
   });
 });

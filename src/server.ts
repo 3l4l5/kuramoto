@@ -30,7 +30,7 @@ import { exportDesignDoc } from "./project/export.js";
 import { extractTransfer, restoreTransfer } from "./project/transfer.js";
 import { runWork } from "./project/progress.js";
 import { saveFormationInput, savePolicyInput, teamView } from "./project/team.js";
-import { addDevRule, devRulesView, setDevRuleEnabled } from "./project/dev-rules.js";
+import { addDevRule, deleteDevRule, devRulesView, openViolations, setDevRuleEnabled, updateDevRule } from "./project/dev-rules.js";
 import { productivity } from "./project/productivity.js";
 import { officeView } from "./project/office.js";
 import { memberView, unitView, type MemberView, type UnitView } from "./project/people.js";
@@ -419,6 +419,21 @@ export class KuramotoServer {
       });
       return devRulesView(p);
     }
+    if (b === "dev-rules" && c && !parts[4] && method === "POST") {
+      updateDevRule(p, Number(c), {
+        ...(typeof body.name === "string" ? { name: body.name } : {}),
+        ...(typeof body.body === "string" ? { body: body.body } : {}),
+        ...(Array.isArray(body.appliesTo) ? { appliesTo: body.appliesTo as never } : {}),
+        ...(typeof body.check === "string" ? { check: body.check as never } : {}),
+        ...(typeof body.pattern === "string" ? { pattern: body.pattern } : {}),
+        ...(typeof body.onFail === "string" ? { onFail: body.onFail as never } : {}),
+      });
+      return devRulesView(p);
+    }
+    if (b === "dev-rules" && c && parts[4] === "delete" && method === "POST") {
+      deleteDevRule(p, Number(c));
+      return devRulesView(p);
+    }
     if (b === "dev-rules" && c && parts[4] === "enabled" && method === "POST") {
       setDevRuleEnabled(p, Number(c), body.enabled === true);
       return devRulesView(p);
@@ -614,6 +629,8 @@ export class KuramotoServer {
         conflict: !!get(p.db, "SELECT 1 AS x FROM conflicts c JOIN pull_requests pr ON pr.id = c.pr_id WHERE pr.ticket_id = ? AND c.resolved_at IS NULL", [t.id]),
         // 取りやめたとき: 誰が・なぜ・いつ(ボードの「取りやめ」に出す)
         dropped: droppedInfo(p, t.id),
+        // 「直すまで進めない」ルールに反して止まっているルールの名前(ボードの赤い札)
+        ruleBlocked: openViolations(p, t.id, "blocked").map((v) => v.name),
       };
     });
     const decisions = pendingOwnerDecisions(p).map((d) => {
@@ -728,6 +745,7 @@ export type HqView = ReturnType<KuramotoServer["hqView"]>;
 export type ProjectView = ReturnType<KuramotoServer["projectView"]>;
 export type StudioView = ReturnType<KuramotoServer["studioViewOf"]>;
 export type TeamView = ReturnType<typeof teamView>;
+export type DevRulesView = ReturnType<typeof devRulesView>;
 export type ProductivityView = ReturnType<typeof productivity>;
 export type OfficeView = ReturnType<typeof officeView> & { running: boolean };
 export type { MemberView, UnitView };

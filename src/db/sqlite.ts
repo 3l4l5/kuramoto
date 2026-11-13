@@ -1,12 +1,13 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { migrate, type Migration } from "./migrate.js";
 
 export type Db = DatabaseSync;
 export type Params = Record<string, SQLInputValue> | SQLInputValue[];
 
-/** マイグレーション 1 件。配列の位置 + 1 が版(PRAGMA user_version)になる。 */
-export type Migration = string;
+export type { Migration } from "./migrate.js";
+export { tx } from "./tx.js";
 
 export function openDb(path: string, migrations: Migration[]): Db {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -16,30 +17,6 @@ export function openDb(path: string, migrations: Migration[]): Db {
   db.exec("PRAGMA busy_timeout = 5000");
   migrate(db, migrations);
   return db;
-}
-
-function migrate(db: Db, migrations: Migration[]): void {
-  const current = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
-  for (let v = current; v < migrations.length; v++) {
-    tx(db, () => {
-      db.exec(migrations[v]!);
-      db.exec(`PRAGMA user_version = ${v + 1}`);
-    });
-  }
-}
-
-/** 書き込みのトランザクション。入れ子にしたときは外側にまとめる。 */
-export function tx<T>(db: Db, fn: () => T): T {
-  if (db.isTransaction) return fn();
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const out = fn();
-    db.exec("COMMIT");
-    return out;
-  } catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
-  }
 }
 
 function bind(params?: Params): unknown[] {

@@ -9,6 +9,8 @@ import { LeadChat } from "./LeadChat";
 import { FormationDrawer } from "./Formation";
 import { Checkbox, Input, Select, Textarea } from "./ds";
 import { BudgetInput } from "./BudgetInput";
+import { Drawer as DsDrawer } from "./ds";
+import { DevRulesTab, draftDirty, useDevRules, type RuleDraft } from "./DevRules";
 
 /**
  * チームの編成と方針(docs/design.md 6.3 の引き出し、ADR-0007・0010)。変えるたびに版を残す。
@@ -22,6 +24,7 @@ export const useTeam = (id: number) => useQuery({ queryKey: ["team", id], queryF
 export function TeamDrawer({ id, drawer, close }: { id: number; drawer: Drawer; close: () => void }) {
   const { data } = useTeam(id);
   if (drawer === "formation") return data ? <FormationDrawer id={id} t={data} close={close} /> : null;
+  if (drawer === "policy") return <PolicyDrawer id={id} team={data} close={close} />;
   return (
     <aside className="drawer" aria-label={DRAWER_LABEL[drawer]}>
       <header>
@@ -30,10 +33,38 @@ export function TeamDrawer({ id, drawer, close }: { id: number; drawer: Drawer; 
           閉じる
         </Btn>
       </header>
-      <div className="pol">
-        {drawer === "lead" ? <LeadChat id={id} /> : !data ? null : <PolicyEditor id={id} t={data} />}
-      </div>
+      <div className="pol">{drawer === "lead" ? <LeadChat id={id} /> : null}</div>
     </aside>
+  );
+}
+
+type PolicyTab = "models" | "rules";
+
+/** チームの方針: 役割ごとのモデル(R11)と開発ルール(R15)の 2 つのタブ。 */
+function PolicyDrawer({ id, team, close }: { id: number; team: TeamView | undefined; close: () => void }) {
+  const [tab, setTab] = useState<PolicyTab>("models");
+  const [draft, setDraft] = useState<RuleDraft | null>(null);
+  const rules = useDevRules(id);
+  return (
+    <DsDrawer
+      className="drawer drawer--wide"
+      label={DRAWER_LABEL.policy}
+      title={DRAWER_LABEL.policy}
+      version={tab === "rules" && rules.data ? `v${rules.data.version}` : undefined}
+      onClose={close}
+      tabs={[
+        { key: "models" as const, label: "役割ごとのモデル" },
+        { key: "rules" as const, label: "開発ルール", count: draft && draftDirty(draft) ? 1 : 0 },
+      ]}
+      activeTab={tab}
+      onTabChange={setTab}
+    >
+      {tab === "rules" ? (
+        <DevRulesTab id={id} draft={draft} setDraft={setDraft} />
+      ) : (
+        <div className="pol">{team ? <PolicyEditor id={id} t={team} /> : null}</div>
+      )}
+    </DsDrawer>
   );
 }
 

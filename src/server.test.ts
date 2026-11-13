@@ -10,6 +10,9 @@ import { StaticWorkspace } from "./project/workspace.js";
 import { KuramotoServer } from "./server.js";
 import { leadMessages } from "./project/leadchat.js";
 import type { Project } from "./project/project.js";
+import { addDevRule } from "./project/dev-rules.js";
+import { createTicket } from "./project/workflow.js";
+import { run } from "./db/sqlite.js";
 
 const leadSaid = (p: Project, text: string) => leadMessages(p).some((m) => m.body.includes(text));
 
@@ -145,7 +148,7 @@ describe("ローカルサーバー", () => {
     expect((await call("GET", "/api/hq")).json.projects[0]).toMatchObject({ running: false, planning: { handed: false, current: "req" } });
   });
 
-  it("開発ルールを API で 一覧・追加・有効 / 無効 にできる", async () => {
+  it("開発ルールを API で 一覧・追加・直す・消す・有効 / 無効 にでき、変えるたびに版が上がる", async () => {
     const { call } = await boot();
     const { json: created } = await call("POST", "/api/projects", { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }] });
     const base = `/api/projects/${created.id}/dev-rules`;
@@ -160,7 +163,36 @@ describe("ローカルサーバー", () => {
 
     const off = (await call("POST", `${base}/${added.rules[0].id}/enabled`, { enabled: false })).json;
     expect(off.rules[0].enabled).toBe(false);
+    expect(off.version).toBe(4);
+
+    // 直す: 版が上がり、渡した項目だけが変わる。読めない正規表現は断る
+    const ruleId = own.rules[1].id;
+    const fixed = (await call("POST", `${base}/${ruleId}`, { name: "直した", onFail: "review" })).json;
+    expect(fixed).toMatchObject({ version: 5, rules: [{}, { name: "直した", onFail: "review", pattern: "^対象" }] });
+    expect((await call("POST", `${base}/${ruleId}`, { pattern: "(" })).status).toBe(400);
+    expect((await call("POST", `${base}/999`, { name: "x" })).status).toBe(400);
+    // 消す
+    const gone = (await call("POST", `${base}/${ruleId}/delete`)).json;
+    expect(gone).toMatchObject({ version: 6, rules: [{ name: "Jira 番号をそろえる" }] });
+    expect(gone.rules).toHaveLength(1);
+    expect((await call("POST", `${base}/${ruleId}/delete`)).status).toBe(400);
     expect((await call("GET", `/api/projects/${created.id}/productivity`)).json.totals.ruleViolations).toEqual({ total: 0, autofixed: 0 });
+  });
+
+  it("「直すまで進めない」ルールに反して止まっているチケットは、ボードの一覧で止まっている印が付く", async () => {
+    const { call, app } = await boot();
+    const { json: created } = await call("POST", "/api/projects", { name: "止まる", repos: [{ fullName: "acme/shop", role: "API" }] });
+    const p = app.project(created.id);
+    const t = createTicket(p, { title: "A" });
+    const other = createTicket(p, { title: "B" });
+    const rule = addDevRule(p, { template: "migration-alone" });
+    run(p.db, "INSERT INTO rule_violations (rule_id, ticket_id, handled, created_at, detail) VALUES (?, ?, 'blocked', ?, '')", [rule.id, t.id, p.now()]);
+    const tickets = (await call("GET", `/api/projects/${created.id}`)).json.tickets as { id: number; ruleBlocked: string[] }[];
+    expect(tickets.find((x) => x.id === t.id)!.ruleBlocked).toEqual(["マイグレーションは単独の PR"]);
+    expect(tickets.find((x) => x.id === other.id)!.ruleBlocked).toEqual([]);
+    // 無効にすると止まらない
+    await call("POST", `/api/projects/${created.id}/dev-rules/${rule.id}/enabled`, { enabled: false });
+    expect(((await call("GET", `/api/projects/${created.id}`)).json.tickets as { id: number; ruleBlocked: string[] }[]).find((x) => x.id === t.id)!.ruleBlocked).toEqual([]);
   });
 
   it("独自ヘッダーの無い書き込みと、localhost 以外の Host は断る", async () => {

@@ -72,7 +72,7 @@ export const TEMPLATES: RuleTemplate[] = [
   },
 ];
 
-// ---- 一覧・追加・有効 / 無効 ----
+// ---- 一覧・追加・直す・消す・有効 / 無効(変えるたびに版が上がる) ----
 
 type RuleRow = { id: number; name: string; body: string; applies_to: string; check_kind: RuleCheck; pattern: string | null; on_fail: RuleOnFail; enabled: number; template: string | null; created_at: string };
 
@@ -92,7 +92,7 @@ function toRule(r: RuleRow): DevRule {
 }
 
 export function devRules(p: Project): DevRule[] {
-  return all<RuleRow>(p.db, "SELECT * FROM dev_rules ORDER BY id").map(toRule);
+  return all<RuleRow>(p.db, "SELECT * FROM dev_rules WHERE deleted_at IS NULL ORDER BY id").map(toRule);
 }
 
 /** 画面の一覧用。ルールごとの違反の数(うち自動で直した数)つき。 */
@@ -102,7 +102,28 @@ export function devRulesView(p: Project) {
   );
   const rules = devRules(p).map((r) => ({ ...r, violations: counts.get(r.id)?.n ?? 0, autofixed: counts.get(r.id)?.fixed ?? 0 }));
   const added = new Set(rules.map((r) => r.template));
-  return { rules, templates: TEMPLATES.map((t) => ({ ...t, added: added.has(t.key) })) };
+  return { version: devRulesVersion(p), rules, templates: TEMPLATES.map((t) => ({ ...t, added: added.has(t.key) })) };
+}
+
+/** 開発ルールの今の版。ルールを足す・直す・消す・有効 / 無効にするたびに 1 つ上がり、そのときのルールの一覧を dev_rule_versions に残す。 */
+export function devRulesVersion(p: Project): number {
+  return get<{ v: number | null }>(p.db, "SELECT MAX(version) AS v FROM dev_rule_versions")?.v ?? 1;
+}
+
+function bumpVersion(p: Project): number {
+  const version = devRulesVersion(p) + 1;
+  const rules = devRules(p).map((r) => ({ id: r.id, name: r.name, body: r.body, appliesTo: r.appliesTo, check: r.check, pattern: r.pattern, onFail: r.onFail, enabled: r.enabled }));
+  run(p.db, "INSERT INTO dev_rule_versions (version, rules, created_at) VALUES (?, ?, ?)", [version, JSON.stringify(rules), p.now()]);
+  return version;
+}
+
+/** 残してある版ごとの、そのときのルールの一覧。 */
+export function devRulesVersions(p: Project): { version: number; createdAt: string; rules: { id: number; name: string; enabled: boolean }[] }[] {
+  return all<{ version: number; rules: string; created_at: string }>(p.db, "SELECT * FROM dev_rule_versions ORDER BY version").map((v) => ({
+    version: v.version,
+    createdAt: v.created_at,
+    rules: JSON.parse(v.rules) as { id: number; name: string; enabled: boolean }[],
+  }));
 }
 
 function checkRegex(pattern: string): void {
@@ -114,16 +135,8 @@ function checkRegex(pattern: string): void {
   }
 }
 
-export function addDevRule(p: Project, input: Partial<RuleInput> & { template?: string }): DevRule {
-  let base: Partial<RuleInput> = input;
-  let template: string | null = null;
-  if (input.template) {
-    const t = TEMPLATES.find((x) => x.key === input.template);
-    if (!t) throw new Error(`ひな形がありません: ${input.template}`);
-    if (devRules(p).some((r) => r.template === t.key)) throw new Error(`「${t.name}」はもう足してあります`);
-    base = { ...t, ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)) };
-    template = t.key;
-  }
+/** 足す・直すで共通の確かめ。足りない項目は、呼ぶ側が埋めてから渡す。 */
+function validRule(base: Partial<RuleInput>): RuleInput & { pattern: string | null } {
   const name = String(base.name ?? "").trim();
   if (!name) throw new Error("名前がありません");
   const appliesTo = [...new Set(base.appliesTo ?? [])];
@@ -140,25 +153,69 @@ export function addDevRule(p: Project, input: Partial<RuleInput> & { template?: 
     if (!pattern) throw new Error("形式のルールには正規表現が要ります");
     checkRegex(pattern);
   }
+  return { name, body, appliesTo, check: base.check!, pattern, onFail: base.onFail! };
+}
+
+export function addDevRule(p: Project, input: Partial<RuleInput> & { template?: string }): DevRule {
+  let base: Partial<RuleInput> = input;
+  let template: string | null = null;
+  if (input.template) {
+    const t = TEMPLATES.find((x) => x.key === input.template);
+    if (!t) throw new Error(`ひな形がありません: ${input.template}`);
+    if (devRules(p).some((r) => r.template === t.key)) throw new Error(`「${t.name}」はもう足してあります`);
+    base = { ...t, ...Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined)) };
+    template = t.key;
+  }
+  const v = validRule(base);
   const id = run(p.db, "INSERT INTO dev_rules (name, body, applies_to, check_kind, pattern, on_fail, enabled, template, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)", [
-    name,
-    body,
-    appliesTo.join(","),
-    base.check!,
-    pattern,
-    base.onFail!,
+    v.name,
+    v.body,
+    v.appliesTo.join(","),
+    v.check,
+    v.pattern,
+    v.onFail,
     template,
     p.now(),
   ]).lastId;
-  p.event("owner", "dev_rule_added", null, { id, name });
-  return devRules(p).find((r) => r.id === id)!;
+  const version = bumpVersion(p);
+  p.event("owner", "dev_rule_added", null, { id, name: v.name, version });
+  return liveRule(p, id);
+}
+
+function liveRule(p: Project, id: number): DevRule {
+  const r = devRules(p).find((x) => x.id === id);
+  if (!r) throw new Error("そのルールはありません");
+  return r;
+}
+
+/** ルールの中身を直す。渡した項目だけを変える(ひな形から足したものも直せる)。直すと版が上がる。 */
+export function updateDevRule(p: Project, id: number, input: Partial<RuleInput>): DevRule {
+  const was = liveRule(p, id);
+  const given = Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined));
+  const v = validRule({ name: was.name, body: was.body, appliesTo: was.appliesTo, check: was.check, pattern: was.pattern, onFail: was.onFail, ...given });
+  run(p.db, "UPDATE dev_rules SET name = ?, body = ?, applies_to = ?, check_kind = ?, pattern = ?, on_fail = ? WHERE id = ?", [v.name, v.body, v.appliesTo.join(","), v.check, v.pattern, v.onFail, id]);
+  const version = bumpVersion(p);
+  p.event("owner", "dev_rule_updated", null, { id, name: v.name, version });
+  return liveRule(p, id);
+}
+
+/**
+ * ルールを消す。違反の記録(チケットのやりとり・生産性の数)は残すので、行は消さずに印を付ける。
+ * 消したルールは確かめず、一覧にも出さず、同じひな形をもう一度足せる。
+ */
+export function deleteDevRule(p: Project, id: number): void {
+  const was = liveRule(p, id);
+  run(p.db, "UPDATE dev_rules SET deleted_at = ? WHERE id = ?", [p.now(), id]);
+  const version = bumpVersion(p);
+  p.event("owner", "dev_rule_deleted", null, { id, name: was.name, version });
 }
 
 export function setDevRuleEnabled(p: Project, id: number, enabled: boolean): DevRule {
-  const changed = run(p.db, "UPDATE dev_rules SET enabled = ? WHERE id = ?", [enabled ? 1 : 0, id]).changes;
-  if (!changed) throw new Error("そのルールはありません");
-  p.event("owner", enabled ? "dev_rule_enabled" : "dev_rule_disabled", null, { id });
-  return devRules(p).find((r) => r.id === id)!;
+  liveRule(p, id);
+  run(p.db, "UPDATE dev_rules SET enabled = ? WHERE id = ?", [enabled ? 1 : 0, id]);
+  const version = bumpVersion(p);
+  p.event("owner", enabled ? "dev_rule_enabled" : "dev_rule_disabled", null, { id, version });
+  return liveRule(p, id);
 }
 
 // ---- 確かめる ----
@@ -272,7 +329,7 @@ export function openViolations(p: Project, ticketId: number, handled?: Handled):
   return all<ViolationRow & { name: string; body: string }>(
     p.db,
     `SELECT v.*, r.name, r.body FROM rule_violations v JOIN dev_rules r ON r.id = v.rule_id
-     WHERE v.ticket_id = ? AND v.resolved_at IS NULL AND r.enabled = 1 ${handled ? "AND v.handled = ?" : ""} ORDER BY v.id`,
+     WHERE v.ticket_id = ? AND v.resolved_at IS NULL AND r.enabled = 1 AND r.deleted_at IS NULL ${handled ? "AND v.handled = ?" : ""} ORDER BY v.id`,
     handled ? [ticketId, handled] : [ticketId],
   );
 }

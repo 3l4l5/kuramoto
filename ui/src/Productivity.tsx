@@ -1,3 +1,4 @@
+import { Chip } from "./ds";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type ProductivityView } from "./api";
@@ -48,6 +49,7 @@ export function ProductivityPage({ id }: { id: number }) {
         <Tile label="完成したチケット" value={`${t.completed}`} note={`1 件あたり ${usd(t.costPerCompletedUsd)} · ${t.tokensPerCompleted == null ? "—" : tok(t.tokensPerCompleted)} トークン`} />
         <Tile label="手戻り" value={`${t.rework.total}`} note={`差し戻し ${t.rework.changes} · 衝突 ${t.rework.conflicts} · エラーでやり直し ${t.rework.retries}`} />
         <Tile label="人間に助けを求めた" value={`${t.help.total}`} note={`判断カード ${t.help.decisions} · 企画の未決 ${t.help.planAsks}`} />
+        <Tile label="ルール違反" value={`${t.ruleViolations.total}`} note={`うち自動で直した ${t.ruleViolations.autofixed}`} />
       </div>
 
       <div className="viewbar">
@@ -294,6 +296,7 @@ function Tickets({ data, mode }: P) {
             <th>差し戻し</th>
             <th>衝突</th>
             <th>やり直し</th>
+            <th>ルール違反</th>
             <th>助けを求めた</th>
           </tr>
         </thead>
@@ -311,6 +314,17 @@ function Tickets({ data, mode }: P) {
               <td>{x.rounds}</td>
               <td>{x.conflicts}</td>
               <td>{x.retries}</td>
+              <td>
+                {x.violations === 0 ? (
+                  "—"
+                ) : (
+                  <span className="viol">
+                    {x.autofixed > 0 && <Chip tone="ok">{x.autofixed} · 自動で直した</Chip>}
+                    {x.reviewed > 0 && <Chip tone="warn">{x.reviewed} · レビューで指摘</Chip>}
+                    {x.blocked > 0 && <Chip tone="danger">{x.blocked} · 直すまで止める</Chip>}
+                  </span>
+                )}
+              </td>
               <td>{x.help}</td>
             </tr>
           ))}

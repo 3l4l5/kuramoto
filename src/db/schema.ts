@@ -260,4 +260,12 @@ CREATE INDEX IF NOT EXISTS member_messages_member ON member_messages(member_id, 
 ALTER TABLE ticket_notes ADD COLUMN kind TEXT NOT NULL DEFAULT 'note';
 ALTER TABLE runs ADD COLUMN about_ticket_id INTEGER REFERENCES tickets(id);
 `,
+  // 20: 開発ルールに版(変えるたびに 1 つ上がり、そのときのルールの一覧を残す)と、消した印を足す。
+  // 消しても違反の記録は残すので、行は消さずに deleted_at を入れる。今あるルールは版 1 として残す。表・列を足すだけ。
+  `
+CREATE TABLE IF NOT EXISTS dev_rule_versions (version INTEGER PRIMARY KEY, rules TEXT NOT NULL, created_at TEXT NOT NULL);
+ALTER TABLE dev_rules ADD COLUMN deleted_at TEXT;
+INSERT OR IGNORE INTO dev_rule_versions (version, rules, created_at)
+  SELECT 1, json_group_array(json_object('id', id, 'name', name, 'enabled', json(CASE WHEN enabled = 1 THEN 'true' ELSE 'false' END))), '' FROM dev_rules;
+`,
 ];
