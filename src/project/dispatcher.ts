@@ -33,7 +33,7 @@ import { finishMemberChat, isFinishedTicket, memberChatPrompt, memberChatSystem,
 import { giveUpTriage, markTriaged, requestTriage, triagePrompt, triageTools, untriaged } from "./triage.js";
 import { LEAD_CHAT_SYSTEM, leadChatPrompt, leadChatTools, leadReply, markOwnerMessagesRead, unreadOwnerMessages } from "./leadchat.js";
 import { dropGithubCiTickets, githubCheckDue, githubDown, githubStillDown, isGithubAuthError, markGithubDown, markGithubUp } from "./outage.js";
-import { deadlockSignals, finishPatrol, loopSignals, patrolPrompt, patrolTools, requestPatrol, type Deadlock, type LoopSignal } from "./patrol.js";
+import { deadlockSignals, finishPatrol, loopSignals, patrolPrompt, patrolTools, refreshMergedWaits, requestPatrol, type Deadlock, type LoopSignal } from "./patrol.js";
 
 export type DispatcherDeps = {
   harnesses: Record<string, Harness>;
@@ -117,11 +117,19 @@ export class Dispatcher {
   /** 1 件だけ起こして終わるまで待つ。起こすものが無ければ false。 */
   async dispatchOnce(): Promise<boolean> {
     await this.checkGithub();
+    await this.refreshMergedWaits();
     await this.p.pdb.transaction(async () => await this.housekeep());
     const job = await this.next();
     if (!job) return false;
     await this.execute(job);
     return true;
+  }
+
+  /** 見回り中なら、待たれている merge 待ちの PR を GitHub から取り直す(外で merge 済みなら done にして、待ちを解く)。DB のトランザクションの外で呼ぶ。 */
+  async refreshMergedWaits(): Promise<void> {
+    const gh = this.deps.github;
+    if (!gh || !this.deps.triage || !(this.deps.ticketsAllowed?.() ?? true)) return;
+    await refreshMergedWaits(this.p, gh);
   }
 
   /** GitHub に入れない間は、間を空けて入れるかを確かめ、入れたら再開する(ADR-0027)。 */
@@ -179,6 +187,7 @@ export class Dispatcher {
       // DB が切れている間は、何も取らず、housekeep も走らせない。動いている起動の終わりだけ待つ
       if (dbUp()) {
         await this.checkGithub();
+        await this.refreshMergedWaits();
         await this.p.pdb.transaction(async () => await this.housekeep());
       }
       while (dbUp() && inflight.size < limit() && started < maxRuns) {

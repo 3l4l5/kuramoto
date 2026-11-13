@@ -5,7 +5,7 @@ import { FakeHarness } from "../harness/fake.js";
 import { Dispatcher } from "./dispatcher.js";
 import { leadMessages } from "./leadchat.js";
 import type { GitHub, PrStatus } from "../github/github.js";
-import { deadlockSignals, detectDeadlocks, finishPatrol, loopSignals, patrolPrompt, requestPatrol, setPatrolMinutes, startPatrol } from "./patrol.js";
+import { deadlockSignals, detectDeadlocks, finishPatrol, loopSignals, patrolPrompt, refreshMergedWaits, requestPatrol, setPatrolMinutes, startPatrol } from "./patrol.js";
 import { ownerMerge } from "./merge.js";
 import { Project } from "./project.js";
 import { blockers } from "./triage.js";
@@ -279,6 +279,78 @@ describe("リーダーの見回り(ADR-0026)", () => {
       expect(p.ticket(base.id).stage).toBe("done");
       expect(await blockers(p, next.id)).toEqual([]);
       expect(await detectDeadlocks(p)).toEqual([]);
+    });
+
+    it("見回りで、待たれている merge 待ちの PR を取り直し、外で merge 済みなら done にする(自動 merge を切って、GitHub から直接 merge した形)", async () => {
+      const { p, clock, make } = setup();
+      p.setSetting("auto_merge", "0");
+      const base = await make("土台");
+      const next = await make("続き");
+      const lone = await make("待たれていない");
+      setStage(p, base.id, "merge");
+      setStage(p, lone.id, "merge");
+      addPr(p, base.id, 54, "OPEN");
+      addPr(p, lone.id, 55, "OPEN");
+      wait(p, next.id, base.id);
+      const asked: number[] = [];
+      let state: PrStatus["state"] = "OPEN";
+      const gh: GitHub = {
+        prStatus: async (_repo, n): Promise<PrStatus> => (asked.push(n), { state: n === 54 ? state : "MERGED", mergeable: "UNKNOWN", ci: "none" }),
+        merge: async () => {
+          throw new Error("merge は呼ばない");
+        },
+        comment: async () => "c",
+      };
+      // まだ OPEN: 何も変えない。待たれていない lone は問い合わせない
+      expect(await refreshMergedWaits(p, gh)).toBe(0);
+      expect(asked).toEqual([54]);
+      expect(p.ticket(base.id).stage).toBe("merge");
+      // 見回りの間隔の間は、もう問い合わせない
+      state = "MERGED";
+      expect(await refreshMergedWaits(p, gh)).toBe(0);
+      expect(asked).toEqual([54]);
+      // 間隔が過ぎて、外で merge されていたら done にし、待っていたチケットが解ける
+      clock.advance(5 * 60_000);
+      expect(await refreshMergedWaits(p, gh)).toBe(1);
+      expect(p.ticket(base.id).stage).toBe("done");
+      expect(p.ticket(lone.id).stage).toBe("merge");
+      expect(await blockers(p, next.id)).toEqual([]);
+      expect(await detectDeadlocks(p)).toEqual([]);
+    });
+
+    it("見回りの PR の取り直しは、GitHub に入れない間は何もせず、問い合わせの失敗では止まらない・見回りを止めていれば動かない", async () => {
+      const { p, clock, make } = setup();
+      const base = await make("土台");
+      const next = await make("続き");
+      setStage(p, base.id, "merge");
+      addPr(p, base.id, 54, "OPEN");
+      wait(p, next.id, base.id);
+      let calls = 0;
+      let fail = false;
+      const gh: GitHub = {
+        prStatus: async (): Promise<PrStatus> => {
+          calls++;
+          if (fail) throw new Error("network timeout");
+          return { state: "MERGED", mergeable: "UNKNOWN", ci: "none" };
+        },
+        merge: async () => "m",
+        comment: async () => "c",
+      } as unknown as GitHub;
+      p.setSetting("github_down", JSON.stringify({ since: "", error: "x", checkedAt: "" }));
+      expect(await refreshMergedWaits(p, gh)).toBe(0);
+      expect(calls).toBe(0);
+      p.setSetting("github_down", "");
+      setPatrolMinutes(p, 0);
+      expect(await refreshMergedWaits(p, gh)).toBe(0);
+      expect(calls).toBe(0);
+      setPatrolMinutes(p, 5);
+      fail = true;
+      expect(await refreshMergedWaits(p, gh)).toBe(0);
+      expect(p.ticket(base.id).stage).toBe("merge");
+      fail = false;
+      clock.advance(5 * 60_000);
+      expect(await refreshMergedWaits(p, gh)).toBe(1);
+      expect(p.ticket(base.id).stage).toBe("done");
     });
 
     it("待ち先が取りやめなのに待ちが残っているものを見つける", async () => {

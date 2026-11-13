@@ -241,7 +241,7 @@ async function prsOfMany(p: Project, ticketIds: number[]): Promise<Map<number, P
   return out;
 }
 
-async function prsOf(p: Project, ticketId: number): Promise<PrRow[]> {
+export async function prsOf(p: Project, ticketId: number): Promise<PrRow[]> {
   return (await prsOfMany(p, [ticketId])).get(ticketId) ?? [];
 }
 
