@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
 import { loadStartupConfig } from "./config.js";
+import { transferCommand } from "./db/transfer-cmd.js";
 import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import { GhCli } from "./github/github.js";
 import { currentWorkspaceId, Hq, workDirFor } from "./hq.js";
@@ -19,7 +20,8 @@ const USAGE = `使い方:
   kuramoto run <project> [--concurrency N] [--once]
   kuramoto decisions <project>
   kuramoto answer <project> <判断の番号> <選択肢の番号>
-  kuramoto merge <project> <チケット番号>`;
+  kuramoto merge <project> <チケット番号>
+  kuramoto db transfer   (SQLite の本部とプロジェクトを、config.yaml の MySQL へ移す。docs/mysql.md)`;
 
 async function main(argv: string[]): Promise<void> {
   const { positionals, values } = parseArgs({
@@ -28,6 +30,12 @@ async function main(argv: string[]): Promise<void> {
     options: { body: { type: "string" }, concurrency: { type: "string" }, once: { type: "boolean" } },
   });
   const [cmd, sub, ...rest] = positionals;
+  // SQLite → MySQL へ移す。MySQL を選んだ設定は loadStartupConfig が止めるので、その前に分ける(本部の DB も、移す道具が自分で開く)
+  if (cmd === "db") {
+    if (sub !== "transfer") throw new Error(USAGE);
+    await transferCommand();
+    return;
+  }
   // 設定は stderr に出す(一覧などの出力に混ぜない)
   loadStartupConfig((line) => console.error(line));
   // 入口で今のワークスペースを決め、本部へ渡す。プロジェクトの id がそのワークスペースの中にあるかは、hq.project() / hq.openProject() が確かめる
