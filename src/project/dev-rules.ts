@@ -107,19 +107,20 @@ export function devRulesView(p: Project) {
 
 /** 開発ルールの今の版。ルールを足す・直す・消す・有効 / 無効にするたびに 1 つ上がり、そのときのルールの一覧を dev_rule_versions に残す。 */
 export function devRulesVersion(p: Project): number {
-  return get<{ v: number | null }>(p.db, "SELECT MAX(version) AS v FROM dev_rule_versions")?.v ?? 1;
+  // 版はプロジェクトごと(主キーは (project_id, version))。まだ 0 のままの行(同期の INSERT)も、このプロジェクトのものとして数える
+  return get<{ v: number | null }>(p.db, "SELECT MAX(version) AS v FROM dev_rule_versions WHERE project_id IN (?, ?)", [p.projectId, 0])?.v ?? 1;
 }
 
 function bumpVersion(p: Project): number {
   const version = devRulesVersion(p) + 1;
   const rules = devRules(p).map((r) => ({ id: r.id, name: r.name, body: r.body, appliesTo: r.appliesTo, check: r.check, pattern: r.pattern, onFail: r.onFail, enabled: r.enabled }));
-  run(p.db, "INSERT INTO dev_rule_versions (version, rules, created_at) VALUES (?, ?, ?)", [version, JSON.stringify(rules), p.now()]);
+  run(p.db, "INSERT INTO dev_rule_versions (project_id, version, rules, created_at) VALUES (?, ?, ?, ?)", [p.projectId, version, JSON.stringify(rules), p.now()]);
   return version;
 }
 
 /** 残してある版ごとの、そのときのルールの一覧。 */
 export function devRulesVersions(p: Project): { version: number; createdAt: string; rules: { id: number; name: string; enabled: boolean }[] }[] {
-  return all<{ version: number; rules: string; created_at: string }>(p.db, "SELECT * FROM dev_rule_versions ORDER BY version").map((v) => ({
+  return all<{ version: number; rules: string; created_at: string }>(p.db, "SELECT * FROM dev_rule_versions WHERE project_id IN (?, ?) ORDER BY version", [p.projectId, 0]).map((v) => ({
     version: v.version,
     createdAt: v.created_at,
     rules: JSON.parse(v.rules) as { id: number; name: string; enabled: boolean }[],

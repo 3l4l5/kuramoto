@@ -121,6 +121,24 @@ describe("開発ルール: 版・直す・消す", () => {
   });
 });
 
+describe("開発ルール: 版はプロジェクトごと(dev_rule_versions)", () => {
+  it("版の番号は自分のプロジェクトの行だけで決め、project_id を書いて残す。ほかのプロジェクトの版は混ざらない", () => {
+    const p = new Project(":memory:", new ManualClock(new Date("2026-11-12T00:00:00Z")), 7);
+    // ほかのプロジェクト(99)が、もっと先の版まで進んでいる
+    run(p.db, "INSERT INTO dev_rule_versions (project_id, version, rules, created_at) VALUES (99, 50, '[]', '')");
+    addDevRule(p, { template: "jira" });
+    addDevRule(p, { template: "commit-50" });
+    expect(devRulesView(p).version).toBe(3);
+    expect(all<{ project_id: number; version: number }>(p.db, "SELECT project_id, version FROM dev_rule_versions ORDER BY project_id, version")).toEqual([
+      { project_id: 7, version: 1 },
+      { project_id: 7, version: 2 },
+      { project_id: 7, version: 3 },
+      { project_id: 99, version: 50 },
+    ]);
+    expect(devRulesVersions(p).map((v) => v.version)).toEqual([1, 2, 3]);
+  });
+});
+
 describe("開発ルール: 形式での確かめ(AI を使わない)", () => {
   it("ひな形 4 つが、守れているものを通し、守れていないものを見つける", async () => {
     const p = projectWith();
