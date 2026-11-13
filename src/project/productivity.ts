@@ -1,3 +1,4 @@
+import { formationMarks } from "./formation-marks.js";
 import { all, get } from "../db/sqlite.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
 import { violationTotals } from "./dev-rules.js";
@@ -140,8 +141,8 @@ export function productivity(p: Project) {
   const tickets = all<{ id: number; number: number; title: string; stage: string; rounds: number; tokens: number | null; cost: number | null; runs: number; prs: number; conflicts: number; help: number; retries: number }>(
     p.db,
     `SELECT t.id, t.number, t.title, t.stage, t.rounds,
-       (SELECT SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0) + COALESCE(cache_read_tokens,0)) FROM runs r WHERE r.ticket_id = t.id) AS tokens,
-       (SELECT SUM(cost_usd) FROM runs r WHERE r.ticket_id = t.id) AS cost,
+       (SELECT SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0) + COALESCE(cache_read_tokens,0)) FROM runs r WHERE COALESCE(r.ticket_id, r.about_ticket_id) = t.id) AS tokens,
+       (SELECT SUM(cost_usd) FROM runs r WHERE COALESCE(r.ticket_id, r.about_ticket_id) = t.id) AS cost,
        (SELECT COUNT(*) FROM runs r WHERE r.ticket_id = t.id AND r.ended_at IS NOT NULL) AS runs,
        (SELECT COUNT(*) FROM pull_requests pr WHERE pr.ticket_id = t.id) AS prs,
        (SELECT COUNT(*) FROM conflicts c JOIN pull_requests pr ON pr.id = c.pr_id WHERE pr.ticket_id = t.id) AS conflicts,
@@ -324,6 +325,8 @@ function flow(p: Project) {
     aging,
     sources,
     hourly,
+    /** 編成の版が上がった印(効率のグラフの縦線)。何を変えたか(連絡経路 / 流れ / 島)つき */
+    formationMarks: formationMarks(p),
     ownerWait: { count: waits.length, pending: waits.filter((w) => !w.decided_at).length, totalMs: waitMs.reduce((s, x) => s + x, 0), ...spread(waitMs) },
   };
 }

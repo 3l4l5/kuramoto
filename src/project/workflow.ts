@@ -691,7 +691,7 @@ export function setTicketBudget(p: Project, ticketId: number, usd: number | null
 }
 
 export function ticketSpentUsd(p: Project, ticketId: number): number {
-  return get<{ s: number | null }>(p.db, "SELECT SUM(cost_usd) AS s FROM runs WHERE ticket_id = ?", [ticketId])?.s ?? 0;
+  return get<{ s: number | null }>(p.db, "SELECT SUM(cost_usd) AS s FROM runs WHERE COALESCE(ticket_id, about_ticket_id) = ?", [ticketId])?.s ?? 0;
 }
 
 /** チケットを作り、開発の受信箱に入れる。 */

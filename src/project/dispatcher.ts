@@ -25,6 +25,7 @@ import { confinementFor } from "./confine.js";
 import { afterPlanningRun, planningPrompt, planningSystemPrompt, planningTools, type PlanPayload } from "./planning-agent.js";
 import { checkStudioLoop, onlyQuestions, say, studioPaused } from "./planning.js";
 import { progressRecorder } from "./progress.js";
+import { answerPrompt, answerSystem, askTools, question, recordAnswer, replyTools, reroutedToLead, targetUnit, type AnswerReport, type AskPayload } from "./questions.js";
 import { finishMemberChat, isFinishedTicket, memberChatPrompt, memberChatSystem, memberChatTools, unreadForMember } from "./member-chat.js";
 import { giveUpTriage, markTriaged, requestTriage, triagePrompt, triageTools, untriaged } from "./triage.js";
 import { LEAD_CHAT_SYSTEM, leadChatPrompt, leadChatTools, leadReply, markOwnerMessagesRead, unreadOwnerMessages } from "./leadchat.js";
@@ -207,6 +208,8 @@ export class Dispatcher {
       const busy = get(p.db, "SELECT 1 AS x FROM runs WHERE member_id = ? AND ended_at IS NULL", [m.id]);
       return busy ? "wait" : { msg, role: msg.to_role, ticket: null, member: m };
     }
+    // 島への質問は、質問の宛先の島の手すきの人が受ける(聞いた本人は除く。チケットは持たない)
+    if (msg.kind === "ask") return this.assignAsk(msg);
     const ticket = msg.ticket_id === null ? null : p.ticket(msg.ticket_id);
     if (ticket && (ticket.stage === "dropped" || ticket.stage === "done")) {
       complete(p, msg.id);
@@ -300,6 +303,29 @@ export class Dispatcher {
     return "wait";
   }
 
+  private assignAsk(msg: MessageRow): Job | "wait" | "handled" {
+    const p = this.p;
+    const q = question(p, (JSON.parse(msg.payload) as AskPayload).questionId);
+    if (q.answer !== null) {
+      complete(p, msg.id);
+      return "handled";
+    }
+    const unit = targetUnit(p, q);
+    if (!unit) {
+      // 編成が変わって、宛先の島が無くなった。経路が無いものとしてリーダーに回す
+      tx(p.db, () => {
+        complete(p, msg.id);
+        reroutedToLead(p, q, p.ticket(q.ticket_id));
+      });
+      return "handled";
+    }
+    if (unitExhausted(p, unit)) return "wait";
+    const busy = new Set(all<{ member_id: number }>(p.db, "SELECT member_id FROM runs WHERE ended_at IS NULL").map((r) => r.member_id));
+    const free = p.membersOfUnit(unit.id).filter((m) => !busy.has(m.id) && m.id !== q.from_member_id);
+    if (!free.length) return "wait";
+    return { msg, role: unit.roles[0]!, ticket: null, member: this.leastLoaded(free) };
+  }
+
   /** 起動 1 回の予算。起動 1 回の上限・全体の残り・ほかに渡された残り(チケット・島)の小さい方。 */
   private runBudget(...left: number[]): number {
     return Math.min(this.p.settingNumber("run_budget_usd", 2), projectLeftUsd(this.p), ...left);
@@ -320,6 +346,7 @@ export class Dispatcher {
     if (job.msg.kind === "patrol") return this.executeLeadChat(job, "patrol");
     if (job.msg.kind === "unstick") return this.executeUnstick(job);
     if (job.msg.kind === "member_chat") return this.executeMemberChat(job);
+    if (job.msg.kind === "ask") return this.executeAsk(job);
     const p = this.p;
     const { msg, member, role, ticket } = job;
     const policy = p.policy(role);
@@ -434,6 +461,8 @@ export class Dispatcher {
           // ノンストップでは、戻せる判断はリーダーが決める(戻せない判断だけ責任者へ)
           ...(msg.kind === "decide" ? { escalateAllowed: !nonstop(p) || !decision(p, Number(JSON.parse(msg.payload).decision_id)).reversible } : {}),
           }),
+          // ほかの島・リーダーに質問する(経路が無ければリーダーに回る)。担当・工程は変わらない。開発より前の確認は、コードを見ず申し送りだけ残す
+          ...(preDev ? [] : askTools(p, member, ticket)),
         ],
         onProgress: progressRecorder(p, runId),
         // 開発より前の確認は、コードを見ない(組み込みの道具は渡さず、申し送りを残す道具だけ)
@@ -807,6 +836,80 @@ export class Dispatcher {
       complete(p, msg.id);
       finishMemberChat(p, member, batch, result?.finalText ?? "", !!done.handedOver);
       p.event(member.name, "member_chat_finished", ticket.id, { handedOver: !!done.handedOver });
+    });
+  }
+
+  /**
+   * 島への質問に答える(R16)。受けた人が、聞かれたチケットのリポジトリを既定のブランチで読んで答える。
+   * チケットの起動ではないので runs.ticket_id は空にし、about_ticket_id に聞かれたチケットをひも付ける
+   * (チケットの担当・工程は変わらず、使った金額はそのチケットに数える)。
+   */
+  private async executeAsk(job: Job): Promise<void> {
+    const p = this.p;
+    const { msg, member, role } = job;
+    const q = question(p, (JSON.parse(msg.payload) as AskPayload).questionId);
+    const ticket = p.ticket(q.ticket_id);
+    const policy = p.policy(role);
+    const use = p.modelFor(member, policy);
+    const formation = p.currentFormation();
+    const unit = formation.units.find((u) => u.id === member.unit_id);
+    const harness = this.deps.harnesses[policy.harness];
+    const repo = ticketRepo(p, ticket);
+    if (!harness || !repo) {
+      this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
+      return;
+    }
+    const runId = run(
+      p.db,
+      "INSERT INTO runs (message_id, ticket_id, about_ticket_id, member_id, role, session_id, policy_id, formation_id, started_at, model, effort, unit_name) VALUES (?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)",
+      [msg.id, ticket.id, member.id, role, policy.id, formation.id, p.now(), use.model, use.effort, use.unitName],
+    ).lastId;
+    p.event(member.name, "ask_started", ticket.id, { questionId: q.id, model: use.model });
+    const report: AnswerReport = {};
+    let result: HarnessResult | undefined;
+    let error: string | undefined;
+    try {
+      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: ticket.number, role, memberName: member.name, branch: "" });
+      result = await harness.run({
+        cwd: ws.path,
+        confine: confinementFor(p, ws, role),
+        systemPrompt: answerSystem(member, { name: use.unitName, focus: use.unitFocus }) + speechNote(member.name),
+        prompt: answerPrompt(p, q, ticket),
+        model: use.model,
+        effort: use.effort,
+        tools: replyTools(report),
+        allowedTools: ["Read", "Glob", "Grep"],
+        maxBudgetUsd: this.runBudget(unit ? unitLeftUsd(p, unit) : Infinity),
+        onProgress: progressRecorder(p, runId),
+      });
+      if (result.status !== "ok" && result.status !== "budget") error = result.error ?? "ハーネスがエラーで終わりました";
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+    // reply を呼ばずに終わったときは、最後のテキストを答えとする
+    const answer = report.answer ?? result?.finalText?.trim();
+    if (!error && !answer) error = "答えが返りませんでした";
+    tx(p.db, () => {
+      const u = result?.usage;
+      run(p.db, "UPDATE runs SET ended_at = ?, input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cost_usd = ?, outcome = ?, error = ?, summary = ? WHERE id = ?", [
+        p.now(),
+        u?.inputTokens ?? 0,
+        u?.outputTokens ?? 0,
+        u?.cacheReadTokens ?? 0,
+        u?.costUsd ?? 0,
+        error ? "error" : (result?.status ?? "error"),
+        error ?? null,
+        answer || null,
+        runId,
+      ]);
+    });
+    if (error) {
+      this.failed(msg, null, error);
+      return;
+    }
+    tx(p.db, () => {
+      complete(p, msg.id);
+      recordAnswer(p, q, member, answer!);
     });
   }
 

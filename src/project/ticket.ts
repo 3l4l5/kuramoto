@@ -7,6 +7,7 @@ import { isPreDev, pipelineOf } from "../domain/formation.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
 import type { Project } from "./project.js";
 import { blockers, dependsOn, mergeBlockers, mergeUnblocks } from "./triage.js";
+import { questionsOf, LEAD_TARGET } from "./questions.js";
 import { threads, type Thread } from "./review.js";
 import { defaultTicketBudgetUsd, droppedInfo, hasOwnBudget, ticketBudgetUsd, type DecisionOption } from "./workflow.js";
 
@@ -39,6 +40,11 @@ export type TimelineItem =
   | { type: "handoff"; at: string; role: string; body: string }
   /** 責任者がチケットの種類を変えた(R17) */
   | { type: "kind_change"; at: string; who: string; from: string; to: string }
+  /**
+   * 他の島(またはリーダー)への質問と答え(R16)。noRoute: 経路が無いのでリーダーに回した。
+   * answeredAt が無ければ、まだ答えを待っている(リーダーに回したものは、リーダーが引き取る)。
+   */
+  | { type: "question"; at: string; from: string; to: string; body: string; routedToLead: boolean; noRoute: boolean; answer: string | null; answeredBy: string | null; answeredAt: string | null }
   | { type: "rule"; at: string; rule: string; handled: string; detail: string; resolvedAt: string | null };
 
 export function ticketView(p: Project, ticketId: number) {
@@ -141,6 +147,22 @@ export function ticketView(p: Project, ticketId: number) {
     items.push({ type: "merge", at: m.created_at, result: m.result });
   }
 
+  // 他の島への質問と答え(R16)
+  for (const q of questionsOf(p, ticketId)) {
+    items.push({
+      type: "question",
+      at: q.asked_at,
+      from: q.from_member_id ? name(q.from_member_id) : "メンバー",
+      to: q.to_target === LEAD_TARGET ? "リーダー" : q.to_target,
+      body: q.body,
+      routedToLead: !!q.routed_to_lead,
+      noRoute: !!q.routed_to_lead && q.to_target !== LEAD_TARGET,
+      answer: q.answer,
+      answeredBy: q.answered_by_member_id ? name(q.answered_by_member_id) : null,
+      answeredAt: q.answered_at,
+    });
+  }
+
   // 開発ルールの違反(R15)。自動で直した記録も残す
   for (const v of violationsOf(p, ticketId)) items.push({ type: "rule", at: v.created_at, rule: v.name, handled: v.handled, detail: v.detail, resolvedAt: v.resolved_at });
 
@@ -148,7 +170,7 @@ export function ticketView(p: Project, ticketId: number) {
   const timeline = items.map((x, i) => [x, i] as const).sort((a, b) => a[0].at.localeCompare(b[0].at) || a[1] - b[1]).map(([x]) => x);
   const cost = get<{ cost: number | null; tokens: number | null }>(
     p.db,
-    "SELECT SUM(cost_usd) AS cost, SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0) + COALESCE(cache_read_tokens,0)) AS tokens FROM runs WHERE ticket_id = ?",
+    "SELECT SUM(cost_usd) AS cost, SUM(COALESCE(input_tokens,0) + COALESCE(output_tokens,0) + COALESCE(cache_read_tokens,0)) AS tokens FROM runs WHERE COALESCE(ticket_id, about_ticket_id) = ?",
     [ticketId],
   );
   return {
