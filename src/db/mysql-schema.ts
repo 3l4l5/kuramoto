@@ -223,4 +223,16 @@ export const MYSQL_MIGRATIONS: MysqlMigration[] = [
   // 22: SQLite の版 22(前の版の UNIQUE を project_id 込みだけにする)に当たる。最初の版が最初から project_id 込みだけなので、流すものは無い。
   // 版の番号を SQLite と揃えるための印(ADR-0040)。
   { version: 22, statements: [] },
+  // 23: github_issues(見回りが取ってきた GitHub の Issue と、リーダーの扱い。SQLite の版 23 と同じ。#79)
+  {
+    version: 23,
+    statements: [
+      scoped("github_issues", [
+        ID, `repo ${S}`, "number INT NOT NULL", `title ${T}`, `body ${T}`, `url ${T}`,
+        `status VARCHAR(191) NOT NULL DEFAULT 'new' ${enumCheck("status", ["new", "ticketed", "duplicate", "owner", "passed"])}`,
+        "ticket_id BIGINT", "note TEXT", `fetched_at ${T}`, "handled_at TEXT",
+        "UNIQUE KEY github_issues_project_issue (project_id, repo, number)", "KEY github_issues_project_status (project_id, status)", fk("ticket_id", "tickets"),
+      ]),
+    ],
+  },
 ];

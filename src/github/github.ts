@@ -73,6 +73,8 @@ export interface GitHub {
   openPulls?(repo: string): Promise<{ number: number; title: string; body: string; head: string; url: string; draft: boolean; author: string }[]>;
   /** 開いている Issue。label を渡すとそのラベルの付いたものだけ。 */
   openIssues?(repo: string, label: string | null): Promise<{ number: number; title: string; body: string; url: string; labels: string[] }[]>;
+  /** Issue にコメントを書く(外に出る操作。設定 issue_comment を入れたときだけ使う)。 */
+  commentIssue?(repo: string, number: number, body: string): Promise<void>;
   /** リポジトリの GitHub Actions を動かすか止めるか(チームの CI を使うときは止める。ADR-0028)。 */
   setActionsEnabled?(repo: string, enabled: boolean): Promise<void>;
   /** PR の詳細(読むだけ。リーダーの読み取り用の道具が使う)。 */
@@ -230,6 +232,10 @@ export class GhCli implements GitHub {
       url: x.url,
       labels: x.labels.map((l) => l.name),
     }));
+  }
+
+  async commentIssue(repo: string, number: number, body: string): Promise<void> {
+    await exec("gh", ["issue", "comment", String(number), "--repo", repo, "--body", body]);
   }
 
   async setActionsEnabled(repo: string, enabled: boolean): Promise<void> {

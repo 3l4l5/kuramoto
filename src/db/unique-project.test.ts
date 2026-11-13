@@ -3,13 +3,15 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { PROJECT_ID_TABLES, PROJECT_MIGRATIONS } from "./schema.js";
+import { PROJECT_MIGRATIONS as ALL_MIGRATIONS, V21_TABLES } from "./schema.js";
 import { all, get, openDb } from "./sqlite.js";
 
 /** 版 22: 前の版の UNIQUE(tickets.number・settings.key など)を project_id 込みだけにする(ADR-0040) */
 
-const V21 = PROJECT_MIGRATIONS.slice(0, 21);
+const V21 = ALL_MIGRATIONS.slice(0, 21);
 const V22 = 22;
+/** 版 22 までのマイグレーション(後の版は、この試験の対象ではない) */
+const PROJECT_MIGRATIONS = ALL_MIGRATIONS.slice(0, V22);
 
 /** 版 22 で作り直す表と、その UNIQUE(主キーも含む。project_id が先頭) */
 const REBUILT: Record<string, string[]> = {
@@ -62,13 +64,13 @@ describe("版 22: 前の UNIQUE を project_id 込みだけにする", () => {
   it("版 21 の DB を開くと流れ、行・id・値・project_id がそのまま残る", () => {
     const path = v21Db();
     const old = openDb(path, V21);
-    const counts = Object.fromEntries(PROJECT_ID_TABLES.map((t) => [t, get<{ n: number }>(old, `SELECT COUNT(*) AS n FROM ${t}`)!.n]));
+    const counts = Object.fromEntries(V21_TABLES.map((t) => [t, get<{ n: number }>(old, `SELECT COUNT(*) AS n FROM ${t}`)!.n]));
     const dump = Object.fromEntries(Object.keys(REBUILT).map((t) => [t, all(old, `SELECT * FROM ${t} ORDER BY project_id, 1, 2`)]));
     old.close();
 
     const db = openDb(path, PROJECT_MIGRATIONS, { projectId: 7 });
     expect(version(db)).toBe(V22);
-    for (const t of PROJECT_ID_TABLES) expect(get<{ n: number }>(db, `SELECT COUNT(*) AS n FROM ${t}`)!.n, t).toBe(counts[t]);
+    for (const t of V21_TABLES) expect(get<{ n: number }>(db, `SELECT COUNT(*) AS n FROM ${t}`)!.n, t).toBe(counts[t]);
     for (const t of Object.keys(REBUILT)) expect(all(db, `SELECT * FROM ${t} ORDER BY project_id, 1, 2`), t).toEqual(dump[t]);
     // 外部キーでつながった行は、つながったまま(DROP で壊れていない)
     expect(all(db, "PRAGMA foreign_key_check")).toEqual([]);
@@ -90,7 +92,7 @@ describe("版 22: 前の UNIQUE を project_id 込みだけにする", () => {
   it("作り直した表の列(名前・並び・型・NOT NULL・既定値)は版 21 と同じ", () => {
     const a = openDb(":memory:", V21);
     const b = openDb(":memory:", PROJECT_MIGRATIONS);
-    for (const t of PROJECT_ID_TABLES) {
+    for (const t of V21_TABLES) {
       // 主キーだった TEXT の列(settings.key・plan_stages.stage)は、版 21 では NULL が入れられた。版 22 は NOT NULL を明示する(厳しくなるだけ)
       const strict = (cols: ReturnType<typeof columns>) => cols.map((c) => ({ ...c, notnull: 0 }));
       expect(strict(columns(b, t)), t).toEqual(strict(columns(a, t)));

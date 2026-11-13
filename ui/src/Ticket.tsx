@@ -232,6 +232,20 @@ function Details({ projectId, t }: { projectId: number; t: TicketView }) {
             </dd>
           </>
         )}
+        {t.issue && (
+          <>
+            <dt>Issue</dt>
+            <dd>
+              {t.issue.url ? (
+                <a href={t.issue.url} target="_blank" rel="noopener">
+                  Issue #{t.issue.number}
+                </a>
+              ) : (
+                `Issue #${t.issue.number}`
+              )}
+            </dd>
+          </>
+        )}
         {t.screens.length > 0 && (
           <>
             <dt>画面</dt>
