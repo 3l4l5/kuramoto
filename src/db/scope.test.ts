@@ -64,7 +64,7 @@ INSERT INTO member_messages (id, member_id, who, body, at) VALUES (1, 1, 'w', 'b
 }
 
 describe("版 21: プロジェクトの全部の表の project_id", () => {
-  it("既存の DB を開くと流れ、全部の表の今ある行に、渡したプロジェクトの id が入る", () => {
+  it("既存の DB を開くと流れ、全部の表の今ある行に、渡したプロジェクトの id が入る", async () => {
     const path = v20Db();
     const db = openDb(path, PROJECT_MIGRATIONS, { projectId: 7 });
     expect(version(db)).toBe(V21);
@@ -78,13 +78,13 @@ describe("版 21: プロジェクトの全部の表の project_id", () => {
     db.close();
   });
 
-  it("プロジェクトの id を渡さなければ 0 のまま", () => {
+  it("プロジェクトの id を渡さなければ 0 のまま", async () => {
     const db = openDb(v20Db(), PROJECT_MIGRATIONS);
     expect(all(db, "SELECT project_id FROM tickets")).toEqual([{ project_id: 0 }]);
     db.close();
   });
 
-  it("新しい DB でも流れる。全部の表(PROJECT_ID_TABLES と一致)に project_id が NOT NULL DEFAULT 0 である", () => {
+  it("新しい DB でも流れる。全部の表(PROJECT_ID_TABLES と一致)に project_id が NOT NULL DEFAULT 0 である", async () => {
     const db = openDb(":memory:", PROJECT_MIGRATIONS, { projectId: 3 });
     expect(tableNames(db)).toEqual([...PROJECT_ID_TABLES].sort());
     for (const t of tableNames(db)) {
@@ -93,7 +93,7 @@ describe("版 21: プロジェクトの全部の表の project_id", () => {
     db.close();
   });
 
-  it("足すだけ: 前の表・列・索引は残り(列は並びも同じ)、新しいものが足されるだけ", () => {
+  it("足すだけ: 前の表・列・索引は残り(列は並びも同じ)、新しいものが足されるだけ", async () => {
     const path = v20Db();
     const old = openDb(path, BEFORE);
     const oldSchema = schema(old);
@@ -114,7 +114,7 @@ describe("版 21: プロジェクトの全部の表の project_id", () => {
     db.close();
   });
 
-  it("索引は project_id が先頭で、project_id 込みの UNIQUE が tickets・formations・policies・settings・plan_stages・requirements・repos に張られる", () => {
+  it("索引は project_id が先頭で、project_id 込みの UNIQUE が tickets・formations・policies・settings・plan_stages・requirements・repos に張られる", async () => {
     const db = openDb(":memory:", PROJECT_MIGRATIONS);
     const before = new Set(schema(openDb(":memory:", BEFORE)).map((s) => s.name));
     const added = all<{ name: string; tbl_name: string }>(db, "SELECT name, tbl_name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'").filter((i) => !before.has(i.name));
@@ -138,7 +138,7 @@ describe("版 21: プロジェクトの全部の表の project_id", () => {
     db.close();
   });
 
-  it("project_id 込みの UNIQUE が効く(同じプロジェクトの同じ番号は入らない)", () => {
+  it("project_id 込みの UNIQUE が効く(同じプロジェクトの同じ番号は入らない)", async () => {
     const db = openDb(":memory:", PROJECT_MIGRATIONS);
     const add = (n: number, p: number) => db.prepare("INSERT INTO tickets (number, title, stage, created_at, project_id) VALUES (?, 't', 'dev', '', ?)").run(n, p);
     add(1, 1);
@@ -147,7 +147,7 @@ describe("版 21: プロジェクトの全部の表の project_id", () => {
     db.close();
   });
 
-  it("前の版のコードで新しい DB が開ける(マイグレーションは流れず、project_id を書かない INSERT・SELECT * が動く)", () => {
+  it("前の版のコードで新しい DB が開ける(マイグレーションは流れず、project_id を書かない INSERT・SELECT * が動く)", async () => {
     const path = v20Db();
     openDb(path, PROJECT_MIGRATIONS, { projectId: 5 }).close();
     const db = openDb(path, BEFORE);
@@ -178,7 +178,7 @@ INSERT INTO formations (version, pull, created_at) VALUES (2, 'start', '');
     old.exec("INSERT INTO tickets (number, title, stage, created_at) VALUES (1, 't', 'dev', '')");
     old.close();
     hq.db.prepare("INSERT INTO projects (id, name, data_dir, status, created_at) VALUES (9, 'old', ?, 'running', '')").run(dir);
-    const p = hq.openProject(9);
+    const p = await hq.openProject(9);
     expect(version(p.db)).toBe(V21);
     expect(all(p.db, "SELECT number, project_id FROM tickets")).toEqual([{ number: 1, project_id: 9 }]);
     p.close();
@@ -199,7 +199,7 @@ INSERT INTO limits (key, value) VALUES ('budget', '10');
     return path;
   }
 
-  it("既存の DB を開くと流れ、workspaces に id=1「既定」ができ、既存の行は workspace_id = 1", () => {
+  it("既存の DB を開くと流れ、workspaces に id=1「既定」ができ、既存の行は workspace_id = 1", async () => {
     const db = openDb(hqV1(), HQ_MIGRATIONS);
     expect(version(db)).toBe(HQ_MIGRATIONS.length);
     expect(all(db, "SELECT id, name FROM workspaces")).toEqual([{ id: 1, name: "既定" }]);
@@ -210,13 +210,13 @@ INSERT INTO limits (key, value) VALUES ('budget', '10');
     db.close();
   });
 
-  it("新しい DB にも「既定」がある", () => {
+  it("新しい DB にも「既定」がある", async () => {
     const db = openDb(":memory:", HQ_MIGRATIONS);
     expect(all(db, "SELECT id, name FROM workspaces")).toEqual([{ id: 1, name: "既定" }]);
     db.close();
   });
 
-  it("projects の INDEX(workspace_id)、limits の UNIQUE(workspace_id, key)", () => {
+  it("projects の INDEX(workspace_id)、limits の UNIQUE(workspace_id, key)", async () => {
     const db = openDb(":memory:", HQ_MIGRATIONS);
     const idx = (t: string) =>
       all<{ name: string; unique: number }>(db, `PRAGMA index_list(${t})`).map((i) => ({
@@ -231,7 +231,7 @@ INSERT INTO limits (key, value) VALUES ('budget', '10');
     db.close();
   });
 
-  it("足すだけ: 前の表・列・索引は残る", () => {
+  it("足すだけ: 前の表・列・索引は残る", async () => {
     const path = hqV1();
     const old = openDb(path, HQ_BEFORE);
     const oldSchema = schema(old);
@@ -246,7 +246,7 @@ INSERT INTO limits (key, value) VALUES ('budget', '10');
     db.close();
   });
 
-  it("前の版のコードで新しい DB が開ける(workspace_id を書かない INSERT が動く)", () => {
+  it("前の版のコードで新しい DB が開ける(workspace_id を書かない INSERT が動く)", async () => {
     const path = hqV1();
     openDb(path, HQ_MIGRATIONS).close();
     const db = openDb(path, HQ_BEFORE);

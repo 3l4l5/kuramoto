@@ -620,11 +620,11 @@ describe("受信箱", () => {
     });
     p.savePolicy("dev", { model: "claude-opus-5-5", effort: "high", focus: "" });
     const t = createTicket(p, { title: "x" });
-    const job = d.next()!;
+    const job = (await d.next())!;
     const running = d.execute(job);
     // 同じチケットへの別のメッセージがあっても取り出されない
     p.db.prepare("INSERT INTO messages (ticket_id, to_role, kind, available_at, created_at) VALUES (?, 'dev', 'fix', ?, ?)").run(t.id, p.now(), p.now());
-    expect(d.next()).toBeNull();
+    expect(await d.next()).toBeNull();
     release();
     await running;
   });

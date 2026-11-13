@@ -2,30 +2,73 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { Hq } from "./hq.js";
+import { currentWorkspaceId, Hq } from "./hq.js";
 import { createTicket } from "./project/workflow.js";
 
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true })));
 
 describe("本部", () => {
-  it("プロジェクトを作ると、データは <home>/<owner>/<repo>/ に分かれて置かれる", () => {
+  it("プロジェクトを作ると、データは <home>/<owner>/<repo>/ に分かれて置かれる", async () => {
     const home = mkdtempSync(join(tmpdir(), "kuramoto-"));
     dirs.push(home);
     const hq = new Hq(home);
-    const rec = hq.createProject("acme ショップ", [
+    const rec = await hq.createProject("acme ショップ", [
       { fullName: "acme/shop-api", role: "API" },
       { fullName: "acme/shop-web", role: "フロント" },
     ]);
     expect(rec.data_dir).toBe(join(home, "acme", "shop-api"));
 
-    const p = hq.openProject(rec.id);
+    const p = await hq.openProject(rec.id);
     expect(p.repos().map((r) => r.full_name)).toEqual(["acme/shop-api", "acme/shop-web"]);
     createTicket(p, { title: "x" });
     p.close();
 
-    expect(hq.ownerQueue()).toEqual([{ project: rec, decisions: 0, merges: 0 }]);
-    expect(() => hq.createProject("x", [{ fullName: "not a repo", role: "API" }])).toThrow(/owner\/repo/);
+    expect((await hq.ownerQueue())).toEqual([{ project: rec, decisions: 0, merges: 0 }]);
+    await expect(hq.createProject("x", [{ fullName: "not a repo", role: "API" }])).rejects.toThrow(/owner\/repo/);
+    hq.close();
+  });
+});
+
+describe("本部のスコープ(ワークスペース)", () => {
+  it("今のワークスペースは 1 つの関数で決まる(今は常に 1)。プロジェクトは workspace_id 付きで入る", async () => {
+    expect(currentWorkspaceId()).toBe(1);
+    const home = mkdtempSync(join(tmpdir(), "kuramoto-"));
+    dirs.push(home);
+    const hq = new Hq(home);
+    const rec = await hq.createProject("a", [{ fullName: "acme/a", role: "API" }]);
+    expect(hq.db.prepare("SELECT workspace_id FROM projects WHERE id = ?").get(rec.id)).toEqual({ workspace_id: 1 });
+    hq.close();
+  });
+
+  it("ワークスペースの外のプロジェクトは、見えず・開けず・変えられない", async () => {
+    const home = mkdtempSync(join(tmpdir(), "kuramoto-"));
+    dirs.push(home);
+    const hq = new Hq(home);
+    const rec = await hq.createProject("a", [{ fullName: "acme/a", role: "API" }]);
+    hq.db.exec("INSERT INTO workspaces (id, name) VALUES (2, 'other')");
+    hq.db.prepare("UPDATE projects SET workspace_id = 2 WHERE id = ?").run(rec.id);
+    await expect(hq.project(rec.id)).rejects.toThrow(/がありません/);
+    await expect(hq.openProject(rec.id)).rejects.toThrow(/がありません/);
+    expect(await hq.projects()).toEqual([]);
+    await expect(hq.setStatus(rec.id, "running")).resolves.toBeUndefined();
+    expect(hq.db.prepare("SELECT status FROM projects WHERE id = ?").get(rec.id)).toEqual({ status: "planning" }); // 外のプロジェクトの状態は変わらない
+    const other = new Hq(home, undefined, 2);
+    expect((await other.project(rec.id)).name).toBe("a");
+    other.close();
+    hq.close();
+  });
+
+  it("リポジトリは、プロジェクトの repos だけに書く(本部の repos には書かない)", async () => {
+    const home = mkdtempSync(join(tmpdir(), "kuramoto-"));
+    dirs.push(home);
+    const hq = new Hq(home);
+    const rec = await hq.createProject("a", [{ fullName: "acme/a", role: "API" }]);
+    const p = await hq.openProject(rec.id);
+    await hq.updateProject(p, rec.id, { name: "a", repos: [{ fullName: "acme/a", role: "API" }, { fullName: "acme/b", role: "フロント" }] });
+    expect(p.repos().map((r) => r.full_name)).toEqual(["acme/a", "acme/b"]);
+    expect(hq.db.prepare("SELECT COUNT(*) AS n FROM repos").get()).toEqual({ n: 0 });
+    p.close();
     hq.close();
   });
 });
@@ -36,13 +79,13 @@ describe("プロジェクトの編集", () => {
     const home = mkdtempSync(join(tmpdir(), "kuramoto-"));
     dirs.push(home);
     const hq = new Hq(home);
-    const rec = hq.createProject("お試し", [
+    const rec = await hq.createProject("お試し", [
       { fullName: "acme/web", role: "フロント" },
       { fullName: "acme/old", role: "その他" },
     ]);
-    const p = hq.openProject(rec.id);
+    const p = await hq.openProject(rec.id);
 
-    const after = hq.updateProject(p, rec.id, {
+    const after = await hq.updateProject(p, rec.id, {
       name: "お試し 2",
       repos: [
         { fullName: "acme/web", role: "API" },
@@ -55,15 +98,15 @@ describe("プロジェクトの編集", () => {
       ["acme/web", "API"],
       ["acme/new", "インフラ"],
     ]);
-    expect(hq.ownerQueue()[0]!.project.name).toBe("お試し 2");
+    expect((await hq.ownerQueue())[0]!.project.name).toBe("お試し 2");
 
     // PR のあるリポジトリは外さない(何も変えずに止める)
     const t = createTicket(p, { title: "x" });
     run(p.db, "INSERT INTO pull_requests (ticket_id, repo_id, number, head) VALUES (?, ?, 1, 'b')", [t.id, p.repos()[1]!.id]);
-    expect(() => hq.updateProject(p, rec.id, { name: "変える", repos: [{ fullName: "acme/web", role: "API" }] })).toThrow(/acme\/new には PR や作業の記録があるので外せません/);
-    expect(hq.project(rec.id).name).toBe("お試し 2");
+    await expect(hq.updateProject(p, rec.id, { name: "変える", repos: [{ fullName: "acme/web", role: "API" }] })).rejects.toThrow(/acme\/new には PR や作業の記録があるので外せません/);
+    expect((await hq.project(rec.id)).name).toBe("お試し 2");
     expect(p.repos()).toHaveLength(2);
-    expect(() => hq.updateProject(p, rec.id, { name: "x", repos: [{ fullName: "bad", role: "API" }] })).toThrow(/owner\/repo/);
+    await expect(hq.updateProject(p, rec.id, { name: "x", repos: [{ fullName: "bad", role: "API" }] })).rejects.toThrow(/owner\/repo/);
     p.close();
     hq.close();
   });

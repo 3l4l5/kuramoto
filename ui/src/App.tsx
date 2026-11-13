@@ -16,7 +16,7 @@ import { clearRequestedTab, useFormationUi } from "./formationUi";
 export function App() {
   const route = useRoute();
   const inProject = route.name === "project" || route.name === "studio" || route.name === "metrics" || route.name === "settings";
-  const { drawer, moveTo, guard } = useDrawerState(route.name);
+  const { drawer, moveTo, guard } = useDrawerState("id" in route ? route.id : null);
   // 床の凡例の「経路を変える」「流れを変える」で、編成の引き出しを開く(開発ルールの下書きがあれば、捨ててよいか確かめる)
   const seq = useFormationUi().request.seq;
   useEffect(() => {

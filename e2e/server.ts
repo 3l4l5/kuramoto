@@ -198,5 +198,5 @@ const app = new KuramotoServer({ hq: new Hq(home), webDir, harnesses: { "claude-
   // 画面から merge を押す流れを確かめるので、自動 merge はテストの間に動かないようにする(自動 merge は単体テストで確かめる)
   mergePollMs: 3_600_000,
 });
-app.resume();
+await app.resume();
 createServer((req, res) => void app.handle(req, res)).listen(port, "127.0.0.1", () => console.log(`e2e server: http://localhost:${port} (${webDir})`));

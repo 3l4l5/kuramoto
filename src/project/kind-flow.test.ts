@@ -167,7 +167,7 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
     expect(p.currentFormation().version).toBe(3);
   });
 
-  it("編成だけを変えて保存しても、前の版の流れを引き継ぐ。流れを渡せば置き換わる", () => {
+  it("編成だけを変えて保存しても、前の版の流れを引き継ぐ。流れを渡せば置き換わる", async () => {
     const { p } = setup({ bugfix: ["qa", "dev"] });
     p.saveFormation({ pull: "start", units: ALL });
     expect(p.currentFormation().flows).toEqual({ bugfix: ["qa", "dev"] });
@@ -237,16 +237,16 @@ describe("種類ごとの流れで工程を進める(R17)", () => {
     expect(trail(b.p, t2.id)).toEqual(["qa*", "dev", "review"]);
   });
 
-  it("開発より前の確認も、リーダーの交通整理を待ってから動く", () => {
+  it("開発より前の確認も、リーダーの交通整理を待ってから動く", async () => {
     const { p } = setup({ bugfix: ["qa", "dev"] });
     const t = mk(p, "bugfix");
     expect(p.db.prepare("SELECT triaged FROM tickets WHERE id = ?").get(t.id)).toEqual({ triaged: 0 });
-    expect(claimNext(p, { triage: true })).toBeUndefined();
+    expect(await claimNext(p, { triage: true })).toBeUndefined();
     p.db.prepare("UPDATE tickets SET triaged = 1 WHERE id = ?").run(t.id);
-    expect(claimNext(p, { triage: true })).toMatchObject({ kind: "qa" });
+    expect(await claimNext(p, { triage: true })).toMatchObject({ kind: "qa" });
   });
 
-  it("リーダーが create_ticket で 4 種類から 1 つを付ける", () => {
+  it("リーダーが create_ticket で 4 種類から 1 つを付ける", async () => {
     const { p } = setup({ bugfix: ["qa", "dev"] });
     const create = leadChatTools(p).find((x) => x.name === "create_ticket")!;
     expect(create.handler({ title: "落ちる", body: "直す", kind: "bugfix" } as never)).toMatch(/作りました/);

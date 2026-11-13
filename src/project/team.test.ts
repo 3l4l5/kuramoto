@@ -133,6 +133,8 @@ describe("島を増やし、同じ役割を複数の島に持たせる(ADR-0019)
     p.addRepo("acme/web", "フロント");
     p.addRepo("acme/api", "API");
     const harness = new FakeHarness(async (req, call) => {
+      // 少し時間をかける(マイクロタスクの数に頼らず、先の起動が動いている間に次の担当が決まるようにする)
+      await new Promise((r) => setTimeout(r, 5));
       if (req.tools.some((t) => t.name === "submit_pr")) {
         await call("submit_pr", { summary: "", responses: fixedAll(req.prompt) });
       } else await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] }));
