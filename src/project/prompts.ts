@@ -100,8 +100,8 @@ export async function promptFor(p: Project, msg: MessageRow, ticket: TicketRow |
         const rules = payload.rules as { name: string; body: string; detail: string }[];
         return `${head}\n\nあなたが出した PR #${ctx.prNumber ?? "?"}(リポジトリは ${ctx.repo}、ブランチは ${ctx.branch})は、次の開発ルールに反したままです。直すまで次の工程(レビューなど)には進めません。\n${rules.map((r) => `- 「${r.name}」: ${r.detail}(守ること: ${r.body})`).join("\n")}\n\nルールを守るように直し、コミットして submit_pr で報告してください。何も変えずに出し直しても、同じように戻ってきます。${rulesNote(p)}`;
       }
-      const must = ticket ? mustAnswer(p, ticket.id) : [];
-      const nits = ticket ? openNits(p, ticket.id) : [];
+      const must = ticket ? await mustAnswer(p, ticket.id) : [];
+      const nits = ticket ? await openNits(p, ticket.id) : [];
       const from = ROLE_LABEL[(payload.from as Role) ?? "review"];
       return `${head}
 
@@ -123,7 +123,7 @@ ${nits.map(threadText).join("\n") || "(なし)"}
     case "sec":
     case "qa": {
       if (payload.preDev) return preDevPrompt(p, msg.kind, ticket, head);
-      const prior = ticket ? mustResolve(p, ticket.id, msg.kind) : [];
+      const prior = ticket ? await mustResolve(p, ticket.id, msg.kind) : [];
       const criteria = ticket ? acceptanceBlock(p, ticket) : "";
       const how = `${criteria}## 何を止めるか(必須にしてよいのは 3 つだけ)
 - 必須(blocking: true)にしてよいのは、次のどれかに当たるものだけです。根拠を basis に付けます。

@@ -15,8 +15,6 @@ const files = [join(ROOT, "hq.ts"), join(ROOT, "server.ts"), ...readdirSync(join
 /** 同期の生 SQL をまだ使っているファイル(src からの相対)。移したら消す。移す単位は ADR-0040 の A〜D(別チケット)。D が済んだら空にする。 */
 const NOT_MIGRATED = new Set([
   "server.ts",
-  "project/budget.ts",
-  "project/ci-tools.ts",
   "project/design-visual.ts",
   "project/design.ts",
   "project/dev-rules.ts",
@@ -24,11 +22,9 @@ const NOT_MIGRATED = new Set([
   "project/inbox.ts",
   "project/leadchat.ts",
   "project/member-chat.ts",
-  "project/merge.ts",
   "project/metrics.ts",
   "project/office.ts",
   "project/onboard.ts",
-  "project/outage.ts",
   "project/people.ts",
   "project/planning-agent.ts",
   "project/planning.ts",
@@ -36,7 +32,6 @@ const NOT_MIGRATED = new Set([
   "project/project.ts",
   "project/prompts.ts",
   "project/questions.ts",
-  "project/review.ts",
   "project/team.ts",
   "project/ticket.ts",
   "project/transfer.ts",

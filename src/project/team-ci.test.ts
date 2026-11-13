@@ -163,7 +163,7 @@ describe("チームの CI(ADR-0028)", () => {
     const msg = run(p.db, "INSERT INTO messages (ticket_id, to_role, kind, status, available_at, created_at) VALUES (?, 'lead', 'unstick', 'claimed', '', '')", [t.id]).lastId;
     run(p.db, "INSERT INTO runs (message_id, ticket_id, member_id, role, policy_id, formation_id, started_at) VALUES (?, ?, ?, 'lead', 1, 1, '')", [msg, t.id, p.fixedMember("lead").id]);
     const done: { action?: "retry" | "hold" | "closed" | "dropped" } = {};
-    const tools = unstickTools(p, p.ticket(t.id), { error: "submit_pr が呼ばれませんでした", resume: { toRole: "dev", toMemberId: null, kind: "implement", payload: {} } }, done);
+    const tools = await unstickTools(p, p.ticket(t.id), { error: "submit_pr が呼ばれませんでした", resume: { toRole: "dev", toMemberId: null, kind: "implement", payload: {} } }, done);
     expect(await tools.find((x) => x.name === "drop_ticket")!.handler({ reason: "直すコードが無い" } as never)).toContain("取りやめました");
     expect(done.action).toBe("dropped");
     // チームの CI では、GitHub の CI を調べる道具は渡さない

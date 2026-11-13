@@ -64,7 +64,7 @@ describe("レビューの往復(実際の PR レビューのモデル)", () => {
     const fix = harness.calls.find((c) => c.prompt.includes("## 必須の指摘"))!;
     expect(fix.prompt).toMatch(/## 必須の指摘[\s\S]*空のとき null を返す[\s\S]*## 提案[\s\S]*変数名/);
     // スレッド: 指摘 → 直した → 解決を確認。提案は未対応のまま残る(通すのを妨げない)
-    const th = threads(p, t.id);
+    const th = await threads(p, t.id);
     expect(th.map((x) => [x.blocking, x.status, x.comments.map((c) => c.action)])).toEqual([
       [true, "fixed", ["raised", "fixed", "resolved"]],
       [false, "open", ["raised"]],
@@ -94,14 +94,14 @@ describe("レビューの往復(実際の PR レビューのモデル)", () => {
     const a = await createTicket(p, { title: "A" });
     await d.drain();
     expect(p.ticket(a.id).stage).toBe("merge");
-    expect(threads(p, a.id)[0]).toMatchObject({ status: "wontfix", comments: [{ action: "raised" }, { action: "wontfix" }, { action: "accepted" }] });
+    expect((await threads(p, a.id))[0]).toMatchObject({ status: "wontfix", comments: [{ action: "raised" }, { action: "wontfix" }, { action: "accepted" }] });
 
     // 2) レビュアーが納得しない → リーダーが「開発の言い分を通す」と裁定 → 次の工程へ
     insist = true;
     const b = await createTicket(p, { title: "B" });
     await d.drain();
     expect(get(p.db, "SELECT decided_by, choice FROM decisions WHERE ticket_id = ?", [b.id])).toEqual({ decided_by: "lead", choice: 1 });
-    expect(threads(p, b.id)[0]!.comments.map((c) => c.action)).toEqual(["raised", "wontfix", "reopened", "ruled"]);
+    expect((await threads(p, b.id))[0]!.comments.map((c) => c.action)).toEqual(["raised", "wontfix", "reopened", "ruled"]);
     expect(p.ticket(b.id).stage).toBe("merge");
   });
 

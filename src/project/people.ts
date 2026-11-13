@@ -117,11 +117,11 @@ export async function unitView(p: Project, unitId: number, office: { units: { id
     members,
     waiting: o?.waiting ?? [],
     queued: o?.queued ?? [],
-    budget: { budgetUsd: u.budget_usd, spentUsd: unitSpentUsd(p, u.name), exhausted: unitExhausted(p, u) },
+    budget: { budgetUsd: u.budget_usd, spentUsd: await unitSpentUsd(p, u.name), exhausted: await unitExhausted(p, u) },
     last24h: { runs: today?.runs ?? 0, costUsd: today?.cost ?? 0, ok: today?.ok ?? 0 },
     recent,
   };
 }
 
-export type MemberView = ReturnType<typeof memberView>;
-export type UnitView = ReturnType<typeof unitView>;
+export type MemberView = Awaited<ReturnType<typeof memberView>>;
+export type UnitView = Awaited<ReturnType<typeof unitView>>;

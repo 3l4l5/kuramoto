@@ -1,5 +1,6 @@
 import { iso } from "../clock.js";
-import { all } from "../db/sqlite.js";
+import { dialect } from "../db/dialect/index.js";
+import { sql, type SqlBool } from "kysely";
 import { leadReply } from "./leadchat.js";
 import type { Project, TicketRow } from "./project.js";
 import { dropTicket, resumeHold, type DecisionOption, type DecisionRow } from "./workflow.js";
@@ -27,13 +28,13 @@ export function githubDown(p: Project): Outage | null {
 }
 
 /** GitHub に入れないことが分かった。初めてなら責任者に 1 回だけ知らせる。 */
-export function markGithubDown(p: Project, error: string): void {
+export async function markGithubDown(p: Project, error: string): Promise<void> {
   const now = iso(p.clock.now());
   const cur = githubDown(p);
   if (cur) return;
   p.setSetting("github_down", JSON.stringify({ since: now, error: error.slice(0, 500), checkedAt: now } satisfies Outage));
   p.event("system", "github_down", null, { error: error.slice(0, 500) });
-  leadReply(
+  await leadReply(
     p,
     `【GitHub に入れません】Kuramoto が GitHub に入れなくなりました(gh か git の認証が切れているか、無効になっています)。チケットの問題ではないので、チームは GitHub を使う仕事を止めて待ちます。\nこの PC のターミナルで \`gh auth login\` をし直してください(\`gh auth status\` で確かめられます)。入れるようになったら、Kuramoto が気づいて自動で再開します。\nエラー: ${error.slice(0, 300)}`,
   );
@@ -60,14 +61,14 @@ export async function markGithubUp(p: Project): Promise<number> {
   const resumed = await resumeAuthHolds(p);
   if (cur) {
     p.event("system", "github_up", null, { since: cur.since, resumed });
-    leadReply(p, `【GitHub に戻れました】また GitHub に入れるようになったので、止めていた仕事を再開します。${resumed ? `認証切れで保留になっていたチケット ${resumed} 枚も再開しました。` : ""}`);
+    await leadReply(p, `【GitHub に戻れました】また GitHub に入れるようになったので、止めていた仕事を再開します。${resumed ? `認証切れで保留になっていたチケット ${resumed} 枚も再開しました。` : ""}`);
   }
   return resumed;
 }
 
 /** 認証切れが理由の保留(責任者の対応待ち)を、続きから再開する。 */
 export async function resumeAuthHolds(p: Project): Promise<number> {
-  const holds = all<DecisionRow>(p.db, "SELECT * FROM decisions WHERE escalated = 1 AND decided_at IS NULL ORDER BY id");
+  const holds = (await p.pdb.from("decisions").where("escalated", "=", 1).where("decided_at", "is", null).orderBy("id").execute()) as DecisionRow[];
   let n = 0;
   for (const d of holds) {
     const options = JSON.parse(d.options) as DecisionOption[];
@@ -106,7 +107,7 @@ export function ciBlockAction(notes: string[]): string {
   return "GitHub の Actions で、ジョブが始まらない理由(ランナー・権限・ワークフローの設定・請求)を確かめてください。直したら、Kuramoto が気づいて CI をやり直し、merge を再開します。";
 }
 
-export function markCiBlocked(p: Project, repo: string, notes: string[], runIds: number[]): boolean {
+export async function markCiBlocked(p: Project, repo: string, notes: string[], runIds: number[]): Promise<boolean> {
   const blocks = ciBlocked(p);
   const cur = blocks.find((b) => b.repo === repo);
   if (cur) {
@@ -117,7 +118,7 @@ export function markCiBlocked(p: Project, repo: string, notes: string[], runIds:
   const now = iso(p.clock.now());
   saveBlocks(p, [...blocks, { repo, since: now, notes: notes.slice(0, 5), probedAt: now, runIds }]);
   p.event("system", "ci_blocked", null, { repo, notes: notes.slice(0, 5) });
-  leadReply(
+  await leadReply(
     p,
     `【${repo} の CI が動いていません】CI のジョブが始まってもいません(ステップが 1 つも動かず、ログもありません)。コードではなく GitHub 側の原因なので、チームでは直せません。開発と確認は続け、merge だけ止めて待ちます。\n${notes.length ? `GitHub の注記: ${notes.slice(0, 3).join(" / ")}\n` : ""}${ciBlockAction(notes)}`,
   );
@@ -136,13 +137,13 @@ export function ciProbeDue(p: Project, repo: string): number[] {
 }
 
 /** CI がまた動き出した(ジョブが始まった・通った)。知らせる。 */
-export function markCiRunning(p: Project, repo: string): void {
+export async function markCiRunning(p: Project, repo: string): Promise<void> {
   const blocks = ciBlocked(p);
   const cur = blocks.find((b) => b.repo === repo);
   if (!cur) return;
   saveBlocks(p, blocks.filter((b) => b.repo !== repo));
   p.event("system", "ci_running", null, { repo, since: cur.since });
-  leadReply(p, `【${repo} の CI が動き出しました】CI のジョブがまた始まるようになったので、merge を再開します。`);
+  await leadReply(p, `【${repo} の CI が動き出しました】CI のジョブがまた始まるようになったので、merge を再開します。`);
 }
 
 /**
@@ -151,14 +152,15 @@ export function markCiRunning(p: Project, repo: string): void {
  * @returns 取りやめたチケット
  */
 export async function dropGithubCiTickets(p: Project): Promise<TicketRow[]> {
-  const open = all<TicketRow>(
-    p.db,
-    `SELECT * FROM tickets WHERE stage NOT IN ('done','dropped') AND json_extract(plan_refs, '$.baseCi') IS NOT NULL
-       AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id = tickets.id AND r.ended_at IS NULL)`,
-  );
+  const open = (await p.pdb
+    .from("tickets")
+    .where("stage", "not in", ["done", "dropped"])
+    .where(sql<SqlBool>`${dialect.jsonExtract("tickets.plan_refs", "baseCi")} IS NOT NULL`)
+    .where(sql<SqlBool>`NOT EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id = tickets.id AND r.ended_at IS NULL AND r.project_id = ${p.projectId})`)
+    .execute()) as TicketRow[];
   for (const t of open)
     await dropTicket(p, t.id, { by: "lead", reason: "チームの CI を使うようになったので、GitHub Actions の CI を直す必要がなくなりました(Actions は止めてあり、merge はチームの CI で決めます)" });
   if (p.setting("ci_blocked") && p.setting("ci_blocked") !== "[]") p.setSetting("ci_blocked", "[]");
-  if (open.length) leadReply(p, `【チームの CI】GitHub Actions の CI を直すためのチケット #${open.map((t) => t.number).join("・#")} は、チームの CI を使うようになっていらなくなったので取りやめました。`);
+  if (open.length) await leadReply(p, `【チームの CI】GitHub Actions の CI を直すためのチケット #${open.map((t) => t.number).join("・#")} は、チームの CI を使うようになっていらなくなったので取りやめました。`);
   return open;
 }

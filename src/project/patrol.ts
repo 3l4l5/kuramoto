@@ -207,7 +207,7 @@ export async function patrolPrompt(p: Project, signals: LoopSignal[], opts: { st
       const t = s.ticket;
       const recent = await p.pdb.from("runs").select(["role", "outcome", "error", "summary"]).where("ticket_id", "=", t.id).orderBy("id", "desc").limit(6).execute();
       const spent = await ticketSpentUsd(p, t.id);
-      const findings = (["review", "sec", "qa"] as const).flatMap((r) => mustResolve(p, t.id, r).map((f) => `  - [${ROLE_LABEL[r]}] 指摘 ${f.id}(${f.status}): ${f.body.slice(0, 200)}`));
+      const findings = (await Promise.all((["review", "sec", "qa"] as const).map(async (r) => (await mustResolve(p, t.id, r)).map((f) => `  - [${ROLE_LABEL[r]}] 指摘 ${f.id}(${f.status}): ${f.body.slice(0, 200)}`)))).flat();
       const notes = p.notes(t.id).slice(-3);
       loopBlocks.push(`### #${t.number} ${t.title} [${stageText(t)}]
 - 引っかかったところ: ${s.reasons.join("、")}
@@ -344,13 +344,13 @@ export async function passAsIs(p: Project, number: number, reason: string): Prom
   await p.pdb.transaction(async () => {
     await p.pdb.update("messages", { status: "done" }).where("ticket_id", "=", t.id).where("status", "=", "pending").execute();
     await p.pdb.update("decisions", { decided_by: "lead", decided_at: p.now() }).where("ticket_id", "=", t.id).where("decided_at", "is", null).execute();
-    for (const f of mustResolve(p, t.id, from)) {
-      setStatus(p, f.id, "wontfix");
-      comment(p, f.id, { memberId: lead.id, role: "lead" }, "ruled", `見回りで裁定: 直さずに通す。${reason}`);
+    for (const f of await mustResolve(p, t.id, from)) {
+      await setStatus(p, f.id, "wontfix");
+      await comment(p, f.id, { memberId: lead.id, role: "lead" }, "ruled", `見回りで裁定: 直さずに通す。${reason}`);
     }
     p.addNote(t.id, `【見回り・往復を止めました】${ROLE_LABEL[from]}の残りの指摘を直さずに通します。${reason}`, "lead");
     p.event(lead.name, "loop_passed", t.id, { from, reason });
-    advance(p, p.ticket(t.id), from);
+    await advance(p, p.ticket(t.id), from);
   });
   await touch(p, t.id);
   return `#${number} の${ROLE_LABEL[from]}の残りの指摘を通し、次の工程へ進めました。`;
