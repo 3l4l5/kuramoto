@@ -476,6 +476,34 @@ test("チームの方針の開発ルール: ひな形から足す・空のルー
     await expect(drawer.getByRole("button", { name: /^保存して/ })).toHaveCount(0);
   });
 
+  await test.step("直している途中で別のルールを選ぶ・足すときは、捨ててよいか確かめる(黙って捨てない)", async () => {
+    const alert = drawer.getByRole("alert");
+    await drawer.getByLabel("名前").fill("途中の名前");
+    await list.getByRole("listitem").nth(1).click();
+    await expect(alert).toContainText("保存していない変更があります");
+    await expect(drawer.getByLabel("名前")).toHaveValue("途中の名前");
+    await expect(drawer.getByRole("button", { name: /^保存して/ })).toBeVisible();
+    // 「このまま直す」で下書きも帯も残る
+    await alert.getByRole("button", { name: "このまま直す" }).click();
+    await expect(alert).toHaveCount(0);
+    await expect(drawer.getByLabel("名前")).toHaveValue("途中の名前");
+    // 空のルールを足すときも同じ
+    await drawer.getByRole("button", { name: "+ 空のルールを足す" }).click();
+    await expect(alert).toBeVisible();
+    await expect(drawer.getByLabel("名前")).toHaveValue("途中の名前");
+    await alert.getByRole("button", { name: "このまま直す" }).click();
+    // 捨てて移ると、選んだルールが開き、帯は消える
+    await list.getByRole("listitem").nth(1).click();
+    await alert.getByRole("button", { name: "捨てて移る" }).click();
+    await expect(drawer.getByLabel("名前")).toHaveValue("README を更新する");
+    await expect(alert).toHaveCount(0);
+    await expect(drawer.getByRole("button", { name: /^保存して/ })).toHaveCount(0);
+    // 直していなければ確かめずに移れる
+    await list.getByRole("listitem").first().click();
+    await expect(drawer.getByLabel("名前")).toHaveValue("Jira 番号を入れる");
+    await expect(alert).toHaveCount(0);
+  });
+
   await test.step("「このルールを消す」で、確かめたあとに一覧から消え、版が上がる", async () => {
     await drawer.getByRole("button", { name: "このルールを消す" }).click();
     await drawer.getByRole("button", { name: "消して v7 にする" }).click();

@@ -45,17 +45,33 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
   const act = useAct();
   const [selected, setSelected] = useState<number | null>(null);
   const [confirming, setConfirming] = useState(false);
+  /** 保存していない下書きがあるまま移ろうとしたときの行き先(確かめるまで下書きは捨てない)。"add" は空のルールを足すフォーム */
+  const [leaving, setLeaving] = useState<number | "add" | null>(null);
   if (!data) return null;
 
   const active = data.rules.filter((r) => r.enabled).length;
   const adding = !!draft && draft.id === undefined;
   const current = adding ? null : (data.rules.find((r) => r.id === (draft?.id ?? selected)) ?? data.rules[0] ?? null);
   const next = data.version + 1;
+  const unsaved = !!draft && draftDirty(draft);
   const select = (id: number | null) => {
     setDraft(null);
     setConfirming(false);
+    setLeaving(null);
     setSelected(id);
   };
+  const openAdd = () => {
+    setConfirming(false);
+    setLeaving(null);
+    setDraft(adding ? draft : EMPTY);
+  };
+  /** 一覧や「足す」で別へ移る。直している途中なら、捨ててよいか確かめてから(足すフォームの途中から「足す」を押しても、そのまま残す) */
+  const go = (to: number | "add") => {
+    if (to === "add") return adding ? undefined : unsaved ? setLeaving("add") : openAdd();
+    if (!unsaved) return select(to);
+    setLeaving(to === current?.id ? null : to);
+  };
+  const proceed = () => (leaving === "add" ? openAdd() : select(leaving));
   const write = (path: string, body: unknown, message: (r: DevRulesView) => string, then?: (r: DevRulesView) => void) =>
     act(
       async () => {
@@ -67,7 +83,9 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
     );
 
   const addTemplate = (key: string, name: string) =>
-    write("/dev-rules", { template: key }, (r) => `「${name}」を足して v${r.version} にしました。次に起動するメンバーから使われます`, (r) => select(r.rules.find((x) => x.template === key)?.id ?? null));
+    write("/dev-rules", { template: key }, (r) => `「${name}」を足して v${r.version} にしました。次に起動するメンバーから使われます`, (r) => {
+      if (!unsaved) select(r.rules.find((x) => x.template === key)?.id ?? null);
+    });
   const toggle = (r: Rule, enabled: boolean) => write(`/dev-rules/${r.id}/enabled`, { enabled }, (v) => `「${r.name}」を${enabled ? "有効" : "無効"}にして v${v.version} にしました`);
   const remove = (r: Rule) => write(`/dev-rules/${r.id}/delete`, {}, (v) => `「${r.name}」を消して v${v.version} にしました`, () => select(null));
 
@@ -95,7 +113,7 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
                   key={r.id}
                   selected={r.id === current?.id}
                   off={!r.enabled}
-                  onClick={() => select(r.id)}
+                  onClick={() => go(r.id)}
                   title={
                     <span className="rules__title">
                       <b>{r.name}</b>
@@ -117,10 +135,7 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
           )}
           <Button
             className="rules__add"
-            onClick={() => {
-              setConfirming(false);
-              setDraft(adding ? draft : EMPTY);
-            }}
+            onClick={() => go("add")}
           >
             + 空のルールを足す
           </Button>
@@ -138,6 +153,17 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
         </div>
       </div>
       <div className="rules__form">
+        {leaving !== null && (
+          <div className="rules__confirm" role="alert">
+            <span className="rules__hint">保存していない変更があります。捨てて移ると、直した内容は戻りません。</span>
+            <Button size="sm" onClick={proceed}>
+              捨てて移る
+            </Button>
+            <Button size="sm" variant="text" onClick={() => setLeaving(null)}>
+              このまま直す
+            </Button>
+          </div>
+        )}
         {adding ? (
           <RuleForm draft={draft!} set={setDraft} />
         ) : current ? (
@@ -163,10 +189,16 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
           <p className="rules__hint">まだルールがありません。ひな形から足すか、空のルールを足します。</p>
         )}
       </div>
-      {draft && (adding || draftDirty(draft)) && (
+      {draft && (adding || unsaved) && (
         <div className="rules__foot">
           <span className="rules__note">保存してない変更: 開発ルール 1 · 次に起動するメンバーから使われます</span>
-          <Button variant="text" onClick={() => setDraft(null)}>
+          <Button
+            variant="text"
+            onClick={() => {
+              setLeaving(null);
+              setDraft(null);
+            }}
+          >
             やめる
           </Button>
           <Button variant="primary" disabled={!valid} onClick={() => void save()}>
