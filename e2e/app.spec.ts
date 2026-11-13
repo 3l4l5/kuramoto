@@ -575,6 +575,41 @@ test("チームの方針の開発ルール: ひな形から足す・空のルー
     await expect(alert).toHaveCount(0);
   });
 
+  await test.step("直している途中で引き出しを閉じる・別の引き出しへ移るときも、捨ててよいか確かめる", async () => {
+    const alert = drawer.getByRole("alert");
+    await drawer.getByLabel("名前").fill("閉じる前の名前");
+    // 閉じる: 確かめるあいだは引き出しも下書きも残る
+    await drawer.getByRole("button", { name: "閉じる" }).click();
+    await expect(alert).toContainText("保存していない変更があります");
+    await expect(drawer.getByLabel("名前")).toHaveValue("閉じる前の名前");
+    await alert.getByRole("button", { name: "このまま直す" }).click();
+    await expect(alert).toHaveCount(0);
+    await expect(drawer.getByLabel("名前")).toHaveValue("閉じる前の名前");
+    // 別の引き出しへ移る
+    await page.getByRole("button", { name: "編成", exact: true }).click();
+    await expect(alert).toBeVisible();
+    await expect(page.getByRole("complementary", { name: "編成" })).toHaveCount(0);
+    await alert.getByRole("button", { name: "捨てて移る" }).click();
+    await expect(page.getByRole("complementary", { name: "編成" })).toBeVisible();
+    // 捨てたので、開き直すと下書きは無く、確かめずに閉じられる
+    await page.getByRole("button", { name: "チームの方針", exact: true }).click();
+    await drawer.getByRole("tab", { name: "開発ルール" }).click();
+    await expect(drawer.getByLabel("名前")).toHaveValue("Jira 番号を入れる");
+    await expect(drawer.getByRole("tab", { name: /開発ルール/ })).not.toContainText("1");
+    await drawer.getByRole("button", { name: "閉じる" }).click();
+    await expect(drawer).toHaveCount(0);
+    // 直していなければ確かめずに閉じられる(捨てて閉じるときも同じ)
+    await page.getByRole("button", { name: "チームの方針", exact: true }).click();
+    await drawer.getByRole("tab", { name: "開発ルール" }).click();
+    await drawer.getByLabel("名前").fill("閉じて捨てる名前");
+    await drawer.getByRole("button", { name: "閉じる" }).click();
+    await alert.getByRole("button", { name: "捨てて移る" }).click();
+    await expect(drawer).toHaveCount(0);
+    await page.getByRole("button", { name: "チームの方針", exact: true }).click();
+    await drawer.getByRole("tab", { name: "開発ルール" }).click();
+    await expect(drawer.getByLabel("名前")).toHaveValue("Jira 番号を入れる");
+  });
+
   await test.step("「このルールを消す」で、確かめたあとに一覧から消え、版が上がる", async () => {
     await drawer.getByRole("button", { name: "このルールを消す" }).click();
     await drawer.getByRole("button", { name: "消して v7 にする" }).click();

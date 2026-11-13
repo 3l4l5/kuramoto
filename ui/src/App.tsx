@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { post } from "./api";
 import { Home } from "./Home";
 import { go, useAct, useProject, useRoute, useStudio } from "./hooks";
@@ -7,8 +8,7 @@ import { Studio } from "./studio/Studio";
 import { ProductivityPage } from "./Productivity";
 import { SettingsPage } from "./Settings";
 import { pct, usd } from "./format";
-import { DRAWER_LABEL, type Drawer } from "./Team";
-import { useEffect, useState } from "react";
+import { DRAWER_LABEL, useDrawerState, type Drawer } from "./Team";
 import { Btn } from "./ui";
 import { WorkSwitch } from "./WorkSwitch";
 import { useFormationUi } from "./formationUi";
@@ -16,15 +16,12 @@ import { useFormationUi } from "./formationUi";
 export function App() {
   const route = useRoute();
   const inProject = route.name === "project" || route.name === "studio" || route.name === "metrics" || route.name === "settings";
-  const [drawer, setDrawer] = useState<Drawer | null>(null);
-  useEffect(() => {
-    setDrawer(null);
-  }, [route.name]);
-  // 床の凡例の「経路を変える」「流れを変える」で、編成の引き出しを開く
+  const { drawer, moveTo, guard } = useDrawerState(route.name);
+  // 床の凡例の「経路を変える」「流れを変える」で、編成の引き出しを開く(開発ルールの下書きがあれば、捨ててよいか確かめる)
   const seq = useFormationUi().request.seq;
   useEffect(() => {
-    if (seq > 0) setDrawer("formation");
-  }, [seq]);
+    if (seq > 0) moveTo("formation");
+  }, [seq]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className="app">
       <header className="bar dads-bar">
@@ -63,7 +60,7 @@ export function App() {
           <>
             <OfficeStatus id={route.id} />
             {(Object.keys(DRAWER_LABEL) as Drawer[]).map((k) => (
-              <Btn key={k} kind={drawer === k ? "solid-fill" : "outline"} size="sm" aria-expanded={drawer === k} onClick={() => setDrawer(drawer === k ? null : k)}>
+              <Btn key={k} kind={drawer === k ? "solid-fill" : "outline"} size="sm" aria-expanded={drawer === k} onClick={() => moveTo(drawer === k ? null : k)}>
                 {DRAWER_LABEL[k]}
               </Btn>
             ))}
@@ -72,7 +69,7 @@ export function App() {
       </header>
       {route.name === "home" && <Home />}
       {route.name === "new" && <NewProject />}
-      {route.name === "project" && <ProjectPage id={route.id} drawer={drawer} closeDrawer={() => setDrawer(null)} />}
+      {route.name === "project" && <ProjectPage id={route.id} drawer={drawer} closeDrawer={() => moveTo(null)} guard={guard} />}
       {route.name === "studio" && <Studio id={route.id} />}
       {route.name === "metrics" && <ProductivityPage id={route.id} />}
       {route.name === "settings" && <SettingsPage id={route.id} />}
