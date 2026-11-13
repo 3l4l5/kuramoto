@@ -132,12 +132,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .tr-node .tr-state { font-size: var(--fs-sm); }
 .tr-node .tr-why { flex-basis: 100%; font-size: var(--fs-xs); color: var(--muted); }
 .tr-node .tr-also { font-size: var(--fs-xs); color: var(--muted); }
-.tr-node .tr-blocks { margin-left: auto; font-size: var(--fs-sm); font-weight: 700; color: var(--review); }
+.tr-node .tr-blocks { margin-left: auto; font-size: var(--fs-sm); font-weight: 700; color: var(--ink); }
 .tr-work { border-color: var(--dev); }
 .tr-work .tr-state { color: var(--dev); }
 .tr-you { border-color: var(--warn); background: var(--warn-soft); }
 .tr-you .tr-state { color: var(--warn-ink); font-weight: 700; }
-.tr-wait .tr-state { color: var(--review); }
+.tr-wait .tr-state { color: var(--muted); }
 .tr-idle .tr-state { color: var(--muted); }
 .board { display: grid; gap: 10px; min-width: 980px; }
 .col { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 10px; display: flex; flex-direction: column; gap: 8px; min-height: 420px; }
@@ -543,7 +543,7 @@ body { background: var(--surface); }
 .gate .st.ok { color: var(--ok); } .gate .st.wip { color: var(--warn); }
 .gate.hand { flex: 0 1 180px; justify-content: center; align-items: center; background: var(--action); color: var(--surface); border-color: var(--action); font-weight: 700; }
 .gate.hand:hover { background: var(--action-hover); text-decoration: underline; }
-.gate.hand:disabled { background: var(--line-strong); border-color: var(--line-strong); color: var(--bg); cursor: not-allowed; text-decoration: none; }
+.gate.hand:disabled { background: var(--bg); border-color: var(--line); color: var(--muted); cursor: not-allowed; text-decoration: none; }
 .sectabs button[aria-selected="true"] { color: var(--dev); border-bottom: 4px solid var(--dev); }
 .sectabs button { font-size: var(--fs-lg); height: 44px; }
 
@@ -950,6 +950,7 @@ body { background: var(--surface); }
 .tr-node .tr-pre { font-size: var(--fs-xs); padding: 0 6px; border-radius: var(--r-sm); border: 1px dashed var(--design); color: var(--design); }
 .tr-node .tr-viol { font-size: var(--fs-sm); font-weight: 700; color: var(--danger-ink); }
 .tr-blocked { border-color: var(--danger); background: var(--danger-soft); }
+.tr-blocked .tr-state { color: var(--danger-ink); font-weight: 700; }
 .kindbar { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-2); }
 .kindbar .kindfilter { margin-bottom: 0; }
 .kindnote { font-size: var(--fs-sm); color: var(--muted); }
