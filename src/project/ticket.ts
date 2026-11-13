@@ -204,7 +204,10 @@ export async function ticketView(p: Project, ticketId: number) {
     // 「直すまで進めない」ルールに反して止まっているか(ボードの赤い札)
     ruleBlocked: openViolations(p, t.id, "blocked").map((v) => v.name),
     // 画面ごとの最新の見比べ(お手本・実装・違いの画像と、違いの割合。ADR-0034)
-    designCompare: (await latestComparisons(p, t.id)).map((c) => ({ ...c, name: screens(p).get(c.screen)?.name ?? c.screen })),
+    designCompare: await (async () => {
+      const scr = await screens(p);
+      return (await latestComparisons(p, t.id)).map((c) => ({ ...c, name: scr.get(c.screen)?.name ?? c.screen }));
+    })(),
     timeline,
   };
 }

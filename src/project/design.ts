@@ -14,14 +14,14 @@ export const DESIGN_DIR = ".kuramoto/design";
 export type DesignFile = { key: string; name: string; device: "phone" | "desktop"; file: string; html: string; requirements: string[]; note?: string };
 
 /** チケットに関わる画面の試作。 */
-export function designFor(p: Project, ticket: TicketRow): DesignFile[] {
+export async function designFor(p: Project, ticket: TicketRow): Promise<DesignFile[]> {
   const refs = JSON.parse(ticket.plan_refs || "{}") as { screens?: string[]; requirement?: string | null };
-  const req = refs.requirement ?? requirements(p).find((r) => r.id === (ticket as TicketRow & { requirement_item_id?: number | null }).requirement_item_id)?.code;
+  const req = refs.requirement ?? (await requirements(p)).find((r) => r.id === (ticket as TicketRow & { requirement_item_id?: number | null }).requirement_item_id)?.code;
   const linked = new Set(refs.screens ?? []);
   // デザインシステムの土台のチケットは、カタログに全部の画面を並べるので、全部の試作を渡す
-  const all = isDesignSystemTicket(p, ticket);
+  const all = await isDesignSystemTicket(p, ticket);
   const out: DesignFile[] = [];
-  for (const [key, s] of screens(p)) {
+  for (const [key, s] of await screens(p)) {
     if (!all && !linked.has(key) && !(req && s.requirements.includes(req))) continue;
     const v = s.variants.find((x) => x.id === s.chosen) ?? s.variants[0];
     if (!v) continue;
@@ -31,7 +31,7 @@ export function designFor(p: Project, ticket: TicketRow): DesignFile[] {
   return out;
 }
 
-export function isDesignSystemTicket(p: Project, ticket: TicketRow): boolean {
+export async function isDesignSystemTicket(p: Project, ticket: TicketRow): Promise<boolean> {
   return !!(JSON.parse(ticket.plan_refs || "{}") as { designSystem?: boolean }).designSystem;
 }
 
@@ -84,6 +84,6 @@ export function designPrompt(files: DesignFile[], role: Role, opts: { hasSystem?
 /** QA が指摘にする、違いの割合の目安。 */
 export const DIFF_WARN = 0.1;
 
-export function hasSystem(p: Project): DesignSystem | null {
-  return designSystem(p);
+export async function hasSystem(p: Project): Promise<DesignSystem | null> {
+  return await designSystem(p);
 }

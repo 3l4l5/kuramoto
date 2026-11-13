@@ -79,7 +79,7 @@ export class Dispatcher {
   async housekeep(): Promise<void> {
     await expireDecisions(this.p);
     // 企画スタジオが同じところを回っていたら止める
-    if (checkStudioLoop(this.p)) this.stopPlanning();
+    if (await checkStudioLoop(this.p)) this.stopPlanning();
     // チームの CI を使うなら、GitHub Actions の CI のためのチケットは片付ける(ADR-0028)
     if (teamCiEnabled(this.p)) await dropGithubCiTickets(this.p);
     // 始業中なら、新しいチケットの交通整理をリーダーに頼む
@@ -432,9 +432,9 @@ export class Dispatcher {
       const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: ticket.number, role, memberName: member.name, branch: preDev ? "" : branch });
       // 画面のデザイン: 企画で合意した試作・デザインシステム・お手本の画像を作業場所に置き、役割ごとの使い方を指示に足す(ADR-0033・0034)
       const designUse = ["dev", "review", "qa"].includes(role) && !preDev;
-      const designs = designUse ? designFor(p, ticket) : [];
-      const system = designUse ? designSystem(p) : null;
-      const systemTicket = designUse && isDesignSystemTicket(p, ticket);
+      const designs = designUse ? await designFor(p, ticket) : [];
+      const system = designUse ? await designSystem(p) : null;
+      const systemTicket = designUse && await isDesignSystemTicket(p, ticket);
       const withSystem = !!system && (designs.length > 0 || systemTicket);
       const refs = new Map<string, { id: number; png: Buffer }>();
       if (designs.length && this.deps.designStore && this.deps.renderer)
@@ -596,8 +596,8 @@ export class Dispatcher {
       result = await harness.run({
         cwd: ws.path,
         confine: confinementFor(p, ws, role),
-        systemPrompt: planningSystemPrompt(p, role, policy.focus) + planWebNote(p),
-        prompt: planningPrompt(p, payload, { fresh: !resume }),
+        systemPrompt: await planningSystemPrompt(p, role, policy.focus) + planWebNote(p),
+        prompt: await planningPrompt(p, payload, { fresh: !resume }),
         model: policy.model,
         effort: policy.effort,
         ...(resume ? { resumeSessionId: resume } : {}),

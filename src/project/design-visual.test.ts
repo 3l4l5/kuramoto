@@ -69,9 +69,9 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
       const p = new Project(":memory:", new ManualClock());
       p.addRepo("acme/shop", "API");
       p.saveFormation({ pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 1, summonAt: 2, idleSec: 600 }, { name: "確認", roles: ["qa"], maxMembers: 1, summonAt: 2, idleSec: 600 }] });
-      upsertRequirement(p, { name: "一覧", acceptance: "並ぶ" });
-      putArtifact(p, "screen", "designsystem", "main", DS);
-      putScreen(p, "list", { name: "メモ一覧", device: "phone", requirements: ["R1"], variants: [{ id: "A", html: "<h1>一覧</h1>" }], chosen: "A", agreed: true });
+      await upsertRequirement(p, { name: "一覧", acceptance: "並ぶ" });
+      await putArtifact(p, "screen", "designsystem", "main", DS);
+      await putScreen(p, "list", { name: "メモ一覧", device: "phone", requirements: ["R1"], variants: [{ id: "A", html: "<h1>一覧</h1>" }], chosen: "A", agreed: true });
       const t = await createTicket(p, { title: "一覧", planRefs: { screens: ["list"] } });
       const render: Renderer = async (_h, w) => png(w, 20, [255, 255, 255]);
       const replies: string[] = [];
@@ -107,10 +107,10 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
   it("画面デザインの段階は、デザインシステムが無いと合意できない。引き渡しでは土台のチケットを先に並べられる", async () => {
     const p = new Project(":memory:", new ManualClock());
     p.addRepo("acme/shop", "API");
-    putScreen(p, "list", { name: "一覧", device: "phone", requirements: [], variants: [{ id: "A", html: "<p>x</p>" }], chosen: "A", agreed: true });
-    expect(agreeBlocker(p, "screen")).toBe("デザインシステムがまだありません");
-    putArtifact(p, "screen", "designsystem", "main", DS);
-    expect(agreeBlocker(p, "screen")).toBeNull();
+    await putScreen(p, "list", { name: "一覧", device: "phone", requirements: [], variants: [{ id: "A", html: "<p>x</p>" }], chosen: "A", agreed: true });
+    expect(await agreeBlocker(p, "screen")).toBe("デザインシステムがまだありません");
+    await putArtifact(p, "screen", "designsystem", "main", DS);
+    expect(await agreeBlocker(p, "screen")).toBeNull();
 
     const tool = (name: string) => planningTools(p, "handoff").find((x) => x.name === name)!;
     void tool("create_ticket").handler({ title: "デザインシステムの土台", body: "トークン・部品・/_design", screens: [], design: [], design_system: true } as never);

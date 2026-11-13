@@ -19,7 +19,6 @@ const NOT_MIGRATED = new Set([
   "project/inbox.ts",
   "project/leadchat.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
   "project/member-chat.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
-  "project/planning.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
   "project/project.ts",
   "project/prompts.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)
   "project/questions.ts", // C2(#44 の後続): workflow・outage が async になってから移す(ADR-0040)

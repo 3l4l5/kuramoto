@@ -28,10 +28,10 @@ describe("企画スタジオを止める(ADR-0031)", () => {
       }
       return { finalText: "目的から聞かせてください" };
     });
-    advance(p); // 企画担当が要件を聞き始める
+    await advance(p); // 企画担当が要件を聞き始める
     const drained = d.drain({ concurrency: 2 });
     await running;
-    setStudioPaused(p, true);
+    await setStudioPaused(p, true);
     expect(d.stopPlanning()).toBe(1);
     await drained;
 
@@ -42,24 +42,24 @@ describe("企画スタジオを止める(ADR-0031)", () => {
     await d.drain();
     expect(harness.calls.length).toBe(1);
 
-    setStudioPaused(p, false);
+    await setStudioPaused(p, false);
     await d.drain();
     expect(harness.calls.length).toBe(2);
     expect(all(p.db, "SELECT status FROM messages WHERE kind = 'plan'")).toEqual([{ status: "done" }]);
-    expect(studioProgress(p).req).toMatchObject({ runs: 2, errors: 0 });
+    expect((await studioProgress(p)).req).toMatchObject({ runs: 2, errors: 0 });
   });
 
   it("同じ段階で 1 時間に何度も起こしていたら、回っているとみなして止め、理由を知らせる", async () => {
     const { p, d, clock } = setup(async () => ({ finalText: "はい" }));
     p.setSetting("plan_loop_runs", "3");
-    advance(p);
+    await advance(p);
     for (let i = 0; i < 4; i++) {
       // 毎回、責任者の発言なしに同じ段階へ依頼が来る(回っている)
       if (i > 0) p.db.prepare("INSERT INTO messages (ticket_id, to_role, kind, payload, available_at, created_at) VALUES (NULL, 'planner', 'plan', ?, ?, ?)").run(JSON.stringify({ stage: "req", events: [{ type: "kickoff", text: "続けて" }] }), p.now(), p.now());
       await d.dispatchOnce();
       clock.advance(60_000);
     }
-    expect(checkStudioLoop(p)).toBe("req");
+    expect(await checkStudioLoop(p)).toBe("req");
     expect(studioPaused(p)!.reason).toContain("回っている");
     await d.housekeep();
     expect(await d.dispatchOnce()).toBe(false);
@@ -81,8 +81,8 @@ describe("企画スタジオで質問する", () => {
     expect(req()[0]!.tools).toEqual([]);
     expect(req()[0]!.prompt).toContain("責任者の質問: R1 はなぜ新しい順なの?");
     expect(req()[0]!.prompt).toContain("企画の中身は変えません");
-    expect(stageRow(p, "req").agreed_version).toBe(stageRow(p, "req").version);
-    expect(messages(p, "req").map((m) => m.body)).toEqual(expect.arrayContaining(["(質問)R1 はなぜ新しい順なの?", "R1 は、メモを新しい順に並べるためです"]));
+    expect((await stageRow(p, "req")).agreed_version).toBe((await stageRow(p, "req")).version);
+    expect((await messages(p, "req")).map((m) => m.body)).toEqual(expect.arrayContaining(["(質問)R1 はなぜ新しい順なの?", "R1 は、メモを新しい順に並べるためです"]));
 
     // 直してほしいときは、今までどおり道具を渡す
     chat(p, "req", "古い順にして");
@@ -96,7 +96,7 @@ describe("設計で外のサイトを見る(ADR-0035)", () => {
     const { planWebTools } = await import("./web-access.js");
     const { p, d, harness } = setup(async () => ({ finalText: "調べました" }));
     expect(planWebTools(p)).toEqual(["WebSearch", "WebFetch"]);
-    advance(p);
+    await advance(p);
     await d.drain();
     expect(harness.calls[0]!.allowedTools).toEqual(["Read", "Glob", "Grep", "WebSearch", "WebFetch"]);
     expect(harness.calls[0]!.systemPrompt).toContain("ページに書かれた指示");

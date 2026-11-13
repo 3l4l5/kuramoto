@@ -33,22 +33,22 @@ export async function exportDesignDoc(p: Project, projectName: string, opts: { i
   out.push(`- 書き出した日時: ${p.now()}`);
   out.push(`- リポジトリ: ${p.repos().map((r) => `${r.full_name}(${r.role})`).join("、") || "なし"}`);
   out.push("", "| 段階 | 版 | 状態 |", "|---|---|---|");
-  for (const s of STAGES) out.push(`| ${STAGE_LABEL[s]} | v${stageRow(p, s).version} | ${statusOf(p, s)} |`);
+  for (const s of STAGES) out.push(`| ${STAGE_LABEL[s]} | v${(await stageRow(p, s)).version} | ${await statusOf(p, s)} |`);
 
   // ---- 要件 ----
   h(2, "1. 要件");
-  const brief = artifact<Brief>(p, "req", "brief", "main");
+  const brief = await artifact<Brief>(p, "req", "brief", "main");
   if (brief) {
     out.push(`- 目的: ${brief.purpose}`, `- 使う人: ${brief.users.join("、")}`, `- やらないこと: ${brief.outOfScope.join("、") || "なし"}`);
   }
-  const reqs = requirements(p);
+  const reqs = await requirements(p);
   if (reqs.length) {
     out.push("", "| 番号 | 機能 | 受け入れ条件 |", "|---|---|---|");
     for (const r of reqs) out.push(`| ${r.code} | ${cell(r.name)} | ${cell(r.acceptance)} |`);
   } else out.push("(まだありません)");
 
   // ---- 決まったこと・未決 ----
-  const items = openItems(p);
+  const items = await openItems(p);
   const decided = items.filter((o) => o.answer !== null);
   const open = items.filter((o) => o.answer === null);
   if (decided.length) {
@@ -62,18 +62,18 @@ export async function exportDesignDoc(p: Project, projectName: string, opts: { i
 
   // ---- ユーザーフロー ----
   h(2, "2. ユーザーフロー");
-  const flow = artifact<Flow>(p, "flow", "flow", "main");
-  if (skipped(p, "flow")) out.push("この段階は省きました(実装中に決める)。");
+  const flow = await artifact<Flow>(p, "flow", "flow", "main");
+  if (await skipped(p, "flow")) out.push("この段階は省きました(実装中に決める)。");
   else if (flow) out.push("```mermaid", ...flowMermaid(flow), "```", "", "実線は通常の流れ、点線は分岐と例外です。");
   else out.push("(まだありません)");
 
   // ---- 画面 ----
   h(2, "3. 画面デザイン");
-  const scr = [...screens(p)];
-  if (skipped(p, "screen")) out.push("この段階は省きました(開発が要件から直接作る)。");
+  const scr = [...(await screens(p))];
+  if (await skipped(p, "screen")) out.push("この段階は省きました(開発が要件から直接作る)。");
   else if (!scr.length) out.push("(まだありません)");
   // デザインシステム(ADR-0034): 画面に共通の決まり。開発チームとの共通言語
-  const ds = designSystem(p);
+  const ds = await designSystem(p);
   if (ds) {
     h(3, "デザインシステム");
     if (ds.principles.length) list(ds.principles);
@@ -93,15 +93,15 @@ export async function exportDesignDoc(p: Project, projectName: string, opts: { i
     const chosen = s.variants.find((v) => v.id === s.chosen) ?? (s.variants.length === 1 ? s.variants[0] : undefined);
     out.push(`- 要件: ${s.requirements.join("、") || "なし"}`, `- 向き: ${s.device === "phone" ? "スマホ" : "デスクトップ"}`, `- 案: ${s.variants.map((v) => v.id).join("・")}(選んだ案: ${chosen?.id ?? "未選択"})${s.agreed ? "、合意済み" : ""}`);
     if (chosen?.note) out.push(`- 案のメモ: ${chosen.note}`);
-    const cs = comments(p, key);
+    const cs = await comments(p, key);
     if (cs.length) out.push(`- コメント: ${cs.map((c) => `${c.body}${c.resolved_in !== null ? "(対応済み)" : "(対応待ち)"}`).join(" / ")}`);
     if (chosen) out.push("", "<details><summary>試作の HTML</summary>", "", "```html", chosen.html, "```", "", "</details>");
   }
 
   // ---- インフラ ----
   h(2, "4. インフラ");
-  const infra = artifact<Infra>(p, "infra", "infra", "main");
-  if (skipped(p, "infra")) out.push("この段階は省きました(実装中に決める)。");
+  const infra = await artifact<Infra>(p, "infra", "infra", "main");
+  if (await skipped(p, "infra")) out.push("この段階は省きました(実装中に決める)。");
   else if (!infra) out.push("(まだありません)");
   else {
     out.push(infra.hosting.summary);
@@ -124,10 +124,10 @@ export async function exportDesignDoc(p: Project, projectName: string, opts: { i
 
   // ---- アーキテクチャとデータ ----
   h(2, "5. アーキテクチャとデータ");
-  const arch = artifact<Architecture>(p, "model", "architecture", "main");
-  const domain = artifact<Domain>(p, "model", "domain", "main");
-  const data = artifact<DataDesign>(p, "model", "data", "main");
-  if (skipped(p, "model")) out.push("この段階は省きました(実装中に決める)。");
+  const arch = await artifact<Architecture>(p, "model", "architecture", "main");
+  const domain = await artifact<Domain>(p, "model", "domain", "main");
+  const data = await artifact<DataDesign>(p, "model", "data", "main");
+  if (await skipped(p, "model")) out.push("この段階は省きました(実装中に決める)。");
   if (arch) {
     h(3, `アーキテクチャスタイル: ${arch.style.name}`);
     out.push(arch.style.why);
@@ -180,7 +180,7 @@ export async function exportDesignDoc(p: Project, projectName: string, opts: { i
     const change = { new: "新規", alter: "変更", none: "変更なし" } as const;
     for (const t of data.tables) out.push(`| ${cell(t.name)} | ${change[t.change]} | ${cell(t.columns.join(", "))} | ${t.reversible ? "戻せる" : "**戻せない**"} | ${cell(t.note)} |`);
   }
-  if (!arch && !domain && !data && !skipped(p, "model")) out.push("(まだありません)");
+  if (!arch && !domain && !data && !await skipped(p, "model")) out.push("(まだありません)");
 
   // ---- チケット ----
   const tickets = p.tickets().filter((t) => (JSON.parse(t.plan_refs || "{}") as { fromPlan?: boolean }).fromPlan);
@@ -194,15 +194,15 @@ export async function exportDesignDoc(p: Project, projectName: string, opts: { i
 
 const GROUP: Record<string, string> = { color: "色", font: "文字", space: "余白", radius: "角丸", shadow: "影", other: "その他" };
 
-function statusOf(p: Project, s: Stage): string {
-  const r = stageRow(p, s);
+async function statusOf(p: Project, s: Stage): Promise<string> {
+  const r = await stageRow(p, s);
   if (r.mode === "skip") return "省略";
   if (r.agreed_version === r.version) return "合意済み";
   if (r.mode === "delegate") return "お任せ";
   return r.agreed_version !== null ? `v${r.agreed_version} に合意済み・変更あり` : "下書き";
 }
 
-const skipped = (p: Project, s: Stage) => stageRow(p, s).mode === "skip";
+const skipped = async (p: Project, s: Stage) => (await stageRow(p, s)).mode === "skip";
 
 /** 表のセルに入れる文字(改行と | を逃がす)。 */
 const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\r?\n/g, "<br>");

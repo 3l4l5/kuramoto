@@ -61,9 +61,9 @@ export function unreadOwnerMessages(p: Project): LeadMessage[] {
 }
 
 /** 企画で合意した画面とデザインシステムの有無(リーダーが画面のチケットにひも付けるため)。 */
-function planScreens(p: Project): string {
-  const list = [...screens(p)].map(([key, s]) => `- ${key}: ${s.name}(${s.device === "phone" ? "スマホ" : "パソコン"}、要件 ${s.requirements.join("・") || "—"}${s.agreed ? "、合意済み" : "、まだ合意していない"})`);
-  const ds = designSystem(p);
+async function planScreens(p: Project): Promise<string> {
+  const list = [...(await screens(p))].map(([key, s]) => `- ${key}: ${s.name}(${s.device === "phone" ? "スマホ" : "パソコン"}、要件 ${s.requirements.join("・") || "—"}${s.agreed ? "、合意済み" : "、まだ合意していない"})`);
+  const ds = await designSystem(p);
   return `${list.join("\n") || "(なし)"}\nデザインシステム: ${ds ? `あり(トークン ${ds.tokens.length}・部品 ${ds.components.length})` : "まだありません"}`;
 }
 
@@ -101,7 +101,7 @@ ${decisions}
 ${leadPendingBlock(p)}
 
 ## 企画の画面(画面を作る・直すチケットは、create_ticket の screens にこの key を書く)
-${planScreens(p)}
+${await planScreens(p)}
 
 ## 最近のやりとり(古い順。前の起動の会話は引き継がないので、ここで流れをつかむ)
 ${recentChat(p, unread)}
@@ -138,10 +138,10 @@ export function leadChatTools(p: Project, ws: { closePrs?: (t: TicketRow, reason
         after: z.array(z.number().int()).optional().describe("先に merge されている必要があるチケットの番号(画面のチケットは、デザインシステムの土台のチケットを書く)"),
       },
       handler: async (a) => {
-        const known = new Set(screens(p).keys());
+        const known = new Set((await screens(p)).keys());
         const bad = (a.screens ?? []).filter((k) => !known.has(k));
         if (bad.length) return `画面 ${bad.join("・")} は企画にありません。使えるのは ${[...known].join("・") || "(なし)"}`;
-        const item = a.requirement ? requirements(p).find((r) => r.code === a.requirement) : undefined;
+        const item = a.requirement ? (await requirements(p)).find((r) => r.code === a.requirement) : undefined;
         if (a.requirement && !item) return `要件 ${a.requirement} はありません`;
         const t = await createTicket(p, {
           title: a.title,

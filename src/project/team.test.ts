@@ -76,7 +76,7 @@ describe("開発生産性の指標", () => {
     const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace("/tmp") });
     const t = await createTicket(p, { title: "CSV" });
     await d.drain();
-    answerOpenItem(p, addOpenItem(p, "req", { question: "q", options: ["a", "b"], recommended: 0, why: "", reversible: true }), "a");
+    await answerOpenItem(p, await addOpenItem(p, "req", { question: "q", options: ["a", "b"], recommended: 0, why: "", reversible: true }), "a");
 
     const m = (await productivity(p));
     // 実装 → 差し戻し → 直し → 通る の 4 回

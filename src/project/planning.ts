@@ -1,4 +1,5 @@
-import { all, get, run, tx } from "../db/sqlite.js";
+import { sql } from "kysely";
+import { inScope, scopeIds } from "../db/count.js";
 import type { Role } from "../domain/roles.js";
 import { send } from "./inbox.js";
 import type { Project } from "./project.js";
@@ -94,7 +95,7 @@ export function designSystemCss(ds: DesignSystem): string {
   return `:root {\n${ds.tokens.map((t) => `  ${v(t.name)}: ${t.value}; /* ${t.use.replace(/\*\//g, "")} */`).join("\n")}\n}\n`;
 }
 
-export function designSystem(p: Project): DesignSystem | null {
+export async function designSystem(p: Project): Promise<DesignSystem | null> {
   return artifact<DesignSystem>(p, "screen", "designsystem", "main");
 }
 
@@ -104,113 +105,122 @@ const REMOVED = "__removed__";
 
 // ---- 段階 ----
 
-export function stageRow(p: Project, s: Stage): StageRow {
-  const r = get<StageRow>(p.db, "SELECT * FROM plan_stages WHERE stage = ?", [s]);
+export async function stageRow(p: Project, s: Stage): Promise<StageRow> {
+  const r = await inScope(p.pdb, "plan_stages").where("stage", "=", s).executeTakeFirst();
   if (!r) throw new Error(`段階 ${s} がありません`);
-  return r;
+  return r as unknown as StageRow;
 }
 
 /**
  * 書き込む版。合意済みの版を直すときは、版を 1 つ上げて新しい下書きにする(合意した版は残る)。
+ * 読んでから書くので、トランザクションの中で行う(呼ぶ側が張っていればそこにまとまる)。
  */
-export function draftVersion(p: Project, s: Stage): number {
-  const r = stageRow(p, s);
-  if (r.agreed_version !== null && r.agreed_version === r.version) {
-    run(p.db, "UPDATE plan_stages SET version = version + 1 WHERE stage = ?", [s]);
-    if (s === "req") run(p.db, "INSERT INTO requirements (version, created_at) VALUES (?, ?)", [r.version + 1, p.now()]);
-    return r.version + 1;
-  }
-  return r.version;
+export async function draftVersion(p: Project, s: Stage): Promise<number> {
+  return p.pdb.transaction(async () => {
+    const r = await stageRow(p, s);
+    if (r.agreed_version !== null && r.agreed_version === r.version) {
+      await p.pdb.update("plan_stages", { version: sql`version + 1` }).where("stage", "=", s).execute();
+      if (s === "req") await p.pdb.insert("requirements", { version: r.version + 1, created_at: p.now() }).execute();
+      return r.version + 1;
+    }
+    return r.version;
+  });
 }
 
-export function setMode(p: Project, s: Stage, mode: Mode): void {
+export async function setMode(p: Project, s: Stage, mode: Mode): Promise<void> {
   if (s === "req" && mode === "skip") throw new Error("要件は省けません");
-  tx(p.db, () => {
-    const before = stageRow(p, s);
-    run(p.db, "UPDATE plan_stages SET mode = ? WHERE stage = ?", [mode, s]);
+  await p.pdb.transaction(async () => {
+    const before = await stageRow(p, s);
+    await p.pdb.update("plan_stages", { mode }).where("stage", "=", s).execute();
     // お任せから自分で確かめるに戻したら、合意し直す
-    if (before.mode === "delegate" && mode === "agree") run(p.db, "UPDATE plan_stages SET agreed_version = NULL WHERE stage = ?", [s]);
-    if (mode === "skip") say(p, s, "me", "この段階は省いて進めます");
+    if (before.mode === "delegate" && mode === "agree") await p.pdb.update("plan_stages", { agreed_version: null }).where("stage", "=", s).execute();
+    if (mode === "skip") await say(p, s, "me", "この段階は省いて進めます");
     if (mode === "delegate") {
-      say(p, s, "me", "この段階はお任せします");
-      sendPlan(p, s, { type: "delegate", text: "この段階はお任せになりました。未決は推奨で決め、版を仕上げて、決めた内容を報告してください。戻せない判断だけは未決に残してください。" });
+      await say(p, s, "me", "この段階はお任せします");
+      await sendPlan(p, s, { type: "delegate", text: "この段階はお任せになりました。未決は推奨で決め、版を仕上げて、決めた内容を報告してください。戻せない判断だけは未決に残してください。" });
     }
-    if (before.mode === "skip" && mode === "agree") say(p, s, "me", "省くのをやめて、この段階を作ります");
-    advance(p);
+    if (before.mode === "skip" && mode === "agree") await say(p, s, "me", "省くのをやめて、この段階を作ります");
+    await advance(p);
   });
 }
 
 /** 合意できない理由。無ければ合意できる。 */
-export function agreeBlocker(p: Project, s: Stage): string | null {
-  const r = stageRow(p, s);
+export async function agreeBlocker(p: Project, s: Stage): Promise<string | null> {
+  const r = await stageRow(p, s);
   if (r.mode === "skip") return "この段階は省いています";
   if (r.agreed_version === r.version) return "この版は合意済みです";
-  if (!hasContent(p, s)) return "まだ中身がありません";
-  const open = openItems(p, s).filter((o) => o.answer === null);
+  if (!(await hasContent(p, s))) return "まだ中身がありません";
+  const open = (await openItems(p, s)).filter((o) => o.answer === null);
   if (open.length) return `未決が ${open.length} 件あります`;
   if (s === "screen") {
     // 画面があるなら、デザインシステムも要る(開発チームとの共通の決まり。ADR-0034)
-    if (screens(p).size && !designSystem(p)) return "デザインシステムがまだありません";
-    for (const [key, sc] of screens(p)) {
+    const scr = await screens(p);
+    if (scr.size && !(await designSystem(p))) return "デザインシステムがまだありません";
+    const cs = await commentsByScreen(p);
+    for (const [key, sc] of scr) {
       if (sc.variants.length > 1 && !sc.chosen) return `「${sc.name}」の案を選んでください`;
-      if (comments(p, key).some((c) => c.resolved_in === null)) return `「${sc.name}」に対応待ちのコメントがあります`;
+      if ((cs.get(key) ?? []).some((c) => c.resolved_in === null)) return `「${sc.name}」に対応待ちのコメントがあります`;
       if (!sc.agreed) return `「${sc.name}」がまだ合意されていません`;
     }
   }
   return null;
 }
 
-export function agree(p: Project, s: Stage): void {
-  tx(p.db, () => {
-    const why = agreeBlocker(p, s);
+export async function agree(p: Project, s: Stage): Promise<void> {
+  await p.pdb.transaction(async () => {
+    const why = await agreeBlocker(p, s);
     if (why) throw new Error(why);
-    const r = stageRow(p, s);
-    run(p.db, "UPDATE plan_stages SET agreed_version = version WHERE stage = ?", [s]);
-    say(p, s, "planner", `${STAGE_LABEL[s]} v${r.version} に合意をもらいました。`);
+    const r = await stageRow(p, s);
+    // 合意するのは、いま読んだ版(同じトランザクションの中)
+    await p.pdb.update("plan_stages", { agreed_version: r.version }).where("stage", "=", s).execute();
+    await say(p, s, "planner", `${STAGE_LABEL[s]} v${r.version} に合意をもらいました。`);
     p.event("owner", "plan_agreed", null, { stage: s, version: r.version });
-    advance(p);
+    await advance(p);
   });
 }
 
-export function hasContent(p: Project, s: Stage): boolean {
+export async function hasContent(p: Project, s: Stage): Promise<boolean> {
   switch (s) {
     case "req":
-      return requirements(p).length > 0;
+      return (await requirements(p)).length > 0;
     case "infra":
-      return artifact<Infra>(p, "infra", "infra", "main") !== null;
+      return (await artifact<Infra>(p, "infra", "infra", "main")) !== null;
     case "flow":
-      return artifact<Flow>(p, "flow", "flow", "main") !== null;
+      return (await artifact<Flow>(p, "flow", "flow", "main")) !== null;
     case "screen":
-      return screens(p).size > 0;
+      return (await screens(p)).size > 0;
     case "model":
-      return artifact<Architecture>(p, "model", "architecture", "main") !== null || artifact<Domain>(p, "model", "domain", "main") !== null;
+      return (await artifact<Architecture>(p, "model", "architecture", "main")) !== null || (await artifact<Domain>(p, "model", "domain", "main")) !== null;
   }
 }
 
 /** 段階が終わっているか(合意済み・お任せで仕上がった・省略)。 */
-export function stageDone(p: Project, s: Stage): boolean {
-  const r = stageRow(p, s);
+export async function stageDone(p: Project, s: Stage): Promise<boolean> {
+  const r = await stageRow(p, s);
   if (r.mode === "skip") return true;
   if (r.agreed_version !== null && r.agreed_version === r.version) return true;
   if (r.mode === "delegate") {
-    if (!hasContent(p, s)) return false;
-    if (openItems(p, s).some((o) => o.answer === null)) return false; // 戻せない判断が残っている
-    if (s === "screen") return [...screens(p).keys()].every((k) => comments(p, k).every((c) => c.resolved_in !== null));
+    if (!(await hasContent(p, s))) return false;
+    if ((await openItems(p, s)).some((o) => o.answer === null)) return false; // 戻せない判断が残っている
+    if (s === "screen") {
+      const cs = await commentsByScreen(p);
+      return [...(await screens(p)).keys()].every((k) => (cs.get(k) ?? []).every((c) => c.resolved_in !== null));
+    }
     return true;
   }
   return false;
 }
 
-export function stageStatus(p: Project, s: Stage): string {
-  const r = stageRow(p, s);
+export async function stageStatus(p: Project, s: Stage): Promise<string> {
+  const r = await stageRow(p, s);
   if (r.mode === "skip") return "省略";
   if (r.agreed_version !== null && r.agreed_version === r.version) return `合意済み v${r.version}`;
-  const open = openItems(p, s).filter((o) => o.answer === null).length;
-  if (r.mode === "delegate") return stageDone(p, s) ? `お任せ v${r.version}` : open ? `お任せ(あなたに 未決 ${open})` : "お任せで作成中";
-  if (!hasContent(p, s)) return stageStarted(p, s) ? "作成中" : "前の段階を待っています";
+  const open = (await openItems(p, s)).filter((o) => o.answer === null).length;
+  if (r.mode === "delegate") return (await stageDone(p, s)) ? `お任せ v${r.version}` : open ? `お任せ(あなたに 未決 ${open})` : "お任せで作成中";
+  if (!(await hasContent(p, s))) return stageStarted(p, s) ? "作成中" : "前の段階を待っています";
   if (open) return `未決 ${open}`;
   if (s === "screen") {
-    const waiting = [...screens(p).values()].filter((x) => !x.agreed).length;
+    const waiting = [...(await screens(p)).values()].filter((x) => !x.agreed).length;
     if (waiting) return `${waiting} 画面が合意待ち`;
   }
   return `下書き v${r.version}`;
@@ -224,28 +234,28 @@ function stageStarted(p: Project, s: Stage): boolean {
  * 段階が終わったら次の段階の担当を起こす(前の段階を終えてから次へ。ADR-0008)。
  * 省いた段階は飛ばす。
  */
-export function advance(p: Project): void {
+export async function advance(p: Project): Promise<void> {
   for (const s of STAGES) {
     if (!stageStarted(p, s)) {
-      if (stageRow(p, s).mode === "skip") continue;
-      kickoff(p, s);
+      if ((await stageRow(p, s)).mode === "skip") continue;
+      await kickoff(p, s);
       return;
     }
     // 一度終えた段階は、後から直されて下書きに戻っても、次の段階を止めない(引き渡しの前には合意し直しが要る)
-    if (!stageDone(p, s) && !onceDone(p, s)) return;
+    if (!(await stageDone(p, s)) && !(await onceDone(p, s))) return;
   }
 }
 
-function onceDone(p: Project, s: Stage): boolean {
-  return stageRow(p, s).agreed_version !== null;
+async function onceDone(p: Project, s: Stage): Promise<boolean> {
+  return (await stageRow(p, s)).agreed_version !== null;
 }
 
-function kickoff(p: Project, s: Stage): void {
+async function kickoff(p: Project, s: Stage): Promise<void> {
   p.setSetting(`plan_started:${s}`, p.now());
   // 既存のリポジトリの続きから: 聞き取りから作らず、リポジトリを読んで現状を下書きに起こす(ADR-0030)
   if (fromExisting(p)) {
-    const delegatedNote = stageRow(p, s).mode === "delegate" ? " この段階はお任せです。未決は推奨で決め(answer_open_item)、版を仕上げて、決めた内容を報告してください。戻せない判断だけは未決に残してください。" : "";
-    sendPlan(p, s, { type: "kickoff", text: existingKickoff(p, s) + delegatedNote });
+    const delegatedNote = (await stageRow(p, s)).mode === "delegate" ? " この段階はお任せです。未決は推奨で決め(answer_open_item)、版を仕上げて、決めた内容を報告してください。戻せない判断だけは未決に残してください。" : "";
+    await sendPlan(p, s, { type: "kickoff", text: existingKickoff(p, s) + delegatedNote });
     return;
   }
   const text: Record<Stage, string> = {
@@ -255,45 +265,52 @@ function kickoff(p: Project, s: Stage): void {
     screen: "ユーザーフローが決まりました。まず set_design_system でデザインシステム(色・文字・余白・角丸・影のトークンと、ボタン・入力欄・カード・一覧の行などの部品)を作り、フローの各画面の触れる試作(HTML)を、そのトークン(CSS 変数)と部品で組み立ててください。迷う画面は 2 案にしてください。",
     model: "インフラが決まりました。インフラで決めたこと(DB の種類など)を前提に、アーキテクチャスタイル → ドメインモデル → 作る / 既存を使う / 作らない → データ設計 の順に書いてください。既存のリポジトリのコードを読んで、既にある作り方に合わせ、新しい表やサービスは安易に作らないでください。",
   };
-  const delegated = stageRow(p, s).mode === "delegate"
-    ? " この段階はお任せです。未決は推奨で決め(answer_open_item)、版を仕上げて、決めた内容を報告してください。戻せない判断だけは未決に残してください。"
-    : "";
-  sendPlan(p, s, { type: "kickoff", text: text[s] + delegated });
+  const delegated =
+    (await stageRow(p, s)).mode === "delegate"
+      ? " この段階はお任せです。未決は推奨で決め(answer_open_item)、版を仕上げて、決めた内容を報告してください。戻せない判断だけは未決に残してください。"
+      : "";
+  await sendPlan(p, s, { type: "kickoff", text: text[s] + delegated });
 }
 
-/** 企画の担当にメッセージを送る。まだ取り出されていないものがあれば、そこにまとめる。 */
-export function sendPlan(p: Project, s: Stage | "handoff", event: { type: string; text: string }): void {
+/** 企画の担当にメッセージを送る。まだ取り出されていないものがあれば、そこにまとめる(読んでから書くので tx の中で)。 */
+export async function sendPlan(p: Project, s: Stage | "handoff", event: { type: string; text: string }): Promise<void> {
   const role: Role = s === "handoff" ? "lead" : STAGE_ROLE[s];
-  const pending = get<{ id: number; payload: string }>(
-    p.db,
-    "SELECT id, payload FROM messages WHERE kind = 'plan' AND status = 'pending' AND to_role = ? AND json_extract(payload, '$.stage') = ?",
-    [role, s],
-  );
-  if (pending) {
-    const payload = JSON.parse(pending.payload) as { stage: string; events: unknown[] };
-    payload.events.push(event);
-    run(p.db, "UPDATE messages SET payload = ? WHERE id = ?", [JSON.stringify(payload), pending.id]);
-    return;
-  }
-  send(p, { ticketId: null, toRole: role, kind: "plan", payload: { stage: s, events: [event] } });
+  await p.pdb.transaction(async () => {
+    const pending = await p.pdb.k
+      .selectFrom("messages")
+      .select(["id", "payload"])
+      .where("project_id", "in", scopeIds(p.pdb))
+      .where("kind", "=", "plan")
+      .where("status", "=", "pending")
+      .where("to_role", "=", role)
+      .where(p.pdb.dialect.jsonExtract("payload", "stage"), "=", s)
+      .executeTakeFirst();
+    if (pending) {
+      const payload = JSON.parse(pending.payload) as { stage: string; events: unknown[] };
+      payload.events.push(event);
+      await p.pdb.update("messages", { payload: JSON.stringify(payload) }).where("id", "=", pending.id).execute();
+      return;
+    }
+    send(p, { ticketId: null, toRole: role, kind: "plan", payload: { stage: s, events: [event] } });
+  });
 }
 
 // ---- 会話 ----
 
 export type PlanMessage = { id: number; stage: string; who: string; body: string; at: string };
 
-export function say(p: Project, stage: Stage | "handoff", who: string, body: string): void {
-  run(p.db, "INSERT INTO plan_messages (stage, who, body, at) VALUES (?, ?, ?, ?)", [stage, who, body, p.now()]);
+export async function say(p: Project, stage: Stage | "handoff", who: string, body: string): Promise<void> {
+  await p.pdb.insert("plan_messages", { stage, who, body, at: p.now() }).execute();
 }
 
 /**
  * 責任者が担当に話す。question なら、中身は変えずに答えだけを返してもらう(書き換えの道具を渡さない)。
  * そうでなければ、頼まれたことを企画の中身に反映して返事をする。
  */
-export function chat(p: Project, stage: Stage | "handoff", text: string, kind: "chat" | "question" = "chat"): void {
-  tx(p.db, () => {
-    say(p, stage, "me", kind === "question" ? `(質問)${text}` : text);
-    sendPlan(p, stage, { type: kind, text });
+export async function chat(p: Project, stage: Stage | "handoff", text: string, kind: "chat" | "question" = "chat"): Promise<void> {
+  await p.pdb.transaction(async () => {
+    await say(p, stage, "me", kind === "question" ? `(質問)${text}` : text);
+    await sendPlan(p, stage, { type: kind, text });
   });
 }
 
@@ -302,120 +319,136 @@ export function onlyQuestions(events: { type: string }[]): boolean {
   return events.length > 0 && events.every((e) => e.type === "question");
 }
 
-export function messages(p: Project, stage?: string): PlanMessage[] {
-  return stage ? all(p.db, "SELECT * FROM plan_messages WHERE stage = ? ORDER BY id", [stage]) : all(p.db, "SELECT * FROM plan_messages ORDER BY id");
+export async function messages(p: Project, stage?: string): Promise<PlanMessage[]> {
+  let q = inScope(p.pdb, "plan_messages").orderBy("id");
+  if (stage) q = q.where("stage", "=", stage);
+  return (await q.execute()) as unknown as PlanMessage[];
 }
 
 // ---- 作ったもの(版つき) ----
 
-export function artifact<T>(p: Project, stage: Stage, kind: string, key: string): T | null {
-  const v = stageRow(p, stage).version;
-  const r = get<{ body: string }>(p.db, "SELECT body FROM plan_artifacts WHERE stage = ? AND kind = ? AND key = ? AND version <= ? ORDER BY version DESC, id DESC LIMIT 1", [
-    stage,
-    kind,
-    key,
-    v,
-  ]);
+type ArtifactRow = { id: number; key: string; version: number; body: string };
+
+/** ある段階の kind の行を全部(id 順)。画面のように、キーごとの最新を 1 文でまとめて取るのに使う。 */
+async function artifactRows(p: Project, stage: Stage, kind: string, key?: string): Promise<ArtifactRow[]> {
+  let q = inScope(p.pdb, "plan_artifacts").where("stage", "=", stage).where("kind", "=", kind).orderBy("id");
+  if (key !== undefined) q = q.where("key", "=", key);
+  return (await q.execute()) as unknown as ArtifactRow[];
+}
+
+/** 版 v までのうち、いちばん新しい行(版 → id の大きい方)。 */
+const latestUpTo = (rows: ArtifactRow[], v: number): ArtifactRow | undefined =>
+  rows.filter((r) => r.version <= v).reduce<ArtifactRow | undefined>((best, r) => (!best || r.version > best.version || (r.version === best.version && r.id > best.id) ? r : best), undefined);
+
+export async function artifact<T>(p: Project, stage: Stage, kind: string, key: string): Promise<T | null> {
+  const v = (await stageRow(p, stage)).version;
+  const r = latestUpTo(await artifactRows(p, stage, kind, key), v);
   if (!r || r.body === REMOVED) return null;
   return JSON.parse(r.body) as T;
 }
 
-function artifactRowId(p: Project, stage: Stage, kind: string, key: string): number | undefined {
-  const v = stageRow(p, stage).version;
-  return get<{ id: number }>(p.db, "SELECT id FROM plan_artifacts WHERE stage = ? AND kind = ? AND key = ? AND version <= ? ORDER BY version DESC, id DESC LIMIT 1", [
-    stage,
-    kind,
-    key,
-    v,
-  ])?.id;
+async function artifactRowId(p: Project, stage: Stage, kind: string, key: string): Promise<number | undefined> {
+  const v = (await stageRow(p, stage)).version;
+  return latestUpTo(await artifactRows(p, stage, kind, key), v)?.id;
 }
 
-export function putArtifact(p: Project, stage: Stage, kind: string, key: string, body: unknown): number {
-  return tx(p.db, () => {
-    const v = draftVersion(p, stage);
+export async function putArtifact(p: Project, stage: Stage, kind: string, key: string, body: unknown): Promise<number> {
+  return p.pdb.transaction(async () => {
+    const v = await draftVersion(p, stage);
     const text = body === null ? REMOVED : JSON.stringify(body);
-    const same = get<{ id: number }>(p.db, "SELECT id FROM plan_artifacts WHERE stage = ? AND kind = ? AND key = ? AND version = ?", [stage, kind, key, v]);
+    const same = await inScope(p.pdb, "plan_artifacts").where("stage", "=", stage).where("kind", "=", kind).where("key", "=", key).where("version", "=", v).executeTakeFirst();
     if (same) {
-      run(p.db, "UPDATE plan_artifacts SET body = ? WHERE id = ?", [text, same.id]);
+      await p.pdb.update("plan_artifacts", { body: text }).where("id", "=", same.id).execute();
       return same.id;
     }
-    return run(p.db, "INSERT INTO plan_artifacts (stage, version, kind, key, body) VALUES (?, ?, ?, ?, ?)", [stage, v, kind, key, text]).lastId;
+    return p.pdb.dialect.insertedId(p.pdb.insert("plan_artifacts", { stage, version: v, kind, key, body: text }));
   });
 }
 
-function keysOf(p: Project, stage: Stage, kind: string): string[] {
-  return all<{ key: string }>(p.db, "SELECT DISTINCT key FROM plan_artifacts WHERE stage = ? AND kind = ? ORDER BY id", [stage, kind]).map((r) => r.key);
-}
-
-export function screens(p: Project): Map<string, Screen> {
+export async function screens(p: Project): Promise<Map<string, Screen>> {
+  // 画面ごとに引かず、段階の版と画面の全部の行を 1 回ずつ取って、キーごとの最新を JS で選ぶ
+  const v = (await stageRow(p, "screen")).version;
+  const rows = await artifactRows(p, "screen", "screen");
+  const byKey = new Map<string, ArtifactRow[]>();
+  for (const r of rows) byKey.set(r.key, [...(byKey.get(r.key) ?? []), r]); // 最初に現れた行(id 順)の順に並ぶ
   const out = new Map<string, Screen>();
-  for (const k of keysOf(p, "screen", "screen")) {
-    const s = artifact<Screen>(p, "screen", "screen", k);
-    if (s) out.set(k, s);
+  for (const [k, rs] of byKey) {
+    const r = latestUpTo(rs, v);
+    if (r && r.body !== REMOVED) out.set(k, JSON.parse(r.body) as Screen);
   }
   return out;
 }
 
-export function putScreen(p: Project, key: string, s: Screen | null): void {
-  putArtifact(p, "screen", "screen", key, s);
+export async function putScreen(p: Project, key: string, s: Screen | null): Promise<void> {
+  await putArtifact(p, "screen", "screen", key, s);
 }
 
-export function pickVariant(p: Project, key: string, variant: string): void {
-  const s = screens(p).get(key);
+export async function pickVariant(p: Project, key: string, variant: string): Promise<void> {
+  const s = (await screens(p)).get(key);
   if (!s) throw new Error("その画面はありません");
   if (!s.variants.some((v) => v.id === variant)) throw new Error("その案はありません");
-  tx(p.db, () => {
-    putScreen(p, key, { ...s, chosen: variant });
-    say(p, "screen", "me", `${s.name}は案 ${variant} で`);
+  await p.pdb.transaction(async () => {
+    await putScreen(p, key, { ...s, chosen: variant });
+    await say(p, "screen", "me", `${s.name}は案 ${variant} で`);
   });
 }
 
-export function agreeScreen(p: Project, key: string): void {
-  const s = screens(p).get(key);
+export async function agreeScreen(p: Project, key: string): Promise<void> {
+  const s = (await screens(p)).get(key);
   if (!s) throw new Error("その画面はありません");
   if (s.variants.length > 1 && !s.chosen) throw new Error("案を 1 つ選んでください");
-  if (comments(p, key).some((c) => c.resolved_in === null)) throw new Error("対応待ちのコメントがあります");
-  putScreen(p, key, { ...s, agreed: true });
+  if ((await comments(p, key)).some((c) => c.resolved_in === null)) throw new Error("対応待ちのコメントがあります");
+  await putScreen(p, key, { ...s, agreed: true });
 }
 
 // ---- 要件 ----
 
 export type RequirementItem = { id: number; code: string; name: string; acceptance: string; added_in: number };
 
-export function requirements(p: Project): RequirementItem[] {
-  return all(p.db, "SELECT id, code, name, acceptance, added_in FROM requirement_items WHERE removed_in IS NULL ORDER BY CAST(SUBSTR(code, 2) AS INTEGER), id");
+/** 要件の番号(R12 の 12)。数としての並びに使う。 */
+const codeNo = (code: string) => Number(code.slice(1)) || 0;
+
+export async function requirements(p: Project): Promise<RequirementItem[]> {
+  const rows = await inScope(p.pdb, "requirement_items").where("removed_in", "is", null).execute();
+  return rows
+    .map((r) => ({ id: r.id, code: r.code, name: r.name, acceptance: r.acceptance, added_in: r.added_in }))
+    .sort((a, b) => codeNo(a.code) - codeNo(b.code) || a.id - b.id);
 }
 
 /** 要件の項目を足す・直す。合意済みの版の項目を直すときは、古い行を残して新しい版の行を足す。 */
-export function upsertRequirement(p: Project, item: { code?: string; name: string; acceptance: string }, from?: Stage): string {
-  return tx(p.db, () => {
-    const before = stageRow(p, "req");
+export async function upsertRequirement(p: Project, item: { code?: string; name: string; acceptance: string }, from?: Stage): Promise<string> {
+  return p.pdb.transaction(async () => {
+    const before = await stageRow(p, "req");
     const wasAgreed = before.agreed_version !== null && before.agreed_version === before.version;
-    const v = draftVersion(p, "req");
-    const code = item.code ?? `R${(get<{ n: number | null }>(p.db, "SELECT MAX(CAST(SUBSTR(code, 2) AS INTEGER)) AS n FROM requirement_items")?.n ?? 0) + 1}`;
-    const cur = get<{ id: number; added_in: number }>(p.db, "SELECT id, added_in FROM requirement_items WHERE code = ? AND removed_in IS NULL", [code]);
+    const v = await draftVersion(p, "req");
+    let code = item.code;
+    if (code === undefined) {
+      const all = await inScope(p.pdb, "requirement_items").execute();
+      code = `R${all.reduce((m, r) => Math.max(m, codeNo(r.code)), 0) + 1}`;
+    }
+    const cur = await inScope(p.pdb, "requirement_items").where("code", "=", code).where("removed_in", "is", null).executeTakeFirst();
     if (cur && cur.added_in === v) {
-      run(p.db, "UPDATE requirement_items SET name = ?, acceptance = ? WHERE id = ?", [item.name, item.acceptance, cur.id]);
+      await p.pdb.update("requirement_items", { name: item.name, acceptance: item.acceptance }).where("id", "=", cur.id).execute();
     } else {
-      if (cur) run(p.db, "UPDATE requirement_items SET removed_in = ? WHERE id = ?", [v, cur.id]);
-      run(p.db, "INSERT INTO requirement_items (code, name, acceptance, added_in) VALUES (?, ?, ?, ?)", [code, item.name, item.acceptance, v]);
+      if (cur) await p.pdb.update("requirement_items", { removed_in: v }).where("id", "=", cur.id).execute();
+      await p.pdb.insert("requirement_items", { code, name: item.name, acceptance: item.acceptance, added_in: v }).execute();
     }
     // 後の段階で責任者が未決に答え、その答えを受け入れ条件に書き足すときは、責任者が決めたことなので合意済みのまま版を上げる
     if (from && from !== "req" && wasAgreed) {
-      run(p.db, "UPDATE plan_stages SET agreed_version = version WHERE stage = 'req'");
-      say(p, "req", "plan", `${STAGE_LABEL[from]}で決まったことを受けて、${code}「${item.name}」の受け入れ条件を書き足しました(要件 v${v})。`);
+      await p.pdb.update("plan_stages", { agreed_version: v }).where("stage", "=", "req").execute();
+      await say(p, "req", "plan", `${STAGE_LABEL[from]}で決まったことを受けて、${code}「${item.name}」の受け入れ条件を書き足しました(要件 v${v})。`);
     }
     return code;
   });
 }
 
-export function removeRequirement(p: Project, code: string): void {
-  tx(p.db, () => {
-    const v = draftVersion(p, "req");
-    const cur = get<{ id: number; added_in: number }>(p.db, "SELECT id, added_in FROM requirement_items WHERE code = ? AND removed_in IS NULL", [code]);
+export async function removeRequirement(p: Project, code: string): Promise<void> {
+  await p.pdb.transaction(async () => {
+    const v = await draftVersion(p, "req");
+    const cur = await inScope(p.pdb, "requirement_items").where("code", "=", code).where("removed_in", "is", null).executeTakeFirst();
     if (!cur) throw new Error(`要件 ${code} はありません`);
-    if (cur.added_in === v && v === 1) run(p.db, "DELETE FROM requirement_items WHERE id = ?", [cur.id]);
-    else run(p.db, "UPDATE requirement_items SET removed_in = ? WHERE id = ?", [v, cur.id]);
+    if (cur.added_in === v && v === 1) await p.pdb.deleteFrom("requirement_items").where("id", "=", cur.id).execute();
+    else await p.pdb.update("requirement_items", { removed_in: v }).where("id", "=", cur.id).execute();
   });
 }
 
@@ -434,110 +467,116 @@ export type OpenItem = {
   withdrawn: string | null;
 };
 
-export function openItems(p: Project, stage?: Stage): OpenItem[] {
-  return stage
-    ? all(p.db, "SELECT * FROM plan_open_items WHERE stage = ? AND withdrawn IS NULL ORDER BY id", [stage])
-    : all(p.db, "SELECT * FROM plan_open_items WHERE withdrawn IS NULL ORDER BY id");
+export async function openItems(p: Project, stage?: Stage): Promise<OpenItem[]> {
+  let q = inScope(p.pdb, "plan_open_items").where("withdrawn", "is", null).orderBy("id");
+  if (stage) q = q.where("stage", "=", stage);
+  return (await q.execute()) as unknown as OpenItem[];
 }
 
-export function addOpenItem(p: Project, stage: Stage, q: { question: string; options: string[]; recommended: number; why: string; reversible: boolean }): number {
+export async function addOpenItem(p: Project, stage: Stage, q: { question: string; options: string[]; recommended: number; why: string; reversible: boolean }): Promise<number> {
   if (q.recommended < 0 || q.recommended >= q.options.length) throw new Error("recommended が選択肢の範囲外です");
-  return tx(p.db, () => {
-    draftVersion(p, stage); // 合意済みの段階に未決が増えたら下書きに戻す
-    return run(p.db, "INSERT INTO plan_open_items (stage, question, options, recommended, why, reversible, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [
-      stage,
-      q.question,
-      JSON.stringify(q.options),
-      q.recommended,
-      q.why,
-      q.reversible ? 1 : 0,
-      p.now(),
-    ]).lastId;
+  return p.pdb.transaction(async () => {
+    await draftVersion(p, stage); // 合意済みの段階に未決が増えたら下書きに戻す
+    return p.pdb.dialect.insertedId(
+      p.pdb.insert("plan_open_items", { stage, question: q.question, options: JSON.stringify(q.options), recommended: q.recommended, why: q.why, reversible: q.reversible ? 1 : 0, created_at: p.now() }),
+    );
   });
 }
 
-function openItem(p: Project, id: number): OpenItem {
-  const o = get<OpenItem>(p.db, "SELECT * FROM plan_open_items WHERE id = ?", [id]);
+async function openItem(p: Project, id: number): Promise<OpenItem> {
+  const o = await inScope(p.pdb, "plan_open_items").where("id", "=", id).executeTakeFirst();
   if (!o) throw new Error(`未決 ${id} はありません`);
-  return o;
+  return o as unknown as OpenItem;
 }
 
 /** 責任者が未決に答えた。担当に伝えて、図や要件に反映してもらう。 */
-export function answerOpenItem(p: Project, id: number, answer: string): void {
-  tx(p.db, () => {
-    const o = openItem(p, id);
+export async function answerOpenItem(p: Project, id: number, answer: string): Promise<void> {
+  await p.pdb.transaction(async () => {
+    const o = await openItem(p, id);
     if (o.answer !== null || o.withdrawn) throw new Error("この未決はもう閉じています");
-    run(p.db, "UPDATE plan_open_items SET answer = ?, decided_by = 'owner', answered_at = ? WHERE id = ?", [answer, p.now(), id]);
-    say(p, o.stage, "me", `「${o.question}」は「${answer}」で`);
-    sendPlan(p, o.stage, { type: "answer", text: `未決 #${id}「${o.question}」に責任者が「${answer}」と答えました。図・要件・設計に反映して版を上げてください。この答えで聞く意味がなくなった未決があれば、理由を添えて取り下げてください。` });
-    advance(p);
+    await p.pdb.update("plan_open_items", { answer, decided_by: "owner", answered_at: p.now() }).where("id", "=", id).execute();
+    await say(p, o.stage, "me", `「${o.question}」は「${answer}」で`);
+    await sendPlan(p, o.stage, { type: "answer", text: `未決 #${id}「${o.question}」に責任者が「${answer}」と答えました。図・要件・設計に反映して版を上げてください。この答えで聞く意味がなくなった未決があれば、理由を添えて取り下げてください。` });
+    await advance(p);
   });
 }
 
 /** 担当が未決を決めた(お任せのときだけ。戻せない判断は決められない)。 */
-export function aiAnswerOpenItem(p: Project, id: number, answer: string): string | null {
-  const o = openItem(p, id);
+export async function aiAnswerOpenItem(p: Project, id: number, answer: string): Promise<string | null> {
+  const o = await openItem(p, id);
   if (o.answer !== null || o.withdrawn) return "この未決はもう閉じています";
-  if (stageRow(p, o.stage).mode !== "delegate") return "この段階はお任せではありません。責任者の答えを待ってください";
+  if ((await stageRow(p, o.stage)).mode !== "delegate") return "この段階はお任せではありません。責任者の答えを待ってください";
   if (!o.reversible) return "戻せない判断は、お任せでも責任者に聞きます";
-  run(p.db, "UPDATE plan_open_items SET answer = ?, decided_by = 'ai', answered_at = ? WHERE id = ?", [answer, p.now(), id]);
+  await p.pdb.update("plan_open_items", { answer, decided_by: "ai", answered_at: p.now() }).where("id", "=", id).execute();
   return null;
 }
 
-export function withdrawOpenItem(p: Project, id: number, reason: string): void {
-  const o = openItem(p, id);
+export async function withdrawOpenItem(p: Project, id: number, reason: string): Promise<void> {
+  const o = await openItem(p, id);
   if (o.answer !== null) throw new Error("答えの出た未決は取り下げられません");
-  run(p.db, "UPDATE plan_open_items SET withdrawn = ? WHERE id = ?", [reason, id]);
+  await p.pdb.update("plan_open_items", { withdrawn: reason }).where("id", "=", id).execute();
 }
 
 // ---- 画面へのコメント ----
 
 export type Comment = { id: number; x: number | null; y: number | null; body: string; variant: string | null; resolved_in: number | null };
 
-export function comments(p: Project, screenKey: string): Comment[] {
-  return all(
-    p.db,
-    `SELECT c.id, c.x, c.y, c.body, c.variant, c.resolved_in FROM plan_comments c JOIN plan_artifacts a ON a.id = c.artifact_id
-     WHERE a.stage = 'screen' AND a.kind = 'screen' AND a.key = ? ORDER BY c.id`,
-    [screenKey],
-  );
+/** 画面のキーごとのコメント(id 順)。画面が何枚あっても 1 文で取る。 */
+export async function commentsByScreen(p: Project): Promise<Map<string, Comment[]>> {
+  const rows = await p.pdb.k
+    .selectFrom("plan_comments as c")
+    .innerJoin("plan_artifacts as a", "a.id", "c.artifact_id")
+    .select(["c.id", "c.x", "c.y", "c.body", "c.variant", "c.resolved_in", "a.key as screen_key"])
+    .where("c.project_id", "in", scopeIds(p.pdb))
+    .where("a.stage", "=", "screen")
+    .where("a.kind", "=", "screen")
+    .orderBy("c.id")
+    .execute();
+  const out = new Map<string, Comment[]>();
+  for (const { screen_key, ...c } of rows) out.set(screen_key, [...(out.get(screen_key) ?? []), c as Comment]);
+  return out;
 }
 
-export function addComment(p: Project, screenKey: string, c: { variant: string; x: number; y: number; body: string }): number {
-  return tx(p.db, () => {
-    const s = screens(p).get(screenKey);
+export async function comments(p: Project, screenKey: string): Promise<Comment[]> {
+  return (await commentsByScreen(p)).get(screenKey) ?? [];
+}
+
+export async function addComment(p: Project, screenKey: string, c: { variant: string; x: number; y: number; body: string }): Promise<number> {
+  return p.pdb.transaction(async () => {
+    const s = (await screens(p)).get(screenKey);
     if (!s) throw new Error("その画面はありません");
-    if (s.agreed) putScreen(p, screenKey, { ...s, agreed: false });
-    const aid = artifactRowId(p, "screen", "screen", screenKey)!;
-    const id = run(p.db, "INSERT INTO plan_comments (artifact_id, x, y, body, variant, created_at) VALUES (?, ?, ?, ?, ?, ?)", [aid, c.x, c.y, c.body, c.variant, p.now()]).lastId;
-    const n = comments(p, screenKey).length;
-    say(p, "screen", "me", `${s.name}(案 ${c.variant})${n} 番: ${c.body}`);
-    sendPlan(p, "screen", { type: "comment", text: `画面「${s.name}」(key: ${screenKey})の案 ${c.variant} の位置 (${Math.round(c.x)}%, ${Math.round(c.y)}%) にコメント #${id}「${c.body}」が付きました。試作を直して upsert_screen で版を上げ、resolve_comment で対応済みにしてください。` });
+    if (s.agreed) await putScreen(p, screenKey, { ...s, agreed: false });
+    const aid = (await artifactRowId(p, "screen", "screen", screenKey))!;
+    const id = await p.pdb.dialect.insertedId(p.pdb.insert("plan_comments", { artifact_id: aid, x: c.x, y: c.y, body: c.body, variant: c.variant, created_at: p.now() }));
+    const n = (await comments(p, screenKey)).length;
+    await say(p, "screen", "me", `${s.name}(案 ${c.variant})${n} 番: ${c.body}`);
+    await sendPlan(p, "screen", { type: "comment", text: `画面「${s.name}」(key: ${screenKey})の案 ${c.variant} の位置 (${Math.round(c.x)}%, ${Math.round(c.y)}%) にコメント #${id}「${c.body}」が付きました。試作を直して upsert_screen で版を上げ、resolve_comment で対応済みにしてください。` });
     return id;
   });
 }
 
-export function resolveComment(p: Project, id: number): void {
-  const v = stageRow(p, "screen").version;
-  const r = run(p.db, "UPDATE plan_comments SET resolved_in = ? WHERE id = ? AND resolved_in IS NULL", [v, id]);
-  if (!r.changes) throw new Error(`コメント ${id} は無いか、もう対応済みです`);
+export async function resolveComment(p: Project, id: number): Promise<void> {
+  const v = (await stageRow(p, "screen")).version;
+  const r = await p.pdb.update("plan_comments", { resolved_in: v }).where("id", "=", id).where("resolved_in", "is", null).executeTakeFirst();
+  if (!Number(r.numUpdatedRows)) throw new Error(`コメント ${id} は無いか、もう対応済みです`);
 }
 
 // ---- チームに渡す ----
 
-export function handoffBlocker(p: Project): string | null {
+export async function handoffBlocker(p: Project): Promise<string | null> {
   if (p.setting("plan_handed_at")) return "もう渡しています";
-  const notDone = STAGES.filter((s) => !stageDone(p, s));
+  const notDone: Stage[] = [];
+  for (const s of STAGES) if (!(await stageDone(p, s))) notDone.push(s);
   return notDone.length ? `終わっていない段階があります: ${notDone.map((s) => STAGE_LABEL[s]).join("・")}` : null;
 }
 
-export function handoff(p: Project): void {
-  tx(p.db, () => {
-    const why = handoffBlocker(p);
+export async function handoff(p: Project): Promise<void> {
+  await p.pdb.transaction(async () => {
+    const why = await handoffBlocker(p);
     if (why) throw new Error(why);
     p.setSetting("plan_handoff_requested_at", p.now());
-    say(p, "handoff", "me", "チームに渡します");
-    sendPlan(p, "handoff", {
+    await say(p, "handoff", "me", "チームに渡します");
+    await sendPlan(p, "handoff", {
       type: "handoff",
       text:
         "企画のすべての段階が終わりました。合意した版から、実装のチケットを create_ticket で作ってください。各チケットには、要件の項目(code)・画面(key)・設計の節をひも付け、受け入れ条件を本文に書いてください。作り終えたら finish_handoff を呼んでください。" +
@@ -551,15 +590,18 @@ export function handedOff(p: Project): boolean {
 }
 
 /** 責任者の対応として本部に出す、企画の確認待ち。 */
-export function ownerPlanItems(p: Project): { stage: Stage; text: string }[] {
+export async function ownerPlanItems(p: Project): Promise<{ stage: Stage; text: string }[]> {
   if (handedOff(p)) return [];
   const out: { stage: Stage; text: string }[] = [];
   for (const s of STAGES) {
-    const open = openItems(p, s).filter((o) => o.answer === null);
+    const open = (await openItems(p, s)).filter((o) => o.answer === null);
     if (open.length) out.push({ stage: s, text: `${STAGE_LABEL[s]}: 未決 ${open.length} 件があなたの答えを待っています` });
-    else if (stageRow(p, s).mode === "agree" && !agreeBlocker(p, s)) out.push({ stage: s, text: `${STAGE_LABEL[s]} v${stageRow(p, s).version} があなたの合意を待っています` });
+    else {
+      const r = await stageRow(p, s);
+      if (r.mode === "agree" && !(await agreeBlocker(p, s))) out.push({ stage: s, text: `${STAGE_LABEL[s]} v${r.version} があなたの合意を待っています` });
+    }
   }
-  if (!handoffBlocker(p) && !p.setting("plan_handoff_requested_at")) out.push({ stage: "model", text: "すべての段階が終わりました。チームに渡せます" });
+  if (!(await handoffBlocker(p)) && !p.setting("plan_handoff_requested_at")) out.push({ stage: "model", text: "すべての段階が終わりました。チームに渡せます" });
   return out;
 }
 
@@ -572,24 +614,25 @@ export function studioPaused(p: Project): { at: string; reason: string } | null 
 }
 
 /** 企画スタジオを止める・再開する。再開すると、止めたところ(待っている依頼)から続ける。 */
-export function setStudioPaused(p: Project, paused: boolean, reason = "あなたが止めました"): void {
+export async function setStudioPaused(p: Project, paused: boolean, reason = "あなたが止めました"): Promise<void> {
   if (paused) {
     if (studioPaused(p)) return;
     p.setSetting("plan_paused", JSON.stringify({ at: p.now(), reason }));
     p.event("owner", "studio_paused", null, { reason });
-    say(p, currentStage(p), "system", `企画スタジオを止めました(${reason})。「再開する」で続きから動きます。`);
+    await say(p, await currentStage(p), "system", `企画スタジオを止めました(${reason})。「再開する」で続きから動きます。`);
   } else {
     if (!studioPaused(p)) return;
     p.setSetting("plan_paused", "");
     p.event("owner", "studio_resumed", null, {});
-    say(p, currentStage(p), "system", "企画スタジオを再開しました。止めたところから続けます。");
+    await say(p, await currentStage(p), "system", "企画スタジオを再開しました。止めたところから続けます。");
   }
 }
 
 /** 今動いている(か、次に動く)段階。会話の知らせを置く場所。 */
-function currentStage(p: Project): Stage | "handoff" {
+async function currentStage(p: Project): Promise<Stage | "handoff"> {
   if (p.setting("plan_handoff_requested_at")) return "handoff";
-  return STAGES.find((s) => stageStarted(p, s) && !stageDone(p, s)) ?? "req";
+  for (const s of STAGES) if (stageStarted(p, s) && !(await stageDone(p, s))) return s;
+  return "req";
 }
 
 /**
@@ -597,30 +640,49 @@ function currentStage(p: Project): Stage | "handoff" {
  * 企画スタジオを止めて知らせる(トークンを使い続けないように)。
  * @returns 止めたら、その段階
  */
-export function checkStudioLoop(p: Project): string | null {
+export async function checkStudioLoop(p: Project): Promise<string | null> {
   if (studioPaused(p)) return null;
   const limit = p.settingNumber("plan_loop_runs", 10);
   const since = new Date(p.clock.now().getTime() - 3_600_000).toISOString();
-  const hot = get<{ stage: string; n: number }>(
-    p.db,
-    `SELECT json_extract(m.payload, '$.stage') AS stage, COUNT(*) AS n FROM runs r JOIN messages m ON m.id = r.message_id
-     WHERE m.kind = 'plan' AND r.started_at >= ? GROUP BY stage ORDER BY n DESC LIMIT 1`,
-    [since],
-  );
-  if (!hot || hot.n <= limit) return null;
-  const label = hot.stage === "handoff" ? "チームへの引き渡し" : (STAGE_LABEL[hot.stage as Stage] ?? hot.stage);
-  setStudioPaused(p, true, `「${label}」で、この 1 時間に担当を ${hot.n} 回起こしていて、同じところを回っているようです。会話と途中経過を見て、指示を足してから再開してください`);
-  return hot.stage;
+  const rows = await p.pdb.k
+    .selectFrom("runs as r")
+    .innerJoin("messages as m", "m.id", "r.message_id")
+    .select(p.pdb.dialect.jsonExtract<string>("m.payload", "stage").as("stage"))
+    .where("r.project_id", "in", scopeIds(p.pdb))
+    .where("m.kind", "=", "plan")
+    .where("r.started_at", ">=", since)
+    .execute();
+  const counts = new Map<string, number>();
+  for (const r of rows) counts.set(r.stage, (counts.get(r.stage) ?? 0) + 1);
+  const hot = [...counts].sort((a, b) => b[1] - a[1])[0];
+  if (!hot || hot[1] <= limit) return null;
+  const [stage, n] = hot;
+  const label = stage === "handoff" ? "チームへの引き渡し" : (STAGE_LABEL[stage as Stage] ?? stage);
+  await setStudioPaused(p, true, `「${label}」で、この 1 時間に担当を ${n} 回起こしていて、同じところを回っているようです。会話と途中経過を見て、指示を足してから再開してください`);
+  return stage;
 }
 
 /** 段階ごとの進み具合: 起動の回数(通算・直近 1 時間)・金額・エラー・最近の起動。 */
-export function studioProgress(p: Project) {
+export async function studioProgress(p: Project) {
   const since = p.clock.now().getTime() - 3_600_000;
-  const rows = all<{ stage: string; id: number; started_at: string; ended_at: string | null; outcome: string | null; error: string | null; cost: number | null; member: string; attempts: number }>(
-    p.db,
-    `SELECT json_extract(m.payload, '$.stage') AS stage, r.id, r.started_at, r.ended_at, r.outcome, r.error, r.cost_usd AS cost, mb.name AS member, m.attempts
-     FROM runs r JOIN messages m ON m.id = r.message_id JOIN members mb ON mb.id = r.member_id WHERE m.kind = 'plan' ORDER BY r.id`,
-  );
+  const rows = await p.pdb.k
+    .selectFrom("runs as r")
+    .innerJoin("messages as m", "m.id", "r.message_id")
+    .innerJoin("members as mb", "mb.id", "r.member_id")
+    .select([
+      p.pdb.dialect.jsonExtract<string>("m.payload", "stage").as("stage"),
+      "r.id as id",
+      "r.started_at as started_at",
+      "r.ended_at as ended_at",
+      "r.outcome as outcome",
+      "r.error as error",
+      "r.cost_usd as cost",
+      "mb.name as member",
+    ])
+    .where("r.project_id", "in", scopeIds(p.pdb))
+    .where("m.kind", "=", "plan")
+    .orderBy("r.id")
+    .execute();
   const out: Record<string, { runs: number; lastHour: number; costUsd: number; errors: number; recent: { at: string; member: string; ms: number | null; outcome: string; error: string | null }[] }> = {};
   for (const r of rows) {
     const o = (out[r.stage] ??= { runs: 0, lastHour: 0, costUsd: 0, errors: 0, recent: [] });
@@ -637,52 +699,67 @@ export function studioProgress(p: Project) {
 // ---- 画面に出す全体 ----
 
 export async function studioView(p: Project) {
-  const thinking = new Set(
-    all<{ stage: string }>(p.db, "SELECT json_extract(payload, '$.stage') AS stage FROM messages WHERE kind = 'plan' AND status IN ('pending','claimed')").map((r) => r.stage),
-  );
-  const items = openItems(p);
+  const thinkingRows = await p.pdb.k
+    .selectFrom("messages")
+    .select(p.pdb.dialect.jsonExtract<string>("payload", "stage").as("stage"))
+    .where("project_id", "in", scopeIds(p.pdb))
+    .where("kind", "=", "plan")
+    .where("status", "in", ["pending", "claimed"])
+    .execute();
+  const thinking = new Set(thinkingRows.map((r) => r.stage));
+  const items = await openItems(p);
+  const stages = [];
+  for (const s of STAGES) {
+    const r = await stageRow(p, s);
+    stages.push({
+      key: s,
+      label: STAGE_LABEL[s],
+      mode: r.mode,
+      version: r.version,
+      agreedVersion: r.agreed_version,
+      done: await stageDone(p, s),
+      status: await stageStatus(p, s),
+      agreeBlocker: await agreeBlocker(p, s),
+      started: stageStarted(p, s),
+      thinking: thinking.has(s),
+    });
+  }
+  const cs = await commentsByScreen(p);
+  // 企画から作ったチケットの plan_refs を、チケットごとに引かず 1 文(IN)で取る
+  const tickets = p.tickets();
+  const refsRows = tickets.length
+    ? await inScope(p.pdb, "tickets")
+        .where("id", "in", tickets.map((t) => t.id))
+        .execute()
+    : [];
+  const refsOf = new Map(refsRows.map((r) => [r.id, JSON.parse(String(r.plan_refs ?? "{}")) as Record<string, unknown>]));
   return {
-    stages: STAGES.map((s) => {
-      const r = stageRow(p, s);
-      return {
-        key: s,
-        label: STAGE_LABEL[s],
-        mode: r.mode,
-        version: r.version,
-        agreedVersion: r.agreed_version,
-        done: stageDone(p, s),
-        status: stageStatus(p, s),
-        agreeBlocker: agreeBlocker(p, s),
-        started: stageStarted(p, s),
-        thinking: thinking.has(s),
-      };
-    }),
-    handoff: { blocker: handoffBlocker(p), requested: !!p.setting("plan_handoff_requested_at"), handed: handedOff(p), thinking: thinking.has("handoff") },
+    stages,
+    handoff: { blocker: await handoffBlocker(p), requested: !!p.setting("plan_handoff_requested_at"), handed: handedOff(p), thinking: thinking.has("handoff") },
     work: await planningWork(p),
     /** 止めているか(いつ・なぜ) */
     paused: studioPaused(p),
     /** 段階ごとの進み具合 */
-    progress: studioProgress(p),
+    progress: await studioProgress(p),
     loopLimit: p.settingNumber("plan_loop_runs", 10),
     /** 担当の名前(画面はここから受け取る) */
     cast: { planner: p.fixedMember("planner").name, designer: p.fixedMember("designer").name, architect: p.fixedMember("architect").name, lead: p.fixedMember("lead").name },
-    brief: artifact<Brief>(p, "req", "brief", "main"),
-    requirements: requirements(p),
+    brief: await artifact<Brief>(p, "req", "brief", "main"),
+    requirements: await requirements(p),
     openItems: items.map((o) => ({ ...o, options: JSON.parse(o.options) as string[], reversible: !!o.reversible })),
-    infra: artifact<Infra>(p, "infra", "infra", "main"),
-    flow: artifact<Flow>(p, "flow", "flow", "main"),
-    screens: [...screens(p)].map(([key, s]) => ({ key, ...s, comments: comments(p, key) })),
-    designSystem: designSystem(p),
-    architecture: artifact<Architecture>(p, "model", "architecture", "main"),
-    domain: artifact<Domain>(p, "model", "domain", "main"),
-    data: artifact<DataDesign>(p, "model", "data", "main"),
-    messages: messages(p),
-    tickets: p
-      .tickets()
-      .filter((t) => JSON.parse(String(get<{ plan_refs: string }>(p.db, "SELECT plan_refs FROM tickets WHERE id = ?", [t.id])?.plan_refs ?? "{}")).fromPlan)
+    infra: await artifact<Infra>(p, "infra", "infra", "main"),
+    flow: await artifact<Flow>(p, "flow", "flow", "main"),
+    screens: [...(await screens(p))].map(([key, s]) => ({ key, ...s, comments: cs.get(key) ?? [] })),
+    designSystem: await designSystem(p),
+    architecture: await artifact<Architecture>(p, "model", "architecture", "main"),
+    domain: await artifact<Domain>(p, "model", "domain", "main"),
+    data: await artifact<DataDesign>(p, "model", "data", "main"),
+    messages: await messages(p),
+    tickets: tickets
+      .filter((t) => refsOf.get(t.id)?.fromPlan)
       .map((t) => {
         // 引き継いだ PR・Issue のチケットなどは、画面・設計・段階の進め方のひも付けを持たない。画面が落ちないよう空で埋める
-        const refs = JSON.parse(String(get<{ plan_refs: string }>(p.db, "SELECT plan_refs FROM tickets WHERE id = ?", [t.id])?.plan_refs ?? "{}")) as Record<string, unknown>;
+        const refs = refsOf.get(t.id) ?? {};
         return { number: t.number, title: t.title, refs: { ...refs, screens: refs.screens ?? [], design: refs.design ?? [], modes: refs.modes ?? {} } };
       }),
   };

@@ -586,7 +586,7 @@ export class KuramotoServer {
     switch (a) {
       case "pause": {
         // 企画スタジオを止める(動いている担当もその場で止める)・再開する
-        setStudioPaused(p, !!body.paused);
+        await setStudioPaused(p, !!body.paused);
         if (body.paused) this.runners.get(id)?.dispatcher.stopPlanning();
         else this.poke(id);
         return { paused: !!studioPaused(p) };
@@ -594,7 +594,7 @@ export class KuramotoServer {
       case "chat": {
         const text = String(body.text ?? "").trim();
         if (!text) throw new Error("メッセージがありません");
-        chat(p, body.stage === "handoff" ? "handoff" : stage(body.stage), text, body.kind === "question" ? "question" : "chat");
+        await chat(p, body.stage === "handoff" ? "handoff" : stage(body.stage), text, body.kind === "question" ? "question" : "chat");
         return { ok: true };
       }
       case "open-items":
@@ -606,13 +606,13 @@ export class KuramotoServer {
         else return undefined;
         return { ok: true };
       case "screens":
-        if (c === "pick") pickVariant(p, String(key), String(body.variant));
-        else if (c === "agree") agreeScreen(p, String(key));
-        else if (c === "comments") addComment(p, String(key), { variant: String(body.variant), x: Number(body.x), y: Number(body.y), body: String(body.body ?? "").trim() || (() => { throw new Error("コメントがありません"); })() });
+        if (c === "pick") await pickVariant(p, String(key), String(body.variant));
+        else if (c === "agree") await agreeScreen(p, String(key));
+        else if (c === "comments") await addComment(p, String(key), { variant: String(body.variant), x: Number(body.x), y: Number(body.y), body: String(body.body ?? "").trim() || (() => { throw new Error("コメントがありません"); })() });
         else return undefined;
         return { ok: true };
       case "handoff":
-        handoff(p);
+        await handoff(p);
         return { ok: true };
     }
     return undefined;
@@ -624,7 +624,7 @@ export class KuramotoServer {
     const projects = await Promise.all(recs.map(async (rec) => {
       const p = this.project(rec.id);
       const m = await metrics(p);
-      const stages = STAGES.map((s) => ({ key: s, done: stageDone(p, s) }));
+      const stages = await Promise.all(STAGES.map(async (s) => ({ key: s, done: await stageDone(p, s) })));
       return {
         id: rec.id,
         name: rec.name,
@@ -643,7 +643,7 @@ export class KuramotoServer {
       const p = this.project(rec.id);
       const owed = await pendingOwnerDecisions(p);
       return [
-        ...ownerPlanItems(p).map((x) => ({ projectId: rec.id, projectName: rec.name, kind: "plan", text: x.text, deadline: null })),
+        ...(await ownerPlanItems(p)).map((x) => ({ projectId: rec.id, projectName: rec.name, kind: "plan", text: x.text, deadline: null })),
         ...owed.map((d) => ({ projectId: rec.id, projectName: rec.name, kind: "decide", text: d.question.split("\n").pop(), deadline: d.deadline_at })),
         ...(await suggestedMergeOrder(p)).map((t) => ({ projectId: rec.id, projectName: rec.name, kind: "merge", text: `#${t.number} ${t.title} を merge できます`, deadline: null })),
       ];
@@ -787,7 +787,7 @@ export class KuramotoServer {
     const render = this.deps.renderer ?? playwrightRenderer;
     const images = new Map<string, string>();
     const files: { name: string; data: Buffer | string }[] = [];
-    for (const [key, s] of screens(p)) {
+    for (const [key, s] of await screens(p)) {
       const v = s.variants.find((x) => x.id === s.chosen) ?? s.variants[0];
       if (!v) continue;
       const ref = await referenceImage(p, store, render, { key, html: v.html, device: s.device });

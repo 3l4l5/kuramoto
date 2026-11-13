@@ -105,9 +105,9 @@ describe("チームに渡したあとのデザインの合わせ直し(ADR-0034)
     await create.handler({ title: "デザインシステムの土台", body: "トークン・部品・/_design", design_system: true } as never);
     await create.handler({ title: "一覧を試作に合わせ直す", body: "部品で組み立て直す", screens: ["list"], after: [1] } as never);
     const [base, screen] = p.tickets();
-    expect(isDesignSystemTicket(p, base!)).toBe(true);
-    expect(designFor(p, base!).map((d) => d.key)).toEqual(["list"]); // 土台はカタログに全部の画面を並べる
-    expect(designFor(p, screen!).map((d) => d.key)).toEqual(["list"]);
+    expect(await isDesignSystemTicket(p, base!)).toBe(true);
+    expect((await designFor(p, base!)).map((d) => d.key)).toEqual(["list"]); // 土台はカタログに全部の画面を並べる
+    expect((await designFor(p, screen!)).map((d) => d.key)).toEqual(["list"]);
     expect(await blockers(p, screen!.id)).toEqual([base!.number]);
   });
 });

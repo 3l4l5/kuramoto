@@ -124,7 +124,7 @@ ${nits.map(threadText).join("\n") || "(なし)"}
     case "qa": {
       if (payload.preDev) return preDevPrompt(p, msg.kind, ticket, head);
       const prior = ticket ? await mustResolve(p, ticket.id, msg.kind) : [];
-      const criteria = ticket ? acceptanceBlock(p, ticket) : "";
+      const criteria = ticket ? (await acceptanceBlock(p, ticket)) : "";
       const how = `${criteria}## 何を止めるか(必須にしてよいのは 3 つだけ)
 - 必須(blocking: true)にしてよいのは、次のどれかに当たるものだけです。根拠を basis に付けます。
   - acceptance: このチケットの受け入れ条件を満たしていない
@@ -193,7 +193,7 @@ export const PRE_DEV_NOTE = `
 - 結果は submit_review ではなく leave_handoff で報告します。差し戻しはありません(往復にも数えません)。`;
 
 /** 開発より前の確認(R17)の指示。コードは見ず、チケットの中身を読んで、開発への申し送りを残す。 */
-function preDevPrompt(p: Project, role: "review" | "sec" | "qa", ticket: TicketRow | null, head: string): string {
+async function preDevPrompt(p: Project, role: "review" | "sec" | "qa", ticket: TicketRow | null, head: string): Promise<string> {
   const refs = ticket ? (JSON.parse(ticket.plan_refs || "{}") as { screens?: string[]; design?: string[] }) : {};
   const refLines = [refs.screens?.length ? `- ひも付く画面: ${refs.screens.join("・")}` : "", refs.design?.length ? `- ひも付く設計の節: ${refs.design.join("・")}` : ""].filter(Boolean).join("\n");
   const view: Record<"review" | "sec" | "qa", string> = {
@@ -203,7 +203,7 @@ function preDevPrompt(p: Project, role: "review" | "sec" | "qa", ticket: TicketR
   };
   return `${head}
 
-${ticket ? acceptanceBlock(p, ticket) : ""}${refLines ? `${refLines}\n\n` : ""}このチケットは開発より前の${ROLE_LABEL[role]}です。コードは見ずに、上のチケットの中身(本文・要件の受け入れ条件・画面・設計)だけを読んでください。
+${ticket ? (await acceptanceBlock(p, ticket)) : ""}${refLines ? `${refLines}\n\n` : ""}このチケットは開発より前の${ROLE_LABEL[role]}です。コードは見ずに、上のチケットの中身(本文・要件の受け入れ条件・画面・設計)だけを読んでください。
 開発が着手する前に知っておくべきこととして、特に次を、開発への申し送りにまとめます。
 - ${view[role]}
 - チケットの本文だけでは曖昧な点(あれば、どう解釈して進めるとよいか)
@@ -214,12 +214,12 @@ ${ticket ? acceptanceBlock(p, ticket) : ""}${refLines ? `${refLines}\n\n` : ""}�
  * 判断の基準にする受け入れ条件。チケットにひも付いた要件と、本文に出てくる要件の番号(R1 など)の受け入れ条件を並べる。
  * チケットの本文の「受け入れ条件」は、チケットの節にそのまま入っている。
  */
-export function acceptanceBlock(p: Project, t: TicketRow): string {
+export async function acceptanceBlock(p: Project, t: TicketRow): Promise<string> {
   const codes = new Set<string>(t.body.match(/\bR\d+\b/g) ?? []);
   const reqId = get<{ requirement_item_id: number | null }>(p.db, "SELECT requirement_item_id FROM tickets WHERE id = ?", [t.id])?.requirement_item_id;
-  const linked = reqId ? requirements(p).find((r) => r.id === reqId) : undefined;
+  const linked = reqId ? (await requirements(p)).find((r) => r.id === reqId) : undefined;
   if (linked) codes.add(linked.code);
-  const items = requirements(p).filter((r) => codes.has(r.code));
+  const items = (await requirements(p)).filter((r) => codes.has(r.code));
   if (!items.length) return "## 判断の基準\nこのチケットの本文(やること・受け入れ条件)を基準にします。\n\n";
   return `## 判断の基準: 受け入れ条件\nこのチケットの本文に加えて、次の要件の受け入れ条件を基準にします。\n${items.map((r) => `- ${r.code} ${r.name}: ${r.acceptance}`).join("\n")}\n\n`;
 }
