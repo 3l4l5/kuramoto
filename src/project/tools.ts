@@ -23,6 +23,8 @@ export type RunReport = {
   question?: Question;
   leadDecision?: { choice: number; reason: string; note?: string };
   escalate?: { reason: string };
+  /** 開発より前の確認が、チケットの中身を読んで残した申し送り(R17)。 */
+  handoff?: { body: string };
   /** このチケットの変更はすでに main に入っていて、やることが無い(Kuramoto が確かめ済み)。 */
   alreadyDone?: { commit: string; reason: string };
   /** push のあとに流したチームの CI(ADR-0028)の結果。 */
@@ -48,6 +50,8 @@ export type Resolution = { findingId: number; result: "resolved" | "accept" | "r
 export type ToolContext = {
   mustAnswer?: number[];
   mustResolve?: number[];
+  /** 開発より前の確認(R17)。差分は無く、申し送りを残す道具だけを渡す。 */
+  preDev?: boolean;
   /** 責任者に上げてよいか。ノンストップでは、戻せる判断は上げずにチームで決める(ADR-0022)。 */
   escalateAllowed?: boolean;
   /** submit_pr を受ける前に作業場所を確かめる(コミットし忘れなど)。問題があればその理由。 */
@@ -246,6 +250,18 @@ export function toolsFor(kind: MessageKind, report: RunReport, ctx: ToolContext 
     },
   });
 
+  const leaveHandoff = defineTool({
+    name: "leave_handoff",
+    description:
+      "申し送りを残す。開発より前の確認で、コードを見ずにチケットの中身(本文・要件の受け入れ条件・画面・設計)を読み、開発が着手する前に知っておくべきこと(確かめる観点・受け入れ条件・注意点・見落としやすい点)を書く。差し戻しは無い。最後に必ず 1 回呼ぶ。開発は着手の前にこれを読む。",
+    input: { body: z.string().describe("開発への申し送り。箇条書きで、具体的に") },
+    handler: ({ body }) => {
+      if (!body.trim()) return "申し送りが空です。開発に伝えたいことを書いて呼び直してください。";
+      report.handoff = { body: body.trim() };
+      return "申し送りを受け付けました。開発に渡し、次の工程に回します。";
+    },
+  });
+
   switch (kind) {
     case "implement":
     case "fix":
@@ -254,7 +270,7 @@ export function toolsFor(kind: MessageKind, report: RunReport, ctx: ToolContext 
     case "review":
     case "sec":
     case "qa":
-      return [submitReview];
+      return ctx.preDev ? [leaveHandoff] : [submitReview];
     case "decide":
       return [decide, escalate];
     case "plan":

@@ -1,3 +1,4 @@
+import { flowFor, validateFlows, type FlowsSpec, type TicketKind } from "./flow.js";
 import { EFFORTS, MODELS, ROLE_LABEL, WORK_ROLES, type Effort, type WorkRole } from "./roles.js";
 
 export type Pull = "down" | "start";
@@ -21,7 +22,8 @@ export type UnitSpec = {
   budgetUsd?: number | null;
 };
 
-export type FormationSpec = { pull: Pull; units: UnitSpec[] };
+/** flows: 種類ごとの流れ(R17)。省くと、前の版の流れを引き継ぐ。 */
+export type FormationSpec = { pull: Pull; units: UnitSpec[]; flows?: FlowsSpec };
 
 /** 島の数と、島ごとの最大人数の上限(ADR-0019)。 */
 export const MAX_UNITS = 6;
@@ -65,6 +67,8 @@ export function validateFormation(f: FormationSpec, repos?: string[]): string[] 
   }
   const pipeline = pipelineOf(f);
   if (!pipeline.includes("dev")) errors.push("開発の役割は必須です");
+  // 流れが決まりに反していないか(開発が無い・merge 待ちの前に工程が無い・同じ工程が 2 回)。島が無い工程は飛ばすだけなので、ここでは確かめない
+  errors.push(...validateFlows(f.flows));
   // 各工程は、どのリポジトリのチケットでも、受け持つ島がある
   if (repos) {
     for (const role of pipeline) {
@@ -76,15 +80,32 @@ export function validateFormation(f: FormationSpec, repos?: string[]): string[] 
   return [...new Set(errors)];
 }
 
-/** 編成にある役割から工程を組み立てる。誰も持っていない役割の工程は飛ばす。 */
-export function pipelineOf(f: { units: { roles: WorkRole[] }[] }): WorkRole[] {
+/**
+ * 工程を組み立てる。チケットの種類の流れ(無ければ既定の流れ、それも無ければ 開発 → レビュー → セキュリティ → QA)から、
+ * 誰も持っていない役割の工程(島が無い工程)を飛ばす。流れに無い工程は省略されている。
+ * devDone: 開発を通ったチケット。開発より前の工程には戻らないので、開発より前を落とす。
+ */
+export function pipelineOf(f: { units: { roles: WorkRole[] }[]; flows?: FlowsSpec }, kind?: TicketKind | string | null, opts: { devDone?: boolean } = {}): WorkRole[] {
   const have = new Set(f.units.flatMap((u) => u.roles));
-  return WORK_ROLES.filter((r) => have.has(r));
+  const stages = [...new Set(flowFor(f.flows, kind))].filter((r) => have.has(r));
+  const dev = stages.indexOf("dev");
+  return opts.devDone && dev > 0 ? stages.slice(dev) : stages;
 }
 
-/** ある工程を通ったあとの行き先。最後の工程の次は merge 待ち。 */
-export function nextStage(pipeline: WorkRole[], from: WorkRole): WorkRole | "merge" {
+/** 開発より前の工程か(コードを見ずに申し送りだけを残す工程)。 */
+export function isPreDev(pipeline: WorkRole[], stage: WorkRole): boolean {
+  const i = pipeline.indexOf(stage);
+  const dev = pipeline.indexOf("dev");
+  return i >= 0 && dev >= 0 && i < dev;
+}
+
+/**
+ * ある工程を通ったあとの行き先。最後の工程の次は merge 待ち。
+ * preDev: 開発より前の工程として動いていた。流れが途中で変わって、今の流れでは開発より後ろにあっても、開発を飛ばさず開発へ行く。
+ */
+export function nextStage(pipeline: WorkRole[], from: WorkRole, opts: { preDev?: boolean } = {}): WorkRole | "merge" {
   const i = pipeline.indexOf(from);
   if (i < 0) throw new Error(`工程 ${from} は今の編成にありません`);
+  if (opts.preDev && from !== "dev" && pipeline.indexOf("dev") >= 0 && pipeline.indexOf("dev") < i) return "dev";
   return pipeline[i + 1] ?? "merge";
 }

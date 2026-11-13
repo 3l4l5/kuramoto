@@ -2,6 +2,8 @@ import { openViolations, violationsOf } from "./dev-rules.js";
 import { latestComparisons } from "./design-visual.js";
 import { screens } from "./planning.js";
 import { all, get } from "../db/sqlite.js";
+import { KIND_LABEL as TICKET_KIND_LABEL } from "../domain/flow.js";
+import { isPreDev, pipelineOf } from "../domain/formation.js";
 import { MODELS, ROLE_LABEL, type Role } from "../domain/roles.js";
 import type { Project } from "./project.js";
 import { blockers, dependsOn, mergeBlockers, mergeUnblocks } from "./triage.js";
@@ -33,6 +35,10 @@ export type TimelineItem =
   | { type: "conflict"; at: string; cause: string | null; resolution: string | null }
   | { type: "merge"; at: string; result: string }
   | { type: "note"; at: string; who: string; body: string }
+  /** 開発より前の確認(R17)が残した申し送り */
+  | { type: "handoff"; at: string; role: string; body: string }
+  /** 責任者がチケットの種類を変えた(R17) */
+  | { type: "kind_change"; at: string; who: string; from: string; to: string }
   | { type: "rule"; at: string; rule: string; handled: string; detail: string; resolvedAt: string | null };
 
 export function ticketView(p: Project, ticketId: number) {
@@ -52,6 +58,12 @@ export function ticketView(p: Project, ticketId: number) {
   const items: TimelineItem[] = [{ type: "created", at: t.created_at, title: t.title }];
   // メモは、同じ時刻の起動より先に並べる(メモを書いた直後に担当が起こされることがあるため)
   for (const n of p.notes(ticketId)) items.push({ type: "note", at: n.at, who: n.who === "lead" ? p.fixedMember("lead").name + "(リーダー)" : "あなた", body: n.body });
+
+  for (const h of p.handoffs(ticketId)) items.push({ type: "handoff", at: h.at, role: ROLE_LABEL[h.role] ?? h.role, body: h.body });
+  for (const e of all<{ at: string; actor: string; data: string }>(p.db, "SELECT at, actor, data FROM events WHERE ticket_id = ? AND type = 'kind_changed' ORDER BY id", [ticketId])) {
+    const d = JSON.parse(e.data) as { from: string; to: string };
+    items.push({ type: "kind_change", at: e.at, who: e.actor === "owner" ? "あなた" : e.actor, from: TICKET_KIND_LABEL[d.from as keyof typeof TICKET_KIND_LABEL] ?? d.from, to: TICKET_KIND_LABEL[d.to as keyof typeof TICKET_KIND_LABEL] ?? d.to });
+  }
 
   for (const r of all<{ id: number; member_id: number; role: string; kind: string; model: string | null; policy_model: string; cost: number | null; tokens: number; started_at: string; ended_at: string | null; outcome: string | null; summary: string | null; error: string | null }>(
     p.db,
@@ -151,6 +163,13 @@ export function ticketView(p: Project, ticketId: number) {
     title: t.title,
     body: t.body,
     stage: t.stage,
+    kind: t.kind,
+    kindLabel: TICKET_KIND_LABEL[t.kind] ?? t.kind,
+    /** このチケットの今の流れ(次の工程から進む順)。開発を通ったあとは、開発より前を含まない */
+    flow: (() => {
+      const pipeline = pipelineOf(p.currentFormation(), t.kind, { devDone: !!t.dev_done });
+      return pipeline.map((r) => ({ key: r, label: ROLE_LABEL[r], preDev: !t.dev_done && isPreDev(pipeline, r) }));
+    })(),
     rounds: t.rounds,
     owner: t.owner_member_id ? name(t.owner_member_id) : null,
     requirement: requirement ?? null,

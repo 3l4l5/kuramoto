@@ -1,6 +1,7 @@
 import { iso, systemClock, type Clock } from "../clock.js";
 import { all, get, openDb, run, tx, type Db } from "../db/sqlite.js";
 import { PROJECT_MIGRATIONS } from "../db/schema.js";
+import { isTicketKind, parseFlows, type FlowsSpec, type TicketKind } from "../domain/flow.js";
 import { covers, DEFAULT_FORMATION, validateFormation, type FormationSpec, type Pull, type UnitSpec } from "../domain/formation.js";
 import { DEFAULT_POLICIES, type Effort, type Role, type WorkRole } from "../domain/roles.js";
 import { FIXED_CAST, MEMBER_POOL } from "../domain/cast.js";
@@ -17,6 +18,10 @@ export type TicketRow = {
   owner_member_id: number | null;
   rounds: number;
   plan_refs: string;
+  /** チケットの種類(R17)。種類ごとの流れで工程を進める */
+  kind: TicketKind;
+  /** 開発を一度でも通ったか。通ったら開発より前の工程には戻らない */
+  dev_done: number;
   created_at: string;
   done_at: string | null;
   active_ms: number;
@@ -65,7 +70,7 @@ export type UnitRow = {
   budget_usd: number | null;
 };
 
-export type FormationRow = { id: number; version: number; pull: Pull; units: UnitRow[] };
+export type FormationRow = { id: number; version: number; pull: Pull; units: UnitRow[]; flows: FlowsSpec };
 
 /** 1 つのプロジェクトの DB(ADR-0004)。 */
 export class Project {
@@ -151,7 +156,9 @@ export class Project {
     return tx(this.db, () => {
       const prev = this.currentFormationOrNull();
       const version = (prev?.version ?? 0) + 1;
-      const fid = run(this.db, "INSERT INTO formations (version, pull, created_at) VALUES (?, ?, ?)", [version, spec.pull, this.now()]).lastId;
+      // 流れを渡さなければ前の版の流れを引き継ぐ(編成だけを変える保存で、種類ごとの流れが消えないように)
+      const flows = spec.flows ?? prev?.flows ?? {};
+      const fid = run(this.db, "INSERT INTO formations (version, pull, flows, created_at) VALUES (?, ?, ?, ?)", [version, spec.pull, JSON.stringify(flows), this.now()]).lastId;
       for (const u of spec.units) this.insertUnit(fid, u);
       this.carryOverMembers(prev);
       this.event(prev ? "owner" : "system", "formation_saved", null, { version });
@@ -242,12 +249,12 @@ export class Project {
   }
 
   currentFormationOrNull(): FormationRow | null {
-    const f = get<{ id: number; version: number; pull: Pull }>(this.db, "SELECT id, version, pull FROM formations ORDER BY version DESC LIMIT 1");
+    const f = get<{ id: number; version: number; pull: Pull; flows: string }>(this.db, "SELECT id, version, pull, flows FROM formations ORDER BY version DESC LIMIT 1");
     if (!f) return null;
     const units = all<Omit<UnitRow, "roles" | "repos"> & { roles: string; repos: string }>(this.db, "SELECT * FROM units WHERE formation_id = ? ORDER BY id", [f.id]).map(
       (u) => ({ ...u, roles: JSON.parse(u.roles) as WorkRole[], repos: JSON.parse(u.repos) as string[] }),
     );
-    return { ...f, units };
+    return { id: f.id, version: f.version, pull: f.pull, units, flows: parseFlows(f.flows) };
   }
 
   currentFormation(): FormationRow {
@@ -286,8 +293,22 @@ export class Project {
     this.event(who, "note_added", ticketId, kind === "member" ? { kind } : {});
   }
 
+  /** 責任者・リーダー・メンバーとの会話のメモ。開発より前の申し送り(kind='handoff')は handoffs() で読む。 */
   notes(ticketId: number): { id: number; who: string; body: string; at: string; kind: string }[] {
-    return all(this.db, "SELECT id, who, body, at, kind FROM ticket_notes WHERE ticket_id = ? ORDER BY id", [ticketId]);
+    return all(this.db, "SELECT id, who, body, at, kind FROM ticket_notes WHERE ticket_id = ? AND kind <> 'handoff' ORDER BY id", [ticketId]);
+  }
+
+  /** 開発より前の工程(R17)が残した申し送り。who は残した工程の役割。 */
+  addHandoff(ticketId: number, role: Role, body: string): void {
+    const text = body.trim();
+    if (!text) throw new Error("申し送りがありません");
+    this.ticket(ticketId);
+    run(this.db, "INSERT INTO ticket_notes (ticket_id, who, body, at, kind) VALUES (?, ?, ?, ?, 'handoff')", [ticketId, role, text, this.now()]);
+    this.event(role, "handoff_left", ticketId, { role });
+  }
+
+  handoffs(ticketId: number): { id: number; role: Role; body: string; at: string }[] {
+    return all(this.db, "SELECT id, who AS role, body, at FROM ticket_notes WHERE ticket_id = ? AND kind = 'handoff' ORDER BY id", [ticketId]);
   }
 
   editTicket(ticketId: number, input: { title: string; body: string }): void {
@@ -376,14 +397,15 @@ export class Project {
 
   // ---- チケット ----
 
-  addTicket(t: { title: string; body?: string; requirementItemId?: number; planRefs?: Record<string, unknown> }): TicketRow {
+  addTicket(t: { title: string; body?: string; kind?: TicketKind; requirementItemId?: number; planRefs?: Record<string, unknown> }): TicketRow {
+    if (t.kind !== undefined && !isTicketKind(t.kind)) throw new Error(`知らないチケットの種類です: ${String(t.kind)}`);
     return tx(this.db, () => {
       const number = (get<{ n: number | null }>(this.db, "SELECT MAX(number) AS n FROM tickets")?.n ?? 0) + 1;
       const jiraPrefix = this.setting("jira_key");
       const id = run(
         this.db,
-        "INSERT INTO tickets (number, jira_key, title, body, stage, requirement_item_id, plan_refs, created_at) VALUES (?, ?, ?, ?, 'dev', ?, ?, ?)",
-        [number, jiraPrefix ? `${jiraPrefix}-${number}` : null, t.title, t.body ?? "", t.requirementItemId ?? null, JSON.stringify(t.planRefs ?? {}), this.now()],
+        "INSERT INTO tickets (number, jira_key, title, body, kind, stage, requirement_item_id, plan_refs, created_at) VALUES (?, ?, ?, ?, ?, 'dev', ?, ?, ?)",
+        [number, jiraPrefix ? `${jiraPrefix}-${number}` : null, t.title, t.body ?? "", t.kind ?? "feature", t.requirementItemId ?? null, JSON.stringify(t.planRefs ?? {}), this.now()],
       ).lastId;
       this.event("lead", "ticket_created", id, { number, title: t.title });
       return this.ticket(id);

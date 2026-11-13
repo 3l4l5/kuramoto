@@ -38,6 +38,7 @@ import {
 } from "./planning.js";
 import type { Project } from "./project.js";
 import { createTicket } from "./workflow.js";
+import { KIND_LABEL, TICKET_KINDS } from "../domain/flow.js";
 import { adoptPull, fromExisting, markIssueTicketed } from "./onboard.js";
 
 export type PlanPayload = { stage: Stage | "handoff"; events: { type: string; text: string }[] };
@@ -372,6 +373,7 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
           input: {
             title: z.string(),
             body: z.string().describe("やること・受け入れ条件・注意点"),
+            kind: z.enum(TICKET_KINDS).default("feature").describe(`チケットの種類。必ず 1 つ選ぶ(${TICKET_KINDS.map((k) => `${k}: ${KIND_LABEL[k]}`).join(" / ")})。種類ごとに工程の流れが違う`),
             requirement: z.string().optional().describe("ひも付ける要件の code(例: R1)"),
             screens: z.array(z.string()).describe("ひも付ける画面の key"),
             design: z.array(z.string()).describe("ひも付ける設計の節(例: ルール 1、reservations 表)"),
@@ -390,6 +392,7 @@ export function planningTools(p: Project, stage: Stage | "handoff"): KuramotoToo
             const t = createTicket(p, {
               title: a.title,
               body: a.body,
+              kind: a.kind ?? "feature",
               ...(item ? { requirementItemId: item.id } : {}),
               planRefs: { fromPlan: true, requirement: a.requirement ?? null, screens: a.screens, design: a.design, modes, versions, ...(a.repo ? { repo: a.repo } : {}), ...(a.issue ? { issue: a.issue } : {}), ...(a.design_system ? { designSystem: true } : {}) },
             });
