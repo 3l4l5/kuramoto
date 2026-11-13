@@ -152,6 +152,53 @@ function BarChart({ title, rows, fmt, tick = (l) => l.slice(5) }: { title: strin
   );
 }
 
+/**
+ * フロー効率の推移(折れ線)と、編成の版が上がった日(縦の点線と札)。札には何を変えたか(連絡経路 / 流れ / 島)を出す(R16)。
+ * 効率が上がり下がりしたのが編成を変えたせいかを、日付で見比べられる。
+ */
+const CHANGED_LABEL: Record<string, string> = { routes: "連絡経路", flows: "流れ", units: "島" };
+function EfficiencyTrend({ data }: { data: ProductivityView }) {
+  const rows = data.flow.efficiencyDaily;
+  const marks = data.flow.formationMarks;
+  const days = [...new Set([...rows.map((r) => r.day), ...marks.map((m) => m.day)])].sort();
+  if (days.length === 0) return null;
+  const W = 386, H = 196, L = 34, R = 8, T = 34, B = 36;
+  const x = (day: string) => (days.length === 1 ? (L + W - R) / 2 : L + (days.indexOf(day) / (days.length - 1)) * (W - L - R));
+  const top = Math.max(0.5, ...rows.map((r) => r.value));
+  const y = (v: number) => T + (1 - v / top) * (H - T - B);
+  return (
+    <figure className="chart" aria-label="フロー効率の推移と編成を変えた日">
+      <figcaption>
+        <span>フロー効率の推移 · 編成を変えた日</span>
+      </figcaption>
+      <div className="plot">
+        <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`フロー効率の推移: ${rows.map((r) => `${r.day} ${Math.round(r.value * 100)}%`).join("、") || "まだありません"}`}>
+          <line x1={L} x2={W - R} y1={H - B} y2={H - B} className="axis" />
+          <line x1={L} x2={W - R} y1={y(top)} y2={y(top)} className="grid" />
+          <text x={0} y={H - B + 4} className="tick">0%</text>
+          <text x={0} y={y(top) + 4} className="tick">{Math.round(top * 100)}%</text>
+          {rows.length > 1 && <polyline fill="none" className="line" stroke="var(--dev)" strokeWidth={2} points={rows.map((r) => `${x(r.day)},${y(r.value)}`).join(" ")} />}
+          {rows.map((r) => <circle key={r.day} cx={x(r.day)} cy={y(r.value)} r={3} fill="var(--dev)" />)}
+          {marks.map((m, i) => {
+            const text = `v${m.version} ${m.changed.map((c) => CHANGED_LABEL[c] ?? c).join("・")}`;
+            const w = text.length * 12 + 12;
+            const left = Math.min(Math.max(x(m.day) - w / 2, 0), W - w);
+            return (
+              <g key={m.version} className="mark" data-version={m.version}>
+                <line x1={x(m.day)} x2={x(m.day)} y1={T - 6} y2={H - B} stroke="var(--lead)" strokeDasharray="4 3" />
+                <rect x={left} y={i % 2 ? 6 : 0} width={w} height={20} rx={6} fill="var(--lead-soft)" />
+                <text x={left + 6} y={(i % 2 ? 6 : 0) + 14} style={{ fill: "var(--lead)", fontSize: "var(--fs-xs)" }}>{text}</text>
+              </g>
+            );
+          })}
+          <text x={L} y={H - 8} className="tick">{days[0]!.slice(5)}</text>
+          <text x={W - R} y={H - 8} textAnchor="end" className="tick">{days.at(-1)!.slice(5)}</text>
+        </svg>
+      </div>
+    </figure>
+  );
+}
+
 /** 金額の内訳(横棒、多い順)。棒の長さは全体に対する割合、値と割合は棒の横に書く。 */
 function CostBars({ rows, total, label }: { rows: { key: string; label: string; costUsd: number; tokens: number; runs: number }[]; total: number; label: string }) {
   const max = Math.max(...rows.map((r) => r.costUsd)) || 1;
@@ -395,6 +442,7 @@ function Flow({ data, mode }: P) {
         <Tile label="あなたを待った時間" value={span(f.ownerWait.totalMs)} note={`判断カード ${f.ownerWait.count} 枚(いま待っている ${f.ownerWait.pending} 枚) · 1 枚あたり中央値 ${span(f.ownerWait.median)}`} />
       </div>
 
+      <EfficiencyTrend data={data} />
       <p className="hint">直近 48 時間を 1 時間ずつ。片付いたのは merge・取りやめ・すでに入っていたもの、未完了は各時間の終わりの数です。</p>
       {mode === "graph" ? (
         <div className="charts">

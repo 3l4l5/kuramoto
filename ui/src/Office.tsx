@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, post, type OfficeView } from "./api";
 import { duration, useAct, useNow } from "./hooks";
@@ -7,12 +7,18 @@ import { unblockText, usd } from "./format";
 import { TicketLink } from "./Ticket";
 import { Avatar } from "./Avatar";
 import { IslandDialog } from "./IslandDialog";
-import { MemberDialog, UnitDialog } from "./OfficeDialogs";
+import { UnitDialog } from "./OfficeDialogs";
+import { MemberDrawer } from "./MemberDrawer";
+import { KIND_SHAPE, KINDS } from "./kind";
+import { Button, Segmented } from "./ds";
+import { requestFormationTab, useFormationUi } from "./formationUi";
 import { MAX_UNITS } from "../../src/domain/formation";
 
 /**
- * バーチャルオフィス(docs/design.md 6.3)。島ごとの机にメンバーが座り、作業中は手元が光って体が揺れ、
- * 今していることを吹き出しで話す。チケットが工程を進むと、書類が次の島や merge 待ちの棚へ飛ぶ。
+ * バーチャルオフィス(docs/design.md 6.3)。島(駅)ごとの机にメンバーが座り、作業中は手元が光って体が揺れ、
+ * 今していることを吹き出しで話す。駅は共有し、種類ごとの流れを路線として重ねる(R17)。
+ * 床には許されている連絡経路が点線で出て、答えを待っている質問の封筒が経路を行き来する(R16)。
+ * チケットが工程を進むと、書類が次の島や merge 待ちの棚へ飛ぶ。メンバーを押すと、右に今していることと話す欄が開く。
  * すべて記録(起動・受信箱・チケット)から組み立てる。
  */
 const useOffice = (id: number) => useQuery({ queryKey: ["office", id], queryFn: () => api<OfficeView>("GET", `/projects/${id}/office`), refetchInterval: 2000 });
@@ -23,62 +29,275 @@ type Work = NonNullable<Member["work"]>;
 const ROLE_CLASS: Record<string, string> = { 開発: "dev", レビュー: "review", セキュリティ: "sec", QA: "qa", リーダー: "lead", アーキテクト: "arch", 企画: "plan", デザイナー: "design" };
 const QUIET_WARN_SEC = 90;
 
+const Selected = createContext<number | null>(null);
+
 export function OfficeFloor({ id }: { id: number }) {
   const { data } = useOffice(id);
   const floor = useRef<HTMLDivElement>(null);
   const flights = useFlights(floor, data?.where);
   const [edit, setEdit] = useState<{ name: string | null } | null>(null);
-  // 様子のモーダル(メンバー・島)。席の下には短い状態だけを出し、詳しいことはここで見せる
-  const [member, setMember] = useState<number | null>(null);
+  // メンバーを押すと右に引き出し(今していること・話す欄)。島の名前を押すと島の様子のモーダル
+  const [member, setMember] = useState<{ id: number; chat: boolean } | null>(null);
   const [unit, setUnit] = useState<number | null>(null);
+  // 路線の絞り込み: 選んだ種類の路線だけが濃くなる(null = すべて)
+  const [kind, setKind] = useState<string>("all");
+  const draftOn = useFormationUi().draftRoutes !== null;
   if (!data) return <section className="officefloor" aria-label="オフィスの床" />;
+  const open = (chat: boolean) => (mid: number) => setMember({ id: mid, chat });
+  const kinds = KINDS.filter((k) => data.lines.some((l) => l.kinds.some((x) => x.kind === k.key))).map((k) => ({ kind: k.key, label: k.label }));
+  const stopsOf = (l: OfficeView["lines"][number]) => ["lead", ...l.stops.map((s) => `unit:${s.unitId}`), "merge"];
   return (
     <section className="officefloor" aria-label="オフィスの床" ref={floor}>
-      <div className="of-islands">
-        {data.units.map((u) => (
-          <Island key={u.id} u={u} running={data.running} onEdit={() => setEdit({ name: u.name })} onOpen={() => setUnit(u.id)} onMember={setMember} />
-        ))}
-        {data.units.length < MAX_UNITS && (
-          <button type="button" className="of-addisland" onClick={() => setEdit({ name: null })}>
-            <span aria-hidden="true">＋</span>
-            島を足す
-            <small>あと {MAX_UNITS - data.units.length} つ</small>
-          </button>
-        )}
-      </div>
-      {edit && <IslandDialog id={id} name={edit.name} close={() => setEdit(null)} />}
-      {member !== null && <MemberDialog projectId={id} memberId={member} close={() => setMember(null)} />}
-      {unit !== null && (
-        <UnitDialog
-          projectId={id}
-          unitId={unit}
-          close={() => setUnit(null)}
-          onEdit={(name) => {
-            setUnit(null);
-            setEdit({ name });
-          }}
-        />
-      )}
-      <aside className="of-side">
-        <Desk onMember={setMember} title="リーダー" who={data.lead} running={data.running} waitingFor="判断・チャットを待っています" loc="lead" note={data.lead.decisions.length ? `判断待ち ${data.lead.decisions.length} 件(#${data.lead.decisions.join("、#")})` : "判断待ちはありません"} />
-        <Desk onMember={setMember} title="アーキテクト" who={data.architect} running={data.running} waitingFor="相談を待っています" loc="arch" note="設計の相談役" />
-        <MergeShelf id={id} q={data.mergeQueue} auto={data.autoMerge} />
-        <section className="of-donepile" data-loc="done" aria-label="merge 済み">
-          <h3>merge 済み</h3>
-          <div className="of-stack" aria-hidden="true">
-            {Array.from({ length: Math.min(8, data.done.count) }, (_, i) => (
-              <i key={i} style={{ bottom: i * 4 }} />
-            ))}
-          </div>
-          <div className="hint">{data.done.count ? `${data.done.count} 件(#${data.done.recent.join("、#")})` : "まだありません"}</div>
-        </section>
-      </aside>
-      {flights.map((f) => (
-        <div key={f.key} className="of-flight" style={{ left: f.x, top: f.y, transform: f.go ? `translate(${f.dx}px, ${f.dy}px)` : "none" }} aria-hidden="true">
-          #{f.n}
+      <Selected.Provider value={member?.id ?? null}>
+        <div className="of-filter">
+          <span id="of-filter-label">路線</span>
+          <Segmented
+            label="路線の種類"
+            value={kind}
+            onChange={setKind}
+            options={[{ value: "all", label: "すべて" }, ...kinds.map((k) => ({ value: k.kind, label: `${KIND_SHAPE[k.kind]} ${k.label}` }))]}
+          />
         </div>
-      ))}
+        <RouteMap data={data} kind={kind}>
+          <div className="of-islands">
+            <Station loc="lead" data={data} stopsOf={stopsOf}>
+              <Desk onMember={open(false)} title="受け口" label="リーダー" who={data.lead} running={data.running} waitingFor="判断・チャットを待っています" loc="lead" note={data.lead.decisions.length ? `判断待ち ${data.lead.decisions.length} 件(#${data.lead.decisions.join("、#")})` : "判断待ちはありません"} />
+            </Station>
+            {data.units.map((u) => (
+              <Station key={u.id} loc={`unit:${u.id}`} data={data} stopsOf={stopsOf}>
+                <Island u={u} running={data.running} onEdit={() => setEdit({ name: u.name })} onOpen={() => setUnit(u.id)} onMember={open(true)} />
+              </Station>
+            ))}
+            <Station loc="merge" data={data} stopsOf={stopsOf}>
+              <MergeShelf id={id} q={data.mergeQueue} auto={data.autoMerge} />
+            </Station>
+            {data.units.length < MAX_UNITS && (
+              <button type="button" className="of-addisland" onClick={() => setEdit({ name: null })}>
+                <span aria-hidden="true">＋</span>
+                島を足す
+                <small>あと {MAX_UNITS - data.units.length} つ</small>
+              </button>
+            )}
+          </div>
+          <aside className="of-side">
+            <Desk onMember={open(false)} title="アーキテクト" who={data.architect} running={data.running} waitingFor="相談を待っています" loc="arch" note="設計の相談役" />
+            <section className="of-donepile" data-loc="done" aria-label="merge 済み">
+              <h3>merge 済み</h3>
+              <div className="of-stack" aria-hidden="true">
+                {Array.from({ length: Math.min(8, data.done.count) }, (_, i) => (
+                  <i key={i} style={{ bottom: i * 4 }} />
+                ))}
+              </div>
+              <div className="hint">{data.done.count ? `${data.done.count} 件(#${data.done.recent.join("、#")})` : "まだありません"}</div>
+            </section>
+            <p className="of-legend">
+            <span><b>○</b> 停車、丸が無い = 省略</span>
+            <span><i className="of-legend-ask" aria-hidden="true" /> {draftOn ? "質問・相談できる経路(保存前の案を表示中)" : "質問・相談できる経路"}</span>
+            <span>メンバーを押すと様子と話す欄が開く</span>
+            <span className="of-legend-links">
+              <Button variant="text" size="sm" onClick={() => requestFormationTab("routes")}>経路を変える</Button>
+              <Button variant="text" size="sm" onClick={() => requestFormationTab("flows")}>流れを変える</Button>
+            </span>
+          </p>
+          </aside>
+        </RouteMap>
+        {edit && <IslandDialog id={id} name={edit.name} close={() => setEdit(null)} />}
+        {member !== null && <MemberDrawer projectId={id} memberId={member.id} canChat={member.chat} close={() => setMember(null)} />}
+        {unit !== null && (
+          <UnitDialog
+            projectId={id}
+            unitId={unit}
+            close={() => setUnit(null)}
+            onEdit={(name) => {
+              setUnit(null);
+              setEdit({ name });
+            }}
+          />
+        )}
+        {flights.map((f) => (
+          <div key={f.key} className="of-flight" style={{ left: f.x, top: f.y, transform: f.go ? `translate(${f.dx}px, ${f.dy}px)` : "none" }} aria-hidden="true">
+            #{f.n}
+          </div>
+        ))}
+      </Selected.Provider>
     </section>
+  );
+}
+
+/** 駅。スマホでは左に縦の路線(丸の中の数字が停車の順番、丸が無ければ通過)を出す。パソコンでは何も足さない。 */
+function Station({ loc, data, stopsOf, children }: { loc: string; data: OfficeView; stopsOf: (l: OfficeView["lines"][number]) => string[]; children: React.ReactNode }) {
+  return (
+    <div className="of-st">
+      <span className="of-strands" aria-hidden="true">
+        {KINDS.map((k) => {
+          const l = data.lines.find((x) => x.kinds.some((y) => y.kind === k.key));
+          const at = l ? stopsOf(l).indexOf(loc) : -1;
+          return (
+            <i key={k.key} className="of-strand" data-k={k.key}>
+              {at >= 0 && <b className="of-stopnum">{at + 1}</b>}
+            </i>
+          );
+        })}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+type Geo = { w: number; h: number; pos: Record<string, { x: number; top: number; bottom: number }>; rowBottom: number };
+
+/** 駅の下に取る、路線を通すための帯の高さ(style.css の .of-st > section の padding-bottom と同じ)。 */
+const BAND = 136;
+const LANE_GAP = 30;
+const LEG_GAP = 9;
+
+/**
+ * 路線の通り道。止まる駅を順に結び、あとの駅が左にあるときは折り返す(折り返しは 1 本下の線に移る)。
+ * 例: バグ修正(QA → 開発 → レビュー)は、受け口から QA へ進み、開発へ戻り、レビュー・merge 待ちへ進む。
+ */
+export function linePath(xs: number[], y0: number): { d: string; ys: number[]; turns: { x1: number; x2: number; y: number }[] } {
+  const ys = [y0];
+  const turns: { x1: number; x2: number; y: number }[] = [];
+  let d = `M ${xs[0]} ${y0}`;
+  let y = y0;
+  let dir = 0;
+  let leg = 0;
+  for (let i = 1; i < xs.length; i++) {
+    const step = Math.sign(xs[i]! - xs[i - 1]!) || dir || 1;
+    if (dir !== 0 && step !== dir) {
+      leg++;
+      y = y0 + leg * LEG_GAP;
+      d += ` L ${xs[i - 1]} ${y}`;
+      turns.push({ x1: xs[i - 1]!, x2: xs[i]!, y });
+    }
+    dir = step;
+    d += ` L ${xs[i]} ${y}`;
+    ys.push(y);
+  }
+  return { d, ys, turns };
+}
+
+/**
+ * 路線図。駅(島・受け口・merge 待ち)を通るように、種類ごとの路線を 1 本ずつ引く(駅の下側の帯)。
+ * 路線は止まる駅に丸を置き、開発より前の「申し送りだけ」の停車は点線の丸にする。選んだ種類の路線だけが濃くなる。
+ * 開いているチケットは、その種類の路線の、いまの駅に札(▲#45)で置く。
+ * 駅の上には、許されている連絡経路を点線で引き、答えを待っている質問の封筒を往復させる。
+ * 連絡経路タブを開いている間は、保存前の案を、保存してある経路の代わりに引く。
+ * 位置は data-loc を付けた駅の大きさから測る(駅の大きさが変わると引き直す)。
+ */
+function RouteMap({ data, kind, children }: { data: OfficeView; kind: string; children: React.ReactNode }) {
+  const map = useRef<HTMLDivElement>(null);
+  const [geo, setGeo] = useState<Geo | null>(null);
+  const draft = useFormationUi().draftRoutes;
+  const measure = () => {
+    const m = map.current;
+    if (!m) return;
+    const box = m.getBoundingClientRect();
+    const pos: Geo["pos"] = {};
+    let bottom = 0;
+    for (const el of m.querySelectorAll<HTMLElement>("[data-loc]")) {
+      const loc = el.dataset.loc!;
+      if (loc === "done") continue;
+      const r = el.getBoundingClientRect();
+      pos[loc] = { x: r.left - box.left + m.scrollLeft + r.width / 2, top: r.top - box.top, bottom: r.bottom - box.top };
+      if (loc !== "arch") bottom = Math.max(bottom, r.bottom - box.top);
+    }
+    const next: Geo = { w: m.scrollWidth, h: m.scrollHeight, pos, rowBottom: bottom };
+    setGeo((g) => (g && JSON.stringify(g) === JSON.stringify(next) ? g : next));
+  };
+  useLayoutEffect(measure);
+  useEffect(() => {
+    const m = map.current;
+    if (!m) return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(m);
+    for (const c of m.querySelectorAll("[data-loc]")) ro.observe(c);
+    return () => ro.disconnect();
+  });
+  const lane = (i: number) => (geo ? geo.rowBottom - BAND + 20 + i * LANE_GAP : 0);
+  const ask = (a: string, b: string): string | null => {
+    const pa = geo?.pos[a], pb = geo?.pos[b];
+    if (!pa || !pb) return null;
+    if (a === "arch" || b === "arch") {
+      const [s, e] = a === "arch" ? [pb, pa] : [pa, pb];
+      return `M ${s.x} ${geo!.rowBottom} L ${e.x} ${e.top}`;
+    }
+    const y = Math.min(pa.top, pb.top) - 6;
+    return `M ${pa.x} ${y} Q ${(pa.x + pb.x) / 2} ${y - 14 - Math.min(54, Math.abs(pa.x - pb.x) / 7)} ${pb.x} ${y}`;
+  };
+  // 保存前の案は、駅の名前(島の名前・lead・architect)で来る。保存してある島に無い端の経路は引けない
+  const locOfName = new Map<string, string>([["lead", "lead"], ["architect", "arch"], ...data.units.map((u): [string, string] => [u.name, `unit:${u.id}`])]);
+  const shown = draft ? draft.flatMap((r) => (locOfName.has(r.a) && locOfName.has(r.b) ? [{ a: locOfName.get(r.a)!, b: locOfName.get(r.b)! }] : [])) : data.routes;
+  const routes = shown.map((r) => ({ ...r, d: ask(r.a, r.b) })).filter((r): r is typeof r & { d: string } => r.d !== null);
+  const waiting = (r: { a: string; b: string }) => data.asks.some((q) => (q.a === r.a && q.b === r.b) || (q.a === r.b && q.b === r.a));
+  const lineName = (l: OfficeView["lines"][number]) => {
+    const shapes = l.kinds.map((k) => KIND_SHAPE[k.kind]).join("");
+    const names = l.kinds.map((k) => k.label).join("・");
+    return l.isDefault ? `${shapes} 既定線(${names})` : `${shapes} ${names}線${l.skipped.length ? `(${l.skipped.join("・")}を通過)` : ""}`;
+  };
+  const built = geo
+    ? data.lines.map((l, i) => {
+        const locs = ["lead", ...l.stops.map((s) => `unit:${s.unitId}`), "merge"].filter((x) => geo.pos[x]);
+        return { l, i, locs, ...linePath(locs.map((x) => geo.pos[x]!.x), lane(i)) };
+      })
+    : [];
+  // 札: 同じ駅・同じ路線に重なるときは横にずらす
+  const slot = new Map<string, number>();
+  const tickets = geo
+    ? Object.entries(data.where).flatMap(([n, loc]) => {
+        const k = data.ticketKinds[Number(n)];
+        const b = built.find((x) => x.l.kinds.some((y) => y.kind === k));
+        const p = geo.pos[loc];
+        if (!k || !b || !p || loc === "done" || loc === "arch") return [];
+        const y = b.ys[b.locs.indexOf(loc)] ?? lane(b.i);
+        const at = slot.get(`${loc}|${b.i}`) ?? 0;
+        slot.set(`${loc}|${b.i}`, at + 1);
+        return [{ n: Number(n), k, x: p.x - 24 + at * 52, y, on: kind === "all" || b.l.kinds.some((y) => y.kind === kind) }];
+      })
+    : [];
+  return (
+    <div className="of-map" ref={map} data-kind={kind}>
+      {children}
+      {geo && (
+        <svg className="of-rails" width={geo.w} height={geo.h} role="img" aria-label={`路線図: ${data.lines.map((l) => `${lineName(l)}は${["受け口", ...l.stops.map((s) => data.units.find((u) => u.id === s.unitId)?.name ?? s.role), "merge 待ち"].join("→")}`).join("、")}`}>
+          {routes.map((r) => (
+            <path key={`${r.a}-${r.b}`} className={`of-route${draft ? " of-route-draft" : ""}`} data-route={`${r.a}|${r.b}`} d={r.d} />
+          ))}
+          {built.map(({ l, locs, d, ys, turns, i }) => {
+            const on = kind === "all" || l.kinds.some((x) => x.kind === kind);
+            const first = geo.pos[locs[0]!]!.x;
+            return (
+              <g key={i} className={`of-line ${on ? "of-line-on" : "of-line-dim"}`} data-line={l.kinds.map((k) => k.kind).join(" ")}>
+                <path d={d} className="of-track" />
+                <path d={d} className="of-sleepers" />
+                {locs.map((loc, at) => {
+                  const pre = at > 0 && at < locs.length - 1 && l.stops[at - 1]?.pre;
+                  return <circle key={`${loc}-${at}`} className={pre ? "of-stop of-stop-pre" : "of-stop"} cx={geo.pos[loc]!.x} cy={ys[at]} r={7} />;
+                })}
+                {l.stops.some((s) => s.pre) && turns[0] && (
+                  <text className="of-turnlabel" x={(turns[0].x1 + turns[0].x2) / 2} y={turns[0].y + 17} textAnchor="middle">
+                    申し送りを書いて開発へ戻る
+                  </text>
+                )}
+                <text className="of-linelabel" x={first + 14} y={lane(i) + 4}>
+                  {lineName(l)}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      )}
+      {tickets.map((t) => (
+        <span key={t.n} className={`of-tk ${t.on ? "" : "of-tk-dim"}`} data-ticket={t.n} data-kind-of={t.k} style={{ left: t.x, top: t.y - 12 }}>
+          <span aria-hidden="true">{KIND_SHAPE[t.k]}</span>#{t.n}
+        </span>
+      ))}
+      {routes.filter(waiting).map((r) => (
+        <span key={`env-${r.a}-${r.b}`} className="of-env" style={{ offsetPath: `path("${r.d}")` }} role="img" aria-label="答えを待っている質問" data-route={`${r.a}|${r.b}`}>
+          ?
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -89,7 +308,7 @@ function Island({ u, running, onEdit, onOpen, onMember }: { u: OfficeView["units
   // すぐ取れる仕事が無く、順番待ちだけがあるときは、手すきの理由を出す(ツールチップ・読み上げ)
   const idleText = !u.waiting.length && u.queued.length ? `手すき・順番待ち(${queuedSummary(u.queued)})` : undefined;
   return (
-    <section className={`of-island ${u.budget.exhausted ? "of-island-broke" : ""}`} data-loc={`unit:${u.id}`} aria-label={`島 ${u.name}`}>
+    <section className={`of-island of-tone-${u.roleKeys[0] ?? "dev"} ${u.budget.exhausted ? "of-island-broke" : ""}`} data-loc={`unit:${u.id}`} aria-label={`島 ${u.name}`}>
       <header>
         <div className="of-head-row">
           <h3>
@@ -169,6 +388,7 @@ function Seat({ m, below, running, waitingFor, onOpen }: { m: Member | null; bel
  */
 function Person({ m, below, title, running, waitingFor, onOpen }: { m: { id: number; name: string; helper?: boolean; joinedAt?: string; work: Work | null }; below?: boolean; title?: string; running: boolean; waitingFor?: string; onOpen: (id: number) => void }) {
   const now = useNow();
+  const selected = useContext(Selected) === m.id;
   const w = m.work;
   const role = w ? (ROLE_CLASS[w.role] ?? "dev") : "idle";
   const quiet = w ? Math.round((now - Date.parse(w.lastActivityAt)) / 1000) : 0;
@@ -183,9 +403,10 @@ function Person({ m, below, title, running, waitingFor, onOpen }: { m: { id: num
   return (
     <button
       type="button"
-      className={`of-seat of-person ${w ? "of-working" : asleep ? "of-idle" : "of-ready"} ${below ? "of-below" : ""} ${fresh ? "of-arrive" : ""} ${quiet >= QUIET_WARN_SEC ? "of-quiet" : ""}`}
+      className={`of-seat of-person ${w ? "of-working" : asleep ? "of-idle" : "of-ready"} ${below ? "of-below" : ""} ${fresh ? "of-arrive" : ""} ${selected ? "of-sel" : ""} ${quiet >= QUIET_WARN_SEC ? "of-quiet" : ""}`}
       aria-label={`${m.name}${title ? `(${title})` : ""}${m.helper ? "(応援)" : ""} ${status}(押すと様子を見る)`}
       title={`${m.name} ${status}`}
+      aria-pressed={selected}
       onClick={() => onOpen(m.id)}
     >
       {say && (
@@ -202,6 +423,7 @@ function Person({ m, below, title, running, waitingFor, onOpen }: { m: { id: num
       {/* 下には名前と「手すき」だけ。何をしているか・手すきの理由・応援かは、押すと開く様子のモーダルと、読み上げ・ツールチップで伝える */}
       <div className="of-tag">
         <b>{m.name}</b>
+        {selected && <span className="of-selmark">選択中</span>}
         {/* 暇しているかだけは、押さなくても一目でわかるようにする */}
         {!w && !asleep && <span className="of-free">手すき</span>}
       </div>
@@ -209,11 +431,13 @@ function Person({ m, below, title, running, waitingFor, onOpen }: { m: { id: num
   );
 }
 
-function Desk({ title, who, loc, note, running, waitingFor, onMember }: { title: string; who: { id: number; name: string; work: Work | null }; loc: string; note: string; running: boolean; waitingFor: string; onMember: (id: number) => void }) {
+function Desk({ title, label, who, loc, note, running, waitingFor, onMember }: { title: string; label?: string; who: { id: number; name: string; work: Work | null }; loc: string; note: string; running: boolean; waitingFor: string; onMember: (id: number) => void }) {
+  const role = label ?? title;
   return (
-    <section className="of-desk" data-loc={loc} aria-label={`${title}の机`}>
+    <section className="of-desk" data-loc={loc} aria-label={`${role}の机`}>
       <h3 title={note}>{title}</h3>
-      <Person m={who} title={title} running={running} waitingFor={waitingFor} onOpen={onMember} />
+      {label && <div className="hint">{label}</div>}
+      <Person m={who} title={role} running={running} waitingFor={waitingFor} onOpen={onMember} />
     </section>
   );
 }

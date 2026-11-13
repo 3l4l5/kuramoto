@@ -1,5 +1,7 @@
 import { all, get } from "../db/sqlite.js";
 import { MODELS, ROLE_LABEL, WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
+import { flowFor, KIND_LABEL as TICKET_KIND_LABEL, TICKET_KINDS } from "../domain/flow.js";
+import { routesAmong } from "../domain/route.js";
 import { ticketRepo } from "./dispatcher.js";
 import { autoMergeEnabled, suggestedMergeOrder } from "./merge.js";
 import { areaWait, blockers, mergeBlockers, mergeUnblocks } from "./triage.js";
@@ -121,7 +123,45 @@ export function officeView(p: Project) {
   const done = [...tickets.values()].filter((t) => t.stage === "done").sort((a, b) => String(b.done_at).localeCompare(String(a.done_at)));
   for (const t of done) where[t.number] = "done";
 
+  // 路線図(R16・R17): 流れ(停車の並び)が同じ種類は 1 本の路線にまとめ、島(駅)を通す。開発より前の工程は「申し送りだけ」の停車(pre)。
+  // 既定の流れと同じ路線は「既定線」。既定の流れから飛ばした工程(島のあるもの)は skipped に入れ、「(QA を通過)」と添える
+  const defaultFlow = flowFor(f.flows, null);
+  const groups = new Map<string, { flow: WorkRole[]; kinds: { kind: string; label: string }[] }>();
+  for (const kind of TICKET_KINDS) {
+    const flow = flowFor(f.flows, kind);
+    const g = groups.get(flow.join(">")) ?? { flow, kinds: [] };
+    g.kinds.push({ kind, label: TICKET_KIND_LABEL[kind] });
+    groups.set(flow.join(">"), g);
+  }
+  const lines = [...groups.values()].map(({ flow, kinds }) => {
+    const devAt = flow.indexOf("dev");
+    const stops = flow.flatMap((role, i) => {
+      const u = f.units.find((x) => x.roles.includes(role));
+      return u ? [{ unitId: u.id, role: ROLE_LABEL[role], pre: i < devAt }] : [];
+    });
+    const isDefault = flow.join(">") === defaultFlow.join(">");
+    const skipped = isDefault ? [] : defaultFlow.filter((r) => !flow.includes(r) && f.units.some((u) => u.roles.includes(r))).map((r) => ROLE_LABEL[r]);
+    return { kinds, isDefault, skipped, stops };
+  });
+  // 許されている連絡経路(端は駅の名前: unit:ID / lead / arch)。質問の封筒は、答えを待っている質問の経路を行き来する
+  const ends = new Map<string, string>([["lead", "lead"], ["architect", "arch"], ...f.units.map((u): [string, string] => [u.name, `unit:${u.id}`])]);
+  const routes = routesAmong(f.routes, [...ends.keys()])
+    .filter((r) => r.mode === "ask")
+    .map((r) => ({ a: ends.get(r.from)!, b: ends.get(r.to)! }));
+  const asks = all<{ unit_id: number | null; to_target: string }>(
+    p.db,
+    "SELECT m.unit_id, q.to_target FROM ticket_questions q JOIN members m ON m.id = q.from_member_id WHERE q.answered_at IS NULL AND q.routed_to_lead = 0 AND m.unit_id IS NOT NULL",
+  ).flatMap((q) => (ends.has(q.to_target) ? [{ a: `unit:${q.unit_id}`, b: ends.get(q.to_target)! }] : []));
+
+  // 路線の上に置く札: 開いているチケットの種類(where の居場所と合わせて、その種類の路線の、いまの駅に置く)
+  const ticketKinds: Record<number, string> = {};
+  for (const t of tickets.values()) if (where[t.number] && where[t.number] !== "done") ticketKinds[t.number] = t.kind;
+
   return {
+    lines,
+    routes,
+    ticketKinds,
+    asks,
     units,
     lead: { ...fixed("lead"), decisions: decisions.map((t) => t.number) },
     architect: fixed("architect"),

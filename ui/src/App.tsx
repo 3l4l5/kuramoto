@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { post } from "./api";
 import { Home } from "./Home";
 import { go, useAct, useProject, useRoute, useStudio } from "./hooks";
@@ -10,11 +11,21 @@ import { pct, usd } from "./format";
 import { DRAWER_LABEL, useDrawerState, type Drawer } from "./Team";
 import { Btn } from "./ui";
 import { WorkSwitch } from "./WorkSwitch";
+import { clearRequestedTab, useFormationUi } from "./formationUi";
 
 export function App() {
   const route = useRoute();
   const inProject = route.name === "project" || route.name === "studio" || route.name === "metrics" || route.name === "settings";
   const { drawer, moveTo, guard } = useDrawerState("id" in route ? route.id : null);
+  // 床の凡例の「経路を変える」「流れを変える」で、編成の引き出しを開く(開発ルールの下書きがあれば、捨ててよいか確かめる)
+  const seq = useFormationUi().request.seq;
+  useEffect(() => {
+    if (seq > 0) moveTo("formation");
+  }, [seq]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 確認で引き出しが開かなかったときは、頼んだタブを残さない(あとで「編成」を押したときに、そのタブで開いてしまうため)
+  useEffect(() => {
+    if (!guard.confirming && drawer !== "formation") clearRequestedTab();
+  }, [guard.confirming, drawer]);
   return (
     <div className="app">
       <header className="bar dads-bar">
