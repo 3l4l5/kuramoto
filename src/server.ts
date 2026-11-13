@@ -30,7 +30,7 @@ import { exportDesignDoc } from "./project/export.js";
 import { extractTransfer, restoreTransfer } from "./project/transfer.js";
 import { runWork } from "./project/progress.js";
 import { saveFormationInput, savePolicyInput, teamView } from "./project/team.js";
-import { addDevRule, devRulesView, openViolations, setDevRuleEnabled } from "./project/dev-rules.js";
+import { addDevRule, deleteDevRule, devRulesView, openViolations, setDevRuleEnabled, updateDevRule } from "./project/dev-rules.js";
 import { productivity } from "./project/productivity.js";
 import { officeView } from "./project/office.js";
 import { memberView, unitView, type MemberView, type UnitView } from "./project/people.js";
@@ -417,6 +417,21 @@ export class KuramotoServer {
         ...(typeof body.pattern === "string" ? { pattern: body.pattern } : {}),
         ...(typeof body.onFail === "string" ? { onFail: body.onFail as never } : {}),
       });
+      return devRulesView(p);
+    }
+    if (b === "dev-rules" && c && !parts[4] && method === "POST") {
+      updateDevRule(p, Number(c), {
+        ...(typeof body.name === "string" ? { name: body.name } : {}),
+        ...(typeof body.body === "string" ? { body: body.body } : {}),
+        ...(Array.isArray(body.appliesTo) ? { appliesTo: body.appliesTo as never } : {}),
+        ...(typeof body.check === "string" ? { check: body.check as never } : {}),
+        ...(typeof body.pattern === "string" ? { pattern: body.pattern } : {}),
+        ...(typeof body.onFail === "string" ? { onFail: body.onFail as never } : {}),
+      });
+      return devRulesView(p);
+    }
+    if (b === "dev-rules" && c && parts[4] === "delete" && method === "POST") {
+      deleteDevRule(p, Number(c));
       return devRulesView(p);
     }
     if (b === "dev-rules" && c && parts[4] === "enabled" && method === "POST") {
