@@ -30,6 +30,11 @@ export function memberMessages(p: Project, memberId: number, limit = 200): Membe
   return all<MessageSql>(p.db, "SELECT id, who, body, at, ticket_id FROM (SELECT * FROM member_messages WHERE member_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id", [memberId, limit]).map(toMessage);
 }
 
+/** 終わったチケット(merge 済み・取り下げ済み)。話しかけられても、メモは足さず答えるだけにする。 */
+export function isFinishedTicket(t: Pick<TicketRow, "stage">): boolean {
+  return t.stage === "done" || t.stage === "dropped";
+}
+
 /** メンバーが「今」持っているチケット: 起動中ならその起動のチケット、手すきなら直前に動いたチケット。話しかけた内容はここにひも付く。 */
 export function currentTicketOf(p: Project, memberId: number): { ticketId: number; role: Role } | null {
   const r = get<{ ticket_id: number; role: Role }>(
@@ -76,7 +81,8 @@ export function sayToMember(p: Project, memberId: number, body: string): void {
 export function finishMemberChat(p: Project, member: MemberRow, unread: MemberMessage[], reply: string, handedOver: boolean): void {
   const ticket = unread[0]?.ticketId ?? null;
   if (reply.trim()) run(p.db, "INSERT INTO member_messages (member_id, ticket_id, who, body, at) VALUES (?, ?, 'member', ?, ?)", [member.id, ticket, reply.trim(), p.now()]);
-  if (ticket !== null && !handedOver) {
+  // 終わったチケットには、もう次の仕事が無いのでメモを足さない(足しても誰にも読まれない)。答えるだけ
+  if (ticket !== null && !handedOver && !isFinishedTicket(p.ticket(ticket))) {
     // 伝えたことは、そのチケットのメモに残る。次に仕事を始める担当(この人も)が読む
     for (const m of unread) p.addNote(m.ticketId ?? ticket, m.body, "owner", "member");
     run(p.db, "INSERT INTO member_messages (member_id, ticket_id, who, body, at) VALUES (?, ?, 'system', ?, ?)", [member.id, ticket, `#${p.ticket(ticket).number} のメモに書き足しました`, p.now()]);
@@ -88,12 +94,15 @@ export function finishMemberChat(p: Project, member: MemberRow, unread: MemberMe
     send(p, { ticketId: null, toRole: currentTicketOf(p, member.id)?.role ?? "dev", toMemberId: member.id, kind: "member_chat", payload: { memberId: member.id } satisfies MemberChatPayload });
 }
 
-export function memberChatSystem(p: Project, member: MemberRow, unit: { name: string | null; focus: string | null }): string {
+export function memberChatSystem(p: Project, member: MemberRow, unit: { name: string | null; focus: string | null }, finished = false): string {
   return `あなたは Kuramoto の開発チームの ${unit.name ?? "島"} のメンバー(${member.name})です。いま、責任者(人間)があなたに話しかけています。
 - 返事は短く、日本語で。分からないことは分からないと言います。
 - あなたが今受け持っているチケットの話として答えます。状況を聞かれたら、この会話のこれまでの作業と、指示に書かれたチケット・メモ・最近の手順をもとに答えます。
-- 伝えられたことは、このチケットのメモに書き足されます。あなたの担当も工程も変わりません。このあと仕事を始めるときにメモを読んで、そのとおりに進めてください。
-- 今のチケットの外の、新しい仕事(別の機能・別の修正)を頼まれたら、自分では引き受けず hand_to_lead でリーダーに回します。チケットの範囲を広げる頼みも同じです。
+${
+    finished
+      ? "- このチケットはもう終わっています(merge 済みか取り下げ済み)。伝えられたことはメモに書き足されません。作業場所は既定のブランチで、このチケットのブランチは無いことがあります。\n"
+      : "- 伝えられたことは、このチケットのメモに書き足されます。あなたの担当も工程も変わりません。このあと仕事を始めるときにメモを読んで、そのとおりに進めてください。\n"
+  }- 今のチケットの外の、新しい仕事(別の機能・別の修正)を頼まれたら、自分では引き受けず hand_to_lead でリーダーに回します。チケットの範囲を広げる頼みも同じです。
 - コードは書き換えません(読むだけ)。merge はしません。
 - 最後のテキストがそのまま責任者への返事になります。` +
     (unit.focus?.trim() ? `\n\n## このプロジェクトで重視すること\n${unit.focus.trim()}` : "");
@@ -131,7 +140,9 @@ ${history.map((m) => `- ${m.who === "owner" ? "責任者" : "あなた"}: ${m.bo
 ## 責任者のメッセージ(まだ返事をしていないもの)
 ${unread.map((m) => `- ${m.body}`).join("\n")}
 
-聞かれたことには、上の状況と作業の記憶をもとに短く答えてください。伝えられたことは、了解したと返事をすれば、このチケットのメモに書き足されます。新しい仕事の頼みは、hand_to_lead でリーダーに回してください。`;
+聞かれたことには、上の状況と作業の記憶をもとに短く答えてください。${
+    isFinishedTicket(ticket) ? "このチケットは終わっているので、伝えられたことはメモに残りません。続けたいことがあれば、新しい仕事として" : "伝えられたことは、了解したと返事をすれば、このチケットのメモに書き足されます。新しい仕事の頼みは、"
+  }hand_to_lead でリーダーに回してください。`;
 }
 
 /** メンバーの道具: 新しい仕事をリーダーの受信箱に回す。 */

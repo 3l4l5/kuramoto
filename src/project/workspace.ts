@@ -11,7 +11,7 @@ export type WorkspaceRequest = {
   ticketNumber: number;
   role: Role;
   memberName: string;
-  /** 開発のブランチ。レビュー側はこのブランチを読むだけ。 */
+  /** 開発のブランチ。レビュー側はこのブランチを読むだけ。空なら既定のブランチ(終わったチケットの話をするときなど。ブランチは消えていてもよい)。 */
   branch: string;
 };
 
@@ -78,6 +78,7 @@ export type CheckWorkspace = PreparedWorkspace & { sha: string; baseSha: string;
  * データの置き場所(DB)とは分ける(ADR-0020。データの置き場所はエージェントに丸ごと読ませない)。
  * - 開発: worktrees/<番号>-dev に、チケットのブランチで作る(持ち主が直すときも同じ場所)
  * - それ以外: worktrees/<番号>-<役割> に、ブランチを読むだけの detached で作る
+ * - ブランチなし(終わったチケットの会話など): 役割によらず worktrees/<番号>-chat に、既定のブランチを読むだけの detached で作る
  */
 export class GitWorkspace implements Workspace {
   constructor(private readonly workDir: string) {}
@@ -106,19 +107,25 @@ export class GitWorkspace implements Workspace {
   private async preparePath(req: WorkspaceRequest): Promise<string> {
     // 企画の担当は、既定のブランチを読むだけの場所で動く
     const base = await this.ensureClone(req.repo);
-    const path = join(this.workDir, "worktrees", req.ticketNumber === 0 ? `plan-${req.role}` : `${req.ticketNumber}-${req.role === "dev" ? "dev" : req.role}`);
+    // ブランチを使わない(終わったチケットの会話など)ときは、どの役割でも専用の読むだけの場所(<番号>-chat)を使う。
+    // 開発の作業場所(<番号>-dev)には触らない: 取り下げを戻したときに、前の作業がそのまま残っていなければならない
+    const name = req.ticketNumber === 0 ? `plan-${req.role}` : req.branch ? `${req.ticketNumber}-${req.role === "dev" ? "dev" : req.role}` : `${req.ticketNumber}-chat`;
+    const path = join(this.workDir, "worktrees", name);
     if (existsSync(path)) {
       if (req.role !== "dev" && req.branch) await this.checkoutBranch(path, req.branch);
-      else if (!req.branch) await git(path, "checkout", "--detach", `origin/${await defaultBranch(base)}`);
+      // 読むだけの場所なので、前の起動の残りがあっても捨てて既定のブランチに合わせる
+      else if (!req.branch) await git(path, "checkout", "--detach", "--force", `origin/${await defaultBranch(base)}`);
       return realpathSync(path);
     }
-    if (req.role === "dev") {
+    if (!req.branch) {
+      await git(base, "worktree", "add", "--detach", path, `origin/${await defaultBranch(base)}`);
+    } else if (req.role === "dev") {
       const remoteHasBranch = await git(base, "ls-remote", "--heads", "origin", req.branch).then((o) => o.trim() !== "");
       const start = remoteHasBranch ? `origin/${req.branch}` : `origin/${await defaultBranch(base)}`;
       await git(base, "worktree", "add", "-B", req.branch, path, start);
     } else {
       await git(base, "worktree", "add", "--detach", path, `origin/${await defaultBranch(base)}`);
-      if (req.branch) await this.checkoutBranch(path, req.branch);
+      await this.checkoutBranch(path, req.branch);
     }
     return realpathSync(path);
   }

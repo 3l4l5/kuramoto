@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ManualClock } from "../clock.js";
 import { all, get } from "../db/sqlite.js";
@@ -7,7 +11,7 @@ import { leadMessages } from "./leadchat.js";
 import { memberChatView, memberNow, sayToMember } from "./member-chat.js";
 import { Project } from "./project.js";
 import { createTicket } from "./workflow.js";
-import { StaticWorkspace } from "./workspace.js";
+import { GitWorkspace, StaticWorkspace, type WorkspaceRequest } from "./workspace.js";
 
 /** 開発・レビューは普通に進め、メンバーとの会話(hand_to_lead だけを持つ起動)とリーダーのチャットは台本で答える。 */
 function setup(chat: FakeStep, opts: { open?: boolean } = {}) {
@@ -161,6 +165,102 @@ describe("メンバーとの会話", () => {
     const { member } = await worked(p, d);
     expect(() => sayToMember(p, member.id, "  ")).toThrow("メッセージがありません");
   });
+});
+
+describe("終わったチケット(done・dropped)について話しかける", () => {
+  for (const stage of ["done", "dropped"] as const) {
+    it(`${stage}: メモは書かず答えるだけ。作業場所は既定のブランチ(チケットのブランチを取り出さない)`, async () => {
+      const prepared: WorkspaceRequest[] = [];
+      class Recording extends StaticWorkspace {
+        override async prepare(req?: WorkspaceRequest) {
+          if (req) prepared.push(req);
+          return super.prepare();
+        }
+      }
+      const clock = new ManualClock();
+      const p = new Project(":memory:", clock);
+      p.addRepo("acme/shop", "API");
+      const harness = new FakeHarness(async (req, call) => {
+        clock.advance(60_000);
+        if (req.tools.some((t) => t.name === "submit_pr")) await call("submit_pr", { summary: "実装した", responses: fixedAll(req.prompt) });
+        else if (req.tools.some((t) => t.name === "submit_review")) await call("submit_review", withResolutions(req.prompt, { verdict: "approve", findings: [] }));
+        else return { finalText: "もう終わったチケットだよ" };
+      });
+      const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new Recording("/tmp") });
+      const { ticket, member } = await worked(p, d);
+      p.db.prepare("UPDATE tickets SET stage = ? WHERE id = ?").run(stage, ticket.id);
+      prepared.length = 0;
+      // 会話の起動が新しく残すセッションに、チケットのブランチが入らないことを見たいので、開発のセッションは消しておく
+      p.db.prepare("DELETE FROM sessions WHERE member_id = ? AND ticket_id = ?").run(member.id, ticket.id);
+      const notesBefore = p.notes(ticket.id).length;
+
+      sayToMember(p, member.id, "あれってどうなった?");
+      await d.drain();
+
+      const call = harness.calls.find(isChat)!;
+      expect(call.systemPrompt).toContain("もう終わっています");
+      expect(call.prompt).toContain("メモに残りません");
+      expect(prepared.map((r) => [r.role, r.branch])).toEqual([[member.role ?? "dev", ""]]);
+      // 答えは残るが、メモは増えず、「メモに書き足しました」も出ない
+      expect(memberChatView(p, member.id).messages.map((m) => [m.who, m.body])).toEqual([
+        ["owner", "あれってどうなった?"],
+        ["member", "もう終わったチケットだよ"],
+      ]);
+      expect(p.notes(ticket.id)).toHaveLength(notesBefore);
+      expect(p.ticket(ticket.id).stage).toBe(stage);
+      // 既定のブランチで動いた起動は、チケットのブランチを覚えない
+      expect(get<{ branch: string | null }>(p.db, "SELECT branch FROM sessions WHERE member_id = ? AND ticket_id = ?", [member.id, ticket.id])!.branch).toBeNull();
+    });
+  }
+
+  it("GitWorkspace: ブランチなしは、役割によらず読むだけの <番号>-chat を使う。ブランチが消えていてもよく、開発の作業場所には触らない", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kuramoto-ws-"));
+    const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, ...a], { encoding: "utf8" });
+    execFileSync("git", ["init", "--bare", "-b", "main", join(dir, "o.git")]);
+    const seed = join(dir, "seed");
+    execFileSync("git", ["clone", join(dir, "o.git"), seed], { stdio: "ignore" });
+    git(seed, "config", "user.email", "t@example.com");
+    git(seed, "config", "user.name", "t");
+    git(seed, "commit", "--allow-empty", "-m", "init");
+    git(seed, "push", "origin", "HEAD:main");
+    // 元の clone は、GitWorkspace の置き場所(<workDir>/repos/<owner>__<repo>)に置く
+    const clone = join(dir, "repos", "acme__shop");
+    execFileSync("git", ["clone", join(dir, "o.git"), clone], { stdio: "ignore" });
+    const ws = new GitWorkspace(dir);
+    const req = (role: "dev" | "review" | "qa", branch: string) => ({ repo: "acme/shop", ticketNumber: 7, role, memberName: "m", branch });
+
+    // 開発が進めた: チケットのブランチに、push していないコミットとコミットしていない変更がある
+    const dev = await ws.prepare(req("dev", "kuramoto/7"));
+    git(dev.path, "config", "user.email", "t@example.com");
+    git(dev.path, "config", "user.name", "t");
+    writeFileSync(join(dev.path, "a.ts"), "a\n");
+    git(dev.path, "add", "a.ts");
+    git(dev.path, "commit", "-m", "a");
+    const work = git(dev.path, "rev-parse", "HEAD").trim();
+    writeFileSync(join(dev.path, "wip.ts"), "wip\n");
+
+    // 取り下げたチケットに話しかける(ブランチは origin に無い)。どの島のメンバーでも、開発の作業場所とは別の場所
+    const chats = new Set<string>();
+    for (const role of ["dev", "review", "qa"] as const) {
+      const first = await ws.prepare(req(role, ""));
+      expect(first.base).toBe("main");
+      expect(first.path).not.toBe(dev.path);
+      expect(git(first.path, "rev-parse", "HEAD").trim()).toBe(git(first.path, "rev-parse", "origin/main").trim());
+      expect((await ws.prepare(req(role, ""))).path).toBe(first.path); // 二度目も失敗しない
+      chats.add(first.path);
+    }
+    expect(chats.size).toBe(1);
+    // 開発の作業場所は、そのまま(ブランチ・コミット・コミットしていない変更)
+    expect(git(dev.path, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("kuramoto/7");
+    expect(git(dev.path, "rev-parse", "HEAD").trim()).toBe(work);
+    expect(git(dev.path, "status", "--porcelain")).toContain("wip.ts");
+
+    // 取り下げを戻した: 開発は元のブランチの続きから進める(別の場所で上書きしない)
+    const again = await ws.prepare(req("dev", "kuramoto/7"));
+    expect(again.path).toBe(dev.path);
+    expect(git(again.path, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("kuramoto/7");
+    expect(git(again.path, "rev-parse", "HEAD").trim()).toBe(work);
+  }, 30_000);
 });
 
 describe("メンバーの今していること", () => {

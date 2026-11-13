@@ -25,7 +25,7 @@ import { confinementFor } from "./confine.js";
 import { afterPlanningRun, planningPrompt, planningSystemPrompt, planningTools, type PlanPayload } from "./planning-agent.js";
 import { checkStudioLoop, onlyQuestions, say, studioPaused } from "./planning.js";
 import { progressRecorder } from "./progress.js";
-import { finishMemberChat, memberChatPrompt, memberChatSystem, memberChatTools, unreadForMember } from "./member-chat.js";
+import { finishMemberChat, isFinishedTicket, memberChatPrompt, memberChatSystem, memberChatTools, unreadForMember } from "./member-chat.js";
 import { giveUpTriage, markTriaged, requestTriage, triagePrompt, triageTools, untriaged } from "./triage.js";
 import { LEAD_CHAT_SYSTEM, leadChatPrompt, leadChatTools, leadReply, markOwnerMessagesRead, unreadOwnerMessages } from "./leadchat.js";
 import { dropGithubCiTickets, githubCheckDue, githubDown, githubStillDown, isGithubAuthError, markGithubDown, markGithubUp } from "./outage.js";
@@ -735,7 +735,9 @@ export class Dispatcher {
     }
     const session = get<{ id: number; harness_session_id: string }>(p.db, "SELECT id, harness_session_id FROM sessions WHERE member_id = ? AND ticket_id = ? AND repo_id = ?", [member.id, ticket.id, repo.id]);
     const resumeId = session && canResume(p, session.harness_session_id) ? session.harness_session_id : undefined;
-    const branch = devBranch(p, ticket, repo.id);
+    // 終わったチケット(ブランチが消えていることがある)では、チケットのブランチを取り出さず、既定のブランチで答える
+    const finished = isFinishedTicket(ticket);
+    const branch = finished ? "" : devBranch(p, ticket, repo.id);
     const runId = run(
       p.db,
       "INSERT INTO runs (message_id, ticket_id, about_ticket_id, member_id, role, session_id, policy_id, formation_id, started_at, model, effort, unit_name) VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -750,7 +752,7 @@ export class Dispatcher {
       result = await harness.run({
         cwd: ws.path,
         confine: confinementFor(p, ws, role),
-        systemPrompt: memberChatSystem(p, member, { name: use.unitName, focus: use.unitFocus }) + speechNote(member.name),
+        systemPrompt: memberChatSystem(p, member, { name: use.unitName, focus: use.unitFocus }, finished) + speechNote(member.name),
         prompt: memberChatPrompt(p, member, ticket, batch),
         model: use.model,
         effort: use.effort,
@@ -784,7 +786,7 @@ export class Dispatcher {
           `INSERT INTO sessions (member_id, ticket_id, repo_id, harness, harness_session_id, branch, created_at, last_used_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(member_id, ticket_id, repo_id) DO UPDATE SET harness_session_id = excluded.harness_session_id, last_used_at = excluded.last_used_at`,
-          [member.id, ticket.id, repo.id, harness.name, result.sessionId, role === "dev" ? branch : null, p.now(), p.now()],
+          [member.id, ticket.id, repo.id, harness.name, result.sessionId, role === "dev" && branch ? branch : null, p.now(), p.now()],
         );
         noteSession(p, result.sessionId, resumeId);
       }
