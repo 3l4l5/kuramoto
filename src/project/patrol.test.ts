@@ -318,16 +318,18 @@ describe("リーダーの見回り(ADR-0026)", () => {
       expect(await detectDeadlocks(p)).toEqual([]);
     });
 
-    it("見回りの PR の取り直しは、1 回に patrol_pr_check_max 件まで。待たれているものを先に、残りは前回の続きから回る", async () => {
+    it("見回りの PR の取り直しは、1 回に patrol_pr_check_max 件まで。待たれているものを先に、上限を超えても 1 周で全部回る", async () => {
       const { p, clock, make } = setup();
-      p.setSetting("patrol_pr_check_max", "2");
-      const ts = [await make("a"), await make("b"), await make("c"), await make("d"), await make("e")];
-      for (const [i, t] of ts.entries()) {
+      p.setSetting("patrol_pr_check_max", "3");
+      // 待たれている 5 件(PR 70〜74)と、待たれていない 2 件(PR 80, 81)
+      const ts = [];
+      for (let i = 0; i < 7; i++) {
+        const t = await make(`t${i}`);
         setStage(p, t.id, "merge");
-        addPr(p, t.id, 70 + i, "OPEN");
+        addPr(p, t.id, i < 5 ? 70 + i : 80 + (i - 5), "OPEN");
+        ts.push(t);
       }
-      const next = await make("続き");
-      wait(p, next.id, ts[3]!.id); // d(PR 73)だけ待たれている
+      for (let i = 0; i < 5; i++) wait(p, (await make(`続き${i}`)).id, ts[i]!.id);
       const asked: number[] = [];
       const gh: GitHub = {
         prStatus: async (_repo, n): Promise<PrStatus> => (asked.push(n), { state: "OPEN", mergeable: "UNKNOWN", ci: "none" }),
@@ -338,13 +340,14 @@ describe("リーダーの見回り(ADR-0026)", () => {
         asked.length = 0;
         await refreshMergedWaits(p, gh);
         clock.advance(5 * 60_000);
-        return [...asked];
+        return [...asked].sort((a, b) => a - b);
       };
-      expect(await round()).toEqual([73, 70]);
-      expect(await round()).toEqual([73, 71]);
-      expect(await round()).toEqual([73, 72]);
-      expect(await round()).toEqual([73, 74]); // 1 周して、はじめに戻る前に最後まで
-      expect(await round()).toEqual([73, 70]);
+      const rounds = [await round(), await round(), await round()];
+      for (const r of rounds) expect(r).toHaveLength(3);
+      // 待たれているもの 5 件は、3 回(5 ÷ 席 2 を切り上げ)で全部回り、待たれていないものにも毎回 1 席が回る
+      expect(new Set(rounds.flat().filter((n) => n < 80))).toEqual(new Set([70, 71, 72, 73, 74]));
+      expect(rounds.flat().some((n) => n === 80)).toBe(true);
+      expect(rounds.flat().some((n) => n === 81)).toBe(true);
     });
 
     it("見回りの PR の取り直しは、GitHub に入れない間は何もせず、問い合わせの失敗では止まらない・見回りを止めていれば動かない", async () => {
