@@ -3,6 +3,7 @@ import { sql } from "kysely";
 import { openDb, type Db } from "../db/sqlite.js";
 import { PROJECT_MIGRATIONS } from "../db/schema.js";
 import { ProjectDb } from "../db/conn.js";
+import type { MysqlHandle } from "../db/mysql.js";
 import { isTicketKind, parseFlows, type FlowsSpec, type TicketKind } from "../domain/flow.js";
 import { parseRoutes, normalizeRoutes, routesAmong, type RouteSpec } from "../domain/route.js";
 import { covers, DEFAULT_FORMATION, validateFormation, type FormationSpec, type Pull, type UnitSpec } from "../domain/formation.js";
@@ -78,26 +79,40 @@ export type FormationRow = { id: number; version: number; pull: Pull; units: Uni
 /** 1 つのプロジェクトの DB(ADR-0004)。 */
 /** 1 つのプロジェクトの DB(ADR-0004)。開くのは Project.open(seed と席埋めがあるので非同期)。 */
 export class Project {
-  readonly db: Db;
+  private readonly sqlite: Db | undefined;
   /** スコープつきの口(このファイルのプロジェクトの project_id の行だけを見る・書く)。 */
   readonly pdb: ProjectDb;
 
   /** 直接 new せず Project.open を使う(開いたあとの seed・席埋めが非同期のため)。 */
-  private constructor(path: string, readonly clock: Clock, projectId?: number) {
-    this.db = openDb(path, PROJECT_MIGRATIONS, { projectId });
-    this.pdb = new ProjectDb(this.db, projectId ?? 0);
+  private constructor(path: string, readonly clock: Clock, projectId?: number, mysql?: MysqlHandle) {
+    if (mysql) {
+      if (projectId === undefined) throw new Error("MySQL でプロジェクトを開くには、プロジェクトの id が要ります");
+      this.pdb = new ProjectDb(mysql.kysely, projectId);
+    } else {
+      this.sqlite = openDb(path, PROJECT_MIGRATIONS, { projectId });
+      this.pdb = new ProjectDb(this.sqlite, projectId ?? 0);
+    }
   }
 
-  /** projectId: 本部でのこのプロジェクトの id。マイグレーションが各表の project_id を埋めるのに使う。渡されなければ 0。 */
-  static async open(path: string, clock: Clock = systemClock, projectId?: number): Promise<Project> {
-    const p = new Project(path, clock, projectId);
+  /**
+   * projectId: 本部でのこのプロジェクトの id。マイグレーションが各表の project_id を埋めるのに使う。渡されなければ 0。
+   * mysql を渡すと path は使わず、その MySQL の上でこのプロジェクトの行(project_id)を開く(プールは持ち主が閉じる)。
+   */
+  static async open(path: string, clock: Clock = systemClock, projectId?: number, mysql?: MysqlHandle): Promise<Project> {
+    const p = new Project(path, clock, projectId, mysql);
     await p.seed();
     await p.fillSeats();
     return p;
   }
 
+  /** SQLite のプロジェクト DB(試験が直に見るため)。MySQL のときは使えない。 */
+  get db(): Db {
+    if (!this.sqlite) throw new Error("プロジェクトの DB は MySQL です(SQLite の接続はありません)");
+    return this.sqlite;
+  }
+
   close(): void {
-    this.db.close();
+    this.sqlite?.close();
   }
 
   now(): string {

@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import { PNG } from "pngjs";
 import pixelmatch from "pixelmatch";
 import { inScope } from "../db/count.js";
-import { dialect } from "../db/dialect/index.js";
 import type { Project } from "./project.js";
 
 /**
@@ -60,7 +59,7 @@ function size(png: Buffer): { width: number; height: number } {
 }
 
 async function record(p: Project, r: Omit<DesignImage, "id" | "created_at">): Promise<number> {
-  return dialect.insertedId(p.pdb.insert("design_images", { ticket_id: r.ticket_id, screen_key: r.screen_key, kind: r.kind, store_key: r.store_key, width: r.width, height: r.height, diff_ratio: r.diff_ratio, created_at: p.now() }));
+  return p.pdb.dialect.insertedId(p.pdb.insert("design_images", { ticket_id: r.ticket_id, screen_key: r.screen_key, kind: r.kind, store_key: r.store_key, width: r.width, height: r.height, diff_ratio: r.diff_ratio, created_at: p.now() }));
 }
 
 /** 試作のお手本の画像。同じ試作(HTML と端末)なら、前に描いたものを使う。 */

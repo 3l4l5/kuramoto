@@ -1,5 +1,4 @@
 import { iso } from "../clock.js";
-import { dialect } from "../db/dialect/index.js";
 import { sql, type SqlBool } from "kysely";
 import { leadReply } from "./leadchat.js";
 import type { Project, TicketRow } from "./project.js";
@@ -155,7 +154,7 @@ export async function dropGithubCiTickets(p: Project): Promise<TicketRow[]> {
   const open = (await p.pdb
     .from("tickets")
     .where("stage", "not in", ["done", "dropped"])
-    .where(sql<SqlBool>`${dialect.jsonExtract("tickets.plan_refs", "baseCi")} IS NOT NULL`)
+    .where(sql<SqlBool>`${p.pdb.dialect.jsonExtract("tickets.plan_refs", "baseCi")} IS NOT NULL`)
     .where(sql<SqlBool>`NOT EXISTS (SELECT 1 FROM runs r WHERE r.ticket_id = tickets.id AND r.ended_at IS NULL AND r.project_id = ${p.projectId})`)
     .execute()) as TicketRow[];
   for (const t of open)

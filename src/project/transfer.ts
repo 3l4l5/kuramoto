@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { inScope } from "../db/count.js";
-import { dialect } from "../db/dialect/index.js";
 import { inferDevDone } from "../domain/dev-done.js";
 import { TICKET_KINDS } from "../domain/flow.js";
 import { artifact, hasContent, STAGES, type Stage } from "./planning.js";
@@ -122,7 +121,7 @@ export async function restoreTransfer(p: Project, d: TransferData): Promise<void
 
     const screenRow = new Map<string, number>();
     for (const a of d.artifacts) {
-      const id = await dialect.insertedId(p.pdb.insert("plan_artifacts", { stage: a.stage, version: version(a.stage), kind: a.kind, key: a.key, body: JSON.stringify(a.body) }));
+      const id = await p.pdb.dialect.insertedId(p.pdb.insert("plan_artifacts", { stage: a.stage, version: version(a.stage), kind: a.kind, key: a.key, body: JSON.stringify(a.body) }));
       if (a.stage === "screen" && a.kind === "screen") screenRow.set(a.key, id);
     }
     for (const c of d.comments) {

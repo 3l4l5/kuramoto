@@ -12,7 +12,7 @@ import { openDb } from "./sqlite.js";
  *
  * 流れ:
  *  1. config.yaml(と KURAMOTO_DATABASE_URL)の接続先を読む。MySQL でなければ止める。
- *     (loadStartupConfig は MySQL を起動の段階で止めるので、ここでは使わず loadConfig で読む)
+ *     (ここは起動ではなく移す道具なので、startDatabase(起動の DB の用意)は通さず loadConfig で読み、自分で繋ぐ)
  *  2. MySQL に繋いで最新の版まで流す(connectMysql が migrateMysql を流す)。届かなければ理由を出して止める。
  *  3. hq.sqlite と、本部に載っている各プロジェクトの project.sqlite を openDb で開く(最新の版まで流れる)。
  *     ファイルが無いときは、空の DB を作ってしまわないように、開く前に止める。

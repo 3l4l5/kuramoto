@@ -4,7 +4,7 @@ import { isAbsolute, join, relative } from "node:path";
 import { iso, systemClock, type Clock } from "./clock.js";
 import { openDb, type Db } from "./db/sqlite.js";
 import { HqDb } from "./db/conn.js";
-import { dialect } from "./db/dialect/index.js";
+import type { MysqlHandle } from "./db/mysql.js";
 import { deleteProjectRows } from "./db/delete-project.js";
 import { HQ_MIGRATIONS } from "./db/schema.js";
 import { Project } from "./project/project.js";
@@ -49,21 +49,37 @@ export function currentWorkspaceId(): number {
 
 /** 本部(ADR-0004)。プロジェクトを作り、全プロジェクトを見渡す。本部の表はいまのワークスペース(workspace_id)の行だけを見る。 */
 export class Hq {
-  readonly db: Db;
+  private readonly sqlite: Db | undefined;
   /** スコープつきの口(いまのワークスペースの行だけを見る・書く) */
   readonly hqdb: HqDb;
 
+  /**
+   * mysql を渡すと、本部もプロジェクトも、その MySQL(startDatabase が開いたもの)の上で動く(ADR-0041)。
+   * 渡さなければ、home の hq.sqlite と各プロジェクトの project.sqlite(SQLite)。
+   * mysql のプールは、開いた側(startDatabase の close())が閉じる。Hq.close() は閉じない。
+   */
   constructor(
     readonly home: string = kuramotoHome(),
     readonly clock: Clock = systemClock,
     readonly workspaceId: number = currentWorkspaceId(),
+    private readonly mysql?: MysqlHandle,
   ) {
-    this.db = openDb(join(home, "hq.sqlite"), HQ_MIGRATIONS);
-    this.hqdb = new HqDb(this.db, workspaceId);
+    if (mysql) {
+      this.hqdb = new HqDb(mysql.kysely, workspaceId);
+    } else {
+      this.sqlite = openDb(join(home, "hq.sqlite"), HQ_MIGRATIONS);
+      this.hqdb = new HqDb(this.sqlite, workspaceId);
+    }
+  }
+
+  /** SQLite の本部 DB(試験が直に見るため)。MySQL のときは使えない。 */
+  get db(): Db {
+    if (!this.sqlite) throw new Error("本部の DB は MySQL です(SQLite の接続はありません)");
+    return this.sqlite;
   }
 
   close(): void {
-    this.db.close();
+    this.sqlite?.close();
   }
 
   /**
@@ -78,7 +94,7 @@ export class Hq {
     // 同じリポジトリから 2 つ目のプロジェクトを作る(設計書から復元するなど)ときは、置き場所を分ける
     let dataDir = join(this.home, owner, repo);
     for (let n = 2; (await this.hqdb.from("projects").select("id").where("data_dir", "=", dataDir).executeTakeFirst()) || existsSync(dataDir); n++) dataDir = join(this.home, owner, `${repo}-${n}`);
-    const id = await dialect.insertedId(this.hqdb.insert("projects", { name, data_dir: dataDir, status: "planning", created_at: iso(this.clock.now()) }));
+    const id = await this.hqdb.dialect.insertedId(this.hqdb.insert("projects", { name, data_dir: dataDir, status: "planning", created_at: iso(this.clock.now()) }));
     const p = await this.openProject(id);
     await p.setSetting("project_name", name);
     for (const r of repos) await p.addRepo(r.fullName, r.role);
@@ -99,7 +115,7 @@ export class Hq {
 
   /** プロジェクトの DB を開く。id がいまのワークスペースの中にあることを、開く前に確かめる。 */
   async openProject(id: number): Promise<Project> {
-    return await Project.open(join((await this.project(id)).data_dir, "project.sqlite"), this.clock, id);
+    return await Project.open(join((await this.project(id)).data_dir, "project.sqlite"), this.clock, id, this.mysql);
   }
 
   /**

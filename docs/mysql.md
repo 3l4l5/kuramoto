@@ -72,7 +72,8 @@ database:
 - パスワードは `config.yaml` に書かず、`passwordFile` が指す `mysql.env` の `MYSQL_PASSWORD` の行から読みます。`~/` は家のディレクトリです。`url` にもパスワードを書くと、どちらを使うか決められないので起動しません。`MYSQL_PASSWORD` の行が無い・空のときも起動しません。
 - 環境変数 `KURAMOTO_DATABASE_URL` があるときは、`url` の代わりにそちらを使います(`passwordFile` はそのまま効きます)。
 - TLS は `tls: { ca: <CA のファイルのパス> }` を足します。手元(`127.0.0.1`・`localhost`)の MySQL では省けますが、外の DB では必須です(無いと起動しません)。証明書は CA で確かめます。
-- 注意: 本部とプロジェクトの読み書きの本体がまだ MySQL に移っていないので、いまは `type: mysql` にすると起動を止めます(ADR-0041)。アダプタは用意済みで、本体が移ったら使えるようになります。そのとき、届かなければ理由を出して起動しません。動いている間に切れたら、受信箱の見回りとエージェントの起動を止めて待ち、画面に出し、繋がり直したら自動で再開します。
+- `type: mysql`(または `KURAMOTO_DATABASE_URL`)にすると、サーバーも `kuramoto` の CLI も、起動時に MySQL に繋いで版を最新にし、本部もプロジェクトもその上で動きます(ADR-0041)。届かなければ理由を出して起動しません(SQLite には黙って戻りません)。動いている間に切れたら、受信箱の見回りとエージェントの起動を止めて待ち、画面の一番上に出し、繋がり直したら自動で再開します。起動の記録には、繋いだ版が出ます(`MySQL に繋ぎました(スキーマの版 …)`)。
+- SQLite にあるプロジェクトは自動では移りません。初めて繋いだとき、SQLite にプロジェクトが残っていれば、移し方(6)を 1 行出します。
 - ここに書ける項目は `type`・`url`・`passwordFile`・`tls` です。これ以外(`host`・`port`・`name`・`user` など)を書くと、知らない項目として起動しません。
 
 テスト用は同じ書き方で、`url` を `mysql://kuramoto_test@127.0.0.1:3307/kuramoto_test` にします(パスワードは `compose.yaml` の `mysql-test` に書いてあるテスト専用のものです)。
@@ -143,9 +144,9 @@ docker exec kuramoto-mysql sh -c 'MYSQL_PWD="$MYSQL_PASSWORD" mysql -u"$MYSQL_US
 
 ボリュームごと失った場合は、`docker volume create kuramoto-mysql` と `docker compose up -d` で空の database を作ってから、上の戻しをします。
 
-## 5. DB を切り替えるとき
+## 5. DB を切り替えるとき(設計書で移す)
 
-SQLite と MySQL のあいだは、DB のファイルやダンプをそのまま移さず、設計書のエクスポートと読み込みで移します([ADR-0017](adr/0017-restore-from-exported-design-doc.md))。DB の種類が違うので、dump は使えません。
+全部(起動の記録・指標・PR の写しまで)を移すなら、6 の `kuramoto db transfer` を使います。ここは、企画だけを軽く移したいときの方法です。SQLite と MySQL のあいだは、DB のファイルやダンプをそのまま移さず、設計書のエクスポートと読み込みで移せます([ADR-0017](adr/0017-restore-from-exported-design-doc.md))。DB の種類が違うので、dump は使えません。
 
 1. いまの Kuramoto で、プロジェクトごとに「設計書をエクスポート(Markdown)」を書き出す。
 2. `config.yaml` の `database` を切り替えて、Kuramoto を起動し直す。
@@ -187,4 +188,4 @@ MySQL に繋ぎました(スキーマの版 21)
 
 「埋めた件数」は、SQLite の版 19 がすでに埋めているデータなら 0 になります(そのまま移るため)。そうなっていないチケットだけが数えられます。
 
-移したあとは、`select` で件数を見るなどして確かめます。注意: サーバー・`kuramoto run` の読み書きの本体は、まだ MySQL に繋がっていません(2 を参照。ADR-0041)。この入口は、データを MySQL に移すだけです。移し終わっても、`config.yaml` を `type: mysql` にした Kuramoto はまだ起動できません。失敗してやり直すときは、MySQL の database を空にしてから(4 の戻しと同じく `DROP DATABASE` / `CREATE DATABASE`)、もう一度流します。
+移し終わったら、`select` で件数を見るなどして確かめてから、Kuramoto(サーバー・`kuramoto run`)を起動します。`config.yaml` が `type: mysql` なら、そのまま MySQL の上で動きます(2 を参照)。プロジェクトのデータの置き場所(`data_dir`。リポジトリの作業場所・画面の画像など)は、DB ではなくファイルなので、移さずそのまま使います。失敗してやり直すときは、MySQL の database を空にしてから(4 の戻しと同じく `DROP DATABASE` / `CREATE DATABASE`)、もう一度流します。

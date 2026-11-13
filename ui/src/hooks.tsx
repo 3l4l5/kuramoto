@@ -1,6 +1,6 @@
 import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, type HqView, type ProjectView, type StudioView } from "./api";
+import { api, type DbStatusView, type HqView, type ProjectView, type StudioView } from "./api";
 
 /**
  * データは TanStack Query で 3 秒ごとに取り直す。前と同じ部分は同じ値のまま返る(structural sharing)ので、
@@ -10,6 +10,8 @@ export const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchInterval: 3000, refetchOnWindowFocus: true, retry: 1 } },
 });
 
+/** DB(MySQL)に繋がっているか。DB を読まない軽い問い合わせなので、切れている間も返る。 */
+export const useDbStatus = () => useQuery({ queryKey: ["db-status"], queryFn: () => api<DbStatusView>("GET", "/db") });
 export const useHq = () => useQuery({ queryKey: ["hq"], queryFn: () => api<HqView>("GET", "/hq") });
 export const useProject = (id: number) => useQuery({ queryKey: ["project", id], queryFn: () => api<ProjectView>("GET", `/projects/${id}`) });
 export const useStudio = (id: number) => useQuery({ queryKey: ["studio", id], queryFn: () => api<StudioView>("GET", `/projects/${id}/studio`) });

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { post } from "./api";
 import { Home } from "./Home";
-import { go, useAct, useProject, useRoute, useStudio } from "./hooks";
+import { go, useAct, useDbStatus, useProject, useRoute, useStudio } from "./hooks";
 import { NewProject } from "./NewProject";
 import { ProjectPage } from "./Project";
 import { TicketPage } from "./Ticket";
@@ -75,6 +75,7 @@ export function App() {
           </>
         )}
       </header>
+      <DbDownBanner />
       {route.name === "home" && <Home />}
       {route.name === "new" && <NewProject />}
       {route.name === "project" && <ProjectPage id={route.id} drawer={drawer} closeDrawer={() => moveTo(null)} guard={guard} />}
@@ -83,6 +84,23 @@ export function App() {
       {route.name === "metrics" && <ProductivityPage id={route.id} />}
       {route.name === "settings" && <SettingsPage id={route.id} />}
       {inProject && route.name !== "ticket" && <PhoneBar id={route.id} drawer={drawer} moveTo={moveTo} />}
+    </div>
+  );
+}
+
+/** DB(MySQL)に繋がらないとき、どの画面でも一番上に出す。繋がり直したら消える(ADR-0041)。 */
+function DbDownBanner() {
+  const { data } = useDbStatus();
+  const down = data?.dbDown;
+  if (!down) return null;
+  return (
+    <div className="budgetalert" role="alert">
+      <p>
+        <b>DB(MySQL)に繋がらないので、画面の表示と受信箱の見回り・エージェントの起動を止めて待っています({new Date(down.since).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}から)。</b>
+        繋がり直したら自動で再開します。
+        <br />
+        <small>エラー: {down.error}</small>
+      </p>
     </div>
   );
 }
