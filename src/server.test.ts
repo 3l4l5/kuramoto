@@ -13,13 +13,14 @@ import type { Project } from "./project/project.js";
 import { addDevRule } from "./project/dev-rules.js";
 import { createTicket } from "./project/workflow.js";
 import { run } from "./db/sqlite.js";
+import { DbHealth } from "./db/mysql-health.js";
 
 const leadSaid = (p: Project, text: string) => leadMessages(p).some((m) => m.body.includes(text));
 
 const cleanups: (() => void)[] = [];
 afterEach(() => cleanups.splice(0).forEach((f) => f()));
 
-async function boot(opts: { publicToken?: string; renderer?: import("./project/design-visual.js").Renderer } = {}) {
+async function boot(opts: { publicToken?: string; renderer?: import("./project/design-visual.js").Renderer; dbHealth?: DbHealth } = {}) {
   const home = mkdtempSync(join(tmpdir(), "kuramoto-srv-"));
   const harness = new FakeHarness(async (req, call) => {
     if (req.tools.some((t) => t.name === "submit_pr")) await call("submit_pr", { summary: "", responses: fixedAll(req.prompt) });
@@ -41,6 +42,38 @@ async function boot(opts: { publicToken?: string; renderer?: import("./project/d
 }
 
 describe("ローカルサーバー", () => {
+  it("DB(MySQL)が切れている間は受信箱の見回りとエージェントの起動を止めて待ち、画面にそう出す。繋がり直したら再開する(ADR-0041)", async () => {
+    let alive = true;
+    const health = new DbHealth(async () => {
+      if (!alive) throw Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" });
+    }, { intervalMs: 3_600_000 });
+    const { call, app } = await boot({ dbHealth: health });
+    const { json: created } = await call("POST", "/api/projects", { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }] });
+    // 切れた(クエリが接続のエラーで落ちた)
+    alive = false;
+    health.reportFailure(Object.assign(new Error("lost"), { code: "PROTOCOL_CONNECTION_LOST", fatal: true }));
+    await call("POST", `/api/projects/${created.id}/tickets`, { title: "CSV" });
+    await call("POST", `/api/projects/${created.id}/run`, { running: true });
+    await new Promise((r) => setTimeout(r, 300));
+    // 待っている: エージェントは起動せず(起動の記録なし)、チケットの仕事は受信箱に残ったまま
+    const p = app.project(created.id);
+    expect((p.db.prepare("SELECT COUNT(*) AS n FROM runs WHERE role = 'dev'").get() as { n: number }).n).toBe(0);
+    expect((p.db.prepare("SELECT COUNT(*) AS n FROM messages WHERE kind = 'implement' AND status = 'pending'").get() as { n: number }).n).toBe(1);
+    const view = (await call("GET", `/api/projects/${created.id}`)).json;
+    expect(view.dbDown).toMatchObject({ error: "lost" });
+    expect(view.dbDown.since).toBeTruthy();
+    // まだ切れている間は、見張りの確認でも戻らない
+    await health.check();
+    expect(app.dbUp()).toBe(false);
+    // 繋がり直した: 自動で再開し、仕事が merge 待ちまで進む
+    alive = true;
+    await health.check();
+    expect(app.dbUp()).toBe(true);
+    for (let i = 0; i < 100 && (await app.projectView(created.id)).mergeOrder.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+    expect((await app.projectView(created.id)).mergeOrder).toHaveLength(1);
+    expect((await app.projectView(created.id)).dbDown).toBeNull();
+  });
+
   it("画面から プロジェクト作成 → チケット → 稼働 → merge まで進められる", async () => {
     const { call, app, github } = await boot();
     expect((await call("GET", "/")).text).toContain("text/html");

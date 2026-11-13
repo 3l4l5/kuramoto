@@ -1,7 +1,6 @@
 import { iso } from "../clock.js";
 import { sql, type SqlBool } from "kysely";
 import { run } from "../db/sqlite.js";
-import { dialect } from "../db/dialect/index.js";
 import type { Pull } from "../domain/formation.js";
 import type { Role } from "../domain/roles.js";
 import type { Project } from "./project.js";
@@ -37,6 +36,11 @@ export type MessageRow = {
   claimed_at: string | null;
   last_error: string | null;
 };
+
+/**
+ * 受信箱の取り出し・完了・失敗が Project から使うもの。SQLite の Project のほか、MySQL の口(pdb)を持つ入れ物でも動かせる(ADR-0041)。
+ */
+export type InboxScope = Pick<Project, "pdb" | "projectId" | "now" | "clock" | "currentFormation" | "settingNumber">;
 
 /**
  * 受信箱に 1 通入れる。
@@ -83,11 +87,11 @@ export const AREA_BUSY_SQL = `EXISTS (
 )`;
 
 /**
- * 受信箱から 1 通取り出す。取り出しは方言の助け(dialect.claimMessage)で、他の取り出しと重ならない 1 文にする(SQLite は 1 文の UPDATE)。
+ * 受信箱から 1 通取り出す。取り出しは接続の方言の助け(pdb.dialect.claimMessage)で、他の取り出しと重ならないようにする(SQLite は 1 文の UPDATE、MySQL は FOR UPDATE SKIP LOCKED → UPDATE)。
  * 他の起動がまだ終わっていないチケット宛てのものは飛ばす(1 チケット 1 起動)。
  * 同じ場所を触るチケットが先に進んでいれば、まだ取りかかっていないチケットの実装は始めない(ADR-0024)。
  */
-export async function claimNext(p: Project, opts: { exclude?: number[]; planningOnly?: boolean; triage?: boolean; noPlan?: boolean } = {}): Promise<MessageRow | undefined> {
+export async function claimNext(p: InboxScope, opts: { exclude?: number[]; planningOnly?: boolean; triage?: boolean; noPlan?: boolean } = {}): Promise<MessageRow | undefined> {
   const pull = p.currentFormation().pull;
   const exclude = opts.exclude ?? [];
   const now = p.now();
@@ -105,21 +109,21 @@ export async function claimNext(p: Project, opts: { exclude?: number[]; planning
   if (opts.noPlan) candidate = candidate.where("m.kind", "<>", "plan");
   if (opts.triage) {
     candidate = candidate
-      .where(sql<SqlBool>`NOT ((m.kind = 'implement' OR ${dialect.jsonExtract("m.payload", "preDev")} = 1) AND EXISTS (SELECT 1 FROM tickets t WHERE t.id = m.ticket_id AND t.triaged = 0))`)
+      .where(sql<SqlBool>`NOT ((m.kind = 'implement' OR ${p.pdb.dialect.jsonExtract("m.payload", "preDev")} = 1) AND EXISTS (SELECT 1 FROM tickets t WHERE t.id = m.ticket_id AND t.triaged = 0))`)
       .where(sql<SqlBool>`NOT (m.kind = 'implement' AND EXISTS (SELECT 1 FROM ticket_deps d JOIN tickets b ON b.id = d.depends_on WHERE d.ticket_id = m.ticket_id AND b.stage NOT IN ('done','dropped')))`)
       .where(sql<SqlBool>`NOT (m.kind = 'implement' AND NOT EXISTS (SELECT 1 FROM runs r0 WHERE r0.ticket_id = m.ticket_id AND r0.role = 'dev') AND ${sql.raw(AREA_BUSY_SQL.replace("%T", "m.ticket_id"))})`);
   }
   if (exclude.length) candidate = candidate.where("m.id", "not in", exclude);
   candidate = candidate.orderBy(orderSql(pull)).orderBy("m.available_at").orderBy("m.id").limit(1);
-  return (await dialect.claimMessage(k, candidate, now)) as MessageRow | undefined;
+  return (await p.pdb.dialect.claimMessage(k, candidate, now)) as MessageRow | undefined;
 }
 
-export async function complete(p: Project, id: number): Promise<void> {
+export async function complete(p: InboxScope, id: number): Promise<void> {
   await p.pdb.update("messages", { status: "done" }).where("id", "=", id).execute();
 }
 
 /** 起動できなかった(人手が足りない等)。試行回数を戻して後で取り直す。 */
-export async function release(p: Project, id: number, delayMs: number): Promise<void> {
+export async function release(p: InboxScope, id: number, delayMs: number): Promise<void> {
   const at = iso(new Date(p.clock.now().getTime() + delayMs));
   await p.pdb.update("messages", { status: "pending", claimed_at: null, attempts: sql`attempts - 1`, available_at: at }).where("id", "=", id).execute();
 }
@@ -128,7 +132,7 @@ export async function release(p: Project, id: number, delayMs: number): Promise<
  * 失敗した。上限までは間を空けて再試行し、尽きたら failed にする。
  * @returns 再試行が尽きたら true
  */
-export async function fail(p: Project, msg: MessageRow, error: string): Promise<boolean> {
+export async function fail(p: InboxScope, msg: MessageRow, error: string): Promise<boolean> {
   const max = p.settingNumber("max_attempts", 3);
   if (msg.attempts >= max) {
     await p.pdb.update("messages", { status: "failed", last_error: error }).where("id", "=", msg.id).execute();
@@ -141,7 +145,7 @@ export async function fail(p: Project, msg: MessageRow, error: string): Promise<
 }
 
 /** 起動中に Kuramoto が落ちたときの取りこぼしを戻す。起動時に 1 回呼ぶ。 */
-export async function recoverStale(p: Project): Promise<number> {
+export async function recoverStale(p: InboxScope): Promise<number> {
   return p.pdb.transaction(async () => {
     await p.pdb.update("runs", { ended_at: p.now(), outcome: "abandoned", error: "Kuramoto が止まっていました" }).where("ended_at", "is", null).execute();
     const r = await p.pdb.update("messages", { status: "pending", claimed_at: null }).where("status", "=", "claimed").executeTakeFirst();
@@ -149,7 +153,7 @@ export async function recoverStale(p: Project): Promise<number> {
   });
 }
 
-export async function pendingCount(p: Project, kinds: MessageKind[]): Promise<number> {
+export async function pendingCount(p: InboxScope, kinds: MessageKind[]): Promise<number> {
   const row = await p.pdb.k
     .selectFrom("messages")
     .select((eb) => eb.fn.countAll<number>().as("n"))

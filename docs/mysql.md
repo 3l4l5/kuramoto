@@ -60,7 +60,8 @@ database:
 - `url` の ユーザーと database 名は、`mysql.env` の `MYSQL_USER` と `MYSQL_DATABASE` と同じにします。
 - パスワードは `config.yaml` に書かず、`passwordFile` が指す `mysql.env` の `MYSQL_PASSWORD` の行から読みます。`~/` は家のディレクトリです。`url` にもパスワードを書くと、どちらを使うか決められないので起動しません。`MYSQL_PASSWORD` の行が無い・空のときも起動しません。
 - 環境変数 `KURAMOTO_DATABASE_URL` があるときは、`url` の代わりにそちらを使います(`passwordFile` はそのまま効きます)。
-- TLS を使うときは `tls: { ca: <CA のファイルのパス> }` を足します。
+- TLS は `tls: { ca: <CA のファイルのパス> }` を足します。手元(`127.0.0.1`・`localhost`)の MySQL では省けますが、外の DB では必須です(無いと起動しません)。証明書は CA で確かめます。
+- 注意: 本部とプロジェクトの読み書きの本体がまだ MySQL に移っていないので、いまは `type: mysql` にすると起動を止めます(ADR-0041)。アダプタは用意済みで、本体が移ったら使えるようになります。そのとき、届かなければ理由を出して起動しません。動いている間に切れたら、受信箱の見回りとエージェントの起動を止めて待ち、画面に出し、繋がり直したら自動で再開します。
 - ここに書ける項目は `type`・`url`・`passwordFile`・`tls` です。これ以外(`host`・`port`・`name`・`user` など)を書くと、知らない項目として起動しません。
 
 テスト用は同じ書き方で、`url` を `mysql://kuramoto_test@127.0.0.1:3307/kuramoto_test` にします(パスワードは `compose.yaml` の `mysql-test` に書いてあるテスト専用のものです)。

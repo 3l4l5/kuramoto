@@ -221,12 +221,20 @@ function DecisionCard({ pid, d }: { pid: number; d: Decision }) {
   );
 }
 
-/** 予算を使い切って止まっているもの・GitHub に入れないことを、責任者の対応の先頭に出す。 */
+/** 予算を使い切って止まっているもの・GitHub に入れないこと・DB に繋がらないことを、責任者の対応の先頭に出す。 */
 function BudgetAlerts({ d }: { d: ProjectView }) {
   const broke = d.budget.units.filter((u) => u.exhausted);
-  if (!d.budget.project.exhausted && !broke.length && !d.githubDown && !d.ciBlocked.length) return null;
+  if (!d.budget.project.exhausted && !broke.length && !d.githubDown && !d.dbDown && !d.ciBlocked.length) return null;
   return (
     <div className="budgetalert" role="alert">
+      {d.dbDown && (
+        <p>
+          <b>DB(MySQL)に繋がらないので、受信箱の見回りとエージェントの起動を止めて待っています({new Date(d.dbDown.since).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}から)。</b>
+          繋がり直したら自動で再開します。
+          <br />
+          <small>エラー: {d.dbDown.error}</small>
+        </p>
+      )}
       {d.githubDown && (
         <p>
           <b>GitHub に入れないので、チームはチケットの仕事を止めて待っています({new Date(d.githubDown.since).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}から)。</b>
