@@ -43,7 +43,7 @@ export function DeleteProjectDialog({ id, name, close }: { id: number; name: str
       </header>
       <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
         <Notice tone="danger" title="元に戻せません">
-          「{name}」のチケット・やりとり・設定などの記録と、Kuramoto の作業場所(clone と worktree)を消します。動いているメンバーも止まります。GitHub のリポジトリ・PR・Issue には触れません。
+          「{name}」のチケット・やりとり・設定などの記録(画面の画像などのファイルも)と、Kuramoto の作業場所(clone と worktree)を消します。動いているメンバーも止まります。GitHub のリポジトリ・PR・Issue には触れません。
         </Notice>
         <TextField label={`確認のため、プロジェクト名「${name}」を入力してください`} value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" />
         <div className="btns">

@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, rmdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { iso, systemClock, type Clock } from "./clock.js";
 import { openDb, type Db } from "./db/sqlite.js";
 import { HqDb } from "./db/conn.js";
@@ -157,6 +157,20 @@ export class Hq {
       await (this.hqdb.k as import("kysely").Kysely<any>).deleteFrom("repos").where("project_id", "=", id).execute();
       await this.hqdb.deleteFrom("projects").where("id", "=", id).execute();
     });
+  }
+
+  /**
+   * プロジェクトのデータの置き場所(SQLite と design/ の画像)を丸ごと消す。呼ぶ前に、そのプロジェクトの SQLite を閉じておく。
+   * 本部の置き場所(home)の外・home そのものは、何があっても消さない。owner の下が空になったら、その owner のディレクトリも片付ける。
+   * 消せなかったときは投げる(呼ぶ側がログに残す)。
+   */
+  removeDataDir(dataDir: string): void {
+    const home = resolve(this.home);
+    const dir = resolve(dataDir);
+    if (home === sep || !dir.startsWith(home + sep)) throw new Error(`データの置き場所が本部の置き場所の外なので消しません: ${dataDir}`);
+    rmSync(dir, { recursive: true, force: true });
+    const owner = dirname(dir);
+    if (owner !== home && existsSync(owner) && readdirSync(owner).length === 0) rmdirSync(owner);
   }
 
   async setStatus(id: number, status: ProjectRecord["status"]): Promise<void> {

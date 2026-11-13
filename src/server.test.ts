@@ -1,5 +1,5 @@
 import { fixedAll, withResolutions } from "./harness/fake.js";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, request, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -69,6 +69,48 @@ describe("ローカルサーバー", () => {
     expect((await keep.tickets()).map((t) => t.title)).toEqual(["残る"]);
     expect((await call("GET", `/api/projects/${b}`)).status).toBe(200);
     expect((await app.hq.project(b)).name).toBe("残す");
+  });
+
+  it("DELETE: データの置き場所(SQLite・design/ の画像)も消し、同じリポジトリで作り直すと元の置き場所が使われる(repo-2 にならない)", async () => {
+    const { call, app } = await boot();
+    const repos = [{ fullName: "acme/shop", role: "API" }];
+    const a = (await call("POST", "/api/projects", { name: "消す", repos })).json.id as number;
+    const other = (await call("POST", "/api/projects", { name: "残す", repos: [{ fullName: "acme/web", role: "UI" }] })).json.id as number;
+    const dir = (await app.hq.project(a)).data_dir;
+    const otherDir = (await app.hq.project(other)).data_dir;
+    mkdirSync(join(dir, "design"), { recursive: true });
+    writeFileSync(join(dir, "design", "shot.png"), "png");
+    expect(existsSync(join(dir, "project.sqlite"))).toBe(true);
+
+    expect((await call("DELETE", `/api/projects/${a}`)).json).toMatchObject({ ok: true, failed: [] });
+    expect(existsSync(dir)).toBe(false);
+    expect(existsSync(otherDir)).toBe(true); // 別のプロジェクトの置き場所は残る
+
+    const again = (await call("POST", "/api/projects", { name: "作り直し", repos })).json.id as number;
+    expect((await app.hq.project(again)).data_dir).toBe(dir);
+    expect(existsSync(join(dir, "design", "shot.png"))).toBe(false);
+  });
+
+  it("Hq.removeDataDir: 本部の置き場所の外・置き場所そのものは消さない。owner の下が空になったら owner も片付ける", () => {
+    const home = mkdtempSync(join(tmpdir(), "kuramoto-rm-"));
+    const outside = mkdtempSync(join(tmpdir(), "kuramoto-out-"));
+    const hq = new Hq(home);
+    cleanups.push(() => { hq.close(); rmSync(home, { recursive: true, force: true }); rmSync(outside, { recursive: true, force: true }); });
+    writeFileSync(join(outside, "keep.txt"), "x");
+    expect(() => hq.removeDataDir(outside)).toThrow(/外/);
+    expect(() => hq.removeDataDir(home)).toThrow(/外/);
+    expect(() => hq.removeDataDir(join(home, "..", "x"))).toThrow(/外/);
+    expect(existsSync(join(outside, "keep.txt"))).toBe(true);
+    expect(existsSync(join(home, "hq.sqlite"))).toBe(true);
+
+    mkdirSync(join(home, "acme", "shop", "design"), { recursive: true });
+    mkdirSync(join(home, "acme", "web"), { recursive: true });
+    hq.removeDataDir(join(home, "acme", "shop"));
+    expect(existsSync(join(home, "acme", "shop"))).toBe(false);
+    expect(existsSync(join(home, "acme", "web"))).toBe(true); // owner の下にまだあるので owner は残る
+    hq.removeDataDir(join(home, "acme", "web"));
+    expect(existsSync(join(home, "acme"))).toBe(false);
+    hq.removeDataDir(join(home, "acme", "web")); // もう無くても通る
   });
 
   it("作業場所を消せなくても(投げても)DB の削除は進み、ログに残す", async () => {
