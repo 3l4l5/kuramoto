@@ -161,6 +161,7 @@ ${how}`;
     case "triage":
     case "unstick":
     case "patrol":
+    case "member_chat":
       return "";
     case "decide": {
       const d = decision(p, Number(payload.decision_id));
