@@ -77,7 +77,16 @@ test("幅 390px: 全画面が横にはみ出さず、引き出しも全画面で
   const formation = page.getByRole("complementary", { name: "編成" });
   await expect(formation).toBeVisible();
   for (const [tab, name] of [["島", "formation-islands"], ["連絡経路", "formation-routes"], ["流れ", "formation-flow"]] as const) {
-    await formation.getByRole("tab", { name: new RegExp(`^${tab}`) }).click();
+    const t = formation.getByRole("tab", { name: new RegExp(`^${tab}`) });
+    // タブの列が潰れず、見出しの下に見えている(#87)。押すと、そのタブが選ばれる
+    await expect(t).toBeVisible();
+    const tb = (await t.boundingBox())!;
+    const head = (await formation.getByRole("heading", { name: /^編成/ }).boundingBox())!;
+    expect(tb.height, `${tab}のタブの高さ`).toBeGreaterThanOrEqual(36);
+    expect(tb.y, `${tab}のタブは見出しより下`).toBeGreaterThanOrEqual(head.y + head.height);
+    expect(tb.x + tb.width, `${tab}のタブは画面の中`).toBeLessThanOrEqual(390);
+    await t.click();
+    await expect(t).toHaveAttribute("aria-selected", "true");
     await fits(page, name);
   }
   await formation.getByRole("button", { name: "閉じる" }).click();

@@ -924,6 +924,11 @@ body { background: var(--surface); }
   /* 開発ルールの「足す」ボタンの帯は、一覧が短くても画面の下に固定する */
   section.drawer .rules { flex: 1; align-content: space-between; }
   aside.drawer .ds-drawer__foot, section.drawer > .ds-drawer__foot { position: sticky; bottom: 0; background: var(--surface); flex-wrap: wrap; }
+  /* 引き出しは、中身が長いと自分の中でスクロールする。見出し・タブ・下の帯が縮んで消えないよう、縮めない(タブは overflow があると最小の高さが 0 になり、潰れて見えなくなっていた #87) */
+  aside.drawer > .ds-drawer { flex: none; }
+  /* 編成は、パソコンでは角を丸く切るため overflow: hidden。スマホは全画面で角が無いので、長い中身を指で動かせるようにする */
+  aside.drawer.formation { overflow: auto; }
+  aside.drawer .ds-drawer__head, aside.drawer .ds-drawer__tabs, aside.drawer .ds-drawer__foot { flex: none; }
   aside.drawer .ds-drawer__tabs { overflow-x: auto; }
   .drawer.wide, .drawer--wide { flex-basis: auto; max-width: none; }
   .flowtab, .islandtab { flex-direction: column; align-self: stretch; }
