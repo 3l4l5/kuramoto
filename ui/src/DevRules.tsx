@@ -5,8 +5,8 @@ import { useAct } from "./hooks";
 import { Button, Chip, Input, List, ListItem, SectionHeading, Segmented, Switch, Textarea } from "./ds";
 
 /**
- * チームの方針の「開発ルール」(R15・ADR-0011)。左に一覧(有効 / 無効のスイッチ)とひな形、右にルールの中身か追加のフォーム。
- * 足したルールの中身は変えられない(API は足す・有効 / 無効だけ)ので、直したいときは無効にして足し直す。
+ * チームの方針の「開発ルール」(R15・ADR-0011)。左に一覧(有効 / 無効のスイッチ)とひな形、右に選んだルールの編集か追加のフォーム。
+ * 直したり足したりすると、下の帯の「保存して vN にする」で版が上がる(R11 と同じ)。「このルールを消す」も版が上がる。
  */
 export const useDevRules = (id: number) => useQuery({ queryKey: ["dev-rules", id], queryFn: () => api<DevRulesView>("GET", `/projects/${id}/dev-rules`) });
 
@@ -17,8 +17,12 @@ type RuleOnFail = Rule["onFail"];
 // サーバーのモジュール(DB を使う)は画面に持ち込まないので、効く場所の並びと名前はここに写す
 const TARGETS: RuleTarget[] = ["branch", "commit", "pr_title", "pr_body", "files", "code"];
 const TARGET_LABEL: Record<RuleTarget, string> = { branch: "ブランチ名", commit: "コミット", pr_title: "PR タイトル", pr_body: "PR 本文", files: "変更したファイル", code: "コード" };
-export type RuleDraft = { name: string; body: string; appliesTo: RuleTarget[]; check: RuleCheck; pattern: string; onFail: RuleOnFail };
-const EMPTY: RuleDraft = { name: "", body: "", appliesTo: [], check: "pattern", pattern: "", onFail: "autofix" };
+type RuleValues = { name: string; body: string; appliesTo: RuleTarget[]; check: RuleCheck; pattern: string; onFail: RuleOnFail };
+/** 下書き。id があれば、そのルールを直している(orig は直す前の中身)。無ければ新しいルール。 */
+export type RuleDraft = RuleValues & { id?: number; orig?: string };
+const EMPTY: RuleValues = { name: "", body: "", appliesTo: [], check: "pattern", pattern: "", onFail: "autofix" };
+const valuesOf = (d: RuleValues): RuleValues => ({ name: d.name, body: d.body, appliesTo: d.appliesTo, check: d.check, pattern: d.pattern, onFail: d.onFail });
+const fromRule = (r: Rule): RuleValues => ({ name: r.name, body: r.body, appliesTo: r.appliesTo, check: r.check, pattern: r.pattern ?? "", onFail: r.onFail });
 
 const CHECK_OPTIONS = [
   { value: "pattern" as const, label: "形式(正規表現)" },
@@ -33,17 +37,41 @@ const ON_FAIL_HINT = "PR を出す前に確かめ、持ち主が直してから 
 
 const targets = (r: { appliesTo: RuleTarget[] }) => r.appliesTo.map((t) => TARGET_LABEL[t]).join("・");
 
-/** 下書きが空のままか(保存していない変更の数に使う) */
-export const draftDirty = (d: RuleDraft) => JSON.stringify(d) !== JSON.stringify(EMPTY);
+/** 保存していない変更があるか(新しいルールは空のままでないか、直しているルールは直す前と違うか) */
+export const draftDirty = (d: RuleDraft) => JSON.stringify(valuesOf(d)) !== (d.id === undefined ? JSON.stringify(EMPTY) : d.orig);
 
 export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDraft | null; setDraft: (d: RuleDraft | null) => void }) {
   const { data } = useDevRules(id);
   const act = useAct();
   const [selected, setSelected] = useState<number | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  /** 保存していない下書きがあるまま移ろうとしたときの行き先(確かめるまで下書きは捨てない)。"add" は空のルールを足すフォーム */
+  const [leaving, setLeaving] = useState<number | "add" | null>(null);
   if (!data) return null;
 
   const active = data.rules.filter((r) => r.enabled).length;
-  const current = draft ? null : (data.rules.find((r) => r.id === selected) ?? data.rules[0] ?? null);
+  const adding = !!draft && draft.id === undefined;
+  const current = adding ? null : (data.rules.find((r) => r.id === (draft?.id ?? selected)) ?? data.rules[0] ?? null);
+  const next = data.version + 1;
+  const unsaved = !!draft && draftDirty(draft);
+  const select = (id: number | null) => {
+    setDraft(null);
+    setConfirming(false);
+    setLeaving(null);
+    setSelected(id);
+  };
+  const openAdd = () => {
+    setConfirming(false);
+    setLeaving(null);
+    setDraft(adding ? draft : EMPTY);
+  };
+  /** 一覧や「足す」で別へ移る。直している途中なら、捨ててよいか確かめてから(足すフォームの途中から「足す」を押しても、そのまま残す) */
+  const go = (to: number | "add") => {
+    if (to === "add") return adding ? undefined : unsaved ? setLeaving("add") : openAdd();
+    if (!unsaved) return select(to);
+    setLeaving(to === current?.id ? null : to);
+  };
+  const proceed = () => (leaving === "add" ? openAdd() : select(leaving));
   const write = (path: string, body: unknown, message: (r: DevRulesView) => string, then?: (r: DevRulesView) => void) =>
     act(
       async () => {
@@ -55,23 +83,20 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
     );
 
   const addTemplate = (key: string, name: string) =>
-    write("/dev-rules", { template: key }, () => `「${name}」を足しました。次に起動するメンバーから使われます`, (r) => {
-      setDraft(null);
-      setSelected(r.rules.find((x) => x.template === key)?.id ?? null);
+    write("/dev-rules", { template: key }, (r) => `「${name}」を足して v${r.version} にしました。次に起動するメンバーから使われます`, (r) => {
+      if (!unsaved) select(r.rules.find((x) => x.template === key)?.id ?? null);
     });
-  const toggle = (r: Rule, enabled: boolean) => write(`/dev-rules/${r.id}/enabled`, { enabled }, () => `「${r.name}」を${enabled ? "有効" : "無効"}にしました`);
+  const toggle = (r: Rule, enabled: boolean) => write(`/dev-rules/${r.id}/enabled`, { enabled }, (v) => `「${r.name}」を${enabled ? "有効" : "無効"}にして v${v.version} にしました`);
+  const remove = (r: Rule) => write(`/dev-rules/${r.id}/delete`, {}, (v) => `「${r.name}」を消して v${v.version} にしました`, () => select(null));
 
   const valid = draft && draft.name.trim() && draft.appliesTo.length > 0 && (draft.check === "ai" ? draft.body.trim() : draft.pattern.trim());
   const save = () =>
     draft &&
     write(
-      "/dev-rules",
+      draft.id === undefined ? "/dev-rules" : `/dev-rules/${draft.id}`,
       { name: draft.name, body: draft.body, appliesTo: draft.appliesTo, check: draft.check, onFail: draft.onFail, ...(draft.check === "pattern" ? { pattern: draft.pattern } : {}) },
-      () => `「${draft.name.trim()}」を足しました。次に起動するメンバーから使われます`,
-      (r) => {
-        setDraft(null);
-        setSelected(r.rules.at(-1)?.id ?? null);
-      },
+      (r) => `「${draft.name.trim()}」を保存して v${r.version} にしました。次に起動するメンバーから使われます`,
+      (r) => select(draft.id ?? r.rules.at(-1)?.id ?? null),
     );
 
   return (
@@ -88,10 +113,7 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
                   key={r.id}
                   selected={r.id === current?.id}
                   off={!r.enabled}
-                  onClick={() => {
-                    setDraft(null);
-                    setSelected(r.id);
-                  }}
+                  onClick={() => go(r.id)}
                   title={
                     <span className="rules__title">
                       <b>{r.name}</b>
@@ -111,7 +133,10 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
               ))}
             </List>
           )}
-          <Button className="rules__add" onClick={() => setDraft(draft ?? EMPTY)}>
+          <Button
+            className="rules__add"
+            onClick={() => go("add")}
+          >
             + 空のルールを足す
           </Button>
         </div>
@@ -128,16 +153,56 @@ export function DevRulesTab({ id, draft, setDraft }: { id: number; draft: RuleDr
         </div>
       </div>
       <div className="rules__form">
-        {draft ? <RuleForm draft={draft} set={setDraft} /> : current ? <RuleView r={current} /> : <p className="rules__hint">まだルールがありません。ひな形から足すか、空のルールを足します。</p>}
+        {leaving !== null && (
+          <div className="rules__confirm" role="alert">
+            <span className="rules__hint">保存していない変更があります。捨てて移ると、直した内容は戻りません。</span>
+            <Button size="sm" onClick={proceed}>
+              捨てて移る
+            </Button>
+            <Button size="sm" variant="text" onClick={() => setLeaving(null)}>
+              このまま直す
+            </Button>
+          </div>
+        )}
+        {adding ? (
+          <RuleForm draft={draft!} set={setDraft} />
+        ) : current ? (
+          <>
+            <RuleForm draft={draft ?? fromRule(current)} set={(d) => setDraft({ ...d, id: current.id, orig: JSON.stringify(fromRule(current)) })} />
+            {confirming ? (
+              <div className="rules__confirm">
+                <span className="rules__hint">「{current.name}」を消すと v{next} になります。これまでの違反の記録は残ります。</span>
+                <Button size="sm" onClick={() => void remove(current)}>
+                  消して v{next} にする
+                </Button>
+                <Button size="sm" variant="text" onClick={() => setConfirming(false)}>
+                  やめる
+                </Button>
+              </div>
+            ) : (
+              <Button className="rules__delete" size="sm" onClick={() => setConfirming(true)}>
+                このルールを消す
+              </Button>
+            )}
+          </>
+        ) : (
+          <p className="rules__hint">まだルールがありません。ひな形から足すか、空のルールを足します。</p>
+        )}
       </div>
-      {draft && (
+      {draft && (adding || unsaved) && (
         <div className="rules__foot">
           <span className="rules__note">保存してない変更: 開発ルール 1 · 次に起動するメンバーから使われます</span>
-          <Button variant="text" onClick={() => setDraft(null)}>
+          <Button
+            variant="text"
+            onClick={() => {
+              setLeaving(null);
+              setDraft(null);
+            }}
+          >
             やめる
           </Button>
           <Button variant="primary" disabled={!valid} onClick={() => void save()}>
-            このルールを足す
+            保存して v{next} にする
           </Button>
         </div>
       )}
@@ -171,8 +236,8 @@ function Targets({ value, onToggle }: { value: RuleTarget[]; onToggle?: (t: Rule
   );
 }
 
-function RuleForm({ draft, set }: { draft: RuleDraft; set: (d: RuleDraft) => void }) {
-  const patch = (p: Partial<RuleDraft>) => set({ ...draft, ...p });
+function RuleForm({ draft, set }: { draft: RuleValues; set: (d: RuleValues) => void }) {
+  const patch = (p: Partial<RuleValues>) => set({ ...draft, ...p });
   return (
     <>
       <Field label="名前" htmlFor="rule-name" hint="一覧に出る名前">
@@ -192,30 +257,6 @@ function RuleForm({ draft, set }: { draft: RuleDraft; set: (d: RuleDraft) => voi
       </Field>
       <Field label="違反したとき" hint={ON_FAIL_HINT}>
         <Segmented label="違反したとき" options={ON_FAIL_OPTIONS} value={draft.onFail} onChange={(onFail) => patch({ onFail })} />
-      </Field>
-    </>
-  );
-}
-
-/** 足したルールの中身(読むだけ) */
-function RuleView({ r }: { r: Rule }) {
-  return (
-    <>
-      <Field label="名前">
-        <p className="rules__text">{r.name}</p>
-      </Field>
-      <Field label="何を守るか">
-        <p className="rules__text">{r.body || "—"}</p>
-      </Field>
-      <Field label="どこに効くか">
-        <Targets value={r.appliesTo} />
-      </Field>
-      <Field label="確かめ方">
-        <Segmented label="確かめ方" options={CHECK_OPTIONS.map((o) => ({ ...o, disabled: o.value !== r.check }))} value={r.check} onChange={() => {}} />
-        {r.check === "pattern" && <code className="rules__ex">{r.pattern}</code>}
-      </Field>
-      <Field label="違反したとき" hint={ON_FAIL_HINT}>
-        <Segmented label="違反したとき" options={ON_FAIL_OPTIONS.map((o) => ({ ...o, disabled: o.value !== r.onFail }))} value={r.onFail} onChange={() => {}} />
       </Field>
     </>
   );

@@ -9,7 +9,7 @@ import type { Generated } from "kysely";
  * - 挿入のとき省いてよい列(INTEGER PRIMARY KEY・DEFAULT のある列)は Generated<...> で包む。
  * - JSON を入れる TEXT 列(payload・data・options・plan_refs など)も string のままにする。取り出しは dialect の jsonExtract を使う。
  * - 真偽は INTEGER の 0 / 1(number)。
- * - project_id(版 20 で全部の表に足した列)は INTEGER NOT NULL DEFAULT 0 なので Generated<number>。
+ * - project_id(版 21 で全部の表に足した列)は INTEGER NOT NULL DEFAULT 0 なので Generated<number>。
  * - 版を足したら(マイグレーションを増やしたら)ここも直す。直し忘れは tables.test.ts が落とす。
  */
 
@@ -112,6 +112,14 @@ export interface DevRulesTable {
   enabled: Generated<number>;
   template: string | null;
   created_at: Generated<string>;
+  deleted_at: string | null;
+  project_id: Generated<number>;
+}
+
+export interface DevRuleVersionsTable {
+  version: Generated<number>;
+  rules: string;
+  created_at: string;
   project_id: Generated<number>;
 }
 
@@ -478,6 +486,7 @@ export interface ProjectDatabase {
   conflicts: ConflictsTable;
   decisions: DecisionsTable;
   design_images: DesignImagesTable;
+  dev_rule_versions: DevRuleVersionsTable;
   dev_rules: DevRulesTable;
   events: EventsTable;
   finding_comments: FindingCommentsTable;

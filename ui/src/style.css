@@ -861,6 +861,8 @@ body { background: var(--surface); }
 .rules__check:disabled { cursor: default; }
 .rules__ex, .rules__mono { font-family: var(--f-mono); font-size: var(--fs-sm); }
 .rules__ex { display: block; width: 100%; background: var(--bg); border-radius: var(--r-md); padding: var(--sp-2) var(--sp-3); overflow-wrap: anywhere; }
+.rules__confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.rules__delete { align-self: flex-start; }
 .rules__foot { flex: 1 0 100%; display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line); }
 .rules__note { flex: 1; font-size: var(--fs-sm); color: var(--muted); }
 .viol { display: inline-flex; flex-wrap: wrap; gap: var(--sp-1); }

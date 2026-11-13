@@ -424,7 +424,8 @@ test("チームの方針の開発ルール: ひな形から足す・空のルー
 
   await test.step("ひな形から足すと、一覧に有効で入り、ひな形は押せなくなる", async () => {
     await drawer.getByRole("button", { name: "+ Jira 番号をそろえる" }).click();
-    await expect(page.getByRole("status", { name: "お知らせ" })).toContainText("「Jira 番号をそろえる」を足しました");
+    await expect(page.getByRole("status", { name: "お知らせ" })).toContainText("「Jira 番号をそろえる」を足して v2 にしました");
+    await expect(drawer.getByRole("heading", { name: /チームの方針/ })).toContainText("v2");
     await expect(list.getByRole("listitem")).toHaveCount(1);
     await expect(list.getByRole("switch", { name: "Jira 番号をそろえるを有効にする" })).toHaveAttribute("aria-checked", "true");
     await expect(drawer.getByRole("button", { name: "✓ Jira 番号をそろえる" })).toBeDisabled();
@@ -434,7 +435,7 @@ test("チームの方針の開発ルール: ひな形から足す・空のルー
 
   await test.step("空のルールは、名前・どこに効くか・確かめ方がそろうまで足せない", async () => {
     await drawer.getByRole("button", { name: "+ 空のルールを足す" }).click();
-    const add = drawer.getByRole("button", { name: "このルールを足す" });
+    const add = drawer.getByRole("button", { name: "保存して v3 にする" });
     await expect(add).toBeDisabled();
     await drawer.getByLabel("名前").fill("README を更新する");
     await drawer.getByLabel("何を守るか").fill("機能を足したら README の使い方も直す。");
@@ -458,9 +459,60 @@ test("チームの方針の開発ルール: ひな形から足す・空のルー
     // 無効にしたルールも選べて、中身を見られる
     await list.getByRole("listitem").nth(1).click();
     await list.getByRole("listitem").first().click();
-    await expect(drawer.getByText("ブランチ名・PR タイトル・コミットに Jira の課題番号")).toBeVisible();
+    await expect(drawer.getByLabel("何を守るか")).toHaveValue(/ブランチ名・PR タイトル・コミットに Jira の課題番号/);
     await sw.click();
     await expect(sw).toHaveAttribute("aria-checked", "true");
+  });
+
+  await test.step("選んだルールを直すと、下の帯の「保存して vN にする」で版が上がる", async () => {
+    // ここまでで v5(ひな形 v2・空のルール v3・無効 v4・有効 v5)
+    await expect(drawer.getByRole("button", { name: /^保存して/ })).toHaveCount(0);
+    await drawer.getByLabel("名前").fill("Jira 番号を入れる");
+    await expect(drawer.getByRole("tab", { name: /開発ルール/ })).toContainText("1");
+    await drawer.getByRole("button", { name: "保存して v6 にする" }).click();
+    await expect(page.getByRole("status", { name: "お知らせ" })).toContainText("「Jira 番号を入れる」を保存して v6 にしました");
+    await expect(list).toContainText("Jira 番号を入れる");
+    await expect(drawer.getByRole("heading", { name: /チームの方針/ })).toContainText("v6");
+    await expect(drawer.getByRole("button", { name: /^保存して/ })).toHaveCount(0);
+  });
+
+  await test.step("直している途中で別のルールを選ぶ・足すときは、捨ててよいか確かめる(黙って捨てない)", async () => {
+    const alert = drawer.getByRole("alert");
+    await drawer.getByLabel("名前").fill("途中の名前");
+    await list.getByRole("listitem").nth(1).click();
+    await expect(alert).toContainText("保存していない変更があります");
+    await expect(drawer.getByLabel("名前")).toHaveValue("途中の名前");
+    await expect(drawer.getByRole("button", { name: /^保存して/ })).toBeVisible();
+    // 「このまま直す」で下書きも帯も残る
+    await alert.getByRole("button", { name: "このまま直す" }).click();
+    await expect(alert).toHaveCount(0);
+    await expect(drawer.getByLabel("名前")).toHaveValue("途中の名前");
+    // 空のルールを足すときも同じ
+    await drawer.getByRole("button", { name: "+ 空のルールを足す" }).click();
+    await expect(alert).toBeVisible();
+    await expect(drawer.getByLabel("名前")).toHaveValue("途中の名前");
+    await alert.getByRole("button", { name: "このまま直す" }).click();
+    // 捨てて移ると、選んだルールが開き、帯は消える
+    await list.getByRole("listitem").nth(1).click();
+    await alert.getByRole("button", { name: "捨てて移る" }).click();
+    await expect(drawer.getByLabel("名前")).toHaveValue("README を更新する");
+    await expect(alert).toHaveCount(0);
+    await expect(drawer.getByRole("button", { name: /^保存して/ })).toHaveCount(0);
+    // 直していなければ確かめずに移れる
+    await list.getByRole("listitem").first().click();
+    await expect(drawer.getByLabel("名前")).toHaveValue("Jira 番号を入れる");
+    await expect(alert).toHaveCount(0);
+  });
+
+  await test.step("「このルールを消す」で、確かめたあとに一覧から消え、版が上がる", async () => {
+    await drawer.getByRole("button", { name: "このルールを消す" }).click();
+    await drawer.getByRole("button", { name: "消して v7 にする" }).click();
+    await expect(list.getByRole("listitem")).toHaveCount(1);
+    await expect(list).not.toContainText("Jira 番号を入れる");
+    await expect(drawer.getByText("ルール(有効 1 / 1)")).toBeVisible();
+    await expect(drawer.getByRole("heading", { name: /チームの方針/ })).toContainText("v7");
+    // ひな形はもう一度足せる
+    await expect(drawer.getByRole("button", { name: "+ Jira 番号をそろえる" })).toBeEnabled();
   });
 
   await test.step("生産性に「ルール違反 / うち自動で直した」が出る", async () => {

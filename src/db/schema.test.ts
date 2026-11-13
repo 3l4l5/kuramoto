@@ -104,10 +104,10 @@ describe("版 19: R15〜R17 とメンバーとの会話", () => {
 
   it("前の版のコードと同じ書き方(新しい列を書かない INSERT・SELECT *)でも、版 19 の DB で動く", () => {
     const path = v18Db(() => {});
-    openDb(path, PROJECT_MIGRATIONS).close();
-    // 前の版のコードは版 18 までしか知らない。新しい版の DB を開いてもマイグレーションは流れず、そのまま使える
+    openDb(path, PROJECT_MIGRATIONS.slice(0, V19)).close();
+    // 前の版のコードは版 18 までしか知らない。版 19 の DB を開いてもマイグレーションは流れず、そのまま使える
     const db = openDb(path, BEFORE);
-    expect(get<{ user_version: number }>(db, "PRAGMA user_version")!.user_version).toBe(PROJECT_MIGRATIONS.length);
+    expect(get<{ user_version: number }>(db, "PRAGMA user_version")!.user_version).toBe(V19);
     seedBase(db);
     addTicket(db, 1, "dev");
     addRun(db, 1, "dev");
@@ -122,6 +122,28 @@ INSERT INTO formations (version, pull, created_at) VALUES (2, 'start', '');
     expect(get<{ routes: string; flows: string }>(db, "SELECT * FROM formations WHERE version = 2")).toMatchObject({ routes: "[]", flows: "{}" });
     expect(get<{ detail: string; run_id: number | null }>(db, "SELECT * FROM rule_violations")).toMatchObject({ detail: "", run_id: null });
     db.close();
+  });
+
+  it("版 20: 開発ルールに版と消した印が付き、今あるルールは版 1 として残る。表・列を足すだけ", () => {
+    const sql = PROJECT_MIGRATIONS[19]!;
+    expect(sql).not.toMatch(/\bRENAME\b|\bDROP\b|_new\b|\bCHECK\b/i);
+    const path = join(mkdtempSync(join(tmpdir(), "kuramoto-schema-")), "p.sqlite");
+    const before = openDb(path, PROJECT_MIGRATIONS.slice(0, 19));
+    before.exec(`
+INSERT INTO dev_rules (id, name, body, applies_to, check_kind, on_fail, enabled) VALUES (1, 'a', 'b', 'branch', 'ai', 'review', 1), (2, 'c', 'd', 'code', 'ai', 'block', 0);
+`);
+    before.close();
+    const db = openDb(path, PROJECT_MIGRATIONS);
+    expect(get<{ user_version: number }>(db, "PRAGMA user_version")!.user_version).toBe(PROJECT_MIGRATIONS.length);
+    const v = all<{ version: number; rules: string }>(db, "SELECT version, rules FROM dev_rule_versions");
+    expect(v.map((x) => x.version)).toEqual([1]);
+    expect(JSON.parse(v[0]!.rules)).toEqual([{ id: 1, name: "a", enabled: true }, { id: 2, name: "c", enabled: false }]);
+    expect(all<{ deleted_at: string | null }>(db, "SELECT deleted_at FROM dev_rules").map((r) => r.deleted_at)).toEqual([null, null]);
+    db.close();
+    // ルールが無い DB でも版 1 ができる
+    const empty = openDb(":memory:", PROJECT_MIGRATIONS);
+    expect(all<{ version: number; rules: string }>(empty, "SELECT version, rules FROM dev_rule_versions")).toEqual([{ version: 1, rules: "[]" }]);
+    empty.close();
   });
 
   it("メッセージの kind に ask / reply / member_chat を入れられる", () => {

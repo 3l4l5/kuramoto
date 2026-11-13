@@ -272,7 +272,15 @@ CREATE INDEX IF NOT EXISTS member_messages_member ON member_messages(member_id, 
 ALTER TABLE ticket_notes ADD COLUMN kind TEXT NOT NULL DEFAULT 'note';
 ALTER TABLE runs ADD COLUMN about_ticket_id INTEGER REFERENCES tickets(id);
 `,
-  // 20: プロジェクトの全部の表に project_id を足す(ADR-0037)。1 つのファイルに複数のプロジェクトを入れられるようにする下ごしらえ。
+  // 20: 開発ルールに版(変えるたびに 1 つ上がり、そのときのルールの一覧を残す)と、消した印を足す。
+  // 消しても違反の記録は残すので、行は消さずに deleted_at を入れる。今あるルールは版 1 として残す。表・列を足すだけ。
+  `
+CREATE TABLE IF NOT EXISTS dev_rule_versions (version INTEGER PRIMARY KEY, rules TEXT NOT NULL, created_at TEXT NOT NULL);
+ALTER TABLE dev_rules ADD COLUMN deleted_at TEXT;
+INSERT OR IGNORE INTO dev_rule_versions (version, rules, created_at)
+  SELECT 1, json_group_array(json_object('id', id, 'name', name, 'enabled', json(CASE WHEN enabled = 1 THEN 'true' ELSE 'false' END))), '' FROM dev_rules;
+`,
+  // 21: プロジェクトの全部の表に project_id を足す(ADR-0037)。1 つのファイルに複数のプロジェクトを入れられるようにする下ごしらえ。
   // 足すだけ(RENAME・削除・表の作り直しはしない。前の版のコードでも開ける)。
   //  - 列は NOT NULL DEFAULT 0。今ある行は、実行器が渡すプロジェクトの id(ctx.projectId)で埋める。渡されなければ 0 のまま。
   //  - 索引は project_id を先頭にする。前の版の索引・UNIQUE は消せないので残し、project_id 込みの索引を足す。
@@ -288,17 +296,17 @@ ALTER TABLE runs ADD COLUMN about_ticket_id INTEGER REFERENCES tickets(id);
   ],
 ];
 
-/** 版 20 で project_id を足す表(プロジェクト DB の全部)。表を足すときは、その版で project_id も足す(schema.test.ts が確かめる)。 */
+/** 版 21 で project_id を足す表(プロジェクト DB の全部)。表を足すときは、その版で project_id も足す(schema.test.ts が確かめる)。 */
 export const PROJECT_ID_TABLES = [
   "repos", "settings", "formations", "units", "policies", "dev_rules",
   "plan_stages", "requirements", "requirement_items", "plan_artifacts", "plan_comments", "plan_open_items", "plan_messages",
   "members", "tickets", "sessions", "pull_requests", "messages", "runs", "run_steps",
   "reviews", "findings", "finding_comments", "rule_violations", "decisions", "merges", "conflicts",
-  "events", "ticket_notes", "lead_messages", "ticket_deps", "ticket_areas", "design_images", "ticket_questions", "member_messages",
+  "dev_rule_versions", "events", "ticket_notes", "lead_messages", "ticket_deps", "ticket_areas", "design_images", "ticket_questions", "member_messages",
 ] as const;
 
 /**
- * 版 20 で足す索引(列は project_id の後ろ。名前は <表>_project_<列>)。
+ * 版 21 で足す索引(列は project_id の後ろ。名前は <表>_project_<列>)。
  *  - unique: 前の版の UNIQUE に project_id を足したもの(前の UNIQUE も残る)。
  *  - 前の版にあった索引は、project_id を先頭にしたものを足す。
  *  - どちらも無い表には (project_id) だけの索引を足す。

@@ -6,10 +6,10 @@ import { describe, expect, it } from "vitest";
 import { HQ_MIGRATIONS, PROJECT_ID_TABLES, PROJECT_MIGRATIONS } from "./schema.js";
 import { all, get, openDb } from "./sqlite.js";
 
-/** 版 20(project_id)・本部の版 2(workspace_id)のマイグレーションの試験 */
+/** 版 21(project_id)・本部の版 2(workspace_id)のマイグレーションの試験 */
 
-const V20 = PROJECT_MIGRATIONS.length;
-const BEFORE = PROJECT_MIGRATIONS.slice(0, V20 - 1);
+const V21 = PROJECT_MIGRATIONS.length;
+const BEFORE = PROJECT_MIGRATIONS.slice(0, V21 - 1);
 const HQ_BEFORE = HQ_MIGRATIONS.slice(0, HQ_MIGRATIONS.length - 1);
 
 const tmpPath = (name: string) => join(mkdtempSync(join(tmpdir(), "kuramoto-scope-")), name);
@@ -19,8 +19,8 @@ const tableNames = (db: DatabaseSync) =>
 const columns = (db: DatabaseSync, t: string) => all<{ name: string; notnull: number; dflt_value: string | null }>(db, `PRAGMA table_info(${t})`);
 const schema = (db: DatabaseSync) => all<{ type: string; name: string; sql: string }>(db, "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name");
 
-/** 版 19 までを流した DB に、全部の表に 1 行ずつ入れて閉じる */
-function v19Db(): string {
+/** 版 20 までを流した DB に、全部の表に 1 行ずつ入れて閉じる */
+function v20Db(): string {
   const path = tmpPath("p.sqlite");
   const db = openDb(path, BEFORE);
   db.exec(`
@@ -63,11 +63,11 @@ INSERT INTO member_messages (id, member_id, who, body, at) VALUES (1, 1, 'w', 'b
   return path;
 }
 
-describe("版 20: プロジェクトの全部の表の project_id", () => {
+describe("版 21: プロジェクトの全部の表の project_id", () => {
   it("既存の DB を開くと流れ、全部の表の今ある行に、渡したプロジェクトの id が入る", () => {
-    const path = v19Db();
+    const path = v20Db();
     const db = openDb(path, PROJECT_MIGRATIONS, { projectId: 7 });
-    expect(version(db)).toBe(V20);
+    expect(version(db)).toBe(V21);
     for (const t of PROJECT_ID_TABLES) {
       const rows = all<{ project_id: number }>(db, `SELECT project_id FROM ${t}`);
       expect(rows.length, `${t} の行`).toBeGreaterThan(0);
@@ -79,7 +79,7 @@ describe("版 20: プロジェクトの全部の表の project_id", () => {
   });
 
   it("プロジェクトの id を渡さなければ 0 のまま", () => {
-    const db = openDb(v19Db(), PROJECT_MIGRATIONS);
+    const db = openDb(v20Db(), PROJECT_MIGRATIONS);
     expect(all(db, "SELECT project_id FROM tickets")).toEqual([{ project_id: 0 }]);
     db.close();
   });
@@ -94,7 +94,7 @@ describe("版 20: プロジェクトの全部の表の project_id", () => {
   });
 
   it("足すだけ: 前の表・列・索引は残り(列は並びも同じ)、新しいものが足されるだけ", () => {
-    const path = v19Db();
+    const path = v20Db();
     const old = openDb(path, BEFORE);
     const oldSchema = schema(old);
     const oldCols = new Map(tableNames(old).map((t) => [t, columns(old, t).map((c) => c.name)]));
@@ -110,7 +110,7 @@ describe("版 20: プロジェクトの全部の表の project_id", () => {
         expect(now.get(s.name)?.sql, `${s.type} ${s.name}`).toBe(s.sql);
       }
     }
-    expect(PROJECT_MIGRATIONS[V20 - 1]).toBeTypeOf("function");
+    expect(PROJECT_MIGRATIONS[V21 - 1]).toBeTypeOf("function");
     db.close();
   });
 
@@ -148,10 +148,10 @@ describe("版 20: プロジェクトの全部の表の project_id", () => {
   });
 
   it("前の版のコードで新しい DB が開ける(マイグレーションは流れず、project_id を書かない INSERT・SELECT * が動く)", () => {
-    const path = v19Db();
+    const path = v20Db();
     openDb(path, PROJECT_MIGRATIONS, { projectId: 5 }).close();
     const db = openDb(path, BEFORE);
-    expect(version(db)).toBe(V20);
+    expect(version(db)).toBe(V21);
     db.exec(`
 INSERT INTO tickets (id, number, title, stage, created_at) VALUES (2, 2, 't2', 'dev', '');
 INSERT INTO settings (key, value) VALUES ('k2', 'v2');
@@ -172,14 +172,14 @@ INSERT INTO formations (version, pull, created_at) VALUES (2, 'start', '');
     const { ManualClock } = await import("../clock.js");
     const home = mkdtempSync(join(tmpdir(), "kuramoto-scope-hq-"));
     const hq = new Hq(home, new ManualClock());
-    // 前の版のコード(版 19 まで)が作った DB を置き、本部の id 9 のプロジェクトとして開く
+    // 前の版のコード(版 20 まで)が作った DB を置き、本部の id 9 のプロジェクトとして開く
     const dir = join(home, "acme", "old");
     const old = openDb(join(dir, "project.sqlite"), BEFORE);
     old.exec("INSERT INTO tickets (number, title, stage, created_at) VALUES (1, 't', 'dev', '')");
     old.close();
     hq.db.prepare("INSERT INTO projects (id, name, data_dir, status, created_at) VALUES (9, 'old', ?, 'running', '')").run(dir);
     const p = hq.openProject(9);
-    expect(version(p.db)).toBe(V20);
+    expect(version(p.db)).toBe(V21);
     expect(all(p.db, "SELECT number, project_id FROM tickets")).toEqual([{ number: 1, project_id: 9 }]);
     p.close();
     hq.close();
