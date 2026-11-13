@@ -110,7 +110,7 @@ async function main(argv: string[]): Promise<void> {
         if (!t) {
           console.log(`merge 待ち(この順がおすすめ): ${(await suggestedMergeOrder(p)).map((x) => `#${x.number}`).join(" → ") || "なし"}`);
         } else {
-          console.log(JSON.stringify(await ownerMerge(p, new GhCli(), t.id)));
+          console.log(JSON.stringify(await ownerMerge(p, new GhCli(), t.id, "owner", { workspace: new GitWorkspace(workDirFor((await hq.project(Number(sub))).data_dir)) })));
         }
         p.close();
         return;

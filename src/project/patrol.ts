@@ -10,6 +10,7 @@ import { lastCiFailure, ownerMerge, prsOf } from "./merge.js";
 import { githubDown, isGithubAuthError, markGithubDown } from "./outage.js";
 import { lastTeamCi, teamCiEnabled } from "./team-ci.js";
 import { areaWait, areasOf, blockers, dependsOn, dropAsDuplicate, teamStatus } from "./triage.js";
+import type { Workspace } from "./workspace.js";
 import { advance, createTicket, dropTicket, holdTicket, ticketSpentUsd, type ResumeMessage } from "./workflow.js";
 
 /**
@@ -336,7 +337,7 @@ const PR_CHECK_MAX = 10;
  * 待たれているものが上限を超えても 1 周で全部回り、待たれていないものにも 1 件分の席を残す。
  * @returns done にしたチケットの数
  */
-export async function refreshMergedWaits(p: Project, gh: GitHub): Promise<number> {
+export async function refreshMergedWaits(p: Project, gh: GitHub, opts: { workspace?: Workspace } = {}): Promise<number> {
   if ((await patrolMinutes(p)) <= 0 || (await githubDown(p))) return 0;
   const waiting = (await p.pdb.from("tickets").select("id").where("stage", "=", "merge").execute()).map((t) => t.id).sort((a, b) => a - b);
   if (!waiting.length) return 0;
@@ -375,7 +376,7 @@ export async function refreshMergedWaits(p: Project, gh: GitHub): Promise<number
       if (!prs.length) continue;
       const states = await Promise.all(prs.map((pr) => gh.prStatus(pr.full_name, pr.number)));
       if (!states.every((s) => s.state === "MERGED")) continue;
-      if ((await ownerMerge(p, gh, id, "team")).result === "merged") done++;
+      if ((await ownerMerge(p, gh, id, "team", opts)).result === "merged") done++;
     } catch (e) {
       const reason = e instanceof Error ? e.message : String(e);
       if (isGithubAuthError(reason)) {
