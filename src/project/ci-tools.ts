@@ -22,7 +22,7 @@ function errText(e: unknown): string {
   return (err?.stderr || err?.message || String(e)).trim().slice(0, 400);
 }
 
-async function prsOf(p: Project, ticketId: number): Promise<{ number: number; full_name: string }[]> {
+export async function prsOf(p: Project, ticketId: number): Promise<{ number: number; full_name: string }[]> {
   return p.pdb.k
     .selectFrom("pull_requests as pr")
     .innerJoin("repos as r", "r.id", "pr.repo_id")
