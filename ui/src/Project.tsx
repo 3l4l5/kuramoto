@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { setPhoneNav, usePhoneNav, type OfficeView } from "./phoneNav";
 import { post, type ProjectView } from "./api";
 import { TicketTree } from "./Tree";
 import { areaWaitText, droppedText, hhmm, kfmt, pct, stalledText, timeLeft, unblockText, usd, waitText } from "./format";
@@ -38,8 +39,9 @@ export function ProjectPage({ id, drawer, closeDrawer, guard }: { id: number; dr
 }
 
 function Office({ id, data }: { id: number; data: ProjectView }) {
+  const { tab } = usePhoneNav();
   return (
-    <section className="pview" aria-label="プロジェクト">
+    <section className="pview" aria-label="プロジェクト" data-phone-tab={tab}>
       {!data.project.handed && (
         <div className="panel" style={{ borderColor: "var(--design)", background: "var(--design-soft)" }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
@@ -75,21 +77,16 @@ function Office({ id, data }: { id: number; data: ProjectView }) {
 
 // ---- オフィスの床 / ボード ----
 
-/** チケットの画面から「← ボードに戻る」で戻ったとき、見ていたオフィス/ボード/ツリーのままにする。 */
-let lastView: "floor" | "board" | "tree" = "floor";
-
 function FloorOrBoard({ id, data }: { id: number; data: ProjectView }) {
-  const [view, setViewState] = useState<"floor" | "board" | "tree">(lastView);
-  const setView = (v: "floor" | "board" | "tree") => {
-    lastView = v;
-    setViewState(v);
-  };
+  // チケットの画面から「← ボードに戻る」で戻ったとき、見ていたオフィス/ボード/ツリーのままにする(phoneNav が画面の外で持つ)
+  const { view } = usePhoneNav();
+  const setView = (v: OfficeView) => setPhoneNav({ view: v });
   const VIEWS = { floor: "オフィス", board: "ボード", tree: "ツリー" } as const;
   return (
-    <section className="panel" aria-label={VIEWS[view]}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <section className="panel officepanel" aria-label={VIEWS[view]}>
+      <div className="viewhead">
         <h2>{VIEWS[view]}</h2>
-        <div role="group" aria-label="オフィスの見方" style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+        <div role="group" aria-label="オフィスの見方" className="viewsw">
           {(Object.keys(VIEWS) as (keyof typeof VIEWS)[]).map((v) => (
             <Btn key={v} kind={view === v ? "solid-fill" : "outline"} size="sm" aria-pressed={view === v} onClick={() => setView(v)}>
               {VIEWS[v]}
@@ -368,6 +365,9 @@ function Board({ d }: { d: ProjectView }) {
     ...(shown.some((t) => t.stage === "dropped") ? [["dropped", "取りやめ", false] as [string, string, boolean]] : []),
   ];
   const colOf = (t: ProjectView["tickets"][number]) => (t.stage === "dev" && !t.started ? "todo" : t.stage);
+  // スマホでは、工程を上のタブにして 1 列ずつ見る。選んだ工程が今の流れに無いとき(種類を変えたとき)は、最初にチケットのある工程にする
+  const [stage, setStage] = useState<string>("");
+  const cur = cols.some(([k]) => k === stage) ? stage : (cols.find(([k]) => shown.some((t) => colOf(t) === k))?.[0] ?? cols[0]![0]);
   return (
     <div className="board-wrap">
       <div className="kindbar">
@@ -385,11 +385,19 @@ function Board({ d }: { d: ProjectView }) {
           </span>
         )}
       </div>
+      <div className="stagetabs" role="tablist" aria-label="工程">
+        {cols.map(([k, label, pre]) => (
+          <button key={k} type="button" role="tab" aria-selected={k === cur} className={pre ? "pre" : undefined} onClick={() => setStage(k)}>
+            {label}
+            <sub>{shown.filter((t) => colOf(t) === k).length}</sub>
+          </button>
+        ))}
+      </div>
       <div className="board" style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(170px, 1fr))` }}>
         {cols.map(([k, label, pre]) => {
           const list = shown.filter((t) => colOf(t) === k);
           return (
-            <div className={`col${pre ? " pre" : ""}`} key={k} aria-label={pre ? `${label}(${PRE_DEV_LABEL})` : undefined}>
+            <div className={`col${pre ? " pre" : ""}`} key={k} data-cur={k === cur ? "" : undefined} aria-label={pre ? `${label}(${PRE_DEV_LABEL})` : undefined}>
               <h3>
                 {label}
                 <span>{list.length}</span>

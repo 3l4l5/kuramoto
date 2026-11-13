@@ -7,6 +7,7 @@ import { duration, go, useAct } from "./hooks";
 import { Btn } from "./ui";
 import { Chip, Input, Segmented, Textarea, type ChipTone } from "./ds";
 import { KINDS, KindChip, PRE_DEV_LABEL } from "./kind";
+import { setPhoneNav } from "./phoneNav";
 import { TeamDrawer, type Drawer, type RuleGuard } from "./Team";
 
 /**
@@ -59,9 +60,19 @@ export function TicketPage({ id, ticketId, drawer, closeDrawer, guard }: { id: n
 }
 
 function TicketScreen({ projectId, ticketId }: { projectId: number; ticketId: number }) {
+  // スマホでは、パソコンの 2 列(中身 / やりとり)を 1 列にして、上のタブで切り替える。よく見るやりとりを先にする
+  const [tab, setTab] = useState<"timeline" | "details">("timeline");
   const { data, error } = useQuery({ queryKey: ["ticket", projectId, ticketId], queryFn: () => api<TicketView>("GET", `/projects/${projectId}/tickets/${ticketId}`), refetchInterval: 3000 });
   const back = (
-    <Btn kind="text" size="sm" className="back" onClick={() => go(`#/p/${projectId}`)}>
+    <Btn
+      kind="text"
+      size="sm"
+      className="back"
+      onClick={() => {
+        setPhoneNav({ tab: "office" });
+        go(`#/p/${projectId}`);
+      }}
+    >
       ← ボードに戻る
     </Btn>
   );
@@ -76,10 +87,11 @@ function TicketScreen({ projectId, ticketId }: { projectId: number; ticketId: nu
     <section className="ticketpage" aria-label={`チケット #${data.number}`}>
       <header className="tk-band">
         {back}
-        <h2>
-          <span className="num">#{data.number}</span>
-          {data.jiraKey ? ` · ${data.jiraKey}` : ""} {data.title}
-        </h2>
+        <span className="num">
+          #{data.number}
+          {data.jiraKey ? ` · ${data.jiraKey}` : ""}
+        </span>
+        <h2>{data.title}</h2>
         <Chip tone={data.stage === "done" ? "ok" : data.stage === "decision" ? "warn" : "default"}>{STAGE[data.stage] ?? data.stage}</Chip>
         <KindChip kind={data.kind} label={data.kindLabel} />
         <span className="rounds">往復 {data.rounds}</span>
@@ -93,7 +105,15 @@ function TicketScreen({ projectId, ticketId }: { projectId: number; ticketId: nu
         </div>
       )}
       {data.designCompare.length > 0 && <DesignCompare projectId={projectId} rows={data.designCompare} />}
-      <div className="cols">
+      <div className="tk-tabs" role="tablist" aria-label="チケットの見方">
+        <button type="button" role="tab" aria-selected={tab === "timeline"} onClick={() => setTab("timeline")}>
+          やりとり
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "details"} onClick={() => setTab("details")}>
+          中身
+        </button>
+      </div>
+      <div className="cols" data-tab={tab}>
         <Details projectId={projectId} t={data} />
         <Timeline projectId={projectId} t={data} />
       </div>

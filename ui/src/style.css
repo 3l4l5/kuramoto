@@ -1091,8 +1091,8 @@ body { background: var(--surface); }
   .toast { max-width: calc(100vw - 2 * var(--sp-4)); }
   .panel, .gate, .item, .tbl { min-width: 0; }
   .tablewrap, .flowwrap { max-width: 100%; }
-  .ticketdialog .cols, .peopledialog .pd-cols { grid-template-columns: minmax(0, 1fr); }
-  .ticketdialog dl, .peopledialog .pd-facts { grid-template-columns: 80px minmax(0, 1fr); }
+  .ticketpage .cols, .ticketdialog .cols, .peopledialog .pd-cols { grid-template-columns: minmax(0, 1fr); }
+  .ticketpage dl, .ticketdialog dl, .peopledialog .pd-facts { grid-template-columns: 80px minmax(0, 1fr); }
   .tr-node { min-width: 0; }
   .tree .tr-flat { grid-template-columns: minmax(0, 1fr); }
   .tree ul ul { margin-left: 8px; padding-left: 10px; }
@@ -1103,4 +1103,93 @@ body { background: var(--surface); }
 /* スマホでは、始業 / 終業は表示だけ(切り替えはパソコンで行う) */
 @media (max-width: 700px) {
   .workswitch .ds-switch { display: none; }
+}
+
+/* ---- 見方の切り替え(オフィス / ボード / ツリー)。パソコンでは右寄せの並び ---- */
+.viewhead { display: flex; align-items: center; gap: var(--sp-2); }
+.viewsw { display: flex; gap: var(--sp-1); margin-left: auto; }
+.stagetabs, .tk-tabs, .phonebar, .phonemenu { display: none; }
+
+/* ---- スマホ(幅 390px、未決 #21): あなたの対応・ボード・チケットの詳細。同じ画面を組み替える ---- */
+@media (max-width: 700px) {
+  body { background: var(--bg); }
+  .app { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+  /* 上の行は「Kuramoto / プロジェクト名 / 稼働の状態」だけ。画面の切り替えと引き出しは、下のタブとメニューへ移す */
+  .bar .tabs, .bar .drawerbtns, .bar .spacer, .bar .crumb .sep:first-of-type, .bar .crumb > .ds-btn:first-child { display: none; }
+  .app[data-route="home"] .bar .crumb > .ds-btn:first-child { display: inline-flex; }
+  .bar .workswitch { margin-left: auto; }
+  .bar .workswitch .state { color: var(--ok); }
+
+  /* 下のタブ */
+  .phonebar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; padding-bottom: env(safe-area-inset-bottom, 0px); background: var(--surface); border-top: 1px solid var(--line); }
+  .phonebar button { position: relative; flex: 1 1 0; min-width: 0; height: 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 0; border-top: 3px solid transparent; background: none; color: var(--muted); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+  .phonebar button[aria-current="page"] { color: var(--ink); font-weight: var(--fw-bold); border-top-color: var(--dev); }
+  .phonebar__n { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 18px; padding: 0 5px; border-radius: var(--r-pill); background: var(--design); color: var(--surface); font-style: normal; font-size: var(--fs-xs); font-weight: var(--fw-bold); }
+  .phonebar button .phonebar__n { position: absolute; top: 6px; left: calc(50% + 8px); }
+  .phonemenu { display: block; position: fixed; inset: 0; z-index: 45; }
+  .phonemenu__scrim { position: absolute; inset: 0; width: 100%; border: 0; background: var(--ink); opacity: .4; }
+  .phonemenu__sheet { position: absolute; left: 0; right: 0; bottom: 56px; margin: 0; padding: var(--sp-2) var(--sp-4) var(--sp-4); list-style: none; border-radius: var(--r-lg) var(--r-lg) 0 0; background: var(--surface); box-shadow: var(--shadow); }
+  .phonemenu__sheet button { display: block; width: 100%; height: var(--h-tab, 44px); padding: 0; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--ink); font: inherit; font-size: var(--fs-lg); text-align: left; cursor: pointer; }
+
+  /* 引き出し(編成・チームの方針・リーダー)は、下のタブの上までの全画面 */
+  aside.drawer { bottom: calc(56px + env(safe-area-inset-bottom, 0px)); }
+
+  /* 下のタブで、あなたの対応とオフィスのどちらかを見せる */
+  .pview[data-phone-tab="inbox"] > :not(.inbox) { display: none; }
+  .pview[data-phone-tab="office"] > .inbox { display: none; }
+
+  /* あなたの対応: 判断カード・merge を 1 枚ずつの白いカードで縦に並べる */
+  .inbox { background: none; border: 0; padding: 0; gap: var(--sp-3); }
+  .inbox .sub, .inbox .more { display: none; }
+  .inbox > header h2 { font-size: var(--fs-md); color: var(--muted); }
+  .inbox .cnt { background: none; color: var(--muted); padding: 0; }
+  .items { grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); }
+  .item { background: var(--surface); border-color: var(--line); box-shadow: var(--shadow); }
+  .item.decide, .item.merge { background: var(--surface); border-color: var(--line); }
+  .item .choices { flex-direction: column; }
+  .item .choices .ds-btn { width: 100%; height: var(--h-tab, 44px); justify-content: center; }
+  .item dl { grid-template-columns: 70px minmax(0, 1fr); }
+
+  /* ボード: 工程を上のタブ(件数つき、横にすべる)にして、1 列ずつ見る */
+  .officepanel { background: none; border: 0; padding: 0; }
+  .viewhead h2 { display: none; }
+  .viewsw { flex: 1; margin-left: 0; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+  .viewsw > .ds-btn { flex: 1 1 0; min-width: 0; }
+  .board-wrap { overflow-x: visible; }
+  .kindbar .kindnote { display: none; }
+  .stagetabs { display: flex; gap: var(--sp-4); overflow-x: auto; margin: 0 calc(-1 * var(--sp-4)) var(--sp-3); padding: 0 var(--sp-4); border-bottom: 1px solid var(--line); }
+  .stagetabs button { flex: none; height: var(--h-tab, 40px); padding: 0; border: 0; border-bottom: 3px solid transparent; background: none; color: var(--muted); font: inherit; white-space: nowrap; cursor: pointer; }
+  .stagetabs button sub { margin-left: 2px; font-size: var(--fs-xs); }
+  .stagetabs button.pre { text-decoration: underline dotted var(--design); text-underline-offset: 4px; }
+  .stagetabs button[aria-selected="true"] { color: var(--ink); font-weight: var(--fw-bold); border-bottom-color: var(--dev); }
+  .board { grid-template-columns: minmax(0, 1fr) !important; min-width: 0; }
+  .board .col:not([data-cur]) { display: none; }
+  .board .col { min-height: 0; padding: 0; border: 0; background: none; }
+  .board .col h3, .board .col .premark { display: none; }
+  .board .card { background: var(--surface); border-radius: var(--r-lg); padding: var(--sp-3); }
+
+  /* チケットの詳細: 1 列にして、上の「やりとり / 中身」のタブ。メモの欄は下に固定 */
+  .app[data-route="ticket"] .bar { display: none; }
+  .app[data-route="ticket"] { padding-bottom: 0; }
+  .ticketpage { padding: 0; border: 0; border-radius: 0; background: none; }
+  .ticketpage > .tk-band { padding: var(--sp-1) 0 var(--sp-3); border-bottom: 0; gap: var(--sp-1) var(--sp-2); }
+  .ticketpage > .tk-band .back { order: 1; padding: 0; }
+  .ticketpage > .tk-band .num { order: 2; margin-left: auto; font-weight: var(--fw-bold); }
+  .ticketpage > .tk-band h2 { order: 3; flex: 1 0 100%; font-size: var(--fs-lg); line-height: var(--lh-tight); }
+  .ticketpage > .tk-band > :not(.back, .num, h2) { order: 4; }
+  .ticketpage .tk-tabs { display: flex; margin: 0 calc(-1 * var(--sp-4)); padding: 0 var(--sp-4); border-bottom: 1px solid var(--line); }
+  .ticketpage .tk-tabs button { flex: 1 1 0; height: var(--h-tab, 40px); border: 0; border-bottom: 3px solid transparent; background: none; color: var(--muted); font: inherit; cursor: pointer; }
+  .ticketpage .tk-tabs button[aria-selected="true"] { color: var(--ink); font-weight: var(--fw-bold); border-bottom-color: var(--dev); }
+  .ticketpage .cols { padding-top: var(--sp-3); }
+  .ticketpage .cols[data-tab="timeline"] > .details, .ticketpage .cols[data-tab="details"] > .timeline { display: none; }
+  .ticketpage .timeline > h3 { display: none; }
+  .ticketpage .timeline ol { max-height: none; overflow: visible; padding-bottom: 150px; }
+  .ticketpage .timeline > ol > li { grid-template-columns: minmax(0, 1fr); }
+  .ticketpage .timeline > ol > li > time { position: absolute; right: 0; top: 8px; }
+  .ticketpage .timeline > ol > li > div { padding-right: 44px; }
+  .ticketpage .timeline .note { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; margin: 0; padding: var(--sp-3) var(--sp-4) calc(var(--sp-3) + env(safe-area-inset-bottom, 0px)); background: var(--surface); border-top: 1px solid var(--line); flex-direction: row; align-items: flex-end; }
+  .ticketpage .timeline .note > .hint { display: none; }
+  .ticketpage .timeline .note > .h { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .ticketpage .timeline .note > :nth-child(2) { flex: 1; min-width: 0; }
+  .ticketpage .timeline .note button { align-self: flex-end; height: var(--h-tab, 44px); }
 }
