@@ -1273,8 +1273,8 @@ body { background: var(--surface); }
 .prod .panel .hint, .prod .markdetail { margin: var(--sp-1) 0 0; font-size: var(--fs-sm); color: var(--muted); }
 .prod .markdetail ul { margin: 0; padding-left: var(--sp-4); }
 .prod .bar { display: flex; align-items: center; gap: var(--sp-3); margin: 0 0 var(--sp-3); flex-wrap: wrap; }
-.prod .bar .sectabs { display: inline-flex; gap: 0; flex-wrap: nowrap; padding: var(--sp-1); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg); }
-.prod .bar .sectabs button { height: var(--h-control-sm); padding: 0 var(--sp-3); margin: 0; border: 0; border-radius: var(--r-md); background: transparent; color: var(--muted); font-size: var(--fs-md); font-weight: var(--fw-medium); }
+.prod .bar .sectabs { display: inline-flex; gap: 0; flex-wrap: nowrap; max-width: 100%; overflow-x: auto; padding: var(--sp-1); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--bg); }
+.prod .bar .sectabs button { flex: none; height: var(--h-control-sm); padding: 0 var(--sp-3); margin: 0; border: 0; border-radius: var(--r-md); background: transparent; color: var(--muted); font-size: var(--fs-md); font-weight: var(--fw-medium); white-space: nowrap; }
 .prod .bar .sectabs button[aria-selected="true"] { background: var(--surface); color: var(--ink); border: 0; box-shadow: var(--shadow); }
 .prod .bar .mode { margin-left: auto; padding: 0; }
 .prod .types { display: flex; align-items: center; gap: var(--sp-1); margin-left: auto; font-size: var(--fs-sm); color: var(--muted); }
@@ -1295,6 +1295,13 @@ body { background: var(--surface); }
   .prod { grid-template-columns: minmax(0, 1fr); }
   .prod .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .prod .bar .mode, .prod .types { margin-left: 0; }
+}
+/* スマホの生産性: 上の帯は全幅に並べ、チケットごとの表は列を潰さずに横へ動かす */
+@media (max-width: 700px) {
+  .dads-bar .kpi { flex: 1 1 100%; margin-left: 0; justify-content: space-between; gap: var(--sp-2) var(--sp-3); padding: 0; border: 0; }
+  .prod .bar .sectabs { flex: 1 1 100%; }
+  .prod table.tickets { min-width: 520px; }
+  .prod table.tickets tbody th { min-width: 8em; }
 }
 /* 生産性の画面の右上(ヘッダー)の指標 */
 .dads-bar .kpi { margin-left: auto; display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }

@@ -11,6 +11,7 @@ import { FakeHarness, fixedAll, withResolutions } from "../src/harness/fake.js";
 import { Hq } from "../src/hq.js";
 import { StaticWorkspace } from "../src/project/workspace.js";
 import { KuramotoServer } from "../src/server.js";
+import { seedScreens, withTreeStates } from "./screens.js";
 
 const port = Number(process.env.E2E_PORT ?? 4390);
 const webDir = resolve(process.env.E2E_WEB_DIR ?? "ui/dist");
@@ -199,4 +200,19 @@ const app = new KuramotoServer({ hq: new Hq(home), webDir, harnesses: { "claude-
   mergePollMs: 3_600_000,
 });
 await app.resume();
-createServer((req, res) => void app.handle(req, res)).listen(port, "127.0.0.1", () => console.log(`e2e server: http://localhost:${port} (${webDir})`));
+const screens = process.env.E2E_SCREENS === "1";
+createServer((req, res) => {
+  // 見た目の撮り直し用(E2E_SCREENS=1): プロジェクトの画面データだけ、ツリー・ボードの 5 状態に差し替える
+  const view = screens && req.method === "GET" ? req.url?.match(/^\/api\/projects\/(\d+)$/) : null;
+  if (!view) return void app.handle(req, res);
+  app.projectView(Number(view[1])).then(
+    (v) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(withTreeStates(v)));
+    },
+    () => void app.handle(req, res),
+  );
+}).listen(port, "127.0.0.1", () => {
+  console.log(`e2e server: http://localhost:${port} (${webDir})`);
+  if (screens) void seedScreens(`http://localhost:${port}`).then((id) => console.log(`screens: プロジェクト ${id} を作りました(http://localhost:${port}/#/p/${id})`));
+});

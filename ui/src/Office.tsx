@@ -158,7 +158,12 @@ type Geo = { w: number; h: number; pos: Record<string, { x: number; top: number;
 
 /** 駅の下に取る、路線を通すための帯の最小の高さ(style.css の .of-st > section の padding-bottom の既定値と同じ)。 */
 const BAND = 136;
-const LANE_GAP = 30;
+/** 路線の間隔。路線名のラベル(20px)と、その下の札(24px)が、上の路線の札に重ならない高さ */
+const LANE_GAP = 48;
+/** 路線から、その名前のラベルの上端までの高さ。札(路線の上下 12px)の上に、ラベルを載せる */
+const LABEL_ABOVE = 34;
+/** 帯の上端から最初の路線までの高さ。島の中の席・名前より下に、ラベルと札が収まる */
+const FIRST_LANE = 44;
 /**
  * 路線図。駅(島・受け口・merge 待ち)を通るように、種類ごとの路線を 1 本ずつ引く(駅の下側の帯)。
  * 路線は止まる駅に丸を置き、開発より前の「申し送りだけ」の停車は点線の丸にする。選んだ種類の路線だけが濃くなる。
@@ -199,14 +204,14 @@ function RouteMap({ data, kind, children }: { data: OfficeView; kind: string; ch
   // 路線ごとの高さ: 折り返しがあると、その分だけ下の路線を下げる。駅の下の帯(band)も、その分だけ広げる
   const order = new Map<string, number>([["lead", 0], ...data.units.map((u, i): [string, number] => [`unit:${u.id}`, i + 1]), ["merge", data.units.length + 1]]);
   const stopsAt = (l: OfficeView["lines"][number]) => ["lead", ...l.stops.map((s) => `unit:${s.unitId}`), "merge"];
-  let acc = 20;
+  let acc = FIRST_LANE;
   const laneAt = data.lines.map((l) => {
     const at = acc;
     acc += linePath(stopsAt(l).filter((x) => order.has(x)).map((x) => order.get(x)!), 0).turns.length * LEG_GAP + LANE_GAP;
     return at;
   });
   const band = Math.max(BAND, acc - LANE_GAP + 56);
-  const lane = (i: number) => (geo ? geo.rowBottom - band + (laneAt[i] ?? 20) : 0);
+  const lane = (i: number) => (geo ? geo.rowBottom - band + (laneAt[i] ?? FIRST_LANE) : 0);
   const ask = (a: string, b: string): string | null => {
     const pa = geo?.pos[a], pb = geo?.pos[b];
     if (!pa || !pb) return null;
@@ -274,7 +279,7 @@ function RouteMap({ data, kind, children }: { data: OfficeView; kind: string; ch
         const on = kind === "all" || l.kinds.some((x) => x.kind === kind);
         const dim = on ? "" : " of-lbl-dim";
         return [
-          <span key={`lbl-${i}`} className={`of-lbl${dim}`} style={{ left: geo!.pos[locs[0]!]!.x + 30, top: lane(i) - 22 }}>
+          <span key={`lbl-${i}`} className={`of-lbl${dim}`} style={{ left: geo!.pos[locs[0]!]!.x + 30, top: lane(i) - LABEL_ABOVE }}>
             {lineName(l)}
           </span>,
           ...(l.stops.some((s) => s.pre) && turns[0]
