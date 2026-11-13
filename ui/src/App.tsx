@@ -11,7 +11,7 @@ import { pct, usd } from "./format";
 import { DRAWER_LABEL, useDrawerState, type Drawer } from "./Team";
 import { Btn } from "./ui";
 import { WorkSwitch } from "./WorkSwitch";
-import { useFormationUi } from "./formationUi";
+import { clearRequestedTab, useFormationUi } from "./formationUi";
 
 export function App() {
   const route = useRoute();
@@ -22,6 +22,10 @@ export function App() {
   useEffect(() => {
     if (seq > 0) moveTo("formation");
   }, [seq]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 確認で引き出しが開かなかったときは、頼んだタブを残さない(あとで「編成」を押したときに、そのタブで開いてしまうため)
+  useEffect(() => {
+    if (!guard.confirming && drawer !== "formation") clearRequestedTab();
+  }, [guard.confirming, drawer]);
   return (
     <div className="app">
       <header className="bar dads-bar">

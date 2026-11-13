@@ -9,7 +9,7 @@ import { Avatar } from "./Avatar";
 import { IslandDialog } from "./IslandDialog";
 import { UnitDialog } from "./OfficeDialogs";
 import { MemberDrawer } from "./MemberDrawer";
-import { KIND_SHAPE } from "./kind";
+import { KIND_SHAPE, KINDS } from "./kind";
 import { Button, Segmented } from "./ds";
 import { requestFormationTab, useFormationUi } from "./formationUi";
 import { MAX_UNITS } from "../../src/domain/formation";
@@ -44,6 +44,7 @@ export function OfficeFloor({ id }: { id: number }) {
   const draftOn = useFormationUi().draftRoutes !== null;
   if (!data) return <section className="officefloor" aria-label="オフィスの床" />;
   const open = (chat: boolean) => (mid: number) => setMember({ id: mid, chat });
+  const kinds = KINDS.filter((k) => data.lines.some((l) => l.kinds.some((x) => x.kind === k.key))).map((k) => ({ kind: k.key, label: k.label }));
   const stopsOf = (l: OfficeView["lines"][number]) => ["lead", ...l.stops.map((s) => `unit:${s.unitId}`), "merge"];
   return (
     <section className="officefloor" aria-label="オフィスの床" ref={floor}>
@@ -54,7 +55,7 @@ export function OfficeFloor({ id }: { id: number }) {
             label="路線の種類"
             value={kind}
             onChange={setKind}
-            options={[{ value: "all", label: "すべて" }, ...data.lines.map((l) => ({ value: l.kind, label: `${KIND_SHAPE[l.kind]} ${l.label}` }))]}
+            options={[{ value: "all", label: "すべて" }, ...kinds.map((k) => ({ value: k.kind, label: `${KIND_SHAPE[k.kind]} ${k.label}` }))]}
           />
         </div>
         <RouteMap data={data} kind={kind}>
@@ -128,10 +129,11 @@ function Station({ loc, data, stopsOf, children }: { loc: string; data: OfficeVi
   return (
     <div className="of-st">
       <span className="of-strands" aria-hidden="true">
-        {data.lines.map((l) => {
-          const at = stopsOf(l).indexOf(loc);
+        {KINDS.map((k) => {
+          const l = data.lines.find((x) => x.kinds.some((y) => y.kind === k.key));
+          const at = l ? stopsOf(l).indexOf(loc) : -1;
           return (
-            <i key={l.kind} className="of-strand" data-k={l.kind}>
+            <i key={k.key} className="of-strand" data-k={k.key}>
               {at >= 0 && <b className="of-stopnum">{at + 1}</b>}
             </i>
           );
@@ -228,6 +230,11 @@ function RouteMap({ data, kind, children }: { data: OfficeView; kind: string; ch
   const shown = draft ? draft.flatMap((r) => (locOfName.has(r.a) && locOfName.has(r.b) ? [{ a: locOfName.get(r.a)!, b: locOfName.get(r.b)! }] : [])) : data.routes;
   const routes = shown.map((r) => ({ ...r, d: ask(r.a, r.b) })).filter((r): r is typeof r & { d: string } => r.d !== null);
   const waiting = (r: { a: string; b: string }) => data.asks.some((q) => (q.a === r.a && q.b === r.b) || (q.a === r.b && q.b === r.a));
+  const lineName = (l: OfficeView["lines"][number]) => {
+    const shapes = l.kinds.map((k) => KIND_SHAPE[k.kind]).join("");
+    const names = l.kinds.map((k) => k.label).join("・");
+    return l.isDefault ? `${shapes} 既定線(${names})` : `${shapes} ${names}線${l.skipped.length ? `(${l.skipped.join("・")}を通過)` : ""}`;
+  };
   const built = geo
     ? data.lines.map((l, i) => {
         const locs = ["lead", ...l.stops.map((s) => `unit:${s.unitId}`), "merge"].filter((x) => geo.pos[x]);
@@ -239,28 +246,28 @@ function RouteMap({ data, kind, children }: { data: OfficeView; kind: string; ch
   const tickets = geo
     ? Object.entries(data.where).flatMap(([n, loc]) => {
         const k = data.ticketKinds[Number(n)];
-        const b = built.find((x) => x.l.kind === k);
+        const b = built.find((x) => x.l.kinds.some((y) => y.kind === k));
         const p = geo.pos[loc];
         if (!k || !b || !p || loc === "done" || loc === "arch") return [];
         const y = b.ys[b.locs.indexOf(loc)] ?? lane(b.i);
-        const at = slot.get(`${loc}|${k}`) ?? 0;
-        slot.set(`${loc}|${k}`, at + 1);
-        return [{ n: Number(n), k, x: p.x - 24 + at * 52, y }];
+        const at = slot.get(`${loc}|${b.i}`) ?? 0;
+        slot.set(`${loc}|${b.i}`, at + 1);
+        return [{ n: Number(n), k, x: p.x - 24 + at * 52, y, on: kind === "all" || b.l.kinds.some((y) => y.kind === kind) }];
       })
     : [];
   return (
     <div className="of-map" ref={map} data-kind={kind}>
       {children}
       {geo && (
-        <svg className="of-rails" width={geo.w} height={geo.h} role="img" aria-label={`路線図: ${data.lines.map((l) => `${l.label}は${["受け口", ...l.stops.map((s) => data.units.find((u) => u.id === s.unitId)?.name ?? s.role), "merge 待ち"].join("→")}`).join("、")}`}>
+        <svg className="of-rails" width={geo.w} height={geo.h} role="img" aria-label={`路線図: ${data.lines.map((l) => `${lineName(l)}は${["受け口", ...l.stops.map((s) => data.units.find((u) => u.id === s.unitId)?.name ?? s.role), "merge 待ち"].join("→")}`).join("、")}`}>
           {routes.map((r) => (
             <path key={`${r.a}-${r.b}`} className={`of-route${draft ? " of-route-draft" : ""}`} data-route={`${r.a}|${r.b}`} d={r.d} />
           ))}
           {built.map(({ l, locs, d, ys, turns, i }) => {
-            const on = kind === "all" || kind === l.kind;
+            const on = kind === "all" || l.kinds.some((x) => x.kind === kind);
             const first = geo.pos[locs[0]!]!.x;
             return (
-              <g key={l.kind} className={`of-line ${on ? "of-line-on" : "of-line-dim"}`} data-line={l.kind}>
+              <g key={i} className={`of-line ${on ? "of-line-on" : "of-line-dim"}`} data-line={l.kinds.map((k) => k.kind).join(" ")}>
                 <path d={d} className="of-track" />
                 <path d={d} className="of-sleepers" />
                 {locs.map((loc, at) => {
@@ -272,8 +279,8 @@ function RouteMap({ data, kind, children }: { data: OfficeView; kind: string; ch
                     申し送りを書いて開発へ戻る
                   </text>
                 )}
-                <text className="of-linelabel" x={first - 14} y={lane(i) + 4} textAnchor="end">
-                  {KIND_SHAPE[l.kind]} {l.label}
+                <text className="of-linelabel" x={first + 14} y={lane(i) + 4}>
+                  {lineName(l)}
                 </text>
               </g>
             );
@@ -281,7 +288,7 @@ function RouteMap({ data, kind, children }: { data: OfficeView; kind: string; ch
         </svg>
       )}
       {tickets.map((t) => (
-        <span key={t.n} className={`of-tk ${kind === "all" || kind === t.k ? "" : "of-tk-dim"}`} data-ticket={t.n} data-kind-of={t.k} style={{ left: t.x, top: t.y - 12 }}>
+        <span key={t.n} className={`of-tk ${t.on ? "" : "of-tk-dim"}`} data-ticket={t.n} data-kind-of={t.k} style={{ left: t.x, top: t.y - 12 }}>
           <span aria-hidden="true">{KIND_SHAPE[t.k]}</span>#{t.n}
         </span>
       ))}

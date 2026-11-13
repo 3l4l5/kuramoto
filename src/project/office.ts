@@ -123,15 +123,25 @@ export function officeView(p: Project) {
   const done = [...tickets.values()].filter((t) => t.stage === "done").sort((a, b) => String(b.done_at).localeCompare(String(a.done_at)));
   for (const t of done) where[t.number] = "done";
 
-  // 路線図(R16・R17): 種類ごとの流れを、島(駅)を通る路線にする。開発より前の工程は「申し送りだけ」の停車(pre)
-  const lines = TICKET_KINDS.map((kind) => {
+  // 路線図(R16・R17): 流れ(停車の並び)が同じ種類は 1 本の路線にまとめ、島(駅)を通す。開発より前の工程は「申し送りだけ」の停車(pre)。
+  // 既定の流れと同じ路線は「既定線」。既定の流れから飛ばした工程(島のあるもの)は skipped に入れ、「(QA を通過)」と添える
+  const defaultFlow = flowFor(f.flows, null);
+  const groups = new Map<string, { flow: WorkRole[]; kinds: { kind: string; label: string }[] }>();
+  for (const kind of TICKET_KINDS) {
     const flow = flowFor(f.flows, kind);
+    const g = groups.get(flow.join(">")) ?? { flow, kinds: [] };
+    g.kinds.push({ kind, label: TICKET_KIND_LABEL[kind] });
+    groups.set(flow.join(">"), g);
+  }
+  const lines = [...groups.values()].map(({ flow, kinds }) => {
     const devAt = flow.indexOf("dev");
     const stops = flow.flatMap((role, i) => {
       const u = f.units.find((x) => x.roles.includes(role));
       return u ? [{ unitId: u.id, role: ROLE_LABEL[role], pre: i < devAt }] : [];
     });
-    return { kind, label: TICKET_KIND_LABEL[kind], stops };
+    const isDefault = flow.join(">") === defaultFlow.join(">");
+    const skipped = isDefault ? [] : defaultFlow.filter((r) => !flow.includes(r) && f.units.some((u) => u.roles.includes(r))).map((r) => ROLE_LABEL[r]);
+    return { kinds, isDefault, skipped, stops };
   });
   // 許されている連絡経路(端は駅の名前: unit:ID / lead / arch)。質問の封筒は、答えを待っている質問の経路を行き来する
   const ends = new Map<string, string>([["lead", "lead"], ["architect", "arch"], ...f.units.map((u): [string, string] => [u.name, `unit:${u.id}`])]);

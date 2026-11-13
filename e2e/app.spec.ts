@@ -172,12 +172,13 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expect(inbox.getByRole("button", { name: "merge する", exact: true })).toHaveCount(0);
     await expect(inbox).toContainText("チームが merge します。あなたの対応は要りません");
     await shot(page, "office-merge");
-    // 路線図: 種類ごとの路線が床に引かれ、種類を選ぶとその路線だけが濃くなる(R17)
+    // 路線図: 流れが同じ種類は 1 本の路線にまとまる(流れを決めていなければ既定線 1 本)。種類を選ぶと、その種類を含む路線が濃くなる(R17)
     const rails = floor.getByRole("img", { name: /^路線図:/ });
-    await expect(rails.locator("[data-line]")).toHaveCount(4);
-    await expect(rails.locator('[data-line="bugfix"]')).not.toHaveClass(/of-line-dim/);
+    await expect(rails.locator("[data-line]")).toHaveCount(1);
+    await expect(rails).toHaveAttribute("aria-label", /●▲■◆ 既定線\(機能・バグ修正・リファクタ・ドキュメント\)は受け口→/);
+    await expect(rails.locator('[data-line~="bugfix"]')).not.toHaveClass(/of-line-dim/);
     // 路線は駅の中(島の下の帯)を通る
-    const track = await rails.locator('[data-line="feature"] .of-track').boundingBox();
+    const track = await rails.locator('[data-line~="feature"] .of-track').boundingBox();
     const station = await devIsland.boundingBox();
     expect(track!.y).toBeGreaterThan(station!.y);
     expect(track!.y + track!.height).toBeLessThan(station!.y + station!.height);
@@ -185,9 +186,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expect(floor.locator('[data-ticket][data-kind-of="feature"]').first()).toBeVisible();
     await expect(floor).toContainText("丸が無い = 省略");
     await floor.getByRole("radiogroup", { name: "路線の種類" }).getByRole("radio", { name: /バグ修正/ }).click();
-    await expect(floor.locator('[data-ticket][data-kind-of="feature"]').first()).toHaveClass(/of-tk-dim/);
-    await expect(rails.locator('[data-line="bugfix"]')).toHaveClass(/of-line-on/);
-    await expect(rails.locator('[data-line="feature"]')).toHaveClass(/of-line-dim/);
+    await expect(rails.locator('[data-line~="bugfix"]')).toHaveClass(/of-line-on/);
     await floor.getByRole("radiogroup", { name: "路線の種類" }).getByRole("radio", { name: "すべて" }).click();
     // キャラクターを押すと、右に引き出しが開く: 今のチケット・直近の手順・話す欄。話すとチケットのメモに残る
     await devIsland.getByRole("button", { name: /実装中.*押すと様子を見る/ }).first().click();
@@ -424,6 +423,16 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(floor.locator("path.of-route")).toHaveCount(2);
     await expect(floor.locator("path.of-route-draft")).toHaveCount(0);
     await expect(floor).not.toContainText("保存前の案を表示中");
+    // 路線図: バグ修正だけ専用の流れ(QA → 開発 → レビュー、セキュリティは通過)なので、路線は既定線とバグ修正線の 2 本になる
+    const rails = floor.getByRole("img", { name: /^路線図:/ });
+    await expect(rails.locator("[data-line]")).toHaveCount(2);
+    await expect(rails).toHaveAttribute("aria-label", /既定線\(機能・リファクタ・ドキュメント\)/);
+    await expect(rails).toHaveAttribute("aria-label", /▲ バグ修正線\(セキュリティを通過\)/);
+    // 種類を選ぶと、その種類を含む路線だけが濃くなる
+    await floor.getByRole("radiogroup", { name: "路線の種類" }).getByRole("radio", { name: /バグ修正/ }).click();
+    await expect(rails.locator('[data-line="bugfix"]')).toHaveClass(/of-line-on/);
+    await expect(rails.locator('[data-line~="feature"]')).toHaveClass(/of-line-dim/);
+    await floor.getByRole("radiogroup", { name: "路線の種類" }).getByRole("radio", { name: "すべて" }).click();
     // 床の凡例から、編成の引き出しを連絡経路・流れのタブで開き直せる
     await drawer.getByRole("button", { name: "閉じる" }).click();
     await floor.getByRole("button", { name: "経路を変える" }).click();
@@ -778,8 +787,9 @@ test("チケットの種類: 詳細で変えられ、ボードは種類の流れ
 
 /**
  * 合意した画面(お手本の画像)との見比べ。お手本は git に入れず、KURAMOTO_DESIGN_DIR(作業場所の .kuramoto/design)から読む。
- * 置いていない環境(普通の CI)では飛ばす。お手本はデータ入りの絵なので、画素の一致ではなく「大きく崩れていない」ことだけを見る。
- * 実際の違いの割合と色付けした画像は、Kuramoto の compare_screen(同じ compareImages)で確かめる。
+ * 置いていない環境(普通の CI)では飛ばす。お手本はデータ入りの絵(メンバーを選んで引き出しを開いた状態)なので、同じようにメンバーを選んで撮る。
+ * データは同じにならないので画素は合わないが、大きく崩れたら落ちるよう 30% をしきい値にしている(目安は 10%)。
+ * 実際の割合は毎回テストの注釈と色付けした画像に残るので、最初に流した値を見てしきい値を締める。同じ比較は Kuramoto の compare_screen でもできる。
  */
 const DESIGN_DIR = process.env.KURAMOTO_DESIGN_DIR;
 test("オフィスの床は、合意したお手本(office.png)と幅がそろい、大きく崩れていない", async ({ page }, info) => {
@@ -787,10 +797,13 @@ test("オフィスの床は、合意したお手本(office.png)と幅がそろ�
   await page.setViewportSize({ width: 1280, height: 800 });
   await createProject(page, "見比べ", "acme/compare");
   await page.getByRole("group", { name: "プロジェクトの画面" }).getByRole("button", { name: "オフィス" }).click();
-  await expect(page.getByRole("region", { name: "オフィスの床" }).getByRole("img", { name: /^路線図:/ })).toBeVisible();
+  const floor = page.getByRole("region", { name: "オフィスの床" });
+  await expect(floor.getByRole("img", { name: /^路線図:/ })).toBeVisible();
+  await floor.getByRole("region", { name: /^島 / }).first().getByRole("button", { name: /押すと様子を見る/ }).first().click();
+  await expect(floor.getByLabel(/の様子と会話$/)).toBeVisible();
   const actual = await page.screenshot({ fullPage: true });
   const c = compareImages(readFileSync(join(DESIGN_DIR!, "office.png")), actual);
   await info.attach("office-diff.png", { body: c.diff, contentType: "image/png" });
   info.annotations.push({ type: "違う画素の割合", description: `${(c.ratio * 100).toFixed(1)}%${c.sizeNote ? `(${c.sizeNote})` : ""}` });
-  expect(c.ratio).toBeLessThan(0.5);
+  expect(c.ratio).toBeLessThan(0.3);
 });

@@ -954,7 +954,7 @@ body { background: var(--surface); }
 .officefloor .of-tk { position: absolute; z-index: 4; display: inline-flex; align-items: center; gap: var(--sp-1); height: var(--h-chip); padding: 0 var(--sp-2); border-radius: var(--r-sm); background: var(--surface); border: 1px solid var(--art-outline); box-shadow: var(--shadow); font-family: var(--f-mono); font-size: var(--fs-xs); pointer-events: none; }
 .officefloor .of-tk-dim { opacity: .35; }
 .officefloor .of-legend-links { margin-left: auto; display: inline-flex; gap: var(--sp-2); }
-.officefloor .of-linelabel { fill: var(--ink); font-size: var(--fs-xs); font-weight: var(--fw-bold); }
+.officefloor .of-linelabel { fill: var(--ink); font-size: var(--fs-xs); font-weight: var(--fw-bold); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }
 .officefloor .of-line-dim { opacity: .3; }
 .officefloor .of-route { fill: none; stroke: var(--dev); stroke-width: 3; stroke-dasharray: 8 6; stroke-linecap: round; }
 .officefloor .of-env { position: absolute; left: 0; top: 0; z-index: 4; width: var(--h-chip); height: 18px; display: flex; align-items: center; justify-content: center; border: 2px solid var(--art-outline); border-radius: var(--r-sm); background: var(--surface); font-size: var(--fs-xs); font-weight: var(--fw-bold); offset-rotate: 0deg; animation: of-ask 2.4s ease-in-out infinite alternate; }

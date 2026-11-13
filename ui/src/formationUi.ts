@@ -40,3 +40,8 @@ export function takeRequestedTab(): FormationTab | null {
   pending = null;
   return t;
 }
+
+/** 頼んだタブを取り下げる(開発ルールの下書きの確認で「このまま直す」を選んだときなど、引き出しが開かなかったとき)。 */
+export function clearRequestedTab() {
+  pending = null;
+}
