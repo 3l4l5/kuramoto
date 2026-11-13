@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { all, get, run, tx } from "../db/sqlite.js";
+import { TICKET_KINDS } from "../domain/flow.js";
 import { artifact, hasContent, STAGES, type Stage } from "./planning.js";
 import type { Project, TicketStage } from "./project.js";
 import { createTicket } from "./workflow.js";
@@ -37,7 +38,8 @@ export const transferSchema = z.object({
   artifacts: z.array(z.object({ stage: stageEnum, kind: z.string(), key: z.string(), body: z.unknown() })),
   comments: z.array(z.object({ screenKey: z.string(), variant: z.string().nullable(), x: z.number().nullable(), y: z.number().nullable(), body: z.string(), resolved: z.boolean() })),
   messages: z.array(z.object({ stage: z.string(), who: z.string(), body: z.string(), at: z.string() })),
-  tickets: z.array(z.object({ title: z.string(), body: z.string(), stage: z.string(), planRefs: z.record(z.string(), z.unknown()) })),
+  // kind / devDone は古い書き出し(無し)も読めるよう省略可。無ければ feature・開発前として読む
+  tickets: z.array(z.object({ title: z.string(), body: z.string(), stage: z.string(), kind: z.enum(TICKET_KINDS).optional(), devDone: z.boolean().optional(), planRefs: z.record(z.string(), z.unknown()) })),
 });
 
 export type TransferData = z.infer<typeof transferSchema>;
@@ -89,7 +91,7 @@ export function collectTransfer(p: Project, projectName: string): TransferData {
       "SELECT a.key, c.variant, c.x, c.y, c.body, c.resolved_in FROM plan_comments c JOIN plan_artifacts a ON a.id = c.artifact_id ORDER BY c.id",
     ).map((c) => ({ screenKey: c.key, variant: c.variant, x: c.x, y: c.y, body: c.body, resolved: c.resolved_in !== null })),
     messages: all<{ stage: string; who: string; body: string; at: string }>(p.db, "SELECT stage, who, body, at FROM plan_messages ORDER BY id"),
-    tickets: p.tickets().map((t) => ({ title: t.title, body: t.body, stage: t.stage, planRefs: JSON.parse(t.plan_refs || "{}") as Record<string, unknown> })),
+    tickets: p.tickets().map((t) => ({ title: t.title, body: t.body, stage: t.stage, kind: t.kind, devDone: !!t.dev_done, planRefs: JSON.parse(t.plan_refs || "{}") as Record<string, unknown> })),
   };
 }
 
@@ -139,11 +141,13 @@ export function restoreTransfer(p: Project, d: TransferData): void {
 
     for (const t of d.tickets) {
       const final = (t.stage === "done" || t.stage === "dropped") as boolean;
+      // 種類と、開発を通ったか(通っていれば開発より前へは戻らない)を持ち越す。古い書き出しは feature として読む
+      const base = { title: t.title, body: t.body, kind: t.kind, devDone: t.devDone, planRefs: t.planRefs };
       if (final) {
-        const row = p.addTicket({ title: t.title, body: t.body, planRefs: t.planRefs });
+        const row = p.addTicket(base);
         p.setStage(row.id, t.stage as TicketStage);
       } else {
-        createTicket(p, { title: t.title, body: t.body, planRefs: t.planRefs });
+        createTicket(p, base);
       }
     }
     // 書き出したときに担当が作業中・順番待ちだった依頼は持ち越していない。

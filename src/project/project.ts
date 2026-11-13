@@ -397,15 +397,15 @@ export class Project {
 
   // ---- チケット ----
 
-  addTicket(t: { title: string; body?: string; kind?: TicketKind; requirementItemId?: number; planRefs?: Record<string, unknown> }): TicketRow {
+  addTicket(t: { title: string; body?: string; kind?: TicketKind; devDone?: boolean; requirementItemId?: number; planRefs?: Record<string, unknown> }): TicketRow {
     if (t.kind !== undefined && !isTicketKind(t.kind)) throw new Error(`知らないチケットの種類です: ${String(t.kind)}`);
     return tx(this.db, () => {
       const number = (get<{ n: number | null }>(this.db, "SELECT MAX(number) AS n FROM tickets")?.n ?? 0) + 1;
       const jiraPrefix = this.setting("jira_key");
       const id = run(
         this.db,
-        "INSERT INTO tickets (number, jira_key, title, body, kind, stage, requirement_item_id, plan_refs, created_at) VALUES (?, ?, ?, ?, ?, 'dev', ?, ?, ?)",
-        [number, jiraPrefix ? `${jiraPrefix}-${number}` : null, t.title, t.body ?? "", t.kind ?? "feature", t.requirementItemId ?? null, JSON.stringify(t.planRefs ?? {}), this.now()],
+        "INSERT INTO tickets (number, jira_key, title, body, kind, dev_done, stage, requirement_item_id, plan_refs, created_at) VALUES (?, ?, ?, ?, ?, ?, 'dev', ?, ?, ?)",
+        [number, jiraPrefix ? `${jiraPrefix}-${number}` : null, t.title, t.body ?? "", t.kind ?? "feature", t.devDone ? 1 : 0, t.requirementItemId ?? null, JSON.stringify(t.planRefs ?? {}), this.now()],
       ).lastId;
       this.event("lead", "ticket_created", id, { number, title: t.title });
       return this.ticket(id);
