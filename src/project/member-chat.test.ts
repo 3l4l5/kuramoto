@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -190,6 +190,8 @@ describe("終わったチケット(done・dropped)について話しかける", 
       const { ticket, member } = await worked(p, d);
       p.db.prepare("UPDATE tickets SET stage = ? WHERE id = ?").run(stage, ticket.id);
       prepared.length = 0;
+      // 会話の起動が新しく残すセッションに、チケットのブランチが入らないことを見たいので、開発のセッションは消しておく
+      p.db.prepare("DELETE FROM sessions WHERE member_id = ? AND ticket_id = ?").run(member.id, ticket.id);
       const notesBefore = p.notes(ticket.id).length;
 
       sayToMember(p, member.id, "あれってどうなった?");
@@ -207,11 +209,11 @@ describe("終わったチケット(done・dropped)について話しかける", 
       expect(p.notes(ticket.id)).toHaveLength(notesBefore);
       expect(p.ticket(ticket.id).stage).toBe(stage);
       // 既定のブランチで動いた起動は、チケットのブランチを覚えない
-      expect(get<{ branch: string | null }>(p.db, "SELECT branch FROM sessions WHERE member_id = ? AND ticket_id = ?", [member.id, ticket.id])!.branch).not.toBe("");
+      expect(get<{ branch: string | null }>(p.db, "SELECT branch FROM sessions WHERE member_id = ? AND ticket_id = ?", [member.id, ticket.id])!.branch).toBeNull();
     });
   }
 
-  it("GitWorkspace: ブランチが消えていても、ブランチなしなら既定のブランチで作業場所を用意できる(開発・レビュー・QA の島とも)", async () => {
+  it("GitWorkspace: ブランチなしは、役割によらず読むだけの <番号>-chat を使う。ブランチが消えていてもよく、開発の作業場所には触らない", async () => {
     const dir = mkdtempSync(join(tmpdir(), "kuramoto-ws-"));
     const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, ...a], { encoding: "utf8" });
     execFileSync("git", ["init", "--bare", "-b", "main", join(dir, "o.git")]);
@@ -222,19 +224,42 @@ describe("終わったチケット(done・dropped)について話しかける", 
     git(seed, "commit", "--allow-empty", "-m", "init");
     git(seed, "push", "origin", "HEAD:main");
     // 元の clone は、GitWorkspace の置き場所(<workDir>/repos/<owner>__<repo>)に置く
-    execFileSync("git", ["clone", join(dir, "o.git"), join(dir, "repos", "acme__shop")], { stdio: "ignore" });
+    const clone = join(dir, "repos", "acme__shop");
+    execFileSync("git", ["clone", join(dir, "o.git"), clone], { stdio: "ignore" });
     const ws = new GitWorkspace(dir);
-    // チケットのブランチ(kuramoto/7)は origin に無い(merge 後に消えた)
+    const req = (role: "dev" | "review" | "qa", branch: string) => ({ repo: "acme/shop", ticketNumber: 7, role, memberName: "m", branch });
+
+    // 開発が進めた: チケットのブランチに、push していないコミットとコミットしていない変更がある
+    const dev = await ws.prepare(req("dev", "kuramoto/7"));
+    git(dev.path, "config", "user.email", "t@example.com");
+    git(dev.path, "config", "user.name", "t");
+    writeFileSync(join(dev.path, "a.ts"), "a\n");
+    git(dev.path, "add", "a.ts");
+    git(dev.path, "commit", "-m", "a");
+    const work = git(dev.path, "rev-parse", "HEAD").trim();
+    writeFileSync(join(dev.path, "wip.ts"), "wip\n");
+
+    // 取り下げたチケットに話しかける(ブランチは origin に無い)。どの島のメンバーでも、開発の作業場所とは別の場所
+    const chats = new Set<string>();
     for (const role of ["dev", "review", "qa"] as const) {
-      const first = await ws.prepare({ repo: "acme/shop", ticketNumber: 7, role, memberName: "m", branch: "" });
+      const first = await ws.prepare(req(role, ""));
       expect(first.base).toBe("main");
-      // 二度目(作業場所がすでにあるとき)も失敗しない
-      const again = await ws.prepare({ repo: "acme/shop", ticketNumber: 7, role, memberName: "m", branch: "" });
-      expect(again.path).toBe(first.path);
+      expect(first.path).not.toBe(dev.path);
       expect(git(first.path, "rev-parse", "HEAD").trim()).toBe(git(first.path, "rev-parse", "origin/main").trim());
+      expect((await ws.prepare(req(role, ""))).path).toBe(first.path); // 二度目も失敗しない
+      chats.add(first.path);
     }
-    // 開発の場所に、チケットのブランチ(kuramoto/7)は作られていない
-    expect(git(join(dir, "repos", "acme__shop"), "branch", "--list", "kuramoto/7").trim()).toBe("");
+    expect(chats.size).toBe(1);
+    // 開発の作業場所は、そのまま(ブランチ・コミット・コミットしていない変更)
+    expect(git(dev.path, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("kuramoto/7");
+    expect(git(dev.path, "rev-parse", "HEAD").trim()).toBe(work);
+    expect(git(dev.path, "status", "--porcelain")).toContain("wip.ts");
+
+    // 取り下げを戻した: 開発は元のブランチの続きから進める(別の場所で上書きしない)
+    const again = await ws.prepare(req("dev", "kuramoto/7"));
+    expect(again.path).toBe(dev.path);
+    expect(git(again.path, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("kuramoto/7");
+    expect(git(again.path, "rev-parse", "HEAD").trim()).toBe(work);
   }, 30_000);
 });
 
