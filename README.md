@@ -25,6 +25,23 @@ npm run dev:ui       # 画面を作るとき: Vite の開発サーバー(http://
 2. 要件 → ユーザーフロー → 画面デザイン → インフラ → アーキテクチャとデータ を、段階ごとに合意(またはお任せ・省略)して進めます。
 3. 「チームに渡す」でリーダーの星南がチケットを作ります。オフィスの「始業」で開発が始まります(「終業」で止まります)。判断カードと merge は「あなたの対応」に出ます。データは `~/.kuramoto/`(`KURAMOTO_HOME` で変更可)に置きます。同じ操作は CLI(`npm run dev -- --help` 相当、`src/cli.ts`)でもできます。
 
+## 設定ファイル(~/.kuramoto/config.yaml)
+
+サーバーと CLI は、起動時に `~/.kuramoto/config.yaml`(`KURAMOTO_HOME` を変えたときはその下)を読みます。無ければ今までどおり SQLite を使います。起動時に、読んだ設定と DB の種類(MySQL ならホストと database 名)を 1 行出します。パスワードは出しません。
+
+```yaml
+# ~/.kuramoto/config.yaml(chmod 600 にしてください。本人以外が読めると注意が出ます)
+database:
+  type: mysql                # sqlite(既定)か mysql
+  url: mysql://kuramoto@db.example.com:3306/kuramoto   # パスワードはここに書かず、KURAMOTO_DATABASE_URL で渡すのがおすすめ
+  tls:
+    ca: /etc/ssl/certs/db-ca.pem                       # TLS の CA のファイル(任意)
+```
+
+- 環境変数 `KURAMOTO_DATABASE_URL`(`mysql://ユーザー:パスワード@ホスト/データベース名`)があれば、ファイルの `database.url` と `type` より優先して MySQL を使います。
+- 読めない・知らない `type`・知らない項目・MySQL なのに接続先が無い、というときは、どの項目(何行目)がおかしいかを出して起動しません。SQLite に黙って戻すことはしません。
+- MySQL への接続はまだ作っていません。今は `type: mysql` にすると、設定を確かめたうえで起動を止めます。
+
 ## コードの地図
 
 | 場所 | 中身 |
@@ -35,6 +52,7 @@ npm run dev:ui       # 画面を作るとき: Vite の開発サーバー(http://
 | `ui/` | 画面(React + TypeScript + TanStack Query、Vite でビルド)。見た目はデジタル庁デザインシステム(`ui/src/dads/` は公式コードスニペットの写し) |
 | `e2e/` | 画面の E2E テスト(Playwright)と、フェイクの担当で動くテスト用サーバー |
 | `src/project/planning.ts` / `planning-agent.ts` | 企画スタジオ(段階・版・未決・コメント・引き渡し)と、企画の担当に渡す道具 |
+| `src/config.ts` | 起動の設定ファイル(`~/.kuramoto/config.yaml`)の読み込み |
 | `src/hq.ts` | 本部(プロジェクトの作成・全体の「あなたの対応」) |
 | `src/project/inbox.ts` | 受信箱(取り出し・再試行・仕事の取り方の順番) |
 | `src/project/dispatcher.ts` | ディスパッチャ(担当決め・応援・1 チケット 1 起動・予算) |

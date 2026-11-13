@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
+import { loadStartupConfig } from "./config.js";
 import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import { GhCli } from "./github/github.js";
 import { Hq, workDirFor } from "./hq.js";
@@ -27,6 +28,8 @@ async function main(argv: string[]): Promise<void> {
     options: { body: { type: "string" }, concurrency: { type: "string" }, once: { type: "boolean" } },
   });
   const [cmd, sub, ...rest] = positionals;
+  // 設定は stderr に出す(一覧などの出力に混ぜない)
+  loadStartupConfig((line) => console.error(line));
   const hq = new Hq();
   try {
     switch (cmd) {
