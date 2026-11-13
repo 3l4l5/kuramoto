@@ -838,7 +838,7 @@ export type HqView = Awaited<ReturnType<KuramotoServer["hqView"]>>;
 export type ProjectView = Awaited<ReturnType<KuramotoServer["projectView"]>>;
 export type StudioView = Awaited<ReturnType<KuramotoServer["studioViewOf"]>>;
 export type TeamView = Awaited<ReturnType<typeof teamView>>;
-export type DevRulesView = ReturnType<typeof devRulesView>;
+export type DevRulesView = Awaited<ReturnType<typeof devRulesView>>;
 export type ProductivityView = Awaited<ReturnType<typeof productivity>>;
 export type OfficeView = Awaited<ReturnType<typeof officeView>> & { running: boolean };
 export type { MemberView, UnitView };
