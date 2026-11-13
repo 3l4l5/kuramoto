@@ -858,18 +858,24 @@ function Handoff({ d }: { d: StudioView }) {
           </thead>
           <tbody>
             {d.tickets.map((t) => {
-              const r = t.refs as { requirement?: string | null; screens: string[]; design: string[]; modes: Record<string, string> };
-              const scr = r.screens.map((k) => d.screens.find((s) => s.key === k)?.name ?? k);
+              // 引き継いだ PR・Issue のチケット(既存のリポジトリの続きから)や、デザインシステムの土台のチケットは、画面や設計のひも付けを持たないことがある
+              const r = t.refs as { requirement?: string | null; screens?: string[]; design?: string[]; modes?: Record<string, string>; adoptedPr?: number; issue?: number; designSystem?: boolean };
+              const modes = r.modes ?? {};
+              const scr = (r.screens ?? []).map((k) => d.screens.find((s) => s.key === k)?.name ?? k);
+              const origin = [r.adoptedPr ? `PR #${r.adoptedPr} を引き継ぎ` : "", r.issue ? `Issue #${r.issue}` : "", r.designSystem ? "デザインシステムの土台" : ""].filter(Boolean).join("・");
               return (
                 <tr key={t.number}>
                   <td>#{t.number}</td>
-                  <td>{t.title}</td>
+                  <td>
+                    {t.title}
+                    {origin && <div className="hint">{origin}</div>}
+                  </td>
                   <td>{r.requirement ?? "—"}</td>
                   <td>
-                    {r.modes.screen === "skip" ? "省略" : scr.join("、") || "—"}
-                    {scr.length ? mode[r.modes.screen ?? "agree"] : ""}
+                    {modes.screen === "skip" ? "省略" : scr.join("、") || "—"}
+                    {scr.length ? mode[modes.screen ?? "agree"] : ""}
                   </td>
-                  <td>{r.modes.model === "skip" ? "省略" : r.design.join("、") || "—"}</td>
+                  <td>{modes.model === "skip" ? "省略" : (r.design ?? []).join("、") || "—"}</td>
                 </tr>
               );
             })}

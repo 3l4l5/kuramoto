@@ -680,6 +680,10 @@ export function studioView(p: Project) {
     tickets: p
       .tickets()
       .filter((t) => JSON.parse(String(get<{ plan_refs: string }>(p.db, "SELECT plan_refs FROM tickets WHERE id = ?", [t.id])?.plan_refs ?? "{}")).fromPlan)
-      .map((t) => ({ number: t.number, title: t.title, refs: JSON.parse(String(get<{ plan_refs: string }>(p.db, "SELECT plan_refs FROM tickets WHERE id = ?", [t.id])?.plan_refs ?? "{}")) })),
+      .map((t) => {
+        // 引き継いだ PR・Issue のチケットなどは、画面・設計・段階の進め方のひも付けを持たない。画面が落ちないよう空で埋める
+        const refs = JSON.parse(String(get<{ plan_refs: string }>(p.db, "SELECT plan_refs FROM tickets WHERE id = ?", [t.id])?.plan_refs ?? "{}")) as Record<string, unknown>;
+        return { number: t.number, title: t.title, refs: { ...refs, screens: refs.screens ?? [], design: refs.design ?? [], modes: refs.modes ?? {} } };
+      }),
   };
 }
