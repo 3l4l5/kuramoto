@@ -35,3 +35,15 @@ const subscribe = (l: () => void) => {
 };
 
 export const usePhoneNav = () => useSyncExternalStore(subscribe, () => state);
+
+/**
+ * 開いたときの引き出し。URL の ?drawer=formation|policy|lead と、その中のタブ ?dtab=(編成: islands|routes|flows / 方針: models|rules)で指定できる
+ * (撮影・共有用)。知らない値は無視して、閉じた状態にする。
+ */
+export function initialDrawer(search: string): { drawer: "formation" | "policy" | "lead" | null; tab: string | null } {
+  const q = new URLSearchParams(search);
+  const d = q.get("drawer");
+  return { drawer: d === "formation" || d === "policy" || d === "lead" ? d : null, tab: q.get("dtab") };
+}
+
+export const drawerFromUrl = () => initialDrawer(typeof location === "undefined" ? "" : location.search);
