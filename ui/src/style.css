@@ -676,10 +676,12 @@ body { background: var(--surface); }
 .ticketdialog .timeline > ol > li.tl-run::before { background: var(--dev); }
 .ticketdialog .timeline > ol > li.tl-note::before { background: var(--design); }
 .ticketdialog .timeline > ol > li.tl-decision::before { background: var(--warn); }
+.ticketdialog .timeline > ol > li.tl-question::before { background: var(--lead); }
 .ticketdialog .timeline > ol > li > div { display: flex; flex-direction: column; gap: 2px; }
 .ticketdialog .timeline time { font-family: var(--f-mono); font-size: var(--fs-sm); color: var(--muted); padding-top: 2px; }
 .ticketdialog .timeline .meta { font-size: var(--fs-md); color: var(--muted); }
 .ticketdialog .timeline .said { margin: 2px 0 0; padding: 6px 10px; border-radius: var(--r-md); background: var(--bg); white-space: pre-wrap; }
+.ticketdialog .timeline .said.answer { margin-left: 14px; background: var(--ok-soft); color: var(--ink); border-left: 3px solid var(--ok); }
 .ticketdialog .timeline .said.err { background: var(--danger-soft); color: var(--danger-ink); }
 .ticketdialog .findings { margin: 4px 0 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
 .ticketdialog .findings code { font-family: var(--f-mono); font-size: var(--fs-md); }

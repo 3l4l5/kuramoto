@@ -468,23 +468,7 @@ function item(x: TicketView["timeline"][number]): ReactNode {
         </>
       );
     case "question":
-      return (
-        <>
-          <b>
-            {x.from}が{x.to}に質問しました
-            {x.noRoute && <Chip tone="warn">連絡経路が無いのでリーダーに回した</Chip>}
-          </b>
-          <p className="said">{x.body}</p>
-          {x.answer ? (
-            <span className="meta">
-              → {x.answeredBy ?? x.to}の答え: {x.answer}
-              {x.answeredAt ? `(${hhmm(x.answeredAt)})` : ""}
-            </span>
-          ) : (
-            <span className="meta">→ まだ答えを待っています</span>
-          )}
-        </>
-      );
+      return <QuestionItem x={x} />;
     case "decision":
       return (
         <>
@@ -512,6 +496,31 @@ function item(x: TicketView["timeline"][number]): ReactNode {
     case "merge":
       return <b>{x.result === "merged" ? "merge しました" : x.result === "conflict" ? "merge しようとしたら衝突していました" : "merge できませんでした"}</b>;
   }
+}
+
+type QuestionView = Extract<TicketView["timeline"][number], { type: "question" }>;
+
+/** 他の島(またはリーダー)への質問と答え(R16)。経路が無くてリーダーに回ったときは、そのことを印にして残す。 */
+export function QuestionItem({ x }: { x: QuestionView }) {
+  return (
+    <>
+      <b>
+        {x.from}が{x.to}に質問しました
+        {x.noRoute && <Chip tone="warn">経路が無いのでリーダーに回した</Chip>}
+      </b>
+      <p className="said">{x.body}</p>
+      {x.answer ? (
+        <>
+          <span className="meta">
+            {x.answeredBy ?? x.to}の答え{x.answeredAt ? `(${hhmm(x.answeredAt)})` : ""}
+          </span>
+          <p className="said answer">{x.answer}</p>
+        </>
+      ) : (
+        <span className="meta">{x.noRoute ? "→ リーダーの返事を待っています" : "→ まだ答えを待っています"}</span>
+      )}
+    </>
+  );
 }
 
 /** 画面のデザインの見比べ(ADR-0034)。お手本(企画で合意した試作)・実装・違い(赤いところ)を並べる。 */
