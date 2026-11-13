@@ -1,6 +1,6 @@
 # MySQL の運用手順
 
-手元の Mac で Kuramoto の DB を MySQL にするときの手順です。立て方・`config.yaml`・バックアップ(launchd)・戻し方・DB の切り替えを書きます。構成は [compose.yaml](../compose.yaml) にあります。
+手元の Mac で Kuramoto の DB を MySQL にするときの手順です。立て方・`config.yaml`・バックアップ(launchd)・戻し方・DB の切り替え・SQLite からの移し方を書きます。構成は [compose.yaml](../compose.yaml) にあります。
 
 | 名前 | 用途 | 公開 | データ |
 |---|---|---|---|
@@ -154,3 +154,37 @@ SQLite と MySQL のあいだは、DB のファイルやダンプをそのまま
 戻るのは、要件・フロー・画面・インフラ・アーキテクチャ・ドメイン・データ設計・未決と答え・会話・チケットです。担当の会話の続き(セッション)、途中の版の履歴、起動の記録と指標、PR の写しは戻りません。作業中だったチケットの依頼も持ち越されません。切り替えの前に、オフィスを「終業」にして、作業中のものを片付けておくと安心です。
 
 元の DB は、切り替えたあとも消さずに残しておき、読み込んだ内容を確かめてから片付けます。
+
+## 6. SQLite から MySQL へ移す(`kuramoto db transfer`)
+
+SQLite の本部(`hq.sqlite`)と全プロジェクトの `project.sqlite` の中身を、まるごと MySQL へ移します(ADR-0038)。設計書のエクスポートと違い、起動の記録・指標・PR の写し・途中の版の履歴まで移ります。
+
+前提:
+
+- MySQL を 1 と 2 のとおり立て、`config.yaml`(または `KURAMOTO_DATABASE_URL`)に `type: mysql` と接続先を書いておく。この入口は、`config.yaml` の MySQL をそのまま移し先にします。
+- 移し先の database は、**プロジェクトがまだ 1 つも入っていない**もの(空の database)。入っていれば、何も入れずに止まります(二重に入れない)。
+- Kuramoto(サーバーと `kuramoto run`)を止めておく。移している間に SQLite が書き換わらないようにするためです。
+- SQLite のバックアップ(`~/.kuramoto` の `hq.sqlite` と各 `project.sqlite`)を取っておく。
+
+```sh
+npm run dev -- db transfer      # = tsx src/cli.ts db transfer
+```
+
+やること(この順):
+
+1. `config.yaml` の接続先を読む(MySQL でなければ止まる)。接続は TLS・パスワードのファイルも含めて、2 の書き方のとおり。
+2. MySQL に繋いで、最新の版まで流す。繋がらなければ、理由を出して止まる。
+3. `hq.sqlite` と、本部に載っている各プロジェクトの `project.sqlite` を開き、最新の版まで流す(SQLite のファイルは、この版の更新のほかは変わらず、消えません)。ファイルが無いプロジェクトがあれば、空の DB を作らずに止まる。
+4. 全部を 1 つのトランザクションで MySQL に入れる。途中で失敗したら、MySQL には何も残らない。プロジェクトごとに、tickets と runs を入れ終えたあとで、`dev_done` を SQLite の版 19 と同じ決まりで埋める。
+
+結果は、プロジェクトごとのチケット数と、`dev_done` を埋めた件数(MySQL 側で 0 から 1 にした件数)で出ます。
+
+```
+MySQL に繋ぎました(スキーマの版 21)
+移しました(プロジェクト 1 件)
+  1	shop	チケット 12 件 / dev_done を埋めた 0 件
+```
+
+「埋めた件数」は、SQLite の版 19 がすでに埋めているデータなら 0 になります(そのまま移るため)。そうなっていないチケットだけが数えられます。
+
+移したあとは、`select` で件数を見るなどして確かめます。注意: サーバー・`kuramoto run` の読み書きの本体は、まだ MySQL に繋がっていません(2 を参照。ADR-0041)。この入口は、データを MySQL に移すだけです。移し終わっても、`config.yaml` を `type: mysql` にした Kuramoto はまだ起動できません。失敗してやり直すときは、MySQL の database を空にしてから(4 の戻しと同じく `DROP DATABASE` / `CREATE DATABASE`)、もう一度流します。
