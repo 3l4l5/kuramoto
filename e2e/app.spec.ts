@@ -468,7 +468,18 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(tiles.getByRole("listitem", { name: "消費トークン" })).not.toContainText(/^消費トークン0/);
     await expect(tiles.getByRole("listitem", { name: "人間に助けを求めた" })).toBeVisible();
     await expect(tiles.getByRole("listitem", { name: "手戻り" })).toBeVisible();
+    // 流れ: フロー効率の推移に、編成の版が上がった日(v2 は島、v3 は連絡経路と流れ)の縦の点線と札が入り、表に切り替えても残る
+    const trend = page.getByRole("figure", { name: "フロー効率の推移と編成を変えた日" });
+    await expect(trend.locator('g.mark[data-version="2"]')).toContainText("v2 島");
+    await expect(trend.locator('g.mark[data-version="3"]')).toContainText("v3 連絡経路・流れ");
+    await expect(trend.locator("g.mark line")).toHaveCount(2);
+    await page.getByRole("group", { name: "表示" }).getByRole("button", { name: "表" }).click();
+    await expect(trend.locator("g.mark")).toHaveCount(2);
+    await page.getByRole("group", { name: "表示" }).getByRole("button", { name: "グラフ" }).click();
+    await expect(trend.locator("g.mark")).toHaveCount(2);
+    await shot(page, "productivity-flow");
     // 日ごとの推移: グラフと表を切り替えられる
+    await page.getByRole("tab", { name: "日ごとの推移" }).click();
     await expect(page.getByRole("tab", { name: "日ごとの推移" })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByRole("figure", { name: "使った金額の日ごとの推移" })).toBeVisible();
     await expect(page.getByRole("figure", { name: "出した PRの日ごとの推移" })).toBeVisible();

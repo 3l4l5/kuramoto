@@ -195,6 +195,7 @@ function EfficiencyTrend({ data }: { data: ProductivityView }) {
           <text x={W - R} y={H - 8} textAnchor="end" className="tick">{days.at(-1)!.slice(5)}</text>
         </svg>
       </div>
+      <p className="hint">{marks.length > 0 ? "縦の点線は、編成の版が上がった日です。札に、何を変えたか(連絡経路 / 流れ / 島)を出します。" : "編成を変えた日はまだありません。編成の版が上がると、その日に縦の点線が入ります。"}</p>
     </figure>
   );
 }
