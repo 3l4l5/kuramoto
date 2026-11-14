@@ -40,6 +40,8 @@ jobs:
     timeout-minutes: 90
     env:
       KURAMOTO_SKIP_MYSQL_TESTS: "1"
+      # ブラウザサーバーの標準エラー(Chrome の落ちた理由)を、ログに残す(src/project/confined-browser.ts)
+      KURAMOTO_E2E_BROWSER_DEBUG: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

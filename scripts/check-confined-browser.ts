@@ -185,7 +185,8 @@ async function main(): Promise<number> {
     }
     try {
       const r = await runner.run("npm test", repo, conf, 20 * 60_000);
-      console.log(r.output.split("\n").slice(-60).join("\n"));
+      // 落ちた試験の理由が切れないよう、末尾 200 行を残す(CI のログで読めるように)
+      console.log(r.output.split("\n").slice(-200).join("\n"));
       console.log(`--- npm test の終了コード: ${r.code}`);
       if (NO_BROWSER_SERVER) {
         // 設定なしの回: ブラウザサーバーは立たず、E2E は「起動できなければ知らせて通す」。通ること・知らせが出たかを残す
