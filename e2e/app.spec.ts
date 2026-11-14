@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { compareImages } from "../src/project/design-visual.js";
@@ -347,7 +348,9 @@ test("エクスポートした設計書を本部で読み込むと、新しい�
 
   const download = page.waitForEvent("download");
   await page.getByRole("link", { name: "設計書をエクスポート(Markdown)" }).click();
-  const file = await (await download).path();
+  // 閉じ込めの中のブラウザには遠くから繋ぐので、download.path() は使えない(「Path is not available when connecting remotely」)。saveAs で手元に保存する
+  const file = join(mkdtempSync(join(tmpdir(), "kuramoto-e2e-dl-")), "design.md");
+  await (await download).saveAs(file);
 
   await page.getByRole("button", { name: "本部", exact: true }).click();
   await shot(page, "home");

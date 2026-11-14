@@ -89,8 +89,6 @@ const { chromium } = require(${JSON.stringify(join(resolve(cwd), "node_modules/@
   if (process.env.KURAMOTO_E2E_BROWSER_DEBUG === "1") {
     opts.logger = { isEnabled: (name) => name === "browser", log: (name, severity, message) => { if (name === "browser") process.stderr.write("[pw:browser] " + String(message).slice(0, 300) + "\\n"); } };
   }
-  // 確かめの CI だけ: ブラウザの起動オプションを足して、原因の見立てを確かめる(KURAMOTO_E2E_BROWSER_ARGS に JSON の配列。#118 の診断)
-  if (process.env.KURAMOTO_E2E_BROWSER_ARGS) opts.args = JSON.parse(process.env.KURAMOTO_E2E_BROWSER_ARGS);
   const ts = () => new Date().toISOString().slice(11, 23);
   const server = await chromium.launchServer({ channel: "chrome", ...opts }).catch((e) => { process.stderr.write("[pw:browser] channel chrome の起動に失敗: " + String((e && e.message) || e).split("\\n")[0].slice(0, 300) + "\\n"); return chromium.launchServer(opts); });
   server.on("close", () => process.stderr.write("[pw:browser] " + ts() + " ブラウザサーバーが閉じた(ブラウザが終わった)\\n"));

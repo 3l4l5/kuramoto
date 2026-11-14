@@ -77,6 +77,15 @@ const agents = new FakeHarness(async (req, call) => {
       return { finalText: "直しました。" };
     }
     if (ev.includes("[kickoff]")) {
+      // 画面があるなら、デザインシステムも要る(無いと、段階の「この版に合意する」が押せない。planning.ts の agreeBlocker)
+      await call("set_design_system", {
+        principles: ["余白を広く取り、色は青 1 色に絞る"],
+        tokens: [
+          { group: "color", name: "--color-primary", value: "#2F67D4", use: "主ボタン・見出しの帯" },
+          { group: "space", name: "--space-md", value: "12px", use: "行の余白" },
+        ],
+        components: [{ name: "主ボタン", use: "決定する操作", states: ["通常", "押せない"], html: "<button style=\"background:var(--color-primary);color:#fff;padding:var(--space-md)\">決める</button>" }],
+      });
       await screens("10:00 残り 1");
       await call("upsert_screen", { key: "confirm", name: "予約の確認", device: "phone", requirements: ["R2"], variants: [{ id: "A", html: phone("<header>予約の確認</header>") }] });
       return { finalText: "試作を作りました。" };
