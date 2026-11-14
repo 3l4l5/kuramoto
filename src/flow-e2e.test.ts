@@ -151,7 +151,8 @@ for (const kind of ["sqlite", "mysql"] as const) {
       await p.setSetting("patrol_pr_check_at", ""); // 始業の見回りがもう 1 回確かめているので、間隔の制限を外す
       expect(await refreshMergedWaits(p, github as unknown as GitHub, { workspace: ws })).toBe(1);
       expect((await p.ticket(ticketId)).stage).toBe("done");
-      expect(ws.cleaned.map((c) => c.repo)).toEqual(["acme/shop"]);
+      // 始業したディスパッチャの背景の見回りも、間隔の制限を外したこの隙に同じ merge 待ちを拾って片付けることがある(DB が遅い MySQL の回で起きた)。片付けは 1 回でも 2 回でもよく、このリポジトリだけが片付いていればよい
+      expect(new Set(ws.cleaned.map((c) => c.repo))).toEqual(new Set(["acme/shop"]));
       expect((await worktreePaths(p)).every((w) => w === null)).toBe(true);
     });
 
