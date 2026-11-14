@@ -345,6 +345,9 @@ export async function refreshMergedWaits(p: Project, gh: GitHub, opts: { workspa
   if (!waiting.length) return 0;
   const last = await p.setting("patrol_pr_check_at");
   if (last && p.clock.now().getTime() - Date.parse(last) < (await patrolMinutes(p)) * 60_000) return 0;
+  // 読んだ last のままのときだけ取り直しの時刻を書き、書けた 1 回だけが先へ進む(ディスパッチャの背景の見回りと直の呼び出しが同時に走っても、同じ merge 待ちを 2 回拾わない)
+  const now = iso(p.clock.now());
+  if (!(await p.claimSetting("patrol_pr_check_at", last, now))) return 0;
   const waited = new Set(
     (
       await p.pdb
@@ -364,8 +367,6 @@ export async function refreshMergedWaits(p: Project, gh: GitHub, opts: { workspa
   const reserve = rest.length && max > 1 ? 1 : 0;
   const ids = waitedIds.slice(0, max - reserve);
   ids.push(...rest.slice(0, max - ids.length));
-  const now = iso(p.clock.now());
-  await p.setSetting("patrol_pr_check_at", now);
   // 取り直したものの時刻を残す。merge 待ちでなくなったチケットの分は捨てる
   const next: Record<string, string> = {};
   for (const id of waiting) if (checked[id] !== undefined) next[id] = checked[id];
