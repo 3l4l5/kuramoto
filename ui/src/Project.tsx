@@ -44,7 +44,7 @@ function Office({ id, data }: { id: number; data: ProjectView }) {
   return (
     <section className="pview" aria-label="プロジェクト" data-phone-tab={tab}>
       {!data.project.handed && (
-        <div className="panel" style={{ borderColor: "var(--design)", background: "var(--design-soft)" }}>
+        <div className="panel studionotice" style={{ borderColor: "var(--design)", background: "var(--design-soft)" }}>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <span>まだ企画スタジオで、どんなアプリを作るかを決めています。すべての段階が終わってチームに渡すと、ここにチケットが並びます。</span>
             <Btn kind="outline" size="sm" style={{ marginLeft: "auto" }} onClick={() => go(`#/p/${id}/studio`)}>

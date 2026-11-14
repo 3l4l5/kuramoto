@@ -68,7 +68,7 @@ export function OfficeFloor({ id }: { id: number }) {
               ))}
             </div>
             <Station loc="lead" data={data} stopsOf={stopsOf}>
-              <Desk onMember={open(false)} title="受け口" label="リーダー" who={data.lead} running={data.running} waitingFor="判断・チャットを待っています" loc="lead" note={data.lead.decisions.length ? `判断待ち ${data.lead.decisions.length} 件(#${data.lead.decisions.join("、#")})` : "判断待ちはありません"} />
+              <Desk onMember={open(false)} title="受け口" label="リーダー" who={data.lead} running={data.running} waitingFor="判断・チャットを待っています" loc="lead" sticky={data.lead.decisions.length ? `相談 ${data.lead.decisions.length}` : undefined} note={data.lead.decisions.length ? `判断待ち ${data.lead.decisions.length} 件(#${data.lead.decisions.join("、#")})` : "判断待ちはありません"} />
             </Station>
             {data.units.map((u) => (
               <Station key={u.id} loc={`unit:${u.id}`} data={data} stopsOf={stopsOf}>
@@ -442,12 +442,13 @@ function Person({ m, below, title, running, waitingFor, onOpen }: { m: { id: num
   );
 }
 
-function Desk({ title, label, who, loc, note, running, waitingFor, onMember }: { title: string; label?: string; who: { id: number; name: string; work: Work | null }; loc: string; note: string; running: boolean; waitingFor: string; onMember: (id: number) => void }) {
+function Desk({ title, label, who, loc, note, sticky, running, waitingFor, onMember }: { title: string; label?: string; who: { id: number; name: string; work: Work | null }; loc: string; note: string; sticky?: string; running: boolean; waitingFor: string; onMember: (id: number) => void }) {
   const role = label ?? title;
   return (
     <section className="of-desk" data-loc={loc} aria-label={`${role}の机`}>
       <h3 title={note}>{title}</h3>
       {label && <div className="hint">{label}</div>}
+      {sticky && <span className="of-sticky">{sticky}</span>}
       <Person m={who} title={role} running={running} waitingFor={waitingFor} onOpen={onMember} />
     </section>
   );
