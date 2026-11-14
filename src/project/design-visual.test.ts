@@ -302,7 +302,7 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
     } finally {
       server.close();
     }
-  });
+  }, 60_000); // Chrome を 3 回起動するので、macOS の CI のランナーなどの遅い環境では既定の 5 秒に収まらない(隣の「手元のブラウザで」の試験と同じ 60 秒)
 
   it("描いてよい URL は、この機械の中の http(s) だけ", () => {
     for (const ok of ["http://localhost:5173/", "https://127.0.0.1:8443/x?y=1", "http://[::1]:3000/"]) expect(isLocalUrl(ok)).toBe(true);

@@ -24,7 +24,7 @@
 | (c) | `<日付>-c-no-browser-server.log` | 設定なし(既定の振る舞い) |
 | (d) | `<日付>-d-denied-ports.log` | 断るポートの確かめ(`--denied-port` を含む) |
 | (d) | `<日付>-d-team-ci-test.log` | `team-ci.test.ts` の「断るポート」の試験 |
-| (e) | `<日付>-e-mysql-rounds.log` | mysql-test(127.0.0.1:3307)に届いて、MySQL の回が通ったことの抜き出し |
+| (e) | `<日付>-e-mysql-rounds.log` | mysql-test(127.0.0.1:3307)に届いて、MySQL の回が通ったことの確かめ(E2E の回を飛ばした `npm test` の、MySQL の回の出力) |
 
 ## ワークフローが流す手順
 
@@ -62,17 +62,20 @@ npx tsx scripts/check-denied-ports.ts --denied-port 3306 2>&1 | tee $L/$D-d-deni
 #     team-ci.test.ts の「断るポート」の試験も、スキップされずに通ること("skipped" ではなく "passed")
 npx vitest run src/project/team-ci.test.ts --reporter=verbose 2>&1 | tee $L/$D-d-team-ci-test.log
 
-# (e) mysql-test: (a)〜(c) は閉じ込めの中で npm test(SQLite の回・MySQL の回・E2E の回)を流すので、
-#     MySQL の回が mysql-test(127.0.0.1:3307)に届いて通ったことは (a)(c) のログに出る。そこを抜き出す
-grep -n -i "mysql\|KURAMOTO_TEST_DB\|Tests " $L/$D-a-confined.log $L/$D-c-no-browser-server.log 2>&1 | tee $L/$D-e-mysql-rounds.log
+# (e) mysql-test: E2E の回を飛ばした npm test(SQLite の回 → MySQL の回)を全文流して、MySQL の回(mysql-test の 127.0.0.1:3307)の出力を残す。
+#     (a)〜(c) は MySQL の回を飛ばして(KURAMOTO_SKIP_MYSQL_TESTS=1)流す。MySQL の有無に引きずられないため。MySQL の回は (e) だけ
+KURAMOTO_SKIP_E2E_TESTS=1 npm test 2>&1 | tee /tmp/npm-test-mysql.out
+sed -n '/^=== MySQL の回/,$p' /tmp/npm-test-mysql.out | tee $L/$D-e-mysql-rounds.log
 ```
 
 ワークフローは、このほかに次を足します(いずれもログに見出しを付けて足し、上の出力は書き換えない):
 
+- (a)〜(c) の `npm test` は、MySQL の回を飛ばす(`KURAMOTO_SKIP_MYSQL_TESTS=1`。ジョブに MySQL を立てないので、MySQL の有無・MySQL の既存の不具合に引きずられない)。ログには「MySQL の回: 飛ばしました」と出る
 - (a) のログの末尾に、`e2e/auth.spec.ts` だけを閉じ込めの外で直に流した出力(`check-confined-browser.ts` は `npm test` の最後の 60 行だけを出すので、auth.spec の行が切れないように)
 - (b) のログの末尾に、`git status --short`(壊したあとに差分が無いこと)
-- (d) では、`--denied-port 3306` の BLOCKED を見るため、3306 で待ち受けるだけのプロセスを立ててから流す
-- (e) のログに、E2E の回を飛ばした `npm test` を閉じ込めの外で全文流した、MySQL の回の出力
+- (d) では、`--denied-port 3306` の BLOCKED と、3307 の REACHED を見るため、3306・3307 で待ち受けるだけのプロセスを立ててから流す(届くかどうかだけを見るので、本物の MySQL でなくてよい)
+- (e) は別のジョブ(MySQL を brew で立てる)。ログは、E2E の回を飛ばした `npm test` を閉じ込めの外で全文流した、MySQL の回の出力。**既存の MySQL の不具合(別チケット「MySQL の回で落ちる既存テストを直す」)が直るまで、このジョブは `continue-on-error: true`**(ジョブが赤でも、ワークフロー全体は落ちない。判定はゆるめず、ログはそのまま artifact に入る)
+- 7 本は、ジョブごとに `e2e-logs-a-d`・`e2e-logs-e` で上がり、最後のジョブが `e2e-logs`(7 本)にまとめる。取るのは `e2e-logs`
 
 ## 受け取ったログの見方
 
@@ -103,7 +106,7 @@ grep -n -i "mysql\|KURAMOTO_TEST_DB\|Tests " $L/$D-a-confined.log $L/$D-c-no-bro
 | (c) | `○ 設定なし: 閉じ込めの中で Chrome が起動でき、E2E N 件が流れた` か `△ 設定なし: Chrome が起動できず、画面の E2E は流れていない(知らせて通った)`。`--- npm test の終了コード: 0` | どちらでも、終了コード 0 なら、既定の振る舞い(通って知らせる)のとおり。**画面の E2E が流れたかは `○` のときだけ言える** | `? 設定なし: E2E が流れたか分からない` は、E2E の回より前で落ちたか、件数が合わない。終了コードが 0 以外なら落ちている |
 | (d) 断るポート | `断るポート: <番号>(Kuramoto 本体の API の代わり)` に続く行 | `○ 断るポート(127.0.0.1:<番号>): BLOCKED(想定 BLOCKED)`・`○ ほかのポート(テストが立てるサーバーの代わり)(…): REACHED(想定 REACHED)`・`○ mysql-test(127.0.0.1:3307): REACHED(想定 REACHED)`・`○ 断るポート(--denied-port。Kuramoto 自身が使っているもの)(127.0.0.1:<MySQL のポート>): BLOCKED(想定 BLOCKED)`・`○ 対照: 断るポートを空にした設定の、同じポート(…): REACHED(想定 REACHED)`・最後が `○ 断るポートだけが BLOCKED になった` | `✗ … (想定 …)` は想定と違う(`✗ 想定と違う`、終了コード 1)。**`- mysql-test(127.0.0.1:3307)は立っていないので、見ていない` が出ていたら、3307 の REACHED は確かめていない**(`docker compose up -d mysql-test` のあとで取り直す)。`- ポート <番号> では何も待ち受けていないので、見ていない` が出ていたら、Kuramoto 自身の MySQL の BLOCKED は確かめていない。`? 閉じ込めを使えなかった` は終了コード 2(閉じ込めの外から流せていない) |
 | (d) team-ci.test.ts | 「localhost を許していても、断るポート…」の行 | `✓`(`passed`)。この試験は、閉じ込めを使えるときだけ流れる | `↓`・`skipped` は、試験が流れていない(閉じ込めの外から流し直す) |
-| (e) | `Tests ` の行、`KURAMOTO_TEST_DB`・`mysql` の行 | (a)(c) の `npm test` の MySQL の回が通っている | 落ちていたら `docker compose ps` で mysql-test が healthy かを見る。`grep` の結果が空なら、(e) は未確認(抜き出し先の出力が切れている) |
+| (e) | `=== MySQL の回(mysql-test の使い捨ての database …)` の行と、そのあとの `Tests  N passed` の行 | MySQL の回が通っている(`✗ 落ちた回` が無い) | 落ちていたら `docker compose ps` で mysql-test が healthy かを見る。`grep` の結果が空なら、(e) は未確認(抜き出し先の出力が切れている) |
 
 **ここまでの照合の結果が、すべて期待どおりになるまで、既定(`confinedBrowserEnabled`)は動かしません。** 期待どおりにそろったかどうかと、反転するかの判断は、ログを置く PR の本文に書いて、責任者に決めてもらいます。
 

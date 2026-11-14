@@ -18,6 +18,11 @@ afterAll(async () => {
 
 const reset = resetDatabase;
 
+/** いまある MySQL の版の番号(マイグレーションを足しても、期待を書き直さずに済むよう、一覧から取る) */
+const ALL_VERSIONS = MYSQL_MIGRATIONS.map((m) => m.version);
+/** 一覧の最後の、次の版(試験で足す版。実際の版と重ならない) */
+const NEXT_VERSION = MYSQL_MIGRATIONS.at(-1)!.version + 1;
+
 const tableNames = async (c: Connection) =>
   (await c.query<any[]>("SELECT table_name AS n FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY table_name"))[0].map((r) => r.n as string);
 const columnNames = async (c: Connection, t: string) =>
@@ -57,7 +62,7 @@ describe.skipIf(!conn)("MySQL(mysql-test)に流す", () => {
 
   it("空の database に流すと、SQLite と同じ表・列が全部でき、版が SQLite と同じ番号になる", async () => {
     await migrateMysql(c, MYSQL_MIGRATIONS);
-    expect(await versions(c)).toEqual([21, 22, 23]);
+    expect(await versions(c)).toEqual(ALL_VERSIONS);
     expect(await mysqlVersion(c)).toBe(PROJECT_MIGRATIONS.length);
 
     const expected = sqliteColumns();
@@ -75,7 +80,7 @@ describe.skipIf(!conn)("MySQL(mysql-test)に流す", () => {
     await c.query("INSERT INTO projects (name, data_dir, status, created_at) VALUES ('p', '/d', 'running', '')");
     const before = await shape(c);
     await migrateMysql(c, MYSQL_MIGRATIONS);
-    expect(await versions(c)).toEqual([21, 22, 23]);
+    expect(await versions(c)).toEqual(ALL_VERSIONS);
     expect(await shape(c)).toEqual(before);
     expect((await c.query<any[]>("SELECT name FROM projects"))[0]).toEqual([{ name: "p" }]);
     expect((await c.query<any[]>("SELECT id, name FROM workspaces"))[0]).toEqual([{ id: 1, name: "既定" }]);
@@ -87,7 +92,7 @@ describe.skipIf(!conn)("MySQL(mysql-test)に流す", () => {
     await c.query("DELETE FROM schema_version");
     await c.query("DROP TABLE member_messages");
     await migrateMysql(c, MYSQL_MIGRATIONS);
-    expect(await versions(c)).toEqual([21, 22, 23]);
+    expect(await versions(c)).toEqual(ALL_VERSIONS);
     expect(await shape(c)).toEqual(before);
   });
 
@@ -170,9 +175,9 @@ describe.skipIf(!conn)("MySQL(mysql-test)に流す", () => {
 
   it("MySQL に無い版だけ流す(新しい版は足され、版の行が増える。古い版は流し直さない)", async () => {
     await migrateMysql(c, MYSQL_MIGRATIONS);
-    const next: MysqlMigration = { version: 24, statements: ["CREATE TABLE IF NOT EXISTS probe (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY)"] };
+    const next: MysqlMigration = { version: NEXT_VERSION, statements: ["CREATE TABLE IF NOT EXISTS probe (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY)"] };
     await migrateMysql(c, [...MYSQL_MIGRATIONS, next]);
-    expect(await versions(c)).toEqual([21, 22, 23, 24]);
+    expect(await versions(c)).toEqual([...ALL_VERSIONS, NEXT_VERSION]);
     await c.query("DROP TABLE probe");
     await migrateMysql(c, [...MYSQL_MIGRATIONS, next]); // 24 は流し終えているので、消した表は戻らない
     expect(await tableNames(c)).not.toContain("probe");
@@ -181,9 +186,9 @@ describe.skipIf(!conn)("MySQL(mysql-test)に流す", () => {
 
   it("失敗した版は版の行を足さない(前の版までは残る)", async () => {
     await migrateMysql(c, MYSQL_MIGRATIONS);
-    const bad: MysqlMigration = { version: 24, statements: ["CREATE TABLE IF NOT EXISTS ok_table (id BIGINT)", "INSERT INTO missing_table VALUES (1)"] };
+    const bad: MysqlMigration = { version: NEXT_VERSION, statements: ["CREATE TABLE IF NOT EXISTS ok_table (id BIGINT)", "INSERT INTO missing_table VALUES (1)"] };
     await expect(migrateMysql(c, [...MYSQL_MIGRATIONS, bad])).rejects.toThrow(/missing_table/);
-    expect(await versions(c)).toEqual([21, 22, 23]);
+    expect(await versions(c)).toEqual(ALL_VERSIONS);
     // ロックは外れているので、続けて流せる
     await migrateMysql(c, MYSQL_MIGRATIONS);
   });
