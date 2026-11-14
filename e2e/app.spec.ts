@@ -148,10 +148,6 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     const drawer = floor.getByLabel(/の様子と会話$/);
     await expect(drawer.getByRole("region", { name: "今のチケット" })).toContainText("工程");
     await expect(drawer.getByRole("region", { name: "直近の手順" })).toBeVisible();
-    // 引き出しが開いている間、凡例はその手前で止まる(幅を詰める。#72・#113)
-    const dr = (await drawer.boundingBox())!;
-    const lgOpen = (await floor.locator(".of-legend").boundingBox())!;
-    expect(lgOpen.x + lgOpen.width).toBeLessThanOrEqual(dr.x);
     await shot(page, "office-member");
     await drawer.getByRole("textbox").fill("境界値のテストも足してね");
     await drawer.getByRole("button", { name: "送る" }).click();
@@ -206,6 +202,15 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     expect(lg.x - fl.x).toBeLessThan(fl.width / 4);
     const people = await floor.locator(".of-person, .of-bubble").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0));
     for (const m of people) expect(m.bottom <= lg.y || m.top >= lg.y + lg.height || m.right <= lg.x || m.left >= lg.x + lg.width).toBe(true);
+    // 引き出しが開いている間、凡例はその手前で止まる(幅を詰める。#72・#113)。働いている間は吹き出しで床が広がるので、全員が終えたあとに見る
+    await devIsland.getByRole("button", { name: /押すと様子を見る/ }).first().click();
+    const idleDrawer = floor.getByLabel(/の様子と会話$/);
+    await expect(idleDrawer).toBeVisible();
+    const dr = (await idleDrawer.boundingBox())!;
+    const lgOpen = (await legend.boundingBox())!;
+    expect(lgOpen.x + lgOpen.width, "引き出しが開いている間の凡例の右端").toBeLessThanOrEqual(dr.x);
+    await idleDrawer.getByRole("button", { name: "閉じる" }).click();
+    await expect(idleDrawer).toHaveCount(0);
     // 開いているチケットは、その種類の路線に札(●#1)で乗る
     await expect(floor.locator('[data-ticket][data-kind-of="feature"]').first()).toBeVisible();
     await expect(floor).toContainText("丸が無い = 省略");
@@ -530,13 +535,15 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     const colors = await page.evaluate(() => {
       const v = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
       const rgb = (hex: string) => { const n = parseInt(hex.slice(1), 16); return `rgb(${n >> 16}, ${(n >> 8) & 255}, ${n & 255})`; };
+      const bg = (q: string) => getComputedStyle(document.querySelector(q)!).backgroundColor;
       return {
-        page: getComputedStyle(document.body).backgroundColor === rgb(v("--bg")),
-        nav: getComputedStyle(document.querySelector(".dads-bar .navsw")!).backgroundColor === rgb(v("--surface")),
-        panel: getComputedStyle(document.querySelector(".prod .panel")!).backgroundColor === rgb(v("--surface")),
+        page: [bg("body"), rgb(v("--bg"))],
+        nav: [bg(".dads-bar .navsw"), rgb(v("--surface"))],
+        panel: [bg(".prod .panel"), rgb(v("--surface"))],
       };
     });
-    expect(colors).toEqual({ page: true, nav: true, panel: true });
+    // 食い違ったとき、どれがどの色かを失敗の文言に出す(CI の注釈で読めるように)
+    for (const [name, [actual, expected]] of Object.entries(colors)) expect(actual, `${name} の背景色(実際 ${actual}・期待 ${expected})`).toBe(expected);
     await expect(page.locator(".dads-bar .verchip")).toContainText(/^編成 v\d+/);
     const tiles = page.getByRole("list", { name: "合計" });
     // 企画の試作(metrics)の並び: トークン・金額・PR / 完成・手戻り・人に助けを求めた・ルール違反・質問(島どうし)・経路が無くリーダーへ
