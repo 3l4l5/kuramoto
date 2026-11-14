@@ -1,7 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import { sql } from "kysely";
 import { countFrom, countOf } from "./db/count.js";
 import { networkInterfaces } from "node:os";
@@ -14,6 +13,7 @@ import { ClaudeAgentSdkHarness } from "./harness/claude-agent-sdk.js";
 import type { Harness } from "./harness/types.js";
 import { GhCli, type GitHub } from "./github/github.js";
 import { ConfigError, loadStartupConfig } from "./config.js";
+import { ACCESS_TOKEN_ENV, accessToken } from "./access-token.js";
 import { DatabaseConnectError } from "./db/mysql.js";
 import { startDatabase } from "./db/startup.js";
 import { currentWorkspaceId, Hq, kuramotoHome, kuramotoPort, workDirFor, type ProjectRecord } from "./hq.js";
@@ -91,10 +91,14 @@ export type ServerDeps = {
   urlRenderer?: UrlRenderer;
   localHtmlRenderer?: Renderer;
   /**
-   * 他の PC から見られるようにする(npm run start:public)。どの Host でも受けるが、合言葉(トークン)を求める。
-   * 合言葉は URL の ?token= で一度渡すと Cookie に入り、以後はそれで通る。この PC 自身(localhost)からは合言葉なしで使える。
+   * 合言葉(ADR-0059)。API と画面のすべてで、localhost からも求める。
+   * URL の ?token= で一度渡すと Cookie(1 年)に入り、以後はそれで通る。Authorization: Bearer でも通る。
+   * 担当(エージェント)のシェルは localhost の本体に届いてしまうので、閉じ込めの中から見えない合言葉でしか守れない。
+   * 「localhost からなら合言葉なし」で合言葉を渡す道(HTML への埋め込み・API での配布)は作らない。
    */
-  publicToken?: string;
+  accessToken: string;
+  /** 他の PC から見られるようにする(npm run start:public)。どの Host でも受ける(合言葉は同じく求める)。 */
+  open?: boolean;
   /**
    * MySQL への接続の見張り(ADR-0041)。切れている間は、受信箱の見回りとエージェントの起動を止めて待ち、
    * 繋がり直したら再開する。画面にも出す。SQLite のときは無い。
@@ -104,8 +108,8 @@ export type ServerDeps = {
 
 /**
  * ローカルサーバー(docs/design.md 3.1)。画面を配り、API を受け、稼働中のプロジェクトのディスパッチャを回す。
- * localhost だけで待ち受け、書き込みの API には独自のヘッダーを求める(他のサイトからの書き込みを防ぐ)。
- * 公開するとき(publicToken)は、localhost 以外からの接続に合言葉を求める。
+ * localhost だけで待ち受け(open のときは他の PC からも)、すべての接続に合言葉を求める(ADR-0059)。
+ * 書き込みの API には、そのうえで独自のヘッダーも求める(他のサイトからの書き込みを防ぐ)。
  */
 export class KuramotoServer {
   private readonly projects = new Map<number, Project>();
@@ -430,30 +434,31 @@ export class KuramotoServer {
     }
   }
 
-  /** 入ってよいか。だめなら応答を返して false。合言葉つきの URL で来たら Cookie に入れて、合言葉を外した URL へ送り直す。 */
+  /**
+   * 入ってよいか。だめなら応答を返して false。localhost からも合言葉(Cookie・Authorization: Bearer)を求める。
+   * 合言葉つきの URL で来たら Cookie に入れて、合言葉を外した URL へ送り直す。
+   * 先に Host を見て、open でなければ localhost 以外の名前(DNS rebinding など)を断る。
+   */
   private allowed(req: IncomingMessage, url: URL, res: ServerResponse): boolean {
-    const local = isLocalHost(req.headers.host) && isLoopback(req.socket.remoteAddress);
-    const token = this.deps.publicToken;
-    if (!token) {
-      if (isLocalHost(req.headers.host)) return true;
+    const token = this.deps.accessToken;
+    if (!this.deps.open && !isLocalHost(req.headers.host)) {
       send(res, 403, { error: "localhost からだけ使えます" });
       return false;
     }
-    if (local) return true;
     const given = url.searchParams.get("token");
     if (given !== null && sameSecret(given, token)) {
       url.searchParams.delete("token");
-      res.writeHead(303, { location: url.pathname + url.search, "set-cookie": `${TOKEN_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${60 * 60 * 24 * 365}` });
+      res.writeHead(303, { location: url.pathname + url.search, "set-cookie": `${TOKEN_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${TOKEN_COOKIE_MAX_AGE}` });
       res.end();
       return false;
     }
     const cookie = parseCookies(req.headers.cookie)[TOKEN_COOKIE];
     const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
     if ((cookie && sameSecret(cookie, token)) || (bearer && sameSecret(bearer, token))) return true;
-    if (url.pathname.startsWith("/api/")) send(res, 401, { error: "合言葉(トークン)が要ります" });
+    if (url.pathname.startsWith("/api/")) send(res, 401, { error: "合言葉(トークン)が要ります。Kuramoto を起動した端末に出ている URL を開いてください" });
     else {
       res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
-      res.end('<!doctype html><meta charset="utf-8"><title>Kuramoto</title><p style="font-family:sans-serif;padding:24px">Kuramoto を開くには、起動したターミナルに出ている「合言葉つきの URL」を開いてください。</p>');
+      res.end('<!doctype html><meta charset="utf-8"><title>Kuramoto</title><p style="font-family:sans-serif;padding:24px">Kuramoto を開くには、起動した端末に出ている「合言葉つきの URL」を開いてください。</p>');
     }
     return false;
   }
@@ -983,10 +988,8 @@ const MIME: Record<string, string> = {
 };
 
 const TOKEN_COOKIE = "kuramoto_token";
-
-function isLoopback(addr: string | undefined): boolean {
-  return !!addr && (addr === "::1" || addr.startsWith("127.") || addr.startsWith("::ffff:127."));
-}
+/** 合言葉の Cookie の有効期限(1 年)。 */
+const TOKEN_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
 function sameSecret(a: string, b: string): boolean {
   const x = Buffer.from(a);
@@ -1001,20 +1004,6 @@ function parseCookies(header: string | undefined): Record<string, string> {
     if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
   }
   return out;
-}
-
-/** 公開するときの合言葉。KURAMOTO_TOKEN があればそれ、なければ ~/.kuramoto/access-token に作って使い回す(本人だけが読める)。 */
-function publicToken(): string {
-  if (process.env.KURAMOTO_TOKEN) return process.env.KURAMOTO_TOKEN;
-  const file = join(kuramotoHome(), "access-token");
-  if (existsSync(file)) {
-    const t = readFileSync(file, "utf8").trim();
-    if (t) return t;
-  }
-  mkdirSync(kuramotoHome(), { recursive: true });
-  const t = randomBytes(24).toString("base64url");
-  writeFileSync(file, t + "\n", { mode: 0o600 });
-  return t;
 }
 
 /** 他の PC から開ける URL(この PC の LAN の IPv4 アドレス)。 */
@@ -1055,12 +1044,15 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
 
   const port = kuramotoPort();
   const open = process.env.KURAMOTO_PUBLIC === "1";
-  const token = open ? publicToken() : undefined;
+  const token = accessToken(kuramotoHome());
+  // 合言葉を環境から外す(これから動かす担当や子プロセスに、環境で渡さない。ADR-0059)
+  delete process.env[ACCESS_TOKEN_ENV];
   // 入口で今のワークスペースを決め、本部へ渡す。MySQL のときは、本部もプロジェクトもその上で動き、見張りを渡す
   const app = new KuramotoServer({
     hq: new Hq(undefined, undefined, currentWorkspaceId(), db.mysql),
     ...(db.health ? { dbHealth: db.health } : {}),
-    ...(token ? { publicToken: token } : {}),
+    accessToken: token,
+    open,
   });
   await app.resume();
   // Kuramoto 自身のポートは、担当に描かせない(render_page)
@@ -1068,8 +1060,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const server = createServer((req, res) => void app.handle(req, res));
   server.listen(port, open ? "0.0.0.0" : "127.0.0.1", () => {
     console.log(`Kuramoto: http://localhost:${port}`);
-    if (!token) return;
-    console.log("他の PC からは、次の URL を開いてください(合言葉つき。一度開けば、そのブラウザでは以後合言葉なしで入れます):");
+    console.log("次の URL を開いてください(合言葉つき。一度開けば、そのブラウザでは 1 年間、以後合言葉なしで入れます):");
+    console.log(`  http://localhost:${port}/?token=${token}`);
+    if (!open) return;
+    console.log("他の PC からは、次の URL を開いてください:");
     for (const u of lanUrls(port)) console.log(`  ${u}/?token=${token}`);
     console.log("この URL を知っている人は、チームを動かし、あなたの GitHub に push できます。信頼できるネットワークでだけ使い、他人に渡さないでください。");
   });

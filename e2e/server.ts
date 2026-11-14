@@ -12,6 +12,7 @@ import { Hq } from "../src/hq.js";
 import { StaticWorkspace } from "../src/project/workspace.js";
 import { KuramotoServer } from "../src/server.js";
 import { seedScreens, withTreeStates } from "./screens.js";
+import { E2E_TOKEN } from "./token.js";
 
 const port = Number(process.env.E2E_PORT ?? 4390);
 const webDir = resolve(process.env.E2E_WEB_DIR ?? "ui/dist");
@@ -195,7 +196,7 @@ const github: GitHub = {
   comment: async () => "",
 };
 
-const app = new KuramotoServer({ hq: new Hq(home), webDir, harnesses: { "claude-agent-sdk": agents }, github, workspaceFor: () => new StaticWorkspace(home),
+const app = new KuramotoServer({ hq: new Hq(home), webDir, harnesses: { "claude-agent-sdk": agents }, github, workspaceFor: () => new StaticWorkspace(home), accessToken: E2E_TOKEN,
   // 画面から merge を押す流れを確かめるので、自動 merge はテストの間に動かないようにする(自動 merge は単体テストで確かめる)
   mergePollMs: 3_600_000,
 });
@@ -213,6 +214,6 @@ createServer((req, res) => {
     () => void app.handle(req, res),
   );
 }).listen(port, "127.0.0.1", () => {
-  console.log(`e2e server: http://localhost:${port} (${webDir})`);
-  if (screens) void seedScreens(`http://localhost:${port}`).then((id) => console.log(`screens: プロジェクト ${id} を作りました(http://localhost:${port}/#/p/${id})`));
+  console.log(`e2e server: http://localhost:${port} (${webDir})。ブラウザで開くときの合言葉つきの URL: http://localhost:${port}/?token=${E2E_TOKEN}`);
+  if (screens) void seedScreens(`http://localhost:${port}`).then((id) => console.log(`screens: プロジェクト ${id} を作りました(http://localhost:${port}/?token=${E2E_TOKEN}#/p/${id})`));
 });

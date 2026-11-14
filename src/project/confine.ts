@@ -1,6 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
+import { ACCESS_TOKEN_ENV } from "../access-token.js";
 import { DATABASE_URL_ENV } from "../db/env.js";
 import type { Role } from "../domain/roles.js";
 import type { Confinement } from "../harness/types.js";
@@ -51,6 +52,8 @@ const HIDDEN_ENV = [
   "DOCKER_HOST",
   // MySQL の接続先(パスワードを含みうる)。閉じ込めの中へは渡さない(ADR-0041)
   DATABASE_URL_ENV,
+  // Kuramoto 本体の合言葉(ADR-0059)。本体は localhost で待ち受けるので、担当に渡すと本体の API を動かせてしまう
+  ACCESS_TOKEN_ENV,
 ];
 
 /**
@@ -121,7 +124,7 @@ export async function confinementFor(p: Project, ws: PreparedWorkspace, role: Ro
     hiddenEnv: HIDDEN_ENV,
     // 設定 sandbox_strict_sockets を 1 にすると、ソケットを閉じる(ブラウザでの確かめ・e2e は動かなくなる)
     allowLocalSockets: await p.setting("sandbox_strict_sockets") !== "1",
-    // ソケットを許していても、Kuramoto 本体のポート(API。localhost からは合言葉なしで書き込める)と、設定 sandbox_deny_local_ports で足したポートには、届かせない(チームの CI の閉じ込め。ADR-0059)
+    // ソケットを許していても、Kuramoto 本体のポート(API)と、設定 sandbox_deny_local_ports で足したポートには、届かせない(チームの CI の閉じ込め。ADR-0059)
     deniedLocalPorts: [...new Set([kuramotoPort(), ...parsePorts(await p.setting("sandbox_deny_local_ports"))])],
     // mise は知らない場所の設定ファイルを信用しないので、作業場所の設定を信用させる(node などの版を選べるように)
     // 合意した試作(HTML・お手本の画像)の場所。e2e などが読む(ADR-0034)

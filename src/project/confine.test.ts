@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import { ManualClock } from "../clock.js";
 import { get } from "../db/sqlite.js";
 import { confineOptions } from "../harness/claude-agent-sdk.js";
 import { FakeHarness, fixedAll, withResolutions } from "../harness/fake.js";
+import { ACCESS_TOKEN_ENV, ACCESS_TOKEN_FILE } from "../access-token.js";
 import { kuramotoHome } from "../hq.js";
 import { Dispatcher } from "./dispatcher.js";
 import { Project } from "./project.js";
@@ -95,6 +96,40 @@ describe("作業場所への閉じ込め", () => {
       network: { allowedDomains: ["github.com"], strictAllowlist: true, allowAllUnixSockets: true, allowLocalBinding: true },
       credentials: { envVars: [{ name: "GH_TOKEN", mode: "deny" }] },
     });
+  });
+
+  it("本体の合言葉(ADR-0059)は、担当のシェルから取れない: 置き場所は隠す場所の中、環境変数は渡さず、名指しで隠す", async () => {
+    const { confinementFor } = await import("./confine.js");
+    const p = await Project.open(":memory:", new ManualClock());
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "kuramoto-home-"))); // 閉じ込めは実体のパスで隠す
+    const saved = { home: process.env.KURAMOTO_HOME, token: process.env[ACCESS_TOKEN_ENV] };
+    process.env.KURAMOTO_HOME = home;
+    process.env[ACCESS_TOKEN_ENV] = "from-env-secret";
+    try {
+      for (const role of ["dev", "qa"] as const) {
+        const c = await confinementFor(p, { path: "/w", base: "main", gitDir: "/g" }, role);
+        // 合言葉のファイルは、データの置き場所の下 = 読ませない場所の中。読んでよい場所には入らない
+        const file = join(home, ACCESS_TOKEN_FILE);
+        const under = (dirs: string[]) => dirs.some((d) => file === d || file.startsWith(`${d}/`));
+        expect(under(c.hidden)).toBe(true);
+        expect(under(c.readable)).toBe(false);
+        expect(under(c.writable)).toBe(false);
+        // 環境変数は、名指しで隠す
+        expect(c.hiddenEnv).toContain(ACCESS_TOKEN_ENV);
+        const o = confineOptions("/w", c);
+        expect(o.sandbox.credentials.envVars).toContainEqual({ name: ACCESS_TOKEN_ENV, mode: "deny" });
+        expect(o.sandbox.filesystem.denyRead).toContain(home);
+        // 担当に渡す環境にも入れない(渡す元の環境に入っていても)。シェルは、この環境で起動する
+        expect(o.env[ACCESS_TOKEN_ENV]).toBeUndefined();
+        const seen = execFileSync("sh", ["-c", `printf %s "\${${ACCESS_TOKEN_ENV}-unset}"`], { env: o.env as Record<string, string> }).toString();
+        expect(seen).toBe("unset");
+      }
+    } finally {
+      if (saved.home === undefined) delete process.env.KURAMOTO_HOME;
+      else process.env.KURAMOTO_HOME = saved.home;
+      if (saved.token === undefined) delete process.env[ACCESS_TOKEN_ENV];
+      else process.env[ACCESS_TOKEN_ENV] = saved.token;
+    }
   });
 
   it("設定 sandbox_strict_sockets でソケットを閉じられる。sandbox_allow_write で書ける場所を足せる", async () => {

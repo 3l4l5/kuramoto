@@ -1,5 +1,6 @@
 import { createSdkMcpServer, query, tool, type SDKMessage, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { basename } from "node:path";
+import { ACCESS_TOKEN_ENV } from "../access-token.js";
 import { DATABASE_URL_ENV } from "../db/env.js";
 import type { Confinement, Harness, HarnessRequest, HarnessResult, ProgressEvent } from "./types.js";
 import { EMPTY_USAGE } from "./types.js";
@@ -208,8 +209,8 @@ function isBudgetError(text: string): boolean {
   return /maximum budget/i.test(text);
 }
 
-/** 接続先(KURAMOTO_DATABASE_URL)は、パスワードを含みうるので、閉じ込めの中の環境変数に入れない。 */
+/** 接続先(KURAMOTO_DATABASE_URL)はパスワードを含みうるし、本体の合言葉(KURAMOTO_TOKEN)は本体の API を動かせるので、閉じ込めの中の環境変数に入れない。 */
 function withoutHidden(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const { [DATABASE_URL_ENV]: _omit, ...rest } = env;
+  const { [DATABASE_URL_ENV]: _db, [ACCESS_TOKEN_ENV]: _token, ...rest } = env;
   return rest;
 }

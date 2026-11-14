@@ -5,8 +5,10 @@
  * 撮り方は docs/screenshots/80/README.md。
  */
 import type { ProjectView } from "../src/server.js";
+import { E2E_TOKEN } from "./token.js";
 
-const write = { "content-type": "application/json", "x-kuramoto": "1" };
+const auth = { authorization: `Bearer ${E2E_TOKEN}` };
+const write = { "content-type": "application/json", "x-kuramoto": "1", ...auth };
 
 /** 作るチケット。番号は作った順(#1〜#5)。 */
 const TICKETS = [
@@ -30,7 +32,7 @@ export async function seedScreens(base: string): Promise<number> {
   for (const t of TICKETS) await post(base, `/api/projects/${id}/tickets`, t);
   // 開発ルール(R15): 試作と同じ 4 件(ひな形)。4 つ目は無効にして、「押せない」見た目も撮れるようにする
   for (const template of ["jira", "pr-body-target", "commit-50", "migration-alone"]) await post(base, `/api/projects/${id}/dev-rules`, { template });
-  const rules = (await (await fetch(`${base}/api/projects/${id}/dev-rules`)).json()) as { rules: { id: number; template: string | null }[] };
+  const rules = (await (await fetch(`${base}/api/projects/${id}/dev-rules`, { headers: auth })).json()) as { rules: { id: number; template: string | null }[] };
   const off = rules.rules.find((r) => r.template === "migration-alone");
   if (off) await post(base, `/api/projects/${id}/dev-rules/${off.id}/enabled`, { enabled: false });
   return id;
