@@ -19,6 +19,15 @@ import type { Confinement } from "../harness/types.js";
 /** 閉じ込めの中の E2E に渡す、ブラウザサーバーの wsEndpoint の環境変数。渡されたら、E2E はブラウザに繋がらないことも失敗にする。 */
 export const E2E_WS_ENDPOINT_ENV = "KURAMOTO_E2E_WS_ENDPOINT";
 
+/**
+ * ブラウザサーバーを立てる経路を動かす明示の設定(1 のときだけ)。既定は動かさない。
+ * 狭い閉じ込めの中で Chrome が実際に起動するかは、Kuramoto のサーバーで scripts/check-confined-browser.ts を流して確かめてから、チームの CI で有効にする(別チケット)。
+ * 無いときは、宛先を渡さず、E2E は「起動できなければ知らせて通す」(手元の閉じ込めの中と同じ)。
+ */
+export const CONFINED_BROWSER_ENV = "KURAMOTO_E2E_CONFINED_BROWSER";
+
+export const confinedBrowserEnabled = (env: NodeJS.ProcessEnv = process.env) => env[CONFINED_BROWSER_ENV] === "1";
+
 export interface BrowserServer {
   endpoint: string;
   close(): Promise<void>;
@@ -146,7 +155,7 @@ export const startConfinedBrowser: StartBrowser = async (cwd, conf) => {
 
 /**
  * コマンドの前にブラウザサーバーを立て、渡す環境変数と、あとで必ず呼ぶ close を返す。立てる必要が無ければ何もしない。
- * 立てられなかったときは、閉じ込めの無いブラウザには切り替えず、宛先を渡さずに進める(notice に理由を入れる)。E2E は「確かめていない」で通る。
+ * KURAMOTO_E2E_CONFINED_BROWSER=1 でないときは何もしない。立てられなかったときは、閉じ込めの無いブラウザには切り替えず、宛先を渡さずに進める(notice に理由を入れる)。E2E は「確かめていない」で通る。
  * 閉じ込めの中から 127.0.0.1 に届かない設定(sandbox_strict_sockets)では、E2E そのものが動かないので立てない。
  */
 export async function withBrowser(
@@ -155,9 +164,11 @@ export async function withBrowser(
   conf: Confinement,
   start: StartBrowser,
   force = false,
+  enabled: boolean = confinedBrowserEnabled(),
 ): Promise<{ env: Record<string, string>; notice?: string; close: () => Promise<void> }> {
   const none = { env: {}, close: async () => {} };
-  if (!conf.allowLocalSockets || !(force || wantsBrowser(command, cwd))) return none;
+  // 既定では動かさない(KURAMOTO_E2E_CONFINED_BROWSER=1 のときだけ)。立てないので、閉じ込めの無いブラウザも立たない
+  if (!enabled || !conf.allowLocalSockets || !(force || wantsBrowser(command, cwd))) return none;
   try {
     const server = await start(cwd, conf);
     return { env: { [E2E_WS_ENDPOINT_ENV]: server.endpoint }, close: () => server.close().catch(() => undefined) };

@@ -17,27 +17,39 @@ E2E_SHOTS=/tmp/shots npm run test:e2e     # 画面ごとのスクリーンショ
 
 ## チームの CI
 
-`npm test` の最後の回が E2E です(SQLite の回 → MySQL の回 → E2E の回)。チームの CI は `npm test` を閉じ込め(sandbox-runtime)の中で流します。閉じ込めの中では Chrome は起動できない(プロファイル・ソケット・Crashpad の置き場所が書けない)ので、**ブラウザはブラウザ専用の狭い閉じ込めの中で別に立てて、`npm test` の側からは繋ぐだけ**にしています。`npm test` の閉じ込め(`src/project/confine.ts`)は広げていません。
+`npm test` の最後の回が E2E です(SQLite の回 → MySQL の回 → E2E の回)。チームの CI は `npm test` を閉じ込め(sandbox-runtime)の中で流します。閉じ込めの中では Chrome は起動できない(プロファイル・ソケット・Crashpad の置き場所が書けない)ので、`npm test` の閉じ込め(`src/project/confine.ts`)は広げず、ブラウザは別に立てて繋ぐ作りにしています。
 
-1. チームの CI の runner(`src/project/team-ci.ts` の `SandboxRunner`)が、playwright の設定(`playwright.config.*`)があるリポジトリのテストのコマンド(`npm test`・`npm run test:e2e`)の前に、Playwright のブラウザサーバー(`chromium.launchServer()`、Google Chrome)を、**ブラウザ専用の狭い閉じ込め**の中で立てる(`src/project/confined-browser.ts`)。リポジトリの `@playwright/test` で立てるので、繋ぐ側と版が必ずそろう。
-   - 書ける: Chrome のプロファイル用の一時ディレクトリ(`/tmp/kuramoto-pw-…`)だけ。リポジトリにも書けない
-   - 読める: ホームの下は、node のツールチェーン・リポジトリの `node_modules` と `package.json`・Playwright のブラウザの置き場所だけ。ホーム(`~/.kuramoto`・`~/.ssh` など)は読めない
-   - つながる: localhost だけ(許すドメインは無く、プロキシの環境変数も外す)
-2. その `wsEndpoint` を環境変数 `KURAMOTO_E2E_WS_ENDPOINT` で、中の `npm test` に渡す。コマンドが終わったら(落ちても時間切れでも)必ずブラウザサーバーを閉じ、一時ディレクトリを消す。
-3. 中では、`playwright.config.ts` が `connectOptions` で、渡された宛先に connect する(Chrome は起動しない)。画面を配るサーバー(`e2e/server.ts`)は `npm test` の側で立て、ブラウザが `localhost` で開く。
-4. `KURAMOTO_E2E_WS_ENDPOINT` が渡されたときは、ブラウザに繋がらないことも**失敗**にする(「確かめていない」で通さない)。
-5. **狭い閉じ込めの中でブラウザが立たなかったときは、閉じ込めの無いブラウザには切り替えない。** 宛先を渡さずに `npm test` を流し(出力の末尾に「⚠ チームの CI: ブラウザ専用の狭い閉じ込めの中でブラウザを起動できなかった…」と理由が付く)、E2E の回は手元の閉じ込めの中と同じ「⚠ ブラウザを起動できなかったので、画面の確かめは流していません」で通る。このときは画面の E2E は流れていないので、出力の知らせを見落とさないこと。
+**ただし、そのブラウザサーバーを立てる経路は、既定では動きません**(環境変数 `KURAMOTO_E2E_CONFINED_BROWSER=1` のときだけ動く)。狭い閉じ込めの中で Chrome が実際に起動するかを、Kuramoto のサーバー(Chrome が動く場所)でまだ確かめていないためです(下の「閉じ込めの確かめ」)。確かめて通ったら、チームの CI で有効にします(別チケット)。
 
-### 閉じ込めの確かめ
+- **既定(設定が無い)**: ブラウザサーバーは立てず、`KURAMOTO_E2E_WS_ENDPOINT` も渡さない。E2E の回は、手元の閉じ込めの中と同じに、先に Chrome を 1 回起動できるか確かめる。起動できなければ「⚠ ブラウザを起動できなかったので、画面の確かめは流していません」と出して**通す**(チームの CI では今は、画面の E2E は流れない)。閉じ込めの無いブラウザが動く経路は無い。
+- **`KURAMOTO_E2E_CONFINED_BROWSER=1`(Kuramoto のサーバーの環境変数)**: チームの CI の runner(`src/project/team-ci.ts` の `SandboxRunner`)が、playwright の設定(`playwright.config.*`)があるリポジトリのテストのコマンド(`npm test`・`npm run test:e2e`)の前に、Playwright のブラウザサーバー(`chromium.launchServer()`、Google Chrome)を**ブラウザ専用の狭い閉じ込め**の中で立てる(`src/project/confined-browser.ts`)。リポジトリの `@playwright/test` で立てるので、繋ぐ側と版が必ずそろう。
+  - 書ける: Chrome のプロファイル用の一時ディレクトリ(`/tmp/kuramoto-pw-…`)だけ。リポジトリにも書けない
+  - 読める: ホームの下は、node のツールチェーン・リポジトリの `node_modules` と `package.json`・Playwright のブラウザの置き場所だけ。ホーム(`~/.kuramoto`・`~/.ssh` など)は読めない
+  - つながる: localhost だけ(許すドメインは無く、プロキシの環境変数も外す)
+  - その `wsEndpoint` を `KURAMOTO_E2E_WS_ENDPOINT` で `npm test` に渡し、コマンドが終わったら(落ちても時間切れでも)必ずブラウザサーバーを閉じ、一時ディレクトリを消す。
+  - 中では、`playwright.config.ts` が `connectOptions` で、渡された宛先に connect する(Chrome は起動しない)。画面を配るサーバー(`e2e/server.ts`)は `npm test` の側で立てる。宛先が渡されたときは、ブラウザに繋がらないことも**失敗**にする(「確かめていない」で通さない)。
+  - **狭い閉じ込めの中でブラウザが立たなかったときも、閉じ込めの無いブラウザには切り替えない。** 宛先を渡さずに `npm test` を流し(出力の末尾に「⚠ チームの CI: ブラウザ専用の狭い閉じ込めの中でブラウザを起動できなかった…」と理由が付く)、既定と同じ「確かめていない」で通る。
 
-Kuramoto のサーバー(Chrome が動く場所)で、次を流します。閉じ込めの中(agent の作業場所など)からは閉じ込めを重ねられないので流せません。
+### 閉じ込めの確かめ(Kuramoto のサーバーで流す)
+
+閉じ込めの中(担当・レビューの作業場所など)からは閉じ込めを重ねられないので流せません。**Chrome が動く Kuramoto のサーバーで、責任者が流します。** このスクリプトは `KURAMOTO_E2E_CONFINED_BROWSER=1` を自分で付けて、チームの CI と同じ実行(`SandboxRunner`)をします。
 
 ```sh
-npx tsx scripts/check-confined-browser.ts [リポジトリのパス]          # チームの CI と同じ実行で E2E が通る + 接続した側からの攻撃がどれも失敗する
-npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --break  # わざと入口を壊すと落ちる
+npx tsx scripts/check-confined-browser.ts [リポジトリのパス]          # (i) と (iii)
+npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --break  # (ii)
 ```
 
-接続した側からの確かめは、`file://` で `~/.kuramoto` の中のファイル(`access-token`)と `~/.ssh` の鍵を開く・`newContext({ proxy })` で外へ出る・`newRequest`(ローカルの playwright と、ブラウザ側の `context.request`)で外の URL を取る、がどれも失敗することと、対照として `package.json` と localhost には繋がることを見ます。終了コードは 0 = 通った / 1 = 落ちた / 2 = 確かめられなかった(ブラウザが起動できなかった)。
+読み方(3 つとも通れば、チームの CI で `KURAMOTO_E2E_CONFINED_BROWSER=1` を有効にしてよい):
+
+1. **(i) E2E が通る**: 出力の末尾に `--- npm test の終了コード: 0` と `○ E2E 15 件が通った` が出る。「15 passed」が見つからないと `△`(件数が変わったか、E2E が流れていない)。
+2. **(ii) 入口を壊すと落ちる**(`--break`): `ui/src/PhoneBar.tsx` の `drawerTo("policy")` を `drawerTo(null)` にして同じ実行をし、`○ 入口を壊すと落ちた` が出る(終わったら元に戻す)。`✗ 入口を壊したのに通った` なら、E2E が画面を確かめていない。
+3. **(iii) 接続した側からの攻撃がどれも失敗する**: 次の行がすべて `○` になる。
+   - `file://` で `~/.kuramoto` の確かめ用ファイルと `~/.kuramoto/access-token`、`~/.ssh` の鍵を開けない
+   - `newContext({ proxy })` で外のプロキシ経由の通信ができない
+   - `newRequest`(ローカルの playwright の `request.newContext` と、ブラウザ側の `context.request`)で外の URL を取れない
+   - 対照として、リポジトリの `package.json` と localhost の確かめ用サーバーには繋がる(ブラウザそのものが壊れて「失敗」しているのではないことを見る)。`✗` が 1 つでもあれば閉じ込めに穴がある。
+
+終了コード: **0** = 通った / **1** = 落ちた(E2E の失敗、`--break` で落ちなかった、閉じ込めの穴) / **2** = 確かめられなかった(狭い閉じ込めの中でブラウザを起動できなかった・確かめが動かなかった。出力の理由を見る)。2 のときは有効にせず、別の形を考える。
 
 - 閉じ込めの中から `127.0.0.1` に届かない設定(プロジェクトの設定 `sandbox_strict_sockets` = 1)では、E2E そのものが動かないので、ブラウザサーバーは立てません(手元と同じ「確かめていない」の知らせになります)。
 - 手元の実行(`KURAMOTO_E2E_WS_ENDPOINT` が無い): E2E の回は、先に Chrome を 1 回起動できるか確かめます。起動できれば流し、落ちたら画面の壊れとして失敗にします(`test-results/` に落ちた画面と手順が残ります)。起動できないとき(手元の閉じ込めの中など)は、画面が壊れたのではないので、失敗にせず「⚠ ブラウザを起動できなかったので、画面の確かめは流していません」と出して通します。起動できないことも失敗にするには `KURAMOTO_E2E_REQUIRE_BROWSER=1`。

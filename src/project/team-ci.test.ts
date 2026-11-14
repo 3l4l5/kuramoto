@@ -13,7 +13,7 @@ import type { GitHub, PrStatus } from "../github/github.js";
 import { Dispatcher } from "./dispatcher.js";
 import { ownerMerge, type TeamCiHook } from "./merge.js";
 import { Project, type TicketRow } from "./project.js";
-import { browserSandboxConfig } from "./confined-browser.js";
+import { browserSandboxConfig, confinedBrowserEnabled } from "./confined-browser.js";
 import { detectCommands, E2E_WS_ENDPOINT_ENV, runTeamCi, SandboxRunner, wantsBrowser, withBrowser, type CommandRunner } from "./team-ci.js";
 import { StaticWorkspace } from "./workspace.js";
 import { createTicket } from "./workflow.js";
@@ -229,13 +229,13 @@ describe("チームの CI: ブラウザの E2E は、ブラウザ専用の狭い
       return { endpoint: "ws://127.0.0.1:9/abc", close: async () => void events.push("close") };
     };
     try {
-      const b = await withBrowser("npm test", dir, conf, start);
+      const b = await withBrowser("npm test", dir, conf, start, false, true);
       expect(b.env).toEqual({ [E2E_WS_ENDPOINT_ENV]: "ws://127.0.0.1:9/abc" });
       await b.close();
       expect(events).toEqual(["start", "close"]);
-      expect((await withBrowser("npm ci", dir, conf, start)).env).toEqual({});
+      expect((await withBrowser("npm ci", dir, conf, start, false, true)).env).toEqual({});
       // ソケットを閉じた設定(sandbox_strict_sockets)では、E2E そのものが動かないので立てない
-      expect((await withBrowser("npm test", dir, { ...conf, allowLocalSockets: false }, start)).env).toEqual({});
+      expect((await withBrowser("npm test", dir, { ...conf, allowLocalSockets: false }, start, false, true)).env).toEqual({});
       expect(events).toEqual(["start", "close"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -249,7 +249,7 @@ describe("チームの CI: ブラウザの E2E は、ブラウザ専用の狭い
       const b = await withBrowser("npm test", dir, conf, async () => {
         started++;
         throw new Error("Chrome が見つかりません");
-      });
+      }, false, true);
       expect(b.env).toEqual({});
       expect(b.notice).toContain("狭い閉じ込めの中でブラウザを起動できなかった");
       expect(b.notice).toContain("Chrome が見つかりません");
@@ -260,6 +260,38 @@ describe("チームの CI: ブラウザの E2E は、ブラウザ専用の狭い
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("既定では動かない: KURAMOTO_E2E_CONFINED_BROWSER=1 が無ければ、ブラウザサーバーを立てず、宛先も渡さない(閉じ込めの無いブラウザも立たない)", async () => {
+    expect(confinedBrowserEnabled({})).toBe(false);
+    expect(confinedBrowserEnabled({ KURAMOTO_E2E_CONFINED_BROWSER: "0" })).toBe(false);
+    expect(confinedBrowserEnabled({ KURAMOTO_E2E_CONFINED_BROWSER: "1" })).toBe(true);
+    const dir = repoWith("playwright.config.ts");
+    let started = 0;
+    const start = async () => {
+      started++;
+      return { endpoint: "ws://127.0.0.1:9/abc", close: async () => {} };
+    };
+    try {
+      const saved = process.env.KURAMOTO_E2E_CONFINED_BROWSER;
+      delete process.env.KURAMOTO_E2E_CONFINED_BROWSER;
+      try {
+        const b = await withBrowser("npm test", dir, conf, start); // 設定が無い
+        expect(b.env).toEqual({});
+        expect(b.notice).toBeUndefined(); // E2E の回が「ブラウザを起動できなかった」の知らせを出して通す
+        expect(started).toBe(0);
+        // SandboxRunner も同じ(宛先を渡さない)
+        if (canSandbox()) {
+          const out = await new SandboxRunner(start).run("echo endpoint=${KURAMOTO_E2E_WS_ENDPOINT:-none}; echo test", dir, { ...conf, hidden: [], allowedDomains: [], hiddenEnv: [] }, 60_000);
+          expect(out.output).toContain("endpoint=none");
+          expect(started).toBe(0);
+        }
+      } finally {
+        if (saved !== undefined) process.env.KURAMOTO_E2E_CONFINED_BROWSER = saved;
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it("ブラウザ専用の閉じ込めは、書けるのはプロファイルの一時ディレクトリだけ・読めないのはホームと隠す場所・外には通信できない", () => {
     const home = "/Users/someone";
@@ -289,6 +321,7 @@ describe("チームの CI: ブラウザの E2E は、ブラウザ専用の狭い
     const dir = mkdtempSync(join(tmpdir(), "kuramoto-srt-"));
     writeFileSync(join(dir, "playwright.config.ts"), "export default {};");
     let closed = 0;
+    process.env.KURAMOTO_E2E_CONFINED_BROWSER = "1";
     try {
       const r = new SandboxRunner(async () => {
         throw new Error("狭い閉じ込めでは Chrome が起動できない");
@@ -306,6 +339,7 @@ describe("チームの CI: ブラウザの E2E は、ブラウザ専用の狭い
       await r.close();
       await ok.close();
     } finally {
+      delete process.env.KURAMOTO_E2E_CONFINED_BROWSER;
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);

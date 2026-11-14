@@ -24,6 +24,9 @@ import { kuramotoHome } from "../src/hq.js";
  * 終了コード: 0 = 通った / 1 = 落ちた(閉じ込めの穴・E2E の失敗) / 2 = 確かめられなかった(ブラウザが起動できなかったなど)
  */
 
+// この確かめは、ブラウザサーバーを狭い閉じ込めの中で立てる経路を明示して動かす(既定では動かない設定)
+process.env.KURAMOTO_E2E_CONFINED_BROWSER = "1";
+
 const repo = resolve(process.argv.slice(2).find((a) => !a.startsWith("--")) ?? ".");
 const BREAK = process.argv.includes("--break");
 
