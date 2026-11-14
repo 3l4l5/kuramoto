@@ -30,6 +30,15 @@ sandbox_denies() {
     | grep -E 'Sandbox: ' | grep -v 'GamePolicyAgent' | sed -E 's/^.*Sandbox: //; s/\([0-9]+\)//' | grep -iE 'chrom|headless|node|playwright' | cut -c1-200 | sort | uniq -c | sort -rn
 }
 
+# sandbox_denies_new: 閉じ込めが断った操作のうち、chrome に関わるものを、時刻順に「最初に出た時刻」つきで 1 種類 1 行にする(あとから新しく出た deny が、末尾に来る)。
+sandbox_denies_new() {
+  [ -z "${SKIP_DENY_LOG:-}" ] || return 0
+  { log show --last 30m --style compact --predicate 'eventMessage CONTAINS "deny"' 2>&1 || sudo log show --last 30m --style compact --predicate 'eventMessage CONTAINS "deny"' 2>&1; } \
+    | grep -E 'Sandbox: ' | grep -iE 'chrom|headless' \
+    | sed -E 's/^[0-9-]+ ([0-9:.]+) .*Sandbox: /\1 /; s/\([0-9]+\) deny\([0-9]+\)/ deny/' | cut -c1-160 \
+    | awk '{ t=$1; $1=""; if (!($0 in seen)) { seen[$0]=1; print t $0 } }'
+}
+
 # need <ログ> <拡張正規表現>: その行が 1 つはあること(grep -a: ログに色の制御文字や壊れたバイトがあっても、その先の行まで読む)
 need() {
   if ! grep -aEq -- "$2" "$1"; then
@@ -63,12 +72,17 @@ show_reasons() {
   grep -E -- 'FATAL|Check failed|SIGTRAP|Permission denied|crash|did exit|Operation not permitted' "$1" | cut -c1-220 | head -6 | annotate "2 Chrome の落ちた理由($n)" 700
   grep -F -- '[browser-server]' "$1" | cut -c1-200 | head -6 | annotate "3 ブラウザサーバーの先頭($n)" 700
   grep -F -- '[browser-server]' "$1" | cut -c1-200 | tail -6 | annotate "4 ブラウザサーバーの末尾($n)" 700
-  grep -E -- '^ +[0-9]+\) |Error:|[0-9]+ (failed|did not run)' "$1" | grep -v 'Test Files' | cut -c1-200 | head -8 | annotate "5 落ちた E2E($n)" 700
+  grep -E -A4 -- '^ +[0-9]+\) ' "$1" | grep -vE '^--$|^ *$' | cut -c1-140 | head -10 | annotate "5 落ちた E2E($n)" 700
   tail -n 10 "$1" | cut -c1-200 | annotate "6 末尾($n)" 700
   # 閉じ込めが断った操作(sandbox の deny)。Chrome のログと突き合わせる。全文はログの末尾に足して artifact に残す
   sandbox_denies > "${RUNNER_TEMP:-/tmp}/deny.out" 2>&1 || true
   { echo; echo "--- sandbox の deny(log show。chrome・node・playwright に関わる行。$(wc -l < "${RUNNER_TEMP:-/tmp}/deny.out" | tr -d ' ') 行)"; head -n 150 "${RUNNER_TEMP:-/tmp}/deny.out"; } >> "$1"
   head -n 12 "${RUNNER_TEMP:-/tmp}/deny.out" | sed -E 's/^ +//' | cut -c1-110 | annotate "7 sandbox の deny($n)" 700
+  # chrome の deny を、最初に出た時刻の順に(末尾ほど、あとから新しく出たもの)。ブラウザが閉じた時刻(ログの「ブラウザのプロセスが終わった」)と突き合わせる
+  sandbox_denies_new > "${RUNNER_TEMP:-/tmp}/deny-new.out" 2>&1 || true
+  { echo; echo "--- chrome の deny を、最初に出た時刻の順に($(wc -l < "${RUNNER_TEMP:-/tmp}/deny-new.out" | tr -d ' ') 種類)"; cat "${RUNNER_TEMP:-/tmp}/deny-new.out"; } >> "$1"
+  tail -n 8 "${RUNNER_TEMP:-/tmp}/deny-new.out" | cut -c1-100 | annotate "8 あとから出た chrome の deny($n)" 700
+  grep -E -- 'ブラウザのプロセスが終わった|ブラウザサーバーが閉じた' "$1" | cut -c1-150 | head -4 | annotate "9 ブラウザが終わった時刻($n)" 700
   echo "::group::$(basename "$1"): 末尾の 100 行"
   tail -n 100 "$1"
   echo "::endgroup::"
