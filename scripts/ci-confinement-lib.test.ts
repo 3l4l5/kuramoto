@@ -72,17 +72,17 @@ describe("ci-confinement-lib.sh(閉じ込めの確かめの CI が、ログを�
     const r = run("%\n✗ 落ちた回: X\n[browser-server] FATAL: Check failed\n○ ok\n", 'show_reasons "$f"');
     expect(r.out).toMatch(/^::error title=1 ✗△\?---\(x\.log\)::✗ 落ちた回: X/m);
     expect(r.out).toMatch(/^::error title=2 Chrome の落ちた理由\(x\.log\)::.*FATAL/m);
-    expect(r.out).toMatch(/^::error title=3 ブラウザサーバーの先頭/m);
+    expect(r.out).toMatch(/^::error title=3 ブラウザサーバーの先頭と末尾/m);
     expect(r.out).not.toMatch(/title=5 落ちた E2E/);
     expect(r.out).toMatch(/title=6 末尾\(x\.log\)::.*%25.*%0A/);
     for (const l of r.out.split("\n")) if (l.startsWith("::error")) expect(l.length).toBeLessThan(900);
   });
 
-  it("show_reasons: 接続した側の「参考:」の行を、2 つの短い注釈に分けて出す(判定の行ではない)", () => {
+  it("show_reasons: 接続した側の「参考:」の行を、1 つの短い注釈に出す(判定の行ではない)", () => {
     const lines = Array.from({ length: 8 }, (_, i) => `参考: 診断 ${i + 1}: 開けた`).join("\n");
     const r = run(`✗ 落ちた回: X\n${lines}\n`, 'show_reasons "$f"');
-    expect(r.out).toMatch(/^::error title=10 接続した側の参考 1\(x\.log\)::診断 1: 開けた.*診断 5: 開けた/m);
-    expect(r.out).toMatch(/^::error title=11 接続した側の参考 2\(x\.log\)::診断 6: 開けた.*診断 8: 開けた/m);
+    expect(r.out).toMatch(/^::error title=10 接続した側の参考\(x\.log\)::診断 1: 開けた.*診断 5: 開けた/m);
+    expect(r.out.split("\n").find((l) => l.startsWith("::error title=10 "))).not.toMatch(/診断 6/);
     expect(r.out).not.toMatch(/title=1 ✗△\?---\(x\.log\)::[^\n]*参考/);
   });
 
