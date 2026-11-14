@@ -57,6 +57,10 @@ describe("パソコンのオフィス: アーキテクトと凡例(#113)", () =>
     expect(desktop).toMatch(/\.of-legend \{ flex: 1 1 100%;[^}]*\}\s*\.officefloor:has\(\.of-drawer\) \.of-legend \{ margin-right: calc\(400px \+ var\(--sp-4\)\)/);
   });
 
+  it("701〜1000px で引き出しが開いている間の凡例は、縦並びにして狭い幅でも崩さない(#125)", () => {
+    expect(desktop).toMatch(/@media \(min-width: 701px\) and \(max-width: 1000px\) \{[^@]*:has\(\.of-drawer\) \.of-legend \{[^}]*flex-direction: column;/);
+  });
+
   it("床の下の行(凡例を含む)の中身の幅は、地図の列の幅に数えない。数えると凡例の行が床の箱より広がり、引き出しに重なる(#122)", () => {
     expect(desktop).toMatch(/\.officefloor \.of-side \{ width: 0; min-width: 100%;/);
   });

@@ -223,6 +223,24 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expectLegendBeforeDrawer(floor, idleDrawer, "全員が終えたあと");
     await idleDrawer.getByRole("button", { name: "閉じる" }).click();
     await expect(idleDrawer).toHaveCount(0);
+    // 狭いパソコン幅(701〜1000px)でも、引き出しを開いた凡例は読める形で手前に収まる(#125)
+    for (const width of [720, 900, 1000]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await devIsland.getByRole("button", { name: /押すと様子を見る/ }).first().click();
+      const narrowDrawer = floor.getByLabel(/の様子と会話$/);
+      await expect(narrowDrawer).toBeVisible();
+      await expectLegendBeforeDrawer(floor, narrowDrawer, `${width}px`);
+      const legendBox = (await floor.locator(".of-legend").boundingBox())!;
+      const spill = await floor.locator(".of-legend").evaluate((e) => {
+        const right = e.getBoundingClientRect().right;
+        return [...e.querySelectorAll("span, button")].filter((c) => c.getBoundingClientRect().right > right + 1).map((c) => c.textContent);
+      });
+      expect(spill, `${width}px: 凡例の span・ボタンが凡例の外にはみ出さない`).toEqual([]);
+      expect(legendBox.height, `${width}px: 凡例が縦に何行も折り返しすぎない`).toBeLessThanOrEqual(230);
+      await narrowDrawer.getByRole("button", { name: "閉じる" }).click();
+      await expect(narrowDrawer).toHaveCount(0);
+    }
+    await page.setViewportSize({ width: 1400, height: 1000 });
     // 開いているチケットは、その種類の路線に札(●#1)で乗る
     await expect(floor.locator('[data-ticket][data-kind-of="feature"]').first()).toBeVisible();
     await expect(floor).toContainText("丸が無い = 省略");

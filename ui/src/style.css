@@ -1408,6 +1408,13 @@ body { background: var(--bg); }
 }
 /* 幅が 1001px 以上で引き出しが閉じているときだけ、凡例を床の中の左下に重ねる(試作。床の最小の高さまで地図を伸ばして、凡例を床の底に付ける)。
    狭い幅や引き出しが開いている間は、凡例が何行にも折り返してアーキテクト・吹き出しに重なるので、流れの中に置く */
+/* 701〜1000px で引き出しが開いている間は、凡例に残る幅が「床の幅 − 416px」(720px で 270px 前後)まで狭くなる。
+   横に並べて折り返すと、凡例の span が細切れになって何行にも崩れるので、1 行 1 項目の縦並びにして、span の中だけが折り返すようにする(チケット 125) */
+@media (min-width: 701px) and (max-width: 1000px) {
+  .officefloor:has(.of-drawer) .of-legend { min-width: 0; flex-direction: column; align-items: flex-start; gap: var(--sp-1); border-radius: var(--r-md); }
+  .officefloor:has(.of-drawer) .of-legend > span { min-width: 0; max-width: 100%; }
+  .officefloor:has(.of-drawer) .of-legend-links { margin-left: 0; flex-wrap: wrap; }
+}
 @media (min-width: 1001px) {
   .officefloor:not(:has(.of-drawer)) .of-map { padding-bottom: 72px; }
   .officefloor:not(:has(.of-drawer)) .of-legend { position: absolute; left: var(--sp-4); bottom: var(--sp-4); margin: 0; flex: none; max-width: calc(100% - var(--sp-4) * 2); z-index: 3; }
