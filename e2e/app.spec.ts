@@ -510,8 +510,8 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(tiles.getByRole("listitem", { name: "質問(島どうし)" })).toContainText("0");
     // 画面の右上には、フロー効率と編成の版・完成 1 件あたり・判断の回数
     await expect(page.getByRole("group", { name: "主な指標" })).toContainText("判断の回数");
-    // 流れ: フロー効率の推移に、編成の版が上がった日(v2 は島、v3 は連絡経路と流れ)の縦の点線と札が入り、表に切り替えても残る
-    const trend = page.getByRole("figure", { name: "フロー効率の推移と編成を変えた日" });
+    // 流れ: フロー効率の推移に、編成の版が上がった時(v2 は島、v3 は連絡経路と流れ)の縦の点線と札が入り、表に切り替えても残る
+    const trend = page.getByRole("figure", { name: "フロー効率の推移と編成を変えた時" });
     await expect(trend.locator('g.mark[data-version="2"]')).toContainText("v2 島");
     await expect(trend.locator('g.mark[data-version="3"]')).toContainText("v3 連絡経路・流れ");
     await expect(trend.locator("g.mark line")).toHaveCount(2);

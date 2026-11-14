@@ -74,13 +74,14 @@ describe("フロー効率の日ごとの推移", () => {
     expect(
       efficiencyDaily([
         { at: day(11), active: 30, lead: 100 },
-        { at: day(11), active: 10, lead: 100 },
+        { at: day(11) + 3600_000, active: 10, lead: 100 },
         { at: day(12), active: 50, lead: 100 },
         { at: day(13), active: 0, lead: 0 },
       ]),
     ).toEqual([
-      { day: "2026-11-11", value: 0.2 },
-      { day: "2026-11-12", value: 0.5 },
+      // at は、その日の最後の merge の時刻(推移の図で、時刻の軸に置く位置)
+      { day: "2026-11-11", value: 0.2, at: new Date(day(11) + 3600_000).toISOString() },
+      { day: "2026-11-12", value: 0.5, at: new Date(day(12)).toISOString() },
     ]);
   });
 });

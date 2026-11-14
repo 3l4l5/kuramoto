@@ -485,14 +485,14 @@ async function members(p: Project, runs: RunRow[]) {
 
 export type Productivity = Awaited<ReturnType<typeof productivity>>;
 
-/** 日(ローカルの日付)ごとのフロー効率。merge した日に集める。 */
-export function efficiencyDaily(rows: { at: number; active: number; lead: number }[]): { day: string; value: number }[] {
-  const byDay = new Map<string, { active: number; lead: number }>();
+/** 日(ローカルの日付)ごとのフロー効率。merge した日に集める。at はその日の最後の merge の時刻で、推移の図で時刻の軸に置く位置。 */
+export function efficiencyDaily(rows: { at: number; active: number; lead: number }[]): { day: string; value: number; at: string }[] {
+  const byDay = new Map<string, { active: number; lead: number; at: number }>();
   for (const r of rows) {
     const d = new Date(r.at);
     const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    const cur = byDay.get(day) ?? { active: 0, lead: 0 };
-    byDay.set(day, { active: cur.active + r.active, lead: cur.lead + Math.max(0, r.lead) });
+    const cur = byDay.get(day) ?? { active: 0, lead: 0, at: r.at };
+    byDay.set(day, { active: cur.active + r.active, lead: cur.lead + Math.max(0, r.lead), at: Math.max(cur.at, r.at) });
   }
-  return [...byDay].filter(([, v]) => v.lead > 0).map(([day, v]) => ({ day, value: v.active / v.lead })).sort((a, b) => a.day.localeCompare(b.day));
+  return [...byDay].filter(([, v]) => v.lead > 0).map(([day, v]) => ({ day, value: v.active / v.lead, at: new Date(v.at).toISOString() })).sort((a, b) => a.day.localeCompare(b.day));
 }
