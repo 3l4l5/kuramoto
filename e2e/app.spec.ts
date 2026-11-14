@@ -19,9 +19,16 @@ async function expectLegendBeforeDrawer(floor: Locator, drawer: Locator, when: s
   const dr = (await drawer.boundingBox())!;
   const fl = (await floor.boundingBox())!;
   const lg = (await legend.boundingBox())!;
-  const rowRight = await legend.evaluate((e) => e.parentElement!.getBoundingClientRect().right);
-  expect(rowRight, `${when}: 凡例の行の右端が床の右端に収まる`).toBeLessThanOrEqual(fl.x + fl.width + 1);
+  // 島の並びが床より広いとき(狭い幅)は、地図が横にスクロールして、行は列の幅(床より広い)になる。そのときは凡例の右端が引き出しの手前かだけを見る
+  const { rowRight, scrolls } = await legend.evaluate((e) => {
+    const map = e.closest(".of-map")!;
+    return { rowRight: e.parentElement!.getBoundingClientRect().right, scrolls: map.scrollWidth > map.clientWidth + 1 };
+  });
+  if (!scrolls) expect(rowRight, `${when}: 凡例の行の右端が床の右端に収まる`).toBeLessThanOrEqual(fl.x + fl.width + 1);
   expect(lg.x + lg.width, `${when}: 引き出しが開いている間の凡例の右端が引き出しの左端より左`).toBeLessThanOrEqual(dr.x);
+  // 凡例は自分だけの行にいる(アーキテクト・merge 済みの山の隣に入ると、余白を吸われて右端が引き出しの下に潜る)
+  const aboveLegend = await legend.evaluate((e) => Math.max(...[...e.parentElement!.children].filter((c) => c !== e).map((c) => c.getBoundingClientRect()).filter((r) => r.width > 0).map((r) => r.bottom)));
+  expect(lg.y, `${when}: 凡例の上端が、床の下の行の他の要素(アーキテクト・merge 済みの山)の下端より下`).toBeGreaterThanOrEqual(aboveLegend - 1);
 }
 
 test("プロジェクトを作り、企画スタジオで 5 段階を決めてチームに渡し、オフィスで merge まで進む", async ({ page }) => {
@@ -223,6 +230,24 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expectLegendBeforeDrawer(floor, idleDrawer, "全員が終えたあと");
     await idleDrawer.getByRole("button", { name: "閉じる" }).click();
     await expect(idleDrawer).toHaveCount(0);
+    // 狭いパソコン幅(701〜1000px)でも、引き出しを開いた凡例は読める形で手前に収まる(#125)
+    for (const width of [720, 900, 1000]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await devIsland.getByRole("button", { name: /押すと様子を見る/ }).first().click();
+      const narrowDrawer = floor.getByLabel(/の様子と会話$/);
+      await expect(narrowDrawer).toBeVisible();
+      await expectLegendBeforeDrawer(floor, narrowDrawer, `${width}px`);
+      const legendBox = (await floor.locator(".of-legend").boundingBox())!;
+      const spill = await floor.locator(".of-legend").evaluate((e) => {
+        const right = e.getBoundingClientRect().right;
+        return [...e.querySelectorAll("span, button")].filter((c) => c.getBoundingClientRect().right > right + 1).map((c) => c.textContent);
+      });
+      expect(spill, `${width}px: 凡例の span・ボタンが凡例の外にはみ出さない`).toEqual([]);
+      expect(legendBox.height, `${width}px: 凡例が縦に何行も折り返しすぎない`).toBeLessThanOrEqual(190); // 縦並びの 4 項目(1 項目 1〜2 行)で 110〜160px 程度。3 行以上に崩れたら気付く上限
+      await narrowDrawer.getByRole("button", { name: "閉じる" }).click();
+      await expect(narrowDrawer).toHaveCount(0);
+    }
+    await page.setViewportSize({ width: 1400, height: 1000 });
     // 開いているチケットは、その種類の路線に札(●#1)で乗る
     await expect(floor.locator('[data-ticket][data-kind-of="feature"]').first()).toBeVisible();
     await expect(floor).toContainText("丸が無い = 省略");
