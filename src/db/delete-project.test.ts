@@ -61,6 +61,8 @@ async function seed(pdb: ProjectDb, tag: string): Promise<void> {
   await add("plan_open_items", { stage: "req", question: "q", options: "[]", recommended: 0 });
   await add("plan_messages", { stage: "req", who: "w", body: "b", at: AT });
   await add("github_issues", { repo: `acme/${tag}`, number: 1, title: "t", url: "https://github.com/acme/x/issues/1", ticket_id: ticket, fetched_at: AT });
+  const periodic = await add("periodic_reviews", { name: "n", viewpoint: "v", every_hours: 24, role: "qa", target_kind: "repo", created_at: AT });
+  await add("periodic_review_runs", { review_id: periodic, origin: "manual", created_at: AT });
 }
 
 /** 表ごとの、プロジェクト(project_id)の行数 */

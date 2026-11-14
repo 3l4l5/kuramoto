@@ -153,6 +153,7 @@ export async function applyReport(p: Project, ctx: { msg: MessageRow; runId: num
       case "triage":
       case "unstick":
       case "patrol":
+      case "periodic_review":
         return undefined;
     }
   });

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, post } from "./api";
 import { useAct } from "./hooks";
 import { Btn } from "./ui";
+import { PeriodicReviews } from "./PeriodicReviews";
 import { DeleteProjectDialog } from "./DeleteProjectDialog";
 import { Checkbox, Input, Select, Textarea } from "./ds";
 import { BudgetInput, budgetOk as totalOk } from "./BudgetInput";
@@ -179,6 +180,7 @@ export function SettingsPage({ id }: { id: number }) {
           <Input type="number" id="ps-patrol" min={0} step={1} invalid={!patrolOk} value={patrolMin} onChange={(e) => setPatrolMin(e.target.value.trim())} />
           {!patrolOk && <div className="bad">0 以上の整数(分)を入れてください</div>}
         </div>
+        <PeriodicReviews id={id} />
         <div>
           <label className="h" htmlFor="ps-total">
             全体の予算(ドル)

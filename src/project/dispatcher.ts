@@ -2,7 +2,7 @@ import { FIXED_CAST, speechNote } from "../domain/cast.js";
 import { mustAnswer, mustResolve } from "./review.js";
 import { isUniqueViolation } from "../db/sqlite.js";
 import { sql } from "kysely";
-import { WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
+import { ROLE_LABEL, WORK_ROLES, type Role, type WorkRole } from "../domain/roles.js";
 import type { Harness, HarnessResult, HarnessUsage } from "../harness/types.js";
 import { claimNext, complete, fail, pendingCount, release, send, type MessageKind, type MessageRow } from "./inbox.js";
 import type { MemberRow, Project, TicketRow } from "./project.js";
@@ -17,8 +17,9 @@ import type { GitHub } from "../github/github.js";
 import { ciTools } from "./ci-tools.js";
 import { githubReadTools } from "./github-read.js";
 import { planWebNote, planWebTools } from "./web-access.js";
-import { designFor, designPrompt, designSystemFiles, isDesignSystemTicket } from "./design.js";
+import { designFilesOf, designFor, designPrompt, designSystemFiles, isDesignSystemTicket } from "./design.js";
 import { compareScreenTools, renderPageTools } from "./design-tools.js";
+import { finishPeriodicRun, markPeriodicRunStarted, periodicReviewPrompt, periodicReviewTools, requestPeriodicReviews, listPeriodicReviews } from "./periodic-review.js";
 import { referenceImage, type DesignStore, type Renderer, type UrlRenderer } from "./design-visual.js";
 import { designSystem } from "./planning.js";
 import { canResume, noteSession } from "./sessions.js";
@@ -93,6 +94,8 @@ export class Dispatcher {
       await requestTriage(this.p);
       // 間隔ごとにボードを見回り、重複と回り続けているチケットに手を打つ(ADR-0026)
       await requestPatrol(this.p);
+      // 頻度が来た定期レビューを起こす(#89)
+      await requestPeriodicReviews(this.p);
     }
     await this.p.fillSeats();
   }
@@ -301,6 +304,15 @@ export class Dispatcher {
 
     const role = msg.to_role;
     if (!isWorkRole(role)) return { msg, role, ticket, member: await p.fixedMember(role) };
+    // 定期レビューを受け持つ島が(編成が変わって)無くなっていたら、記録に残して終える
+    if (msg.kind === "periodic_review" && !(await p.unitsForRole(role, undefined)).length) {
+      await p.pdb.transaction(async () => {
+        await complete(p, msg.id);
+        const runId = (JSON.parse(msg.payload) as { runId?: number }).runId;
+        if (runId !== undefined) await finishPeriodicRun(p, runId, { error: `${ROLE_LABEL[role]}の島がありません` });
+      });
+      return "handled";
+    }
 
     // 同じ役割の島が複数あるときは、チケットのリポジトリを受け持つ島から選ぶ(ADR-0019)
     const repo = ticket ? (await ticketRepo(p, ticket))?.full_name : undefined;
@@ -428,6 +440,7 @@ export class Dispatcher {
     if (job.msg.kind === "triage") return this.executeLeadChat(job, "triage");
     if (job.msg.kind === "patrol") return this.executeLeadChat(job, "patrol");
     if (job.msg.kind === "unstick") return this.executeUnstick(job);
+    if (job.msg.kind === "periodic_review") return this.executePeriodicReview(job);
     if (job.msg.kind === "member_chat") return this.executeMemberChat(job);
     if (job.msg.kind === "ask") return this.executeAsk(job);
     const p = this.p;
@@ -784,6 +797,92 @@ export class Dispatcher {
         // 渡したメッセージまで読んだことにする(返事の最中に届いたものは、次の起動で読む)
         await markOwnerMessagesRead(p, Math.max(...unread.map((m) => m.id)));
       }
+    });
+  }
+
+  /**
+   * 定期レビュー(#89)。担当の役割のメンバーが、観点に沿って画面(や、リポジトリ全体)を見て、見つけたものをチケットに切る。
+   * 画面を見るときは、試作とお手本の画像・デザインシステムを作業場所に置き、今の描画を撮る道具を渡す。結果は periodic_review_runs に残す。
+   */
+  private async executePeriodicReview(job: Job): Promise<void> {
+    const p = this.p;
+    const { msg, member, role } = job;
+    const payload = JSON.parse(msg.payload) as { reviewId: number; runId: number };
+    const review = (await listPeriodicReviews(p)).find((r) => r.id === payload.reviewId);
+    if (!review) {
+      await complete(p, msg.id);
+      return;
+    }
+    const run = (await p.pdb.from("periodic_review_runs").selectAll().where("id", "=", payload.runId).executeTakeFirst());
+    if (!run || run.status === "done" || run.status === "error") {
+      await complete(p, msg.id);
+      return;
+    }
+    const policy = await p.policy(role);
+    const harness = this.deps.harnesses[policy.harness];
+    const repo = (await p.repos())[0];
+    if (!harness || !repo) {
+      await this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
+      return;
+    }
+    await markPeriodicRunStarted(p, run.id);
+    const use = await p.modelFor(member, policy);
+    const runId = await p.pdb.dialect.insertedId(p.pdb.insert("runs", { message_id: msg.id, ticket_id: null, member_id: member.id, role, policy_id: policy.id, formation_id: (await p.currentFormation()).id, started_at: p.now(), model: use.model, effort: use.effort }));
+    await p.event(member.name, "periodic_review_started", null, { review: review.name, model: use.model });
+    let result: HarnessResult | undefined;
+    let error: string | undefined;
+    try {
+      const ws = await this.deps.workspace.prepare({ repo: repo.full_name, ticketNumber: 0, role, memberName: member.name, branch: "" });
+      const designs = review.targetKind === "repo" ? [] : await designFilesOf(p, (key) => review.targetKind === "all_screens" || review.targetScreens.includes(key));
+      const system = designs.length ? await designSystem(p) : null;
+      const refs = new Map<string, { id: number; png: Buffer }>();
+      if (this.deps.designStore && this.deps.renderer)
+        for (const d of designs) {
+          const r = await referenceImage(p, this.deps.designStore, this.deps.renderer, d);
+          if (r) refs.set(d.key, r);
+        }
+      const files = [
+        ...designs.map((d) => ({ file: d.file, data: d.html })),
+        ...designs.filter((d) => refs.has(d.key)).map((d) => ({ file: d.file.replace(/\.html$/, ".png"), data: refs.get(d.key)!.png })),
+        ...(system ? designSystemFiles(system) : []),
+      ];
+      if (files.length) await this.deps.workspace.writeDesign?.(ws.path, ws.gitDir, files);
+      const renderTools = designs.length && this.deps.localHtmlRenderer && this.deps.urlRenderer
+        ? renderPageTools(ws.path, ws.gitDir, this.deps.workspace, { html: this.deps.localHtmlRenderer, url: this.deps.urlRenderer, allowUrl: (await p.setting("sandbox_strict_sockets")) !== "1" })
+        : [];
+      result = await harness.run({
+        cwd: ws.path,
+        confine: await confinementFor(p, ws, role),
+        systemPrompt: await systemPromptFor(p, role, policy, { name: use.unitName, focus: use.unitFocus }, member.name),
+        prompt: await periodicReviewPrompt(p, review, { id: run.id, lookedAt: run.looked_at }),
+        model: use.model,
+        effort: use.effort,
+        tools: [...periodicReviewTools(p, review, run.id), ...renderTools],
+        allowedTools: ["Read", "Glob", "Grep"],
+        maxBudgetUsd: await this.runBudget(),
+        signal: this.halt.signal,
+        onProgress: progressRecorder(p, runId),
+      });
+      if (result.status !== "ok" && result.status !== "budget") error = result.error ?? "ハーネスがエラーで終わりました";
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
+    await flushProgress(runId);
+    await p.pdb.transaction(async () => {
+      const u = result?.usage;
+      await p.pdb.update("runs", { ended_at: p.now(), input_tokens: u?.inputTokens ?? 0, output_tokens: u?.outputTokens ?? 0, cache_read_tokens: u?.cacheReadTokens ?? 0, cost_usd: u?.costUsd ?? 0, outcome: error ? "error" : (result?.status ?? "error"), error: error ?? null, summary: result?.finalText?.trim() || null }).where("id", "=", runId).execute();
+    });
+    if (error) {
+      await this.failed(msg, null, error);
+      // 再試行が尽きたら、記録を失敗で閉じる(次の頻度でまた回る)
+      if ((await p.pdb.from("messages").select("status").where("id", "=", msg.id).executeTakeFirst())?.status === "failed") await finishPeriodicRun(p, run.id, { error });
+      return;
+    }
+    await p.pdb.transaction(async () => {
+      await complete(p, msg.id);
+      await finishPeriodicRun(p, run.id, { summary: result?.finalText ?? "" });
+      const done = await p.pdb.from("periodic_review_runs").select(["created_tickets", "skipped_duplicates"]).where("id", "=", run.id).executeTakeFirst();
+      await p.event(member.name, "periodic_reviewed", null, { review: review.name, tickets: JSON.parse(done?.created_tickets ?? "[]") as number[], skipped: done?.skipped_duplicates ?? 0 });
     });
   }
 

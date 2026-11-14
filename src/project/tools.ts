@@ -278,6 +278,7 @@ export function toolsFor(kind: MessageKind, report: RunReport, ctx: ToolContext 
     case "triage":
     case "unstick":
     case "patrol":
+    case "periodic_review":
     case "member_chat":
     case "ask":
       return [];

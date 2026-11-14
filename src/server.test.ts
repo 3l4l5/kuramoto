@@ -354,6 +354,30 @@ describe("ローカルサーバー", () => {
     expect(((await call("GET", `/api/projects/${created.id}`)).json.tickets as { id: number; ruleBlocked: string[] }[]).find((x) => x.id === t.id)!.ruleBlocked).toEqual([]);
   });
 
+  it("定期レビューを API で 作る・直す・無効にする・今すぐ実行する・消す(#89)", async () => {
+    const { call } = await boot();
+    const { json: created } = await call("POST", "/api/projects", { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }] });
+    const base = `/api/projects/${created.id}/periodic-reviews`;
+    expect((await call("GET", base)).json).toMatchObject({ reviews: [], runs: [], templates: [{ key: "designer_screens", added: false }] });
+
+    const added = (await call("POST", base, { template: "designer_screens" })).json;
+    expect(added.reviews).toMatchObject([{ name: "デザイナーによる画面レビュー", role: "designer", everyHours: 168, enabled: true }]);
+    expect(added.templates[0].added).toBe(true);
+    const own = (await call("POST", base, { name: "QA", viewpoint: "壊れ物を探す", everyHours: 6, role: "qa", targetKind: "repo" })).json;
+    expect(own.reviews).toHaveLength(2);
+    expect((await call("POST", base, { name: "", viewpoint: "x", everyHours: 6, role: "qa", targetKind: "repo" })).status).toBe(400);
+
+    const id = own.reviews[1].id;
+    expect((await call("POST", `${base}/${id}`, { name: "QA 改", viewpoint: "壊れ物を探す", everyHours: 12, role: "qa", targetKind: "repo" })).json.reviews[1]).toMatchObject({ name: "QA 改", everyHours: 12 });
+    expect((await call("POST", `${base}/${id}/enabled`, { enabled: false })).json.reviews[1].enabled).toBe(false);
+    const ran = (await call("POST", `${base}/${id}/run`, {})).json;
+    // 起動の記録ができる(動いているチームがすぐ取ることもあるので、状態までは見ない)
+    expect(ran.runs[0]).toMatchObject({ reviewId: id, origin: "manual" });
+    const gone = (await call("POST", `${base}/${id}/delete`, {})).json;
+    expect(gone.reviews).toHaveLength(1);
+    expect(gone.runs).toEqual([]);
+  });
+
   it("独自ヘッダーの無い書き込みと、localhost 以外の Host は断る", async () => {
     const { call, port } = await boot();
     expect((await call("POST", "/api/projects", { name: "x", repos: [] }, {})).status).toBe(403);

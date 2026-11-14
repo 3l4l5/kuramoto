@@ -235,4 +235,23 @@ export const MYSQL_MIGRATIONS: MysqlMigration[] = [
       ]),
     ],
   },
+  // 24: 定期レビューの定義と実行の記録(SQLite の版 24 と同じ。#89)
+  {
+    version: 24,
+    statements: [
+      scoped("periodic_reviews", [
+        ID, `name ${T}`, `viewpoint ${T}`, "template TEXT", "every_hours INT NOT NULL", `role ${S}`,
+        `target_kind VARCHAR(191) NOT NULL ${enumCheck("target_kind", ["all_screens", "screens", "repo"])}`, "target_screens TEXT NOT NULL DEFAULT ('[]')",
+        "enabled INT NOT NULL DEFAULT 1", "last_run_at TEXT", `created_at ${T}`,
+        "KEY periodic_reviews_project_enabled (project_id, enabled)",
+      ]),
+      scoped("periodic_review_runs", [
+        ID, `review_id ${BIG}`, `origin VARCHAR(191) NOT NULL ${enumCheck("origin", ["schedule", "manual"])}`,
+        `status VARCHAR(191) NOT NULL DEFAULT 'queued' ${enumCheck("status", ["queued", "running", "done", "error"])}`,
+        "looked_at TEXT NOT NULL", "created_tickets TEXT NOT NULL DEFAULT ('[]')", "skipped_duplicates INT NOT NULL DEFAULT 0", "summary TEXT", "error TEXT",
+        `created_at ${T}`, "started_at TEXT", "ended_at TEXT",
+        "KEY periodic_review_runs_project_review (project_id, review_id, id)", fk("review_id", "periodic_reviews"),
+      ]),
+    ],
+  },
 ];
