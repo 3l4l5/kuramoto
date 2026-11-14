@@ -182,6 +182,23 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     for (const m of seats) expect(m.left >= box.x - 1 && m.right <= box.x + box.width + 1).toBe(true);
     const all = await floor.locator(".of-island .of-seat").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0));
     for (const [i, a] of all.entries()) for (const b of all.slice(i + 1)) expect(a.right <= b.left + 1 || a.left >= b.right - 1 || a.bottom <= b.top + 1 || a.top >= b.bottom - 1).toBe(true);
+    // アーキテクトは、枠つきの机ではなく、受け口の箱の下に立つメンバー(試作)。机の読み上げ・相談の線の端(data-loc="arch")はそのまま(#113)
+    const lead = (await floor.locator('.of-desk[data-loc="lead"]').boundingBox())!;
+    const arch = floor.locator('.of-desk[data-loc="arch"]');
+    await expect(arch).toHaveAccessibleName("アーキテクトの机");
+    const archBox = (await arch.boundingBox())!;
+    expect(archBox.y).toBeGreaterThanOrEqual(lead.y + lead.height - 1);
+    expect(Math.abs(archBox.x + archBox.width / 2 - (lead.x + lead.width / 2))).toBeLessThan(2);
+    expect(await arch.evaluate((e) => getComputedStyle(e).borderTopWidth)).toBe("0px");
+    // 凡例は床の中の左下に重なり、メンバーには重ならない(#113)
+    const legend = floor.locator(".of-legend");
+    const lg = (await legend.boundingBox())!;
+    const fl = (await floor.boundingBox())!;
+    expect(lg.x).toBeGreaterThanOrEqual(fl.x);
+    expect(lg.y + lg.height).toBeLessThanOrEqual(fl.y + fl.height);
+    expect(lg.x - fl.x).toBeLessThan(fl.width / 4);
+    const people = await floor.locator(".of-person, .of-bubble").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0));
+    for (const m of people) expect(m.bottom <= lg.y || m.top >= lg.y + lg.height || m.right <= lg.x || m.left >= lg.x + lg.width).toBe(true);
     // 開いているチケットは、その種類の路線に札(●#1)で乗る
     await expect(floor.locator('[data-ticket][data-kind-of="feature"]').first()).toBeVisible();
     await expect(floor).toContainText("丸が無い = 省略");
@@ -193,6 +210,10 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     const drawer = floor.getByLabel(/の様子と会話$/);
     await expect(drawer.getByRole("region", { name: "今のチケット" })).toContainText("工程");
     await expect(drawer.getByRole("region", { name: "直近の手順" })).toBeVisible();
+    // 引き出しが開いている間、凡例はその手前で止まる(幅を詰める。#72・#113)
+    const dr = (await drawer.boundingBox())!;
+    const lgOpen = (await legend.boundingBox())!;
+    expect(lgOpen.x + lgOpen.width).toBeLessThanOrEqual(dr.x);
     await shot(page, "office-member");
     await drawer.getByRole("textbox").fill("境界値のテストも足してね");
     await drawer.getByRole("button", { name: "送る" }).click();
