@@ -173,6 +173,15 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     const lanes = await floor.locator(".of-track, .of-tk, .of-lbl").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0));
     const crew = await devIsland.locator(".of-seat, .of-bubble").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0));
     for (const m of crew) for (const l of lanes) expect(m.bottom <= l.top || m.top >= l.bottom || m.right <= l.left || m.left >= l.right).toBe(true);
+    // パソコンの床は試作(office)どおり: メンバーは島の箱の上(上の段)か下(下の段)に立ち、箱の中には路線だけが通る。床は「あなたの対応」より上にある(#109)
+    const box = (await devIsland.boundingBox())!;
+    const seats = await devIsland.locator(".of-seat").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()));
+    for (const m of seats) expect(m.bottom <= box.y + 1 || m.top >= box.y + box.height - 1).toBe(true);
+    expect((await floor.boundingBox())!.y).toBeLessThan((await inbox.boundingBox())!.y);
+    // 席は箱の幅の中に収まり(人数の多い島は箱が広がる)、島どうしの席が重ならない
+    for (const m of seats) expect(m.left >= box.x - 1 && m.right <= box.x + box.width + 1).toBe(true);
+    const all = await floor.locator(".of-island .of-seat").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0));
+    for (const [i, a] of all.entries()) for (const b of all.slice(i + 1)) expect(a.right <= b.left + 1 || a.left >= b.right - 1 || a.bottom <= b.top + 1 || a.top >= b.bottom - 1).toBe(true);
     // 開いているチケットは、その種類の路線に札(●#1)で乗る
     await expect(floor.locator('[data-ticket][data-kind-of="feature"]').first()).toBeVisible();
     await expect(floor).toContainText("丸が無い = 省略");

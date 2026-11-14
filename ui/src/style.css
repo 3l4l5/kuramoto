@@ -1209,6 +1209,7 @@ body { background: var(--bg); }
 
 /* ---- スマホ(幅 390px、未決 #21): あなたの対応・ボード・チケットの詳細。同じ画面を組み替える ---- */
 @media (max-width: 700px) {
+  .officefloor .of-sticky { display: none; }
   body { background: var(--bg); }
   /* スマホの試作(phone-home・phone-office・phone-board)は、ヘッダーが白い帯で、灰色の地の上に部品が白 */
   .dads-bar { margin: calc(-1 * var(--sp-3)) calc(-1 * var(--sp-4)) 0; padding: var(--sp-3) var(--sp-4); background: var(--surface); border-bottom: 1px solid var(--line); }
@@ -1356,3 +1357,30 @@ body { background: var(--bg); }
 /* 生産性の画面の右上(ヘッダー)の指標 */
 .dads-bar .kpi { margin-left: auto; padding: 0; border: 0; line-height: var(--lh-tight); display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
 .dads-bar .kpi b { display: block; font-family: var(--f-mono); font-size: var(--fs-lg); color: var(--ink); }
+
+/* ---- チケット 109: パソコンのオフィスを試作(office)に合わせる。スマホ(700px 以下)は変えない ---- */
+@media (min-width: 701px) {
+  /* 床は共通ヘッダーのすぐ下(試作は 1 画面が「ヘッダー+床」)。あなたの対応・チケットを足す・指標などは、その下に続く(並びは Project.tsx の JSX の順)。判断待ちの数は、受け口の付箋(相談 N)でも見える */
+  /* 床の外の「オフィス」の枠と見出しは出さず、床の枠だけにする(試作は枠が 1 重)。見出しは読み上げの名前(aria-label)で残る */
+  .officepanel:has(.officefloor) { background: none; border: 0; padding: 0; }
+  .officepanel:has(.officefloor) > .viewhead { display: none; }
+  /* 受け口の付箋(相談 N): 試作の .note */
+  .officefloor .of-sticky { position: absolute; right: calc(-1 * var(--sp-2)); top: var(--sp-5); z-index: 3; padding: 2px var(--sp-2); background: var(--art-note); font-size: var(--fs-xs); font-weight: var(--fw-bold); transform: rotate(6deg); box-shadow: var(--shadow); white-space: nowrap; }
+  /* 路線の絞り込み: 白い床の上なので、外枠が白・選んでいるのが灰(試作の .seg) */
+  .officefloor .of-filter .ds-seg { background: var(--surface); }
+  .officefloor .of-filter .ds-seg__opt[aria-checked="true"] { background: var(--bg); }
+  /* 島(駅)の箱: 試作どおり、箱は幅 160px の「路線が通る帯」だけ。メンバーは箱の上(上の段)と下(下の段)に立つ。
+     路線は箱の中を通り(e2e: 路線は駅の中)、メンバー・吹き出しは路線・札・ラベルに重ならない(#78・#91) */
+  .officefloor .of-islands { gap: calc(var(--sp-5) * 4); padding: 152px 0 148px; }
+  .officefloor .of-side { margin-top: 0; }
+  /* 箱の幅は 160px を下限に、1 段に並ぶ人数(--per-row。Island が渡す)ぶんの席(76px + すき間)に合わせて広げる。人数の多い島でも、席が箱の外へはみ出して隣の島に重ならない */
+  .officefloor .of-st > .of-island { flex: 0 0 max(160px, calc(var(--per-row, 2) * 84px)); min-width: 160px; }
+  .officefloor .of-st > .of-desk { flex: 0 0 160px; }
+  .officefloor .of-st > .of-shelf { flex: 0 0 180px; }
+  .officefloor .of-island > .of-seats { position: absolute; left: 0; right: 0; z-index: 4; min-height: 0; padding: 0; }
+  .officefloor .of-island > .of-seats.of-top { bottom: 100%; margin-bottom: var(--sp-4); }
+  .officefloor .of-island > .of-seats.of-bottom { top: 100%; margin-top: var(--sp-2); }
+  .officefloor .of-island > .of-seats.of-bottom:has(.of-bubble) { padding-bottom: 0; }
+  .officefloor .of-st > .of-desk > .of-seat { position: absolute; left: calc(50% - 38px); bottom: 100%; margin: 0 0 var(--sp-4); z-index: 4; }
+  .officefloor .of-island > .of-table { position: absolute; left: 0; right: 0; bottom: var(--sp-2); }
+}

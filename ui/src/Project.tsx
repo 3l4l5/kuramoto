@@ -40,7 +40,7 @@ export function ProjectPage({ id, drawer, closeDrawer, guard }: { id: number; dr
 }
 
 function Office({ id, data }: { id: number; data: ProjectView }) {
-  const { tab } = usePhoneNav();
+  const { tab, view } = usePhoneNav();
   return (
     <section className="pview" aria-label="プロジェクト" data-phone-tab={tab}>
       {!data.project.handed && (
@@ -53,8 +53,18 @@ function Office({ id, data }: { id: number; data: ProjectView }) {
           </div>
         </div>
       )}
-      <Inbox d={data} />
-      <FloorOrBoard id={id} data={data} />
+      {/* パソコンでは、オフィスの床を共通ヘッダーのすぐ下に置く(試作は「ヘッダー+床」の 1 画面)。ボード・ツリーと、スマホ(タブで出し分ける)は、これまでどおり あなたの対応 が先 */}
+      {view === "floor" ? (
+        <>
+          <FloorOrBoard id={id} data={data} />
+          <Inbox d={data} />
+        </>
+      ) : (
+        <>
+          <Inbox d={data} />
+          <FloorOrBoard id={id} data={data} />
+        </>
+      )}
       <div className="two-col">
         <NewTicket id={id} />
         <section className="panel" aria-label="出来事">
