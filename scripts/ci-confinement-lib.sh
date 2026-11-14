@@ -27,7 +27,7 @@ annotate() {
 sandbox_denies() {
   [ -z "${SKIP_DENY_LOG:-}" ] || return 0
   { log show --last 30m --style compact --predicate 'eventMessage CONTAINS "deny"' 2>&1 || sudo log show --last 30m --style compact --predicate 'eventMessage CONTAINS "deny"' 2>&1; } \
-    | grep -E 'Sandbox: ' | grep -v 'GamePolicyAgent' | sed -E 's/^.*Sandbox: //; s/\([0-9]+\)//' | grep -iE 'chrom|headless|node|playwright|deny' | cut -c1-200 | sort | uniq -c | sort -rn
+    | grep -E 'Sandbox: ' | grep -v 'GamePolicyAgent' | sed -E 's/^.*Sandbox: //; s/\([0-9]+\)//' | grep -iE 'chrom|headless|node|playwright' | cut -c1-200 | sort | uniq -c | sort -rn
 }
 
 # need <ログ> <拡張正規表現>: その行が 1 つはあること
@@ -68,7 +68,7 @@ show_reasons() {
   # 閉じ込めが断った操作(sandbox の deny)。Chrome のログと突き合わせる。全文はログの末尾に足して artifact に残す
   sandbox_denies > "${RUNNER_TEMP:-/tmp}/deny.out" 2>&1 || true
   { echo; echo "--- sandbox の deny(log show。chrome・node・playwright に関わる行。$(wc -l < "${RUNNER_TEMP:-/tmp}/deny.out" | tr -d ' ') 行)"; head -n 150 "${RUNNER_TEMP:-/tmp}/deny.out"; } >> "$1"
-  head -n 8 "${RUNNER_TEMP:-/tmp}/deny.out" | cut -c1-200 | annotate "7 sandbox の deny($n)" 700
+  head -n 12 "${RUNNER_TEMP:-/tmp}/deny.out" | sed -E 's/^ +//' | cut -c1-110 | annotate "7 sandbox の deny($n)" 700
   echo "::group::$(basename "$1"): 末尾の 100 行"
   tail -n 100 "$1"
   echo "::endgroup::"

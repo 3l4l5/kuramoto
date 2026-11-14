@@ -3,14 +3,15 @@ import { describe, expect, it } from "vitest";
 import { allowChromiumMachRegister, CHROMIUM_MACH_REGISTER_NAME, needsMachRegister } from "./mach-register.js";
 
 const RULE = `(allow mach-register (global-name-prefix "${CHROMIUM_MACH_REGISTER_NAME}"))`;
+const LOOKUP = `(allow mach-lookup (global-name-prefix "${CHROMIUM_MACH_REGISTER_NAME}"))`;
 
 describe("allowChromiumMachRegister(ブラウザ専用の閉じ込めに、Chromium の mach-register を 1 行だけ足す)", () => {
   const profile = '(version 1)\n(deny default)\n(allow mach-priv-task-port (target same-sandbox))\n(allow mach-lookup\n  (global-name "com.apple.logd")\n)\n';
 
-  it("目印の行のすぐあとに、規則を 1 行だけ足す。ほかは 1 文字も変えない", () => {
+  it("目印の行のすぐあとに、規則を 2 行(mach-register と mach-lookup)だけ足す。ほかは 1 文字も変えない", () => {
     const out = allowChromiumMachRegister(`sandbox-exec -p '${profile}' bash`);
-    expect(out).toContain(`(allow mach-priv-task-port (target same-sandbox))\n${RULE}\n(allow mach-lookup`);
-    expect(out.replace(`\n${RULE}`, "")).toBe(`sandbox-exec -p '${profile}' bash`);
+    expect(out).toContain(`(allow mach-priv-task-port (target same-sandbox))\n${RULE}\n${LOOKUP}\n(allow mach-lookup`);
+    expect(out.replace(`\n${RULE}\n${LOOKUP}`, "")).toBe(`sandbox-exec -p '${profile}' bash`);
     expect(out.split("mach-register").length - 1).toBe(1);
   });
 
@@ -18,12 +19,14 @@ describe("allowChromiumMachRegister(ブラウザ専用の閉じ込めに、Chrom
     const quoted = profile.replaceAll('"', '\\"');
     const out = allowChromiumMachRegister(quoted);
     expect(out).toContain(`(allow mach-register (global-name-prefix \\"${CHROMIUM_MACH_REGISTER_NAME}\\"))`);
+    expect(out).toContain(`(allow mach-lookup (global-name-prefix \\"${CHROMIUM_MACH_REGISTER_NAME}\\"))`);
   });
 
-  it("ファイル・ネットワーク・mach-lookup の許可は足さない(足すのは mach-register の 1 行だけ)", () => {
+  it("足すのは Chromium の Mach ポートの受け渡しの名前だけの 2 行。ファイル・ネットワーク・ほかの Mach サービスの許可は足さない", () => {
     const out = allowChromiumMachRegister(profile);
     const added = out.split("\n").filter((l) => !profile.split("\n").includes(l));
-    expect(added).toEqual([RULE]);
+    expect(added).toEqual([RULE, LOOKUP]);
+    for (const l of added) expect(l).not.toMatch(/file-|network|\(global-name "/);
   });
 
   it("差し込む位置(目印の行)が無ければ、黙って素のプロファイルで流さず投げる", () => {
