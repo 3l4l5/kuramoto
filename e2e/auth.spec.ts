@@ -2,16 +2,16 @@ import { expect, test } from "@playwright/test";
 import { E2E_TOKEN } from "./token.js";
 
 /**
- * 合言葉(ADR-0059)。Kuramoto 本体は、localhost からも合言葉(Cookie か ?token=)が無いと、API も画面も 401 にする。
+ * 合言葉(ADR-0059)。Kuramoto 本体は、localhost からも合言葉(Authorization: Bearer か、前の画面の Cookie)が無いと、API を 401 にする。画面のファイルは合言葉なしで配る(ADR-0062)。
  * ほかのテストは playwright.config.ts が Authorization: Bearer を渡す。ここでは渡さずに、人が使う道(端末に出た URL を開く)を確かめる。
  */
 test.use({ extraHTTPHeaders: {} });
 
-test("合言葉が無いと、画面は案内だけを出し、API は 401。合言葉つきの URL を一度開けば、以後は合言葉なしで入れる", async ({ page }) => {
-  // 合言葉なし: 画面の代わりに案内。API も 401
+test("合言葉が無いと、画面のファイルは開くが API は 401 で、画面が案内を出す。合言葉つきの URL を一度開けば、以後は合言葉なしで入れる", async ({ page }) => {
+  // 合言葉なし: 画面のファイルは合言葉なしで配られる(ADR-0062)。API が 401 なので、画面が案内を出す
   const res = await page.goto("/");
-  expect(res?.status()).toBe(401);
-  await expect(page.getByText("合言葉つきの URL")).toBeVisible();
+  expect(res?.status()).toBe(200);
+  await expect(page.getByText("端末に出ている「合言葉つきの URL」を開いてください")).toBeVisible();
   expect((await page.request.get("/api/hq")).status()).toBe(401);
 
   // 端末に出た URL(?token=)を開く: 合言葉が URL から外れて、画面が開く
