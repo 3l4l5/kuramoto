@@ -157,13 +157,13 @@ function Station({ loc, data, stopsOf, children }: { loc: string; data: OfficeVi
 type Geo = { w: number; h: number; pos: Record<string, { x: number; top: number; bottom: number }>; rowBottom: number };
 
 /** 駅の下に取る、路線を通すための帯の最小の高さ(style.css の .of-st > section の padding-bottom の既定値と同じ)。 */
-const BAND = 136;
+const BAND = 160;
 /** 路線の間隔。路線名のラベル(20px)と、その下の札(24px)が、上の路線の札に重ならない高さ */
 const LANE_GAP = 48;
 /** 路線から、その名前のラベルの上端までの高さ。札(路線の上下 12px)の上に、ラベルを載せる */
 const LABEL_ABOVE = 34;
 /** 帯の上端から最初の路線までの高さ。島の中の席・名前より下に、ラベルと札が収まる */
-const FIRST_LANE = 44;
+const FIRST_LANE = 68;
 /**
  * 路線図。駅(島・受け口・merge 待ち)を通るように、種類ごとの路線を 1 本ずつ引く(駅の下側の帯)。
  * 路線は止まる駅に丸を置き、開発より前の「申し送りだけ」の停車は点線の丸にする。選んだ種類の路線だけが濃くなる。

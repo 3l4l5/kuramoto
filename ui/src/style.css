@@ -997,8 +997,10 @@ body { background: var(--bg); }
 .officefloor .of-strandhead { display: none; }
 .officefloor .of-st > section { position: relative; z-index: 1; flex: 1 1 200px; min-width: 200px; }
 /* 駅の下の帯に、種類ごとの路線を通す。高さは RouteMap が --of-band で渡す(折り返しが無ければ BAND の 136px) */
-.officefloor .of-st > .of-island, .officefloor .of-st > .of-desk, .officefloor .of-st > .of-shelf { padding-bottom: var(--of-band, 136px); }
+.officefloor .of-st > .of-island, .officefloor .of-st > .of-desk, .officefloor .of-st > .of-shelf { padding-bottom: var(--of-band, 160px); }
 .officefloor .of-st > .of-desk, .officefloor .of-st > .of-shelf { flex: 0 0 180px; min-width: 0; }
+/* 下の段のメンバーの吹き出しは席の下へ出る(position: absolute)。島の下の帯に通す路線・札・ラベルに掛からないよう、吹き出しの分だけ席の下を空ける */
+.officefloor .of-seats.of-bottom:has(.of-bubble) { padding-bottom: 56px; }
 .officefloor .of-island { background: var(--c-soft); border: 2px solid var(--c); }
 .officefloor .of-tone-dev { --c: var(--dev); --c-soft: var(--dev-soft); }
 .officefloor .of-tone-review { --c: var(--review); --c-soft: var(--review-soft); }
