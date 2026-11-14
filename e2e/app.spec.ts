@@ -143,10 +143,25 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expect(devIsland.getByRole("button", { name: /#\d 実装中/ }).first()).toBeVisible();
     await expect(devIsland).toContainText("src/export.ts を書いています");
     await shot(page, "office-working");
+    // キャラクターを押すと、右に引き出しが開く: 今のチケット・直近の手順・話す欄。話すとチケットのメモに残る(働いている間に開く。全員が終えたあとは「実装中」のメンバーがいない)
+    await devIsland.getByRole("button", { name: /実装中.*押すと様子を見る/ }).first().click();
+    const drawer = floor.getByLabel(/の様子と会話$/);
+    await expect(drawer.getByRole("region", { name: "今のチケット" })).toContainText("工程");
+    await expect(drawer.getByRole("region", { name: "直近の手順" })).toBeVisible();
+    // 引き出しが開いている間、凡例はその手前で止まる(幅を詰める。#72・#113)
+    const dr = (await drawer.boundingBox())!;
+    const lgOpen = (await floor.locator(".of-legend").boundingBox())!;
+    expect(lgOpen.x + lgOpen.width).toBeLessThanOrEqual(dr.x);
+    await shot(page, "office-member");
+    await drawer.getByRole("textbox").fill("境界値のテストも足してね");
+    await drawer.getByRole("button", { name: "送る" }).click();
+    await expect(drawer.getByRole("log", { name: "会話" })).toContainText("境界値のテストも足してね");
+    await drawer.getByRole("button", { name: "閉じる" }).click();
+    await expect(drawer).toHaveCount(0);
     await expect(page.getByRole("banner").getByText("始業中")).toBeVisible();
     // merge 待ちの棚に並ぶ。自動 merge なので、あなたの対応には merge の依頼を出さず、チームが merge すると案内する(ADR-0022)
     const shelf = floor.getByRole("region", { name: "merge 待ちの棚" });
-    await expect(shelf.getByRole("button", { name: /を merge$/ })).toHaveCount(2, { timeout: 30_000 });
+    await expect(shelf.getByRole("button", { name: /を merge$/ })).toHaveCount(2, { timeout: 60_000 });
     await expect(shelf).toContainText("チームが merge します");
     await expect(inbox.getByRole("button", { name: "merge する", exact: true })).toHaveCount(0);
     await expect(inbox).toContainText("チームが merge します。あなたの対応は要りません");
@@ -197,21 +212,6 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await floor.getByRole("radiogroup", { name: "路線の種類" }).getByRole("radio", { name: /バグ修正/ }).click();
     await expect(rails.locator('[data-line~="bugfix"]')).toHaveClass(/of-line-on/);
     await floor.getByRole("radiogroup", { name: "路線の種類" }).getByRole("radio", { name: "すべて" }).click();
-    // キャラクターを押すと、右に引き出しが開く: 今のチケット・直近の手順・話す欄。話すとチケットのメモに残る
-    await devIsland.getByRole("button", { name: /実装中.*押すと様子を見る/ }).first().click();
-    const drawer = floor.getByLabel(/の様子と会話$/);
-    await expect(drawer.getByRole("region", { name: "今のチケット" })).toContainText("工程");
-    await expect(drawer.getByRole("region", { name: "直近の手順" })).toBeVisible();
-    // 引き出しが開いている間、凡例はその手前で止まる(幅を詰める。#72・#113)
-    const dr = (await drawer.boundingBox())!;
-    const lgOpen = (await legend.boundingBox())!;
-    expect(lgOpen.x + lgOpen.width).toBeLessThanOrEqual(dr.x);
-    await shot(page, "office-member");
-    await drawer.getByRole("textbox").fill("境界値のテストも足してね");
-    await drawer.getByRole("button", { name: "送る" }).click();
-    await expect(drawer.getByRole("log", { name: "会話" })).toContainText("境界値のテストも足してね");
-    await drawer.getByRole("button", { name: "閉じる" }).click();
-    await expect(drawer).toHaveCount(0);
     // 島の名前を押すと、島の様子(メンバー・待ち・予算・最近の仕事)が開き、そこから設定にも行ける
     await devIsland.getByRole("button", { name: "開発の島 の様子" }).click();
     const unitDialog = page.getByRole("dialog", { name: "開発の島 の様子" });
@@ -433,7 +433,7 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(floor.locator("path.of-route")).toHaveCount(0); // 連絡経路タブを離れると、案は床から消える
     await expect(drawer).toHaveClass(/wide/);
     await drawer.getByText("バグ修正", { exact: true }).click();
-    await expect(drawer).toContainText("既定の流れを使います");
+    await expect(drawer).toContainText("既定の流れ(上の図)を使います");
     await drawer.getByRole("button", { name: "専用の流れを作る" }).click();
     for (let i = 0; i < 3; i++) await drawer.getByRole("button", { name: "QAを前へ" }).click();
     await expect(drawer.getByRole("img", { name: /^流れの図/ })).toHaveAttribute("aria-label", "流れの図: QA→開発→レビュー→セキュリティ→merge 待ち");

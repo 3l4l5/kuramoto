@@ -176,7 +176,8 @@ const agents = new FakeHarness(async (req, call) => {
   if (has("submit_pr")) {
     // 作業中の様子がオフィスに見えるよう、少し時間をかける
     step("src/export.ts を書いています");
-    await wait(1500);
+    // E2E がメンバーを押して様子を見る間は、働いていてほしいので、少し長めに待つ
+    await wait(5000);
     const repo = ev.match(/リポジトリは (\S+?)、/)?.[1] ?? "";
     const n = Number(ev.match(/チケット (?:\S+\(#)?#?(\d+)/)?.[1] ?? 1);
     await call("submit_pr", { repo, number: 100 + n, head: `kuramoto/${n}`, summary: "実装した" , responses: fixedAll(req.prompt) });
