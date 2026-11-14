@@ -69,7 +69,7 @@ npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --no-browse
 
 #### ワークフロー `confinement-check`
 
-- **起動のきっかけ**: `workflow_dispatch`(Actions の画面・`gh workflow run confinement-check` から手動で)と、閉じ込め・認証まわり(`src/project/confine*`・`team-ci*`・`confined-browser*`・`src/access-token*`・`src/sessions*`・`e2e/**`・`playwright.config.ts`・`scripts/check-*`・`scripts/e2e-count*`・`scripts/run-tests*`・このワークフロー)を触る PR。
+- **起動のきっかけ**: `workflow_dispatch`(Actions の画面・`gh workflow run confinement-check` から手動で)と、閉じ込め・認証まわり(`src/project/confine*`・`team-ci*`・`confined-browser*`・`local-ports*`・`src/server.ts`・`src/access-token*`・`src/sessions*`・認証の案内を出す `ui/src/App.tsx`・`SessionPanel.tsx`・`api.ts`・`e2e/**`・`playwright.config.ts`・`scripts/check-*`・`scripts/e2e-count*`・`scripts/run-tests*`・このワークフロー)を触る PR。
 - **流す順**: 環境(env)→ (a) → (b) → (c) → (d) → (e)。ログのファイル名と中身は [`docs/e2e-logs/README.md`](e2e-logs/README.md) の表のとおり(`<日付>-env` / `a-confined` / `b-break` / `c-no-browser-server` / `d-denied-ports` / `d-team-ci-test` / `e-mysql-rounds` の `.log`)。どれかが落ちても、あとの手順は流し、ログは artifact に上げる。
 - **期待どおりでなければジョブを落とす**: 各手順が、終了コードと、README の「照合の手順」の行(`○ E2E N 件が通った`・`○ 入口を壊すと落ちた`・`○ 断るポートだけが BLOCKED になった` など)を見て、`✗`・`△`・`?`・「見ていない」(`- …`)・スキップが 1 つでもあれば落とす(`scripts/ci-confinement-lib.sh`)。ログが 7 本揃っていなければ落とす。
 - **ホームのダミー**: ランナーのホームはまっさらなので、(a) (iii) の「`~/.kuramoto`・`~/.ssh` へのシンボリックリンク経由の読み取りが断られる」確かめのために、ダミーの `~/.kuramoto/access-token` と `~/.ssh/id_dummy` を作ってから流す。
@@ -81,11 +81,11 @@ npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --no-browse
 
 | 回 | コマンド | 結果 | 日 | 流した場所(CI) | OS | Chrome の版 | コミット | ログのファイル | 流すチケット |
 |---|---|---|---|---|---|---|---|---|---|
-| 設定あり (i)(iii) | `check-confined-browser.ts <repo>`(E2E 全件・`e2e/auth.spec.ts` を含む) | 未実施 | | | | | | | #112(`confinement-check` の artifact から) |
-| 設定あり (ii) | `check-confined-browser.ts <repo> --break` | 未実施 | | | | | | | #112(`confinement-check` の artifact から) |
-| 設定なし | `check-confined-browser.ts <repo> --no-browser-server` | 未実施 | | | | | | | #112(`confinement-check` の artifact から) |
-| 断るポート(ADR-0059・0060) | `check-denied-ports.ts --denied-port <Kuramoto 自身の MySQL のポート>` と、`team-ci.test.ts` の「断るポート」の試験 | 未実施 | | | | | | | #112(`confinement-check` の artifact から) |
-| mysql-test | (a)(c) のログの、MySQL の回(127.0.0.1:3307) | 未実施 | | | | | | | #112(`confinement-check` の artifact から) |
+| 設定あり (i)(iii) | `check-confined-browser.ts <repo>`(E2E 全件・`e2e/auth.spec.ts` を含む) | 未実施 | | | | | | | #115(`confinement-check` の artifact から) |
+| 設定あり (ii) | `check-confined-browser.ts <repo> --break` | 未実施 | | | | | | | #115(`confinement-check` の artifact から) |
+| 設定なし | `check-confined-browser.ts <repo> --no-browser-server` | 未実施 | | | | | | | #115(`confinement-check` の artifact から) |
+| 断るポート(ADR-0059・0060) | `check-denied-ports.ts --denied-port <Kuramoto 自身の MySQL のポート>` と、`team-ci.test.ts` の「断るポート」の試験 | 未実施 | | | | | | | #115(`confinement-check` の artifact から) |
+| mysql-test | (a)(c) のログの、MySQL の回(127.0.0.1:3307) | 未実施 | | | | | | | #115(`confinement-check` の artifact から) |
 
 ## ファイルの分け方
 

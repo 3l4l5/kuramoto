@@ -18,6 +18,11 @@ on:
       - "src/project/confine*"
       - "src/project/team-ci*"
       - "src/project/confined-browser*"
+      - "src/project/local-ports*"
+      - "src/server.ts"
+      - "ui/src/App.tsx"
+      - "ui/src/SessionPanel.tsx"
+      - "ui/src/api.ts"
       - "src/access-token*"
       - "src/sessions*"
 
@@ -33,8 +38,6 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 90
     env:
-      # ログの置き場所。リポジトリの外に置く(作業ツリーに出ると、(b) の「壊したあとに差分が無い」の確かめが崩れる)
-      L: ${{ runner.temp }}/e2e-logs
       # mysql-test(compose.yaml)と同じ接続先。macOS のランナーには docker が無いので、brew の mysql を 3307 で立てる(下の「MySQL」の手順)
       KURAMOTO_MYSQL_TEST_URL: mysql://kuramoto_test:kuramoto-test@127.0.0.1:3307/kuramoto_test
     steps:
@@ -47,7 +50,10 @@ jobs:
 
       - name: 準備(ログの置き場所と日付・ホームのダミー)
         run: |
-          mkdir -p "$L"
+          # ログの置き場所 L。リポジトリの外に置く(作業ツリーに出ると、(b) の「壊したあとに差分が無い」の確かめが崩れる)。
+          # ジョブの env では runner コンテキストが使えないので、ステップの中で $RUNNER_TEMP から作って、以後のステップに渡す
+          echo "L=$RUNNER_TEMP/e2e-logs" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/e2e-logs"
           echo "D=$(date +%F)" >> "$GITHUB_ENV"
           # (a) (iii) の「~/.kuramoto・~/.ssh へのシンボリックリンク経由の読み取りが断られる」確かめに、読めてはいけないファイルを置く(ランナーはまっさらなので、ダミーを作る)
           mkdir -p ~/.kuramoto ~/.ssh
