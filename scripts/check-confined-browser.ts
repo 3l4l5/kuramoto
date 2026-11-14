@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, networkInterfaces } from "node:os";
 import { join, resolve } from "node:path";
 import { Project } from "../src/project/project.js";
@@ -14,21 +14,25 @@ import { kuramotoHome } from "../src/hq.js";
  *
  *   npx tsx scripts/check-confined-browser.ts [リポジトリのパス]            # (i) と (iii)
  *   npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --break    # (ii) わざと入口を壊して、落ちることを確かめる
+ *   npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --no-browser-server  # 設定なし(KURAMOTO_E2E_CONFINED_BROWSER を付けない既定)の回。同じ SandboxRunner で npm test を流して、出力を残す
  *
  * (i)   チームの CI と同じ閉じ込めの中で npm test を流し、狭い閉じ込めの中のブラウザに繋いで E2E が通る
  * (ii)  --break: PhoneBar の「チームの方針」の入口を壊して同じ実行をし、落ちる(終わったら元に戻す)
  * (iii) 接続した側から、次がどれも失敗する(外のブラウザサーバーの閉じ込めが効いている)
  *       - file:// で ~/.kuramoto の中のファイル(access-token など)と ~/.ssh の中のファイルを開く
+ *       - 読める場所(リポジトリの node_modules)の中に置いた、~/.kuramoto・~/.ssh へのシンボリックリンク(ファイル・ディレクトリ)経由で、同じファイルを開く(許した場所がリンクで広がらない)
  *       - newContext({ proxy }) を使った外への通信 / newRequest(ローカルの playwright と、ブラウザ側の context.request)で外の URL を取る
  *       対照として、リポジトリの package.json と localhost の確かめ用サーバーには繋がる(ブラウザそのものが壊れて「失敗」しているのではないことを見るため)
  * 終了コード: 0 = 通った / 1 = 落ちた(閉じ込めの穴・E2E の失敗) / 2 = 確かめられなかった(ブラウザが起動できなかったなど)
  */
 
-// この確かめは、ブラウザサーバーを狭い閉じ込めの中で立てる経路を明示して動かす(既定では動かない設定)
-process.env.KURAMOTO_E2E_CONFINED_BROWSER = "1";
-
 const repo = resolve(process.argv.slice(2).find((a) => !a.startsWith("--")) ?? ".");
 const BREAK = process.argv.includes("--break");
+const NO_BROWSER_SERVER = process.argv.includes("--no-browser-server");
+
+// 既定は、ブラウザサーバーを狭い閉じ込めの中で立てる経路を明示して動かす(チームの CI の既定は動かない設定)。--no-browser-server のときは付けず、設定なしの回にする
+if (NO_BROWSER_SERVER) delete process.env.KURAMOTO_E2E_CONFINED_BROWSER;
+else process.env.KURAMOTO_E2E_CONFINED_BROWSER = "1";
 
 type Probe = { name: string; ok: boolean; detail: string };
 
@@ -55,6 +59,13 @@ const body = async (page, url) => {
   for (const f of t.files) {
     r = await body(page, "file://" + f.path);
     out("file:// で " + f.label + " を開けない", !r.text.includes(f.marker), r.error || (r.text.includes(f.marker) ? "中身が読めた" : "開いたが中身は無い"));
+  }
+  // (iii) シンボリックリンク(読める node_modules の中に置いたリンク)経由
+  r = await body(page, "file://" + t.linkControl.path);
+  out("対照: node_modules の中のリンクが、許した場所(package.json)を指すなら開ける", r.text.includes('"name"'), r.error || "開けた");
+  for (const f of t.links) {
+    r = await body(page, "file://" + f.path);
+    out("node_modules 内のシンボリックリンク経由で " + f.label + " を開けない", !r.text.includes(f.marker), r.error || (r.text.includes(f.marker) ? "中身が読めた(リンクで読める場所が広がっている)" : "開いたが中身は無い"));
   }
   // (iii) 外への通信
   if (!t.lanIp) out("外への通信を確かめる LAN の IP", false, "非 loopback の IPv4 が無いので確かめられない");
@@ -102,6 +113,39 @@ function secretFiles(canary: string): { label: string; path: string; marker: str
   return list.filter((f) => f.marker.length >= 8);
 }
 
+/**
+ * 読める場所(リポジトリの node_modules)の中に、読めてはいけないファイル・ディレクトリへのシンボリックリンクを置く。
+ * 置いたリンクのパスと、消すためのパスを返す。ディレクトリへのリンクは、その中の確かめ用ファイル(canary)を開く。
+ */
+function plantLinks(repo: string, canary: string, files: { label: string; path: string; marker: string }[]) {
+  const dir = join(repo, "node_modules", ".kuramoto-probe-links");
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const links: { label: string; path: string; marker: string }[] = [];
+  const canaryMarker = readFileSync(canary, "utf8").trim();
+  // ファイルへのリンク
+  files.forEach((f, i) => {
+    const l = join(dir, `file-${i}`);
+    symlinkSync(f.path, l);
+    links.push({ label: `${f.label}(ファイルへのリンク)`, path: l, marker: f.marker });
+  });
+  // ディレクトリへのリンク(~/.kuramoto と ~/.ssh)
+  const dirLink = join(dir, "kuramoto-home");
+  symlinkSync(kuramotoHome(), dirLink);
+  links.push({ label: "~/.kuramoto の確かめ用ファイル(ディレクトリへのリンク)", path: join(dirLink, "e2e-probe-canary.txt"), marker: canaryMarker });
+  const sshDir = join(homedir(), ".ssh");
+  const sshFile = files.find((f) => f.path.startsWith(sshDir + "/"));
+  if (sshFile) {
+    const l = join(dir, "ssh-home");
+    symlinkSync(sshDir, l);
+    links.push({ label: `${sshFile.label}(ディレクトリへのリンク)`, path: join(l, sshFile.path.slice(sshDir.length + 1)), marker: sshFile.marker });
+  }
+  // 対照: 許した場所(package.json)を指すリンクは開ける(リンクそのものが壊れていないことを見る)
+  const control = join(dir, "control");
+  symlinkSync(join(repo, "package.json"), control);
+  return { dir, links, control: { path: control } };
+}
+
 async function main(): Promise<number> {
   const p = await Project.open(":memory:");
   let gitDir = join(repo, ".git");
@@ -126,6 +170,20 @@ async function main(): Promise<number> {
       const r = await runner.run("npm test", repo, conf, 20 * 60_000);
       console.log(r.output.split("\n").slice(-60).join("\n"));
       console.log(`--- npm test の終了コード: ${r.code}`);
+      if (NO_BROWSER_SERVER) {
+        // 設定なしの回: ブラウザサーバーは立たず、E2E は「起動できなければ知らせて通す」。通ること・知らせが出たかを残す
+        const skipped = r.output.includes("ブラウザを起動できなかったので、画面の確かめは流していません");
+        // ○ は、npm test が通り、知らせが無く、E2E の件数(「15 passed」)が出力にあるときだけ。それ以外は E2E が流れたか分からない(E2E の回より前で落ちた・回ごと飛ばした、など)
+        const ran = r.code === 0 && !skipped && /\b15 passed\b/.test(r.output);
+        console.log(
+          skipped
+            ? "△ 設定なし: Chrome が起動できず、画面の E2E は流れていない(知らせて通った)"
+            : ran
+              ? "○ 設定なし: 閉じ込めの中で Chrome が起動でき、E2E 15 件が流れた"
+              : "? 設定なし: E2E が流れたか分からない(npm test の終了コードか、出力に「15 passed」が無い。E2E の回より前で落ちた・回ごと飛ばした・件数が変わった可能性。上の出力を見る)",
+        );
+        return r.code === 0 ? 0 : 1;
+      }
       const browserNotice = r.output.includes("狭い閉じ込めの中でブラウザを起動できなかった");
       if (browserNotice) {
         console.log("--- 確かめられなかった: 狭い閉じ込めの中でブラウザを起動できなかった(上の出力の理由を見る)。閉じ込めの無いブラウザには切り替えていない");
@@ -149,9 +207,12 @@ async function main(): Promise<number> {
     const server = createServer((_req, res) => res.end("CANARY-NET"));
     await new Promise<void>((ok) => server.listen(0, "0.0.0.0", ok));
     const probeFile = join(repo, "node_modules/.kuramoto-probe.cjs");
+    const linkDir = join(repo, "node_modules", ".kuramoto-probe-links");
     try {
       writeFileSync(probeFile, PROBE);
-      const targets = { cwd: repo, port: (server.address() as AddressInfo).port, lanIp: lanIp(), files: secretFiles(canary) };
+      const files = secretFiles(canary);
+      const planted = plantLinks(repo, canary, files);
+      const targets = { cwd: repo, port: (server.address() as AddressInfo).port, lanIp: lanIp(), files, links: planted.links, linkControl: planted.control };
       const r = await runner.run("node node_modules/.kuramoto-probe.cjs", repo, { ...conf, env: { ...conf.env, PROBE_TARGETS: JSON.stringify(targets) } }, 5 * 60_000, true);
       const probes = r.output.split("\n").filter((l) => l.startsWith("PROBE ")).map((l) => JSON.parse(l.slice(6)) as Probe);
       if (!probes.length) {
@@ -165,6 +226,7 @@ async function main(): Promise<number> {
       server.close();
       rmSync(canary, { force: true });
       rmSync(probeFile, { force: true });
+      rmSync(linkDir, { recursive: true, force: true });
     }
   } finally {
     await runner.close();
