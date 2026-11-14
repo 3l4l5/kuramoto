@@ -19,8 +19,11 @@ test("合言葉が無いと、画面は案内だけを出し、API は 401。合
   await expect(page.getByRole("button", { name: "+ プロジェクトを作る" })).toBeVisible();
   expect(page.url()).not.toContain("token=");
 
-  // Cookie に入ったので、合言葉なしで API も通る
+  // Cookie に入ったので、合言葉なしで API も通る。入ったのは合言葉ではなくセッション ID(ADR-0061)
   expect((await page.request.get("/api/hq")).status()).toBe(200);
+  const cookies = await page.context().cookies();
+  expect(cookies.map((c) => c.name)).toEqual(["kuramoto_session"]);
+  expect(cookies[0]?.value).not.toContain(E2E_TOKEN);
 });
 
 test("画面を開いたあとで合言葉が通らなくなったら(401)、端末の URL を開くよう案内を出す", async ({ page }) => {

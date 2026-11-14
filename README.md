@@ -14,14 +14,14 @@ Node 24 以上が要ります。エージェントを実際に動かすには `c
 
 ```sh
 npm install
-npm start            # 画面をビルドして起動。ターミナルに出る「合言葉つきの URL」(http://localhost:4300/?token=…。KURAMOTO_PORT で変更可)を、ブラウザごとに一度開く(以後 1 年は Cookie で入れる)
+npm start            # 画面をビルドして起動。ターミナルに出る「合言葉つきの URL」(http://127.0.0.1:4300/?token=…。KURAMOTO_PORT で変更可)を、ブラウザごとに一度開く(以後 8 時間はセッションの Cookie で入れる)
 npm run start:public # 他の PC からも開けるように起動。ターミナルに出る、他の PC 向けの「合言葉つきの URL」を開く
 npm test             # SQLite の回・MySQL の回・E2E の回を流す(チームの CI もこれ)。MySQL の回は要 docker compose up -d mysql-test(飛ばすなら KURAMOTO_SKIP_MYSQL_TESTS=1。docs/mysql.md)。E2E の回は、チームの CI の閉じ込めの中では Chrome が起動できないので、今は「確かめていない」の知らせを出して通る(閉じ込め専用のブラウザサーバーは KURAMOTO_E2E_CONFINED_BROWSER=1 のときだけ。docs/e2e.md)。手元は Chrome が起動できるときだけ(飛ばすなら KURAMOTO_SKIP_E2E_TESTS=1。docs/e2e.md)
 npm run test:e2e     # 画面の E2E テストだけ(手元の Google Chrome を使う。本物の Claude と GitHub は使わない。書き方は docs/e2e.md)
 npm run dev:ui       # 画面を作るとき: Vite の開発サーバー(http://localhost:5173)。/api は npm start のサーバーへ回す
 ```
 
-**合言葉**: `~/.kuramoto/access-token`(無ければ起動時に作る。`KURAMOTO_TOKEN` で指定も可)。localhost からも、画面と API のすべてで求めます。担当(エージェント)のシェルは localhost の本体に届いてしまうので、担当から見えない合言葉でチケットの操作や merge を守るためです(`docs/adr/0059-confine-local-ports.md`)。合言葉なしで開くと 401 で、端末の URL を開くよう案内が出ます。`npm run dev:ui` で開くときは、先に `npm start` の URL を同じブラウザで一度開いておくと(Cookie は localhost のポートをまたいで使われます)、そのまま通ります。
+**合言葉**: `~/.kuramoto/access-token`(無ければ起動時に作る。`KURAMOTO_TOKEN` で指定も可)。localhost からも、画面と API のすべてで求めます。担当(エージェント)のシェルは localhost の本体に届いてしまうので、担当から見えない合言葉でチケットの操作や merge を守るためです(`docs/adr/0059-confine-local-ports.md`)。合言葉なしで開くと 401 で、端末の URL を開くよう案内が出ます。Cookie には合言葉ではなく、本体だけが覚えているセッション ID(8 時間で切れる。本体の再起動でも全部切れる)が入ります。Cookie は**ポートで分けられない**ので、同じホスト名で担当が立てた開発サーバー(`localhost:5173` など)を開くと、その Cookie が担当のサーバーに届きます。そのため、**Kuramoto の画面は `127.0.0.1` で、担当の成果物は `localhost` で(別のホスト名で)開いてください**(端末に出る URL は `127.0.0.1` です)。漏れた疑いがあるときは `POST /api/session/revoke-all`(`x-kuramoto: 1` ヘッダーと `Authorization: Bearer <合言葉>` を付ける)で全部のセッションを失効できます。合言葉も変えるなら `~/.kuramoto/access-token` を消して再起動します(`docs/adr/0061-session-cookie.md`)。`npm run dev:ui`(`localhost:5173`)で開くときは、`http://localhost:4300/?token=…` を同じブラウザで一度開くと(Cookie は localhost のポートをまたいで使われます)通ります。この間は成果物を `localhost` で開かないでください。
 
 1. 本部の「+ プロジェクトを作る」で名前とリポジトリを登録すると、企画スタジオが開き、企画の咲季が要件を聞き始めます。
 2. 要件 → ユーザーフロー → 画面デザイン → インフラ → アーキテクチャとデータ を、段階ごとに合意(またはお任せ・省略)して進めます。

@@ -88,7 +88,7 @@ function UnauthorizedBanner() {
     <div className="budgetalert" role="alert">
       <p>
         <b>合言葉が通りません。</b>
-        Kuramoto を起動した端末に出ている「合言葉つきの URL」を開いてください(一度開けば、このブラウザでは 1 年間通ります)。
+        Kuramoto を起動した端末に出ている「合言葉つきの URL」を開いてください(一度開けば、このブラウザでは 8 時間通ります)。
       </p>
     </div>
   );
