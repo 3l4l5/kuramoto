@@ -27,7 +27,7 @@ annotate() {
 sandbox_denies() {
   [ -z "${SKIP_DENY_LOG:-}" ] || return 0
   { log show --last 30m --style compact --predicate 'eventMessage CONTAINS "deny"' 2>&1 || sudo log show --last 30m --style compact --predicate 'eventMessage CONTAINS "deny"' 2>&1; } \
-    | grep -iE 'Sandbox|deny' | grep -iE 'chrom|headless|node|playwright' | cut -c1-260
+    | grep -E 'Sandbox: ' | grep -v 'GamePolicyAgent' | sed -E 's/^.*Sandbox: //; s/\([0-9]+\)//' | grep -iE 'chrom|headless|node|playwright|deny' | cut -c1-200 | sort | uniq -c | sort -rn
 }
 
 # need <ログ> <拡張正規表現>: その行が 1 つはあること

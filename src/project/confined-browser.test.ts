@@ -10,6 +10,13 @@ describe("serverScript(狭い閉じ込めの中のブラウザサーバーの起
     expect(serverScript("/work/repo")).toContain('require("/work/repo/node_modules/@playwright/test")');
   });
 
+  it("確かめの CI(KURAMOTO_E2E_BROWSER_DEBUG=1)では、DEBUG に頼らず、ブラウザの標準エラーと「閉じた」を標準エラーに出す", () => {
+    const s = serverScript("/work/repo");
+    expect(s).toContain('KURAMOTO_E2E_BROWSER_DEBUG === "1"');
+    expect(s).toContain("[pw:browser]");
+    expect(s).toContain('server.on("close"');
+  });
+
   it("カレントディレクトリが別の場所でも、そのパスの @playwright/test を読める", () => {
     const repo = mkdtempSync(join(tmpdir(), "cb-repo-"));
     const elsewhere = mkdtempSync(join(tmpdir(), "cb-cwd-"));

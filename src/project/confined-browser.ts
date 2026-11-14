@@ -85,7 +85,12 @@ export const serverScript = (cwd: string) => `
 const { chromium } = require(${JSON.stringify(join(resolve(cwd), "node_modules/@playwright/test"))});
 (async () => {
   const opts = { headless: true, timeout: 60000 };
-  const server = await chromium.launchServer({ channel: "chrome", ...opts }).catch(() => chromium.launchServer(opts));
+  // 確かめの CI(KURAMOTO_E2E_BROWSER_DEBUG=1)では、ブラウザの標準エラー(Chrome の落ちた理由)を、DEBUG の環境変数に頼らず、標準エラーに出す
+  if (process.env.KURAMOTO_E2E_BROWSER_DEBUG === "1") {
+    opts.logger = { isEnabled: (name) => name === "browser", log: (name, severity, message) => { if (name === "browser") process.stderr.write("[pw:browser] " + String(message).slice(0, 300) + "\\n"); } };
+  }
+  const server = await chromium.launchServer({ channel: "chrome", ...opts }).catch((e) => { process.stderr.write("[pw:browser] channel chrome の起動に失敗: " + String((e && e.message) || e).split("\\n")[0].slice(0, 300) + "\\n"); return chromium.launchServer(opts); });
+  server.on("close", () => process.stderr.write("[pw:browser] ブラウザサーバーが閉じた(ブラウザが終わった)\\n"));
   process.stdout.write("KURAMOTO_WS " + server.wsEndpoint() + "\\n");
   const stop = () => server.close().catch(() => {}).then(() => process.exit(0));
   process.stdin.on("end", stop);

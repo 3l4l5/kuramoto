@@ -187,6 +187,9 @@ async function main(): Promise<number> {
       const r = await runner.run("npm test", repo, conf, 20 * 60_000);
       // 落ちた試験の理由が切れないよう、末尾 200 行を残す(CI のログで読めるように)
       console.log(r.output.split("\n").slice(-200).join("\n"));
+      // ブラウザサーバーの標準エラー(Chrome の落ちた理由)は、E2E の最初に出るので、末尾 200 行には入らない。別に取り出して残す
+      const browserLines = r.output.split("\n").filter((l) => /\[browser-server\]|FATAL|Check failed|SIGTRAP|crashed/.test(l));
+      if (browserLines.length) console.log(`--- ブラウザサーバーの標準エラー・Chrome の落ちた理由(${browserLines.length} 行のうち先頭 60 行)\n${browserLines.slice(0, 60).map((l) => l.slice(0, 300)).join("\n")}`);
       console.log(`--- npm test の終了コード: ${r.code}`);
       if (NO_BROWSER_SERVER) {
         // 設定なしの回: ブラウザサーバーは立たず、E2E は「起動できなければ知らせて通す」。通ること・知らせが出たかを残す
