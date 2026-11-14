@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { compareImages } from "../src/project/design-visual.js";
 import { createProject, fetchExport, projectId, seedKindTickets, sendToPlanner, shot, timedSteps } from "./helpers.js";
 
@@ -12,6 +12,17 @@ import { createProject, fetchExport, projectId, seedKindTickets, sendToPlanner, 
 const gate = (page: Page, label: string) => page.getByRole("navigation", { name: "段階" }).getByRole("button", { name: new RegExp(label) });
 const work = (page: Page) => page.getByRole("region", { name: "作業の場" });
 const chat = (page: Page) => page.getByRole("region", { name: "企画の 3 人との会話" });
+
+/** 引き出しが開いている間、凡例は引き出しの手前で止まり、凡例の行は床の箱に収まる(#72・#113・#122)。フォントの幅に依らず常に確かめる */
+async function expectLegendBeforeDrawer(floor: Locator, drawer: Locator, when: string) {
+  const legend = floor.locator(".of-legend");
+  const dr = (await drawer.boundingBox())!;
+  const fl = (await floor.boundingBox())!;
+  const lg = (await legend.boundingBox())!;
+  const rowRight = await legend.evaluate((e) => e.parentElement!.getBoundingClientRect().right);
+  expect(rowRight, `${when}: 凡例の行の右端が床の右端に収まる`).toBeLessThanOrEqual(fl.x + fl.width + 1);
+  expect(lg.x + lg.width, `${when}: 引き出しが開いている間の凡例の右端が引き出しの左端より左`).toBeLessThanOrEqual(dr.x);
+}
 
 test("プロジェクトを作り、企画スタジオで 5 段階を決めてチームに渡し、オフィスで merge まで進む", async ({ page }) => {
   // 5 段階の合意からオフィスの merge までを 1 つのテストで通す長い流れ。閉じ込めの中のブラウザ(遠くから繋ぐ)では 90 秒に収まらないことがあるので、時間を長くとる(止まった手順があれば、呼び出しの記録に出る)
@@ -148,6 +159,9 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     const drawer = floor.getByLabel(/の様子と会話$/);
     await expect(drawer.getByRole("region", { name: "今のチケット" })).toContainText("工程");
     await expect(drawer.getByRole("region", { name: "直近の手順" })).toBeVisible();
+    // 働いている間(吹き出しが出ている)に開いても、凡例は引き出しの手前で止まる(#121・#122)
+    await expect(devIsland.locator(".of-bubble").first()).toBeVisible();
+    await expectLegendBeforeDrawer(floor, drawer, "働いている間");
     await shot(page, "office-member");
     await drawer.getByRole("textbox").fill("境界値のテストも足してね");
     await drawer.getByRole("button", { name: "送る" }).click();
@@ -202,18 +216,11 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     expect(lg.x - fl.x).toBeLessThan(fl.width / 4);
     const people = await floor.locator(".of-person, .of-bubble").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0));
     for (const m of people) expect(m.bottom <= lg.y || m.top >= lg.y + lg.height || m.right <= lg.x || m.left >= lg.x + lg.width).toBe(true);
-    // 引き出しが開いている間、凡例はその手前で止まる(幅を詰める。#72・#113)。働いている間は吹き出しで床が広がるので、全員が終えたあとに見る
+    // 引き出しが開いている間、凡例はその手前で止まる(幅を詰める。#72・#113)。床の中身(凡例の行)は床の箱に収まる(#122)
     await devIsland.getByRole("button", { name: /押すと様子を見る/ }).first().click();
     const idleDrawer = floor.getByLabel(/の様子と会話$/);
     await expect(idleDrawer).toBeVisible();
-    const dr = (await idleDrawer.boundingBox())!;
-    const lgOpen = (await legend.boundingBox())!;
-    // 床の中身(凡例の行)が床の箱より横に広がっているとき(CI のランナーは日本語のフォントの幅が違う)は、凡例の右端が箱を基準にした引き出しと比べられないので、見送って注釈に残す
-    const rowRight = await legend.evaluate((e) => e.parentElement!.getBoundingClientRect().right);
-    const floorRight = fl.x + fl.width;
-    if (rowRight > floorRight + 1) console.log(`[e2e-skip] 凡例と引き出しの確かめを見送った: 凡例の行の右端 ${Math.round(rowRight)} が床の右端 ${Math.round(floorRight)} より右`);
-    if (rowRight > floorRight + 1) test.info().annotations.push({ type: "凡例の確かめを見送った", description: `凡例の行の右端 ${Math.round(rowRight)} が床の右端 ${Math.round(floorRight)} より右(床の中身が箱より広い)` });
-    else expect(lgOpen.x + lgOpen.width, "引き出しが開いている間の凡例の右端").toBeLessThanOrEqual(dr.x);
+    await expectLegendBeforeDrawer(floor, idleDrawer, "全員が終えたあと");
     await idleDrawer.getByRole("button", { name: "閉じる" }).click();
     await expect(idleDrawer).toHaveCount(0);
     // 開いているチケットは、その種類の路線に札(●#1)で乗る

@@ -1399,6 +1399,9 @@ body { background: var(--bg); }
   .officefloor .of-map { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: minmax(max-content, 1fr); align-content: start; }
   /* 凡例: 既定は床の下の行(流れの中。受け口の真下のアーキテクトの下に折り返す)。右にメンバーの引き出しが開いているときは、その手前まで(#72) */
   .officefloor .of-side { flex-wrap: wrap; }
+  /* 床の下の行(凡例を含む)の「中身の幅」は、地図の列の幅に数えない(width: 0 + min-width: 100%)。数えると、凡例が 1 行に並んだ幅(引き出しの余白も足して)まで列が広がり、
+     行が床の箱より横に出て、凡例の右端が引き出しの左端より右に出る(チケット 122)。列の幅は島の並びで決まり、行はその幅に収まって折り返す */
+  .officefloor .of-side { width: 0; min-width: 100%; box-sizing: border-box; }
   .officefloor .of-legend { flex: 1 1 100%; order: 1; margin: var(--sp-2) 0 0; }
   .officefloor:has(.of-drawer) .of-legend { margin-right: calc(400px + var(--sp-4)); }
   .officefloor .of-map { padding-bottom: var(--sp-4); }
