@@ -30,6 +30,15 @@ sandbox_denies() {
     | grep -E 'Sandbox: ' | grep -v 'GamePolicyAgent' | sed -E 's/^.*Sandbox: //; s/\([0-9]+\)//' | grep -iE 'chrom|headless|node|playwright' | cut -c1-200 | sort | uniq -c | sort -rn
 }
 
+# sandbox_denies_new: 閉じ込めが断った操作のうち、chrome に関わるものを、時刻順に「最初に出た時刻」つきで 1 種類 1 行にする(あとから新しく出た deny が、末尾に来る)。
+sandbox_denies_new() {
+  [ -z "${SKIP_DENY_LOG:-}" ] || return 0
+  { log show --last 30m --style compact --predicate 'eventMessage CONTAINS "deny"' 2>&1 || sudo log show --last 30m --style compact --predicate 'eventMessage CONTAINS "deny"' 2>&1; } \
+    | grep -E 'Sandbox: ' | grep -iE 'chrom|headless' \
+    | sed -E 's/^[0-9-]+ ([0-9:.]+) .*Sandbox: /\1 /; s/\([0-9]+\) deny\([0-9]+\)/ deny/' | cut -c1-160 \
+    | awk '{ t=$1; $1=""; if (!($0 in seen)) { seen[$0]=1; print t $0 } }'
+}
+
 # need <ログ> <拡張正規表現>: その行が 1 つはあること(grep -a: ログに色の制御文字や壊れたバイトがあっても、その先の行まで読む)
 need() {
   if ! grep -aEq -- "$2" "$1"; then
@@ -61,14 +70,24 @@ show_reasons() {
   local n; n="$(basename "$1")"
   grep -E -- '^(✗|△|\?|---)' "$1" | cut -c1-200 | annotate "1 ✗△?---($n)" 700
   grep -E -- 'FATAL|Check failed|SIGTRAP|Permission denied|crash|did exit|Operation not permitted' "$1" | cut -c1-220 | head -6 | annotate "2 Chrome の落ちた理由($n)" 700
-  grep -F -- '[browser-server]' "$1" | cut -c1-200 | head -6 | annotate "3 ブラウザサーバーの先頭($n)" 700
-  grep -F -- '[browser-server]' "$1" | cut -c1-200 | tail -6 | annotate "4 ブラウザサーバーの末尾($n)" 700
-  grep -E -- '^ +[0-9]+\) |Error:|[0-9]+ (failed|did not run)' "$1" | grep -v 'Test Files' | cut -c1-200 | head -8 | annotate "5 落ちた E2E($n)" 700
+  # 先頭 3 行と末尾 3 行を 1 つの注釈に(注釈は 1 ステップ 10 件までなので、番号を詰める)
+  { grep -F -- '[browser-server]' "$1" | cut -c1-200 | head -3; grep -F -- '[browser-server]' "$1" | cut -c1-200 | tail -3; } | annotate "3 ブラウザサーバーの先頭と末尾($n)" 700
+  # 落ちた E2E は、見出し(ファイル:行)・Error・Playwright の「waiting for」・失敗した行(コードの枠の「>」)だけに縮めて、2 つの注釈に分けて出す(1 件 600 文字ほどで切れるため)
+  grep -aE -- '^ +[0-9]+\) |^ +(Error|Expected|Received)|^ +> [0-9]+ \||waiting for' "$1" | sed -E 's/^ +([0-9]+\)) (e2e[^ ]*) .*/\1 \2/' | cut -c1-95 > "${RUNNER_TEMP:-/tmp}/failed-e2e.out"
+  head -n 9 "${RUNNER_TEMP:-/tmp}/failed-e2e.out" | annotate "5 落ちた E2E($n)" 700
   tail -n 10 "$1" | cut -c1-200 | annotate "6 末尾($n)" 700
   # 閉じ込めが断った操作(sandbox の deny)。Chrome のログと突き合わせる。全文はログの末尾に足して artifact に残す
   sandbox_denies > "${RUNNER_TEMP:-/tmp}/deny.out" 2>&1 || true
   { echo; echo "--- sandbox の deny(log show。chrome・node・playwright に関わる行。$(wc -l < "${RUNNER_TEMP:-/tmp}/deny.out" | tr -d ' ') 行)"; head -n 150 "${RUNNER_TEMP:-/tmp}/deny.out"; } >> "$1"
   head -n 12 "${RUNNER_TEMP:-/tmp}/deny.out" | sed -E 's/^ +//' | cut -c1-110 | annotate "7 sandbox の deny($n)" 700
+  # chrome の deny を、最初に出た時刻の順に(末尾ほど、あとから新しく出たもの)。ブラウザが閉じた時刻(ログの「ブラウザのプロセスが終わった」)と突き合わせる
+  sandbox_denies_new > "${RUNNER_TEMP:-/tmp}/deny-new.out" 2>&1 || true
+  { echo; echo "--- chrome の deny を、最初に出た時刻の順に($(wc -l < "${RUNNER_TEMP:-/tmp}/deny-new.out" | tr -d ' ') 種類)"; cat "${RUNNER_TEMP:-/tmp}/deny-new.out"; } >> "$1"
+  sed -n '10,18p' "${RUNNER_TEMP:-/tmp}/failed-e2e.out" | annotate "8 落ちた E2E の続き($n)" 700
+  # 長いテストの手順ごとの経過時間(e2e/helpers.ts の timedSteps)。時間切れが、止まった手順か、全体の遅さかを見分ける
+  grep -aF -- '[e2e-time]' "$1" | cut -c1-90 | tail -n 9 | annotate "9 手順の経過時間($n)" 700
+  # 接続した側の確かめ(check-confined-browser の「参考:」の行。判定には入れない記録)。1 つの注釈(700 文字ほど)に収まる 5 行まで
+  grep -a -- '^参考: ' "$1" | sed -E 's/^参考: //' | cut -c1-130 | sed -n '1,5p' | annotate "10 接続した側の参考($n)" 700
   echo "::group::$(basename "$1"): 末尾の 100 行"
   tail -n 100 "$1"
   echo "::endgroup::"

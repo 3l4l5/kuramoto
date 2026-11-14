@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { expect, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 /**
  * E2E の共通の道具。どのテストも、ここの「プロジェクトを作る」「画面の幅」「引き出し・下のタブの場所」を使う
@@ -23,6 +23,47 @@ export async function createProject(page: Page, name: string, repo: string) {
   await page.getByLabel("リポジトリ 1").fill(repo);
   await page.getByRole("button", { name: "次へ: 企画スタジオ" }).click();
   await expect(page.getByText(`${name} · 企画スタジオ`)).toBeVisible();
+}
+
+/**
+ * 企画スタジオのチャットで、担当に「直してほしい・相談する」を送る(中身に反映してもらう)。
+ * 送り方の既定は「質問する(中身は変えない)」で、送るボタンの名前も「質問する」になる(10569ca)。企画の中身を書かせたいときは、送り方を切り替えてから送る。
+ */
+export async function sendToPlanner(page: Page, text: string) {
+  await page.getByRole("radiogroup", { name: "送り方" }).getByRole("radio", { name: "直してほしい・相談する" }).check();
+  await page.getByLabel("メッセージ").fill(text);
+  await page.getByRole("button", { name: "送る", exact: true }).click();
+}
+
+/**
+ * 設計書(Markdown)のエクスポートのリンクが、ダウンロードの印(download)つきで、名前と中身の正しいファイルを返すことを確かめて、名前と中身を返す。
+ * ブラウザの「ダウンロード」の動き(ファイルに書く)は通さず、リンクの宛先を page.request(Authorization つき)で取る。
+ * 理由: 閉じ込めの中のブラウザは、ダウンロードのファイルを書くときに、書ける場所の外(ユーザーの一時ディレクトリ /private/var/folders/…/T/.org.chromium.Chromium.*)へ
+ * 書こうとして sandbox に断られ、ダウンロードが canceled で失敗する(run 43609097616)。この許可は足さない(閉じ込めを広げない)。
+ */
+export async function fetchExport(page: Page, name: string): Promise<{ filename: string; body: Buffer }> {
+  const link = page.getByRole("link", { name: "設計書をエクスポート(Markdown)" });
+  expect(await link.evaluate((a) => a.hasAttribute("download")), "リンクに download の印がある").toBe(true);
+  const res = await page.request.get((await link.getAttribute("href"))!);
+  expect(res.status()).toBe(200);
+  const disposition = res.headers()["content-disposition"] ?? "";
+  expect(disposition).toMatch(/^attachment;/);
+  const m = /filename\*=UTF-8''([^;]+)/.exec(disposition);
+  const filename = m ? decodeURIComponent(m[1]!) : "";
+  expect(filename).toBe(`${name}-設計書.md`);
+  return { filename, body: await res.body() };
+}
+
+/**
+ * 長いテストの手順(test.step)を、始まった時刻(テストの始めからの秒)つきで標準出力に残す。確かめの CI(閉じ込めの中のブラウザ)で、
+ * 90 秒の時間切れが「止まった手順があった」のか「全体が遅かった」のかを、ログから見分けるため(scripts/ci-confinement-lib.sh が [e2e-time] の行を注釈に出す)。
+ */
+export function timedSteps() {
+  const t0 = Date.now();
+  return <T>(title: string, body: () => Promise<T>) => {
+    console.log(`[e2e-time] ${Math.round((Date.now() - t0) / 1000)}s ▶ ${title.slice(0, 24)}`);
+    return test.step(title, body);
+  };
 }
 
 /** いま開いているプロジェクトの番号(アドレスの #/p/<番号> から)。 */

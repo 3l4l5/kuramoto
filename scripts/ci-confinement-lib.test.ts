@@ -72,10 +72,18 @@ describe("ci-confinement-lib.sh(閉じ込めの確かめの CI が、ログを�
     const r = run("%\n✗ 落ちた回: X\n[browser-server] FATAL: Check failed\n○ ok\n", 'show_reasons "$f"');
     expect(r.out).toMatch(/^::error title=1 ✗△\?---\(x\.log\)::✗ 落ちた回: X/m);
     expect(r.out).toMatch(/^::error title=2 Chrome の落ちた理由\(x\.log\)::.*FATAL/m);
-    expect(r.out).toMatch(/^::error title=3 ブラウザサーバーの先頭/m);
+    expect(r.out).toMatch(/^::error title=3 ブラウザサーバーの先頭と末尾/m);
     expect(r.out).not.toMatch(/title=5 落ちた E2E/);
     expect(r.out).toMatch(/title=6 末尾\(x\.log\)::.*%25.*%0A/);
     for (const l of r.out.split("\n")) if (l.startsWith("::error")) expect(l.length).toBeLessThan(900);
+  });
+
+  it("show_reasons: 接続した側の「参考:」の行を、1 つの短い注釈に出す(判定の行ではない)", () => {
+    const lines = Array.from({ length: 8 }, (_, i) => `参考: 診断 ${i + 1}: 開けた`).join("\n");
+    const r = run(`✗ 落ちた回: X\n${lines}\n`, 'show_reasons "$f"');
+    expect(r.out).toMatch(/^::error title=10 接続した側の参考\(x\.log\)::診断 1: 開けた.*診断 5: 開けた/m);
+    expect(r.out.split("\n").find((l) => l.startsWith("::error title=10 "))).not.toMatch(/診断 6/);
+    expect(r.out).not.toMatch(/title=1 ✗△\?---\(x\.log\)::[^\n]*参考/);
   });
 
   it("どれか 1 つでも落ちれば、あとの確かめが通っても、最後は落ちる", () => {
@@ -102,14 +110,8 @@ describe("ワークフロー confinement-check", () => {
     for (const p of ['"src/project/confine*"', '"scripts/check-*"', '"e2e/**"']) expect(wf).toContain(p);
   });
 
-  it("continue-on-error は、(a) のステップだけ(ジョブには付けない)。(e) の MySQL の回は、落ちたらジョブを落とす。判定はゆるめない", () => {
-    const lines = wf.split("\n");
-    const at = lines.flatMap((l, i) => (/^\s*continue-on-error: true\s*$/.test(l) ? [i] : []));
-    expect(at).toHaveLength(1);
-    const stepName = (i: number) => lines.slice(0, i).reverse().find((l) => /^\s+- name:/.test(l)) ?? "";
-    expect(stepName(at[0])).toContain("(a) 設定あり");
-    // ステップの中(インデント 8)にあること = ジョブ直下(インデント 4)ではない
-    expect(lines[at[0]]).toMatch(/^ {8}continue-on-error: true$/);
+  it("continue-on-error は、どのステップ・ジョブにも付けない((a) は #118、(e) の MySQL の回は #116)。判定はゆるめない", () => {
+    expect(wf).not.toMatch(/^\s*continue-on-error:/m);
     // (e) は #116 で直った。既知の失敗として扱う仕組み(steps.e.outcome・::warning::)は残さない
     expect(wf).not.toContain("steps.e.outcome");
     expect(wf).not.toContain("#116 の既知の失敗");

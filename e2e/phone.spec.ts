@@ -153,7 +153,7 @@ test("幅 390px: 下のタブで あなたの対応 / オフィスを切り替�
     const tabs = board.getByRole("tablist", { name: "工程" });
     await expect(tabs.getByRole("tab")).toHaveText(["未着手1", "開発中(直し含む)0", "QA1", "判断待ち0", "merge 待ち0", "完了0"]);
     // 今の工程の列だけが見える
-    await expect(board.locator(".card")).toHaveCount(1);
+    await expect(board.locator(".card:visible")).toHaveCount(1);
     await board.getByRole("radiogroup", { name: "種類で絞り込み" }).getByRole("radio", { name: "バグ修正" }).click();
     await expect(tabs.getByRole("tab").first()).toHaveText("QA1");
     await expect(tabs.getByRole("tab").first()).toHaveAttribute("aria-selected", "true");
