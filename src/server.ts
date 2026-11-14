@@ -125,6 +125,9 @@ export class KuramotoServer {
   private readonly records = new Map<number, ProjectRecord>();
   private readonly opening = new Map<number, Promise<Project>>();
   private readonly looping = new Set<number>();
+  /** 流れている見回り(tick)・自動 merge。close() が、終わるのを待ってから DB を閉じるために持つ。 */
+  private readonly inflight = new Set<Promise<unknown>>();
+  private closed = false;
   /** 削除中のプロジェクト。ループを新しく始めない。 */
   private readonly deleting = new Set<number>();
   private readonly harnesses: Record<string, Harness>;
@@ -266,11 +269,12 @@ export class KuramotoServer {
     // チームが自動で merge する(ADR-0022)。始業中だけ。merge できたら、待っていた後のチケットが動けるように受信箱を見直す
     let merging = false;
     const merge = async (): Promise<void> => {
-      if (merging || !this.running.has(id) || !this.dbUp() || !await autoMergeEnabled(p)) return;
+      if (this.closed || merging || !this.running.has(id) || !this.dbUp() || !await autoMergeEnabled(p)) return;
       merging = true;
       try {
         if (await autoMerge(p, this.github, { teamCi, workspace })) this.poke(id);
       } catch (e) {
+        if (this.closed) return; // 閉じている最中の失敗(DB はもう閉じている)は記録しない
         this.deps.dbHealth?.reportFailure(e); // 接続のエラーなら、次の ping を待たずに「切れた」にする
         await p.event("system", "dispatcher_error", null, { error: e instanceof Error ? e.message : String(e) });
       } finally {
@@ -282,14 +286,14 @@ export class KuramotoServer {
       dispatcher,
       teamCi,
       workspace,
-      timer: setInterval(() => void tick(), POLL_MS),
-      mergeTimer: setInterval(() => void merge(), this.mergePollMs),
-      tick: async () => tick(),
+      timer: setInterval(() => void this.track(tick), POLL_MS),
+      mergeTimer: setInterval(() => void this.track(merge), this.mergePollMs),
+      tick: async () => this.track(tick),
     };
     let again = false;
     const tick = async (): Promise<void> => {
       // DB に繋がらない間は、受信箱を見回らない(繋がり直したら onChange が起こす。取りこぼしても次の見回りで再開する)
-      if (!this.dbUp()) return;
+      if (this.closed || !this.dbUp()) return;
       if (r.busy) {
         again = true; // 見回り中に呼ばれたら、終わってからもう一度見る
         return;
@@ -299,6 +303,7 @@ export class KuramotoServer {
         // 島の最大人数まで並列に動かす(編成を変えたら次に見直すときから効く)
         await dispatcher.drain({ concurrency: async () => await dispatcher.capacity() });
       } catch (e) {
+        if (this.closed) return; // 閉じている最中の失敗(DB はもう閉じている)は記録しない
         this.deps.dbHealth?.reportFailure(e); // 接続のエラーなら、次の ping を待たずに「切れた」にする
         await p.event("system", "dispatcher_error", null, { error: e instanceof Error ? e.message : String(e) });
       } finally {
@@ -310,7 +315,7 @@ export class KuramotoServer {
       }
     };
     this.runners.set(id, r);
-    void tick();
+    void this.track(tick);
   }
 
   /**
@@ -405,13 +410,37 @@ export class KuramotoServer {
     }
   }
 
-  close(): void {
+  /** 見回り・自動 merge を 1 回流し、流れている間は close() が待てるように覚える。 */
+  private track(run: () => Promise<void>): Promise<void> {
+    const pr = run();
+    this.inflight.add(pr);
+    void pr.then(
+      () => this.inflight.delete(pr),
+      () => this.inflight.delete(pr),
+    );
+    return pr;
+  }
+
+  /**
+   * 止める。新しい見回りは始めず、流れている見回りが終わるのを待ってから(上限 10 秒)、プロジェクトを閉じる。
+   * 待たずに DB(MySQL のプール)を閉じると、流れていた見回りが閉じたあとの接続を使って落ちる。
+   */
+  async close(): Promise<void> {
+    this.closed = true;
     this.unwatchDb?.();
     this.deps.dbHealth?.stop();
     for (const r of this.runners.values()) {
       clearInterval(r.timer);
       clearInterval(r.mergeTimer);
     }
+    let giveUp: NodeJS.Timeout | undefined;
+    await Promise.race([
+      Promise.allSettled([...this.inflight]),
+      new Promise((res) => {
+        giveUp = setTimeout(res, 10_000);
+      }),
+    ]);
+    clearTimeout(giveUp);
     for (const p of this.projects.values()) p.close();
     if (this.checkRunner instanceof SandboxRunner) void this.checkRunner.close();
   }
@@ -1174,8 +1203,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     console.log("この URL を知っている人は、チームを動かし、あなたの GitHub に push できます。信頼できるネットワークでだけ使い、他人に渡さないでください。");
   });
   const shutdown = () => {
-    app.close();
-    server.close(() => void db.close().finally(() => process.exit(0)));
+    // 見回りが終わるのを待ってから、DB を閉じる
+    void app.close().finally(() => server.close(() => void db.close().finally(() => process.exit(0))));
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);

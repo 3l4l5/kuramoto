@@ -19,8 +19,10 @@ import { Sessions } from "./sessions.js";
 
 const leadSaid = async (p: Project, text: string) => (await leadMessages(p)).some((m) => m.body.includes(text));
 
-const cleanups: (() => void)[] = [];
-afterEach(() => cleanups.splice(0).forEach((f) => f()));
+const cleanups: (() => void | Promise<void>)[] = [];
+afterEach(async () => {
+  for (const f of cleanups.splice(0)) await f();
+});
 
 /** テストの合言葉(ADR-0059)。API と画面は localhost からも合言葉を求めるので、call は Authorization: Bearer で渡す。 */
 const TOKEN = "s3cret";
@@ -38,7 +40,7 @@ async function boot(opts: { workspaceFor?: (dataDir: string) => import("./projec
   const server: Server = createServer((req, res) => void app.handle(req, res));
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as { port: number }).port;
-  cleanups.push(() => { app.close(); server.close(); app.hq.close(); rmSync(home, { recursive: true, force: true }); });
+  cleanups.push(async () => { await app.close(); server.close(); app.hq.close(); rmSync(home, { recursive: true, force: true }); });
   const call = async (method: string, path: string, body?: unknown, headers: Record<string, string> = { "x-kuramoto": "1" }) => {
     const res = await fetch(`http://localhost:${port}${path}`, { method, headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, ...headers }, body: body ? JSON.stringify(body) : undefined });
     return { status: res.status, json: (await res.json().catch(() => null)) as any, text: res.headers.get("content-type") };

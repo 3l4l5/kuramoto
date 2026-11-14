@@ -224,6 +224,8 @@ export const MYSQL_MIGRATIONS: MysqlMigration[] = [
   // 版の番号を SQLite と揃えるための印(ADR-0040)。
   { version: 22, statements: [] },
   // 23: github_issues(見回りが取ってきた GitHub の Issue と、リーダーの扱い。SQLite の版 23 と同じ。#79)
+  // (#116: body の DEFAULT ('') を、この版の中で直した。MySQL はまだ本番の DB ではない(ADR-0041)ので、版 23 を流し終えた MySQL の database は無い前提。
+  //  もしあれば、`ALTER TABLE github_issues ALTER COLUMN body SET DEFAULT ('')` を手で流すこと。版 24 の periodic_review_runs.looked_at も同じ)
   {
     version: 23,
     statements: [
