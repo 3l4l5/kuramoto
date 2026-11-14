@@ -2,25 +2,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { compareImages } from "../src/project/design-visual.js";
+import { createProject, projectId, seedKindTickets, shot } from "./helpers.js";
 
 /**
  * 画面の作りに依らないよう、ボタンの名前や見える文言で操作する。
  * 担当はフェイク(e2e/server.ts)で、本物の Claude と GitHub は使わない。
  */
-
-async function createProject(page: Page, name: string, repo: string) {
-  await page.goto("/#/");
-  await page.getByRole("button", { name: "+ プロジェクトを作る" }).click();
-  await page.getByLabel("名前").fill(name);
-  await page.getByLabel("リポジトリ 1").fill(repo);
-  await page.getByRole("button", { name: "次へ: 企画スタジオ" }).click();
-  await expect(page.getByText(`${name} · 企画スタジオ`)).toBeVisible();
-}
-
-/** E2E_SHOTS にフォルダを指定したときだけ、見た目の確認用にスクリーンショットを撮る。 */
-async function shot(page: Page, name: string) {
-  if (process.env.E2E_SHOTS) await page.screenshot({ path: `${process.env.E2E_SHOTS}/${name}.png`, fullPage: true });
-}
 
 const gate = (page: Page, label: string) => page.getByRole("navigation", { name: "段階" }).getByRole("button", { name: new RegExp(label) });
 const work = (page: Page) => page.getByRole("region", { name: "作業の場" });
@@ -795,16 +782,8 @@ test("オフィスの床から島を足し、設定を変え、外せる。キ�
 test("チケットの種類: 詳細で変えられ、ボードは種類の流れの順に列が並び、ツリーと生産性にも出て絞り込める", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await createProject(page, "種類", "acme/kinds");
-  const id = page.url().match(/#\/p\/(\d+)/)![1];
-  const write = { "x-kuramoto": "1" };
-  // バグ修正は QA の申し送りから始める流れ。ほかの種類は既定の流れ
-  const f = await page.request.post(`/api/projects/${id}/formation`, {
-    headers: write,
-    data: { pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300 }, { name: "QA", roles: ["qa"], maxMembers: 2, summonAt: 2, idleSec: 300 }], flows: { bugfix: ["qa", "dev"] } },
-  });
-  expect(f.ok()).toBe(true);
-  expect((await page.request.post(`/api/projects/${id}/tickets`, { headers: write, data: { title: "落ちるのを直す", kind: "bugfix" } })).ok()).toBe(true);
-  expect((await page.request.post(`/api/projects/${id}/tickets`, { headers: write, data: { title: "新しい画面を足す" } })).ok()).toBe(true);
+  const id = projectId(page);
+  await seedKindTickets(page, id);
   await page.goto(`/#/p/${id}`);
   await page.getByRole("group", { name: "オフィスの見方" }).getByRole("button", { name: "ボード" }).click();
   const board = page.getByRole("region", { name: "ボード" });

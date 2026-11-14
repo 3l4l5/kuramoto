@@ -16,7 +16,8 @@
     "start:public": "vite build && KURAMOTO_PUBLIC=1 tsx src/server.ts",
     "build:ui": "vite build",
     "dev:ui": "vite",
-    "e2e": "vite build && playwright test"
+    "test:e2e": "vite build && playwright test",
+    "e2e": "npm run test:e2e"
   },
   "devDependencies": {
     "@digital-go-jp/tailwind-theme-plugin": "^1.0.1",

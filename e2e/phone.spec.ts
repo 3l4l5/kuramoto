@@ -1,21 +1,13 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+import { createProject, PHONE, phoneMenu, phoneTabs, projectId, seedKindTickets } from "./helpers.js";
 
 /**
  * スマホの幅(390px)。全画面が横にはみ出さず、操作できることを確かめる(未決 #21)。
  * E2E_SHOTS にフォルダを指定すると、画面ごとのスクリーンショットを残す(Kuramoto の compare_screen でお手本と見比べるため)。
  */
-test.use({ viewport: { width: 390, height: 844 } });
-
-async function createProject(page: Page, name: string, repo: string) {
-  await page.goto("/#/");
-  await page.getByRole("button", { name: "+ プロジェクトを作る" }).click();
-  await page.getByLabel("名前").fill(name);
-  await page.getByLabel("リポジトリ 1").fill(repo);
-  await page.getByRole("button", { name: "次へ: 企画スタジオ" }).click();
-  await expect(page.getByText(`${name} · 企画スタジオ`)).toBeVisible();
-}
+test.use({ viewport: PHONE });
 
 /**
  * ページ全体が画面の幅に収まる(横にスクロールしない)。はみ出した要素の名前をメッセージに出す。
@@ -43,12 +35,8 @@ async function fits(page: Page, name: string) {
   }
 }
 
-/** 下のタブ「対応 / オフィス / リーダー / メニュー」と、メニューのシート(スマホでは上の切り替えの代わり)。 */
-const bar = (page: Page) => page.getByRole("navigation", { name: "スマホの下のタブ" });
-async function menu(page: Page, name: string) {
-  await bar(page).getByRole("button", { name: "メニュー" }).click();
-  await page.getByRole("dialog", { name: "メニュー" }).getByRole("button", { name, exact: true }).click();
-}
+const bar = phoneTabs;
+const menu = phoneMenu;
 
 test("幅 390px: 全画面が横にはみ出さず、引き出しも全画面で開く", async ({ page }) => {
   await createProject(page, "スマホ", "acme/phone");
@@ -146,15 +134,8 @@ test("幅 390px: 全画面が横にはみ出さず、引き出しも全画面で
 
 test("幅 390px: 下のタブで あなたの対応 / オフィスを切り替え、ボードは工程のタブ、チケットは「やりとり / 中身」のタブで操作できる", async ({ page }) => {
   await createProject(page, "スマホの画面", "acme/phone2");
-  const id = page.url().match(/#\/p\/(\d+)/)![1];
-  const write = { "x-kuramoto": "1" };
-  const f = await page.request.post(`/api/projects/${id}/formation`, {
-    headers: write,
-    data: { pull: "down", units: [{ name: "開発", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 300 }, { name: "QA", roles: ["qa"], maxMembers: 2, summonAt: 2, idleSec: 300 }], flows: { bugfix: ["qa", "dev"] } },
-  });
-  expect(f.ok()).toBe(true);
-  expect((await page.request.post(`/api/projects/${id}/tickets`, { headers: write, data: { title: "落ちるのを直す", kind: "bugfix" } })).ok()).toBe(true);
-  expect((await page.request.post(`/api/projects/${id}/tickets`, { headers: write, data: { title: "新しい画面を足す" } })).ok()).toBe(true);
+  const id = projectId(page);
+  await seedKindTickets(page, id);
   await page.goto(`/#/p/${id}`);
 
   await test.step("最初は あなたの対応(スマホで開くと最初にこの画面)。上の画面の切り替えは無く、下のタブが出る", async () => {

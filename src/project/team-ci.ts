@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Confinement } from "../harness/types.js";
 import { confinementFor } from "./confine.js";
+import { startConfinedBrowser, withBrowser, type StartBrowser } from "./confined-browser.js";
 import type { Project, TicketRow } from "./project.js";
 import type { Workspace } from "./workspace.js";
 
@@ -139,6 +140,9 @@ export async function lastTeamCi(p: Project, ticketId: number, maxChars = 3000):
   return s.length > maxChars ? `${s.slice(0, maxChars)}…` : s;
 }
 
+// ブラウザの E2E(#93)のブラウザサーバーは、ブラウザ専用の狭い閉じ込めの中で立てる(confined-browser.ts)。
+export { E2E_WS_ENDPOINT_ENV, wantsBrowser, withBrowser, type BrowserServer, type StartBrowser } from "./confined-browser.js";
+
 /**
  * Claude Code と同じ閉じ込め(@anthropic-ai/sandbox-runtime)の中でコマンドを流す。
  * - ホームの下は、ツールチェーンと作業場所のほかは読めない。認証情報と Kuramoto のデータは読めない
@@ -150,6 +154,8 @@ export class SandboxRunner implements CommandRunner {
   private queue: Promise<unknown> = Promise.resolve();
   private ready = false;
 
+  constructor(private readonly startBrowser: StartBrowser = startConfinedBrowser) {}
+
   /** 閉じ込めのための通信の中継を止める(プロセスを終えるとき)。 */
   async close(): Promise<void> {
     if (!this.ready) return;
@@ -158,13 +164,14 @@ export class SandboxRunner implements CommandRunner {
     this.ready = false;
   }
 
-  run(command: string, cwd: string, conf: Confinement, timeoutMs: number): Promise<{ code: number | null; output: string }> {
-    const next = this.queue.then(() => this.runOne(command, cwd, conf, timeoutMs));
+  /** browser = true にすると、コマンドの中身に関わらずブラウザサーバーを立てる(閉じ込めの確かめ用)。 */
+  run(command: string, cwd: string, conf: Confinement, timeoutMs: number, browser = false): Promise<{ code: number | null; output: string }> {
+    const next = this.queue.then(() => this.runOne(command, cwd, conf, timeoutMs, browser));
     this.queue = next.catch(() => undefined);
     return next;
   }
 
-  private async runOne(command: string, cwd: string, conf: Confinement, timeoutMs: number): Promise<{ code: number | null; output: string }> {
+  private async runOne(command: string, cwd: string, conf: Confinement, timeoutMs: number, forceBrowser: boolean): Promise<{ code: number | null; output: string }> {
     const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
     const config = {
       network: {
@@ -185,31 +192,40 @@ export class SandboxRunner implements CommandRunner {
       await SandboxManager.initialize(config);
       this.ready = true;
     } else SandboxManager.updateConfig(config);
-    const wrapped = await SandboxManager.wrapWithSandbox(command);
-    const env: NodeJS.ProcessEnv = { ...process.env, ...conf.env, CI: "1" };
-    for (const k of conf.hiddenEnv) delete env[k];
-    return new Promise((resolve) => {
-      const child = spawn("/bin/bash", ["-c", wrapped], { cwd, env });
-      let out = "";
-      const add = (b: Buffer) => {
-        out += b.toString();
-        if (out.length > 200_000) out = out.slice(-100_000);
-      };
-      child.stdout.on("data", add);
-      child.stderr.on("data", add);
-      const timer = setTimeout(() => {
-        out += `\n(${Math.round(timeoutMs / 60_000)} 分を過ぎたので止めました)`;
-        child.kill("SIGKILL");
-      }, timeoutMs);
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        SandboxManager.cleanupAfterCommand();
-        resolve({ code, output: SandboxManager.annotateStderrWithSandboxFailures(wrapped, out) });
+    // 画面の E2E を流すコマンドには、ブラウザ専用の狭い閉じ込めの中で立てたブラウザサーバーの宛先を渡す(終わったら必ず閉じる)。
+    // 立てられなければ、宛先を渡さずに流す(閉じ込めの無いブラウザには切り替えない)
+    const browser = await withBrowser(command, cwd, conf, this.startBrowser, forceBrowser);
+    try {
+      const wrapped = await SandboxManager.wrapWithSandbox(command);
+      const env: NodeJS.ProcessEnv = { ...process.env, ...conf.env, ...browser.env, CI: "1" };
+      for (const k of conf.hiddenEnv) delete env[k];
+      const r = await new Promise<{ code: number | null; output: string }>((resolve) => {
+        const child = spawn("/bin/bash", ["-c", wrapped], { cwd, env });
+        let out = "";
+        const add = (b: Buffer) => {
+          out += b.toString();
+          if (out.length > 200_000) out = out.slice(-100_000);
+        };
+        child.stdout.on("data", add);
+        child.stderr.on("data", add);
+        const timer = setTimeout(() => {
+          out += `\n(${Math.round(timeoutMs / 60_000)} 分を過ぎたので止めました)`;
+          child.kill("SIGKILL");
+        }, timeoutMs);
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          SandboxManager.cleanupAfterCommand();
+          resolve({ code, output: SandboxManager.annotateStderrWithSandboxFailures(wrapped, out) });
+        });
+        child.on("error", (e) => {
+          clearTimeout(timer);
+          resolve({ code: null, output: `${out}\n${e.message}` });
+        });
       });
-      child.on("error", (e) => {
-        clearTimeout(timer);
-        resolve({ code: null, output: `${out}\n${e.message}` });
-      });
-    });
+      // 知らせは末尾に付ける(出力の末尾だけがレビューに渡るため)
+      return browser.notice ? { ...r, output: `${r.output}\n${browser.notice}` } : r;
+    } finally {
+      await browser.close();
+    }
   }
 }
