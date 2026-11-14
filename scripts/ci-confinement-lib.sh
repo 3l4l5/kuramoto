@@ -35,6 +35,8 @@ show_reasons() {
   echo "::group::$(basename "$1"): '---' で始まる行と、その前後"
   grep -n -B5 -A20 -- '^---' "$1" || echo "(「---」で始まる行は無い)"
   echo "::endgroup::"
+  # ci_status の注釈には、::group:: の中のログは出ない。理由の行は、エラー注釈としても出す(1 行 400 文字まで、12 行まで)
+  grep -E -- '^---|ブラウザサーバー|理由:|Error|ProcessSingleton|sandbox|Operation not permitted|Executable' "$1" | cut -c1-400 | head -12 | while IFS= read -r l; do echo "::error title=理由($(basename "$1"))::$l"; done
   echo "::group::$(basename "$1"): 末尾の 100 行"
   tail -n 100 "$1"
   echo "::endgroup::"
