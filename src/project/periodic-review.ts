@@ -179,7 +179,10 @@ export async function setPeriodicReviewEnabled(p: Project, id: number, enabled: 
 export async function deletePeriodicReview(p: Project, id: number): Promise<void> {
   await rowOf(p, id);
   await p.pdb.transaction(async () => {
-    await p.pdb.deleteFrom("messages").where("kind", "=", "periodic_review").where("status", "in", ["pending"]).where("payload", "like", `%"reviewId":${id},%`).execute();
+    // 待っているメッセージは、payload を読んで、この定義のものだけを消す(payload の文字列の並びには頼らない)
+    const waiting = await p.pdb.from("messages").select(["id", "payload"]).where("kind", "=", "periodic_review").where("status", "=", "pending").execute();
+    const mine = waiting.filter((m) => (JSON.parse(m.payload) as { reviewId?: number }).reviewId === id).map((m) => m.id);
+    if (mine.length) await p.pdb.deleteFrom("messages").where("id", "in", mine).execute();
     await p.pdb.deleteFrom("periodic_review_runs").where("review_id", "=", id).execute();
     await p.pdb.deleteFrom("periodic_reviews").where("id", "=", id).execute();
   });
@@ -193,7 +196,23 @@ export async function describeTarget(p: Project, r: { targetKind: TargetKind; ta
   return `${keys.length ? keys.map((k) => all.get(k)?.name ?? k).join("・") : "(画面なし)"}(1280px・390px)`;
 }
 
+/**
+ * 待ち・実行中のまま取り残された回を、error で閉じる。ひも付くメッセージが、もう待っても動いてもいない(再試行が尽きて failed・done になった、消えた)回のこと。
+ * 閉じておかないと、activeRun に数えられ続けて、その定義が定期でも手動でも二度と起動しなくなる。
+ */
+export async function closeStaleRuns(p: Project, reviewId: number): Promise<number> {
+  const active = await p.pdb.from("periodic_review_runs").select("id").where("review_id", "=", reviewId).where("status", "in", ["queued", "running"]).execute();
+  if (!active.length) return 0;
+  const live = new Set(
+    (await p.pdb.from("messages").select("payload").where("kind", "=", "periodic_review").where("status", "in", ["pending", "claimed"]).execute()).map((m) => (JSON.parse(m.payload) as { runId?: number }).runId),
+  );
+  const stale = active.filter((r) => !live.has(r.id));
+  for (const r of stale) await finishPeriodicRun(p, r.id, { error: "起動が失敗して取り残されていたので閉じました" });
+  return stale.length;
+}
+
 async function activeRun(p: Project, reviewId: number) {
+  await closeStaleRuns(p, reviewId);
   return p.pdb.from("periodic_review_runs").select("id").where("review_id", "=", reviewId).where("status", "in", ["queued", "running"]).limit(1).executeTakeFirst();
 }
 

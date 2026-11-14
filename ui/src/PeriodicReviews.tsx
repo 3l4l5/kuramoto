@@ -72,7 +72,7 @@ export function PeriodicReviews({ id }: { id: number }) {
     <fieldset className="periodic" aria-label="定期レビュー">
       <legend className="h">定期レビュー</legend>
       <div className="hint" style={{ marginBottom: 8 }}>
-        決まった頻度で、担当が観点に沿ってレビューし、見つけたものをチケットに切ります(開いているチケットと同じものは切りません)。始業中に動きます。
+        決まった頻度で、担当が観点に沿ってレビューし、見つけたものをチケットに切ります(開いているチケットと同じものは切りません)。始業中に動きます。「今すぐ実行」しても、次の定期の起動はそこから 1 頻度ぶん後になります。
       </div>
       <SectionHeading>
         観点(有効 {data.reviews.filter((r) => r.enabled).length} / {data.reviews.length})

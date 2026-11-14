@@ -822,7 +822,10 @@ export class Dispatcher {
     const harness = this.deps.harnesses[policy.harness];
     const repo = (await p.repos())[0];
     if (!harness || !repo) {
-      await this.failed(msg, null, !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません");
+      const why = !harness ? `ハーネス ${policy.harness} がありません` : "リポジトリが登録されていません";
+      await this.failed(msg, null, why);
+      // 再試行が尽きたら、記録を失敗で閉じる(閉じないと、この定義が二度と起動しなくなる)
+      if ((await p.pdb.from("messages").select("status").where("id", "=", msg.id).executeTakeFirst())?.status === "failed") await finishPeriodicRun(p, run.id, { error: why });
       return;
     }
     await markPeriodicRunStarted(p, run.id);

@@ -28,7 +28,8 @@
 1. 始業中の `housekeep`(見回りと同じところ)が `requestPeriodicReviews` を呼ぶ。頻度が来た有効な定義ごとに `startPeriodicRun`。
 2. `startPeriodicRun` は実行の記録(`periodic_review_runs`、status = queued)を作り、`last_run_at` を進め、メッセージ `kind = periodic_review`(担当の役割宛て、チケット無し)を受信箱に入れる。同じ定義の待ち・実行中の回があれば起動しない。
 3. 受信箱から担当が取り、`Dispatcher.executePeriodicReview` が動く。受け持つ島が(編成の変更で)無くなっていたら、記録を error で閉じる。
-4. 手動の「今すぐ実行」も同じ `startPeriodicRun`(origin = manual)。始業していなければ、始業したときに動く。
+4. 手動の「今すぐ実行」も同じ `startPeriodicRun`(origin = manual)。始業していなければ、始業したときに動く。手動でも `last_run_at` を進めるので、次の定期の起動はそこから 1 頻度ぶん後ろになる(意図した動き。画面のヒントにも書いてある)。
+   取り残された回(ひも付くメッセージが再試行を尽くして failed になった・消えた)は、次の起動のときに error で閉じるので、定義が二度と起動しなくなることはない。ハーネス・リポジトリが無くて再試行が尽きたときも、記録を error で閉じる。
 
 ## 切る・重複の判定
 

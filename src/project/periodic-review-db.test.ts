@@ -122,6 +122,38 @@ for (const kind of ["sqlite", "mysql"] as const) {
       expect(await requestPeriodicReviews(p)).toBe(0);
     });
 
+    it("ハーネスが無くて再試行が尽きたら、記録を error で閉じ、次の回が起動できる(定義が詰まらない)", async () => {
+      const { open } = await boot(kind);
+      const p = await open();
+      await p.setSetting("max_attempts", "1");
+      const r = await createPeriodicReview(p, {}, "designer_screens");
+      const first = (await startPeriodicRun(p, r.id, "manual"))!;
+      await p.pdb.update("messages", { available_at: "2000-01-01T00:00:00.000Z" }).execute();
+      const d = new Dispatcher(p, { harnesses: {}, workspace: new StaticWorkspace("/tmp"), recheckMs: 10 });
+      await d.drain({ concurrency: 1, maxRuns: 1 });
+      expect((await p.pdb.from("messages").select("status").where("kind", "=", "periodic_review").executeTakeFirst())?.status).toBe("failed");
+      expect((await listPeriodicRuns(p))[0]).toMatchObject({ id: first, status: "error", error: expect.stringContaining("ハーネス") });
+      expect(await startPeriodicRun(p, r.id, "manual")).not.toBeNull();
+    });
+
+    it("ひも付くメッセージが failed のまま取り残された回は、次の起動で閉じられて詰まらない", async () => {
+      const { open } = await boot(kind);
+      const p = await open();
+      const r = await createPeriodicReview(p, input);
+      const first = (await startPeriodicRun(p, r.id, "manual"))!;
+      expect(await startPeriodicRun(p, r.id, "manual")).toBeNull(); // まだ待っている回がある
+      await p.pdb.update("messages", { status: "failed" }).where("kind", "=", "periodic_review").execute();
+      const second = await startPeriodicRun(p, r.id, "manual");
+      expect(second).not.toBeNull();
+      expect((await listPeriodicRuns(p)).find((x) => x.id === first)).toMatchObject({ status: "error" });
+      // 消すときは、待っているメッセージも、この定義のものだけが消える
+      const other = await createPeriodicReview(p, { ...input, name: "別" });
+      await startPeriodicRun(p, other.id, "manual");
+      await deletePeriodicReview(p, r.id);
+      const left = await p.pdb.from("messages").select("payload").where("kind", "=", "periodic_review").where("status", "=", "pending").execute();
+      expect(left.map((m) => (JSON.parse(m.payload) as { reviewId: number }).reviewId)).toEqual([other.id]);
+    });
+
     it("担当が見つけたものがチケットになり、重複は切らない。実行の記録に残る", async () => {
       const { open } = await boot(kind);
       const p = await open();
