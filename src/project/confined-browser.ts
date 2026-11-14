@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Confinement } from "../harness/types.js";
 import { denyLocalPorts, needsLocalPortDeny } from "./local-ports.js";
+import { allowChromiumMachRegister, needsMachRegister } from "./mach-register.js";
 
 /**
  * チームの CI の、画面(ブラウザ)の E2E のためのブラウザサーバー(#93)。
@@ -113,7 +114,9 @@ export const startConfinedBrowser: StartBrowser = async (cwd, conf) => {
     ].join("; ");
     // ブラウザサーバーの閉じ込めも、全体の設定の localhost の許可を引き継ぐので、npm test と同じポートを断る(ADR-0059)
     const raw = await SandboxManager.wrapWithSandbox(inner, undefined, browserSandboxConfig(cwd, conf, profileDir));
-    const wrapped = needsLocalPortDeny(conf.allowLocalSockets, conf.deniedLocalPorts) ? denyLocalPorts(raw, conf.deniedLocalPorts ?? []) : raw;
+    const denied = needsLocalPortDeny(conf.allowLocalSockets, conf.deniedLocalPorts) ? denyLocalPorts(raw, conf.deniedLocalPorts ?? []) : raw;
+    // macOS の Chromium は、起動時に mach-register が要る。ブラウザ専用の閉じ込めにだけ、その 1 行を足す(mach-register.ts)
+    const wrapped = needsMachRegister() ? allowChromiumMachRegister(denied) : denied;
     const env: NodeJS.ProcessEnv = { ...process.env, ...conf.env, CI: "1" };
     for (const k of conf.hiddenEnv) delete env[k];
     // カレントディレクトリは、閉じ込めの中で読める・書ける profileDir にする。リポジトリ(ホームの下)のままだと、ホームを読めない閉じ込めの中で
