@@ -54,11 +54,16 @@ describe("パソコンのオフィス: アーキテクトと凡例(#113)", () =>
 
   it("凡例は、幅 1001px 以上で引き出しが閉じているときだけ床の左下に重ねる。それ以外は流れの中(引き出しの手前まで)", () => {
     expect(desktop).toMatch(/@media \(min-width: 1001px\) \{[^@]*:not\(:has\(\.of-drawer\)\) \.of-legend \{ position: absolute; left: var\(--sp-4\); bottom: var\(--sp-4\)/);
-    expect(desktop).toMatch(/\.of-legend \{ flex: 1 1 100%;[^}]*\}\s*\.officefloor:has\(\.of-drawer\) \.of-legend \{ margin-right: calc\(400px \+ var\(--sp-4\)\)/);
+    expect(desktop).toMatch(/\.of-legend \{ flex: 1 1 100%;[^}]*\}[\s\S]*?\.officefloor:has\(\.of-drawer\) \.of-legend \{ max-width: calc\(100cqw - 400px - var\(--sp-4\)\)/);
+  });
+
+  it("引き出しが開いている間の凡例の幅は、列の幅ではなく見えている地図の幅(.of-map の cqw)から引く。島が多く地図が横に伸びても、引き出しの下に入らない(#125)", () => {
+    expect(desktop).toMatch(/:has\(\.of-drawer\) \.of-map \{ container-type: inline-size; \}/);
+    expect(desktop).not.toMatch(/\.of-legend \{[^}]*margin-right: calc\(400px/);
   });
 
   it("701〜1000px で引き出しが開いている間の凡例は、縦並びにして狭い幅でも崩さない(#125)", () => {
-    expect(desktop).toMatch(/@media \(min-width: 701px\) and \(max-width: 1000px\) \{[^@]*:has\(\.of-drawer\) \.of-legend \{[^}]*flex-direction: column;/);
+    expect(desktop).toMatch(/@media \(min-width: 701px\) and \(max-width: 1000px\) \{[^@]*:has\(\.of-drawer\) \.of-legend \{[^}]*flex-direction: column/);
   });
 
   it("床の下の行(凡例を含む)の中身の幅は、地図の列の幅に数えない。数えると凡例の行が床の箱より広がり、引き出しに重なる(#122)", () => {

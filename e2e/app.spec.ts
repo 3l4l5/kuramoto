@@ -19,8 +19,12 @@ async function expectLegendBeforeDrawer(floor: Locator, drawer: Locator, when: s
   const dr = (await drawer.boundingBox())!;
   const fl = (await floor.boundingBox())!;
   const lg = (await legend.boundingBox())!;
-  const rowRight = await legend.evaluate((e) => e.parentElement!.getBoundingClientRect().right);
-  expect(rowRight, `${when}: 凡例の行の右端が床の右端に収まる`).toBeLessThanOrEqual(fl.x + fl.width + 1);
+  // 島の並びが床より広いとき(狭い幅)は、地図が横にスクロールして、行は列の幅(床より広い)になる。そのときは凡例の右端が引き出しの手前かだけを見る
+  const { rowRight, scrolls } = await legend.evaluate((e) => {
+    const map = e.closest(".of-map")!;
+    return { rowRight: e.parentElement!.getBoundingClientRect().right, scrolls: map.scrollWidth > map.clientWidth + 1 };
+  });
+  if (!scrolls) expect(rowRight, `${when}: 凡例の行の右端が床の右端に収まる`).toBeLessThanOrEqual(fl.x + fl.width + 1);
   expect(lg.x + lg.width, `${when}: 引き出しが開いている間の凡例の右端が引き出しの左端より左`).toBeLessThanOrEqual(dr.x);
 }
 
@@ -236,7 +240,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
         return [...e.querySelectorAll("span, button")].filter((c) => c.getBoundingClientRect().right > right + 1).map((c) => c.textContent);
       });
       expect(spill, `${width}px: 凡例の span・ボタンが凡例の外にはみ出さない`).toEqual([]);
-      expect(legendBox.height, `${width}px: 凡例が縦に何行も折り返しすぎない`).toBeLessThanOrEqual(230);
+      expect(legendBox.height, `${width}px: 凡例が縦に何行も折り返しすぎない`).toBeLessThanOrEqual(190); // 縦並びの 4 項目(1 項目 1〜2 行)で 110〜160px 程度。3 行以上に崩れたら気付く上限
       await narrowDrawer.getByRole("button", { name: "閉じる" }).click();
       await expect(narrowDrawer).toHaveCount(0);
     }
