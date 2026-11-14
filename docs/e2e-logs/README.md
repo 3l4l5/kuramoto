@@ -74,7 +74,7 @@ sed -n '/^=== MySQL の回/,$p' /tmp/npm-test-mysql.out | tee $L/$D-e-mysql-roun
 - (a) のログの末尾に、`e2e/auth.spec.ts` だけを閉じ込めの外で直に流した出力(`check-confined-browser.ts` は `npm test` の最後の 60 行だけを出すので、auth.spec の行が切れないように)
 - (b) のログの末尾に、`git status --short`(壊したあとに差分が無いこと)
 - (d) では、`--denied-port 3306` の BLOCKED と、3307 の REACHED を見るため、3306・3307 で待ち受けるだけのプロセスを立ててから流す(届くかどうかだけを見るので、本物の MySQL でなくてよい)
-- (e) は別のジョブ(MySQL を brew で立てる)。ログは、E2E の回を飛ばした `npm test` を閉じ込めの外で全文流した、MySQL の回の出力。**既存の MySQL の不具合(#116「MySQL の回で落ちる既存テストを直す」)が直るまで、このジョブは `continue-on-error: true`**(ジョブが赤でも、ワークフロー全体は落ちない。判定はゆるめず、ログはそのまま artifact に入る)
+- (e) は別のジョブ(MySQL を brew で立てる)。ログは、E2E の回を飛ばした `npm test` を閉じ込めの外で全文流した、MySQL の回の出力。**既存の MySQL の不具合(#116「MySQL の回で落ちる既存テストを直す」)が直るまで、(e) の `npm test` のステップだけ `continue-on-error: true`**(ジョブの check は success。赤のときは「(e) の結果」のステップが `::warning::`・サマリー・このログの末尾に #116 の既知の失敗として残す。判定はゆるめず、ログはそのまま artifact に入る)
 - 7 本は、ジョブごとに `e2e-logs-a-d`・`e2e-logs-e` で上がり、最後のジョブが `e2e-logs`(7 本)にまとめる。取るのは `e2e-logs`
 
 ## 受け取ったログの見方
