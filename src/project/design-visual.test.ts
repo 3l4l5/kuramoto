@@ -9,6 +9,7 @@ import { ticketView } from "./ticket.js";
 import { createServer } from "node:http";
 import { colorDistance, deltaE76, rgbToLab } from "./design-color.js";
 import { blockRenderPort, compareImages, FileDesignStore, isLocalUrl, playwrightLocalHtmlRenderer, playwrightRenderer, playwrightUrlRenderer, referenceImage, renderableUrl, type Renderer, type UrlRenderer } from "./design-visual.js";
+import { insideConfinement } from "./can-sandbox.js";
 import { Dispatcher } from "./dispatcher.js";
 import { agreeBlocker, putArtifact, putScreen, upsertRequirement, type DesignSystem } from "./planning.js";
 import { planningTools } from "./planning-agent.js";
@@ -275,8 +276,8 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
     }
   });
 
-  // 実ブラウザで、ローカルのサーバのページを 390/1280 で撮れること、外への読み込みが止まることを確かめる(darwin のみ)
-  it.skipIf(process.platform !== "darwin")("render_page の描き手は、ローカルのページを 390px・1280px で撮り、外への読み込みを止める(URL も HTML も)", async () => {
+  // 実ブラウザで、ローカルのサーバのページを 390/1280 で撮れること、外への読み込みが止まることを確かめる(darwin のみ。閉じ込めの中(チームの CI の npm test)では Chrome を起動できないので飛ばす)
+  it.skipIf(process.platform !== "darwin" || insideConfinement())("render_page の描き手は、ローカルのページを 390px・1280px で撮り、外への読み込みを止める(URL も HTML も)", async () => {
     const hits: string[] = [];
     const server = createServer((req, res) => {
       hits.push(`${req.headers.host}${req.url}`);
@@ -324,7 +325,7 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
     expect(await blockers(p, screen!.id)).toEqual([base!.number]);
   });
 
-  it.skipIf(process.platform !== "darwin")("手元のブラウザで、試作を実際の幅の画像にする", async () => {
+  it.skipIf(process.platform !== "darwin" || insideConfinement())("手元のブラウザで、試作を実際の幅の画像にする", async () => {
     const shot = await playwrightRenderer("<body style='margin:0'><div style='height:1200px;background:#2f67d4'></div></body>", 390);
     const img = PNG.sync.read(shot);
     expect(img.width).toBe(390);

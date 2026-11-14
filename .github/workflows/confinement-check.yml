@@ -47,6 +47,9 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # ランナーには Google Chrome はあるが、Playwright のブラウザ(chromium・headless shell)は入っていない。
+      # ブラウザ専用の狭い閉じ込めの中のブラウザサーバーが、Chrome を起動できないときの代わり(Playwright の Chromium)に要る
+      - run: npx playwright install chromium
 
       - name: 準備(ログの置き場所と日付・ホームのダミー)
         run: |
