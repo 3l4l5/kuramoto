@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { compareImages } from "../src/project/design-visual.js";
-import { createProject, projectId, seedKindTickets, shot } from "./helpers.js";
+import { createProject, projectId, seedKindTickets, sendToPlanner, shot } from "./helpers.js";
 
 /**
  * 画面の作りに依らないよう、ボタンの名前や見える文言で操作する。
@@ -20,8 +20,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
   });
 
   await test.step("要件: 話しかけると作業中の様子が見え、終わると要件が書かれる", async () => {
-    await page.getByLabel("メッセージ").fill("店舗の予約サイトを作りたい");
-    await page.getByRole("button", { name: "送る", exact: true }).click();
+    await sendToPlanner(page, "店舗の予約サイトを作りたい");
     await expect(chat(page).getByText("店舗の予約サイトを作りたい")).toBeVisible();
     await expect(chat(page).getByText("咲季が作業中")).toBeVisible();
     await expect(chat(page).getByText("README.md を読んでいます")).toBeVisible();
@@ -335,8 +334,7 @@ test("段階を省く・お任せにするときは、何が起きるかを見�
 
 test("エクスポートした設計書を本部で読み込むと、新しいプロジェクトとして企画の中身が戻る", async ({ page }) => {
   await createProject(page, "復元テスト", "acme/restore");
-  await page.getByLabel("メッセージ").fill("店舗の予約サイトを作りたい");
-  await page.getByRole("button", { name: "送る", exact: true }).click();
+  await sendToPlanner(page, "店舗の予約サイトを作りたい");
   await expect(work(page).getByText("R1 空き枠を探す")).toBeVisible();
   await page.getByRole("button", { name: "作らない(推奨)", exact: true }).click();
   await page.getByRole("button", { name: "この版に合意する", exact: true }).click();

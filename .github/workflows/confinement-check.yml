@@ -175,18 +175,6 @@ jobs:
           forbid "$t" '(↓|skipped).*断るポート'
           finish
 
-      # ブラウザ専用の閉じ込めの中で断られたもの(sandbox の deny)を、種類ごとの件数にして、ジョブのログに出す(#118)。
-      # (a) の E2E が落ちたとき、どの deny が原因か(または deny は関係ないか)を、ログだけで読めるようにする。ログの 7 本には入れず、このステップは落ちない
-      - name: sandbox の deny の要約(ジョブのログだけ)
-        if: ${{ always() }}
-        timeout-minutes: 5
-        run: |
-          sudo log show --last 3h --style compact --predicate 'eventMessage CONTAINS "Sandbox:" AND eventMessage CONTAINS "deny("' 2> /dev/null \
-            | sed -nE 's/.*Sandbox: ([^(]+)\([0-9]+\) deny\([0-9]+\) (.*)/\1 \2/p' \
-            | sed -E 's/\.[0-9]+( |$)/\1/' \
-            | sort | uniq -c | sort -rn | head -80 || true
-          exit 0
-
       - name: ログ(env・a〜d)を artifact に上げる
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

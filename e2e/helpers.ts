@@ -25,6 +25,16 @@ export async function createProject(page: Page, name: string, repo: string) {
   await expect(page.getByText(`${name} · 企画スタジオ`)).toBeVisible();
 }
 
+/**
+ * 企画スタジオのチャットで、担当に「直してほしい・相談する」を送る(中身に反映してもらう)。
+ * 送り方の既定は「質問する(中身は変えない)」で、送るボタンの名前も「質問する」になる(10569ca)。企画の中身を書かせたいときは、送り方を切り替えてから送る。
+ */
+export async function sendToPlanner(page: Page, text: string) {
+  await page.getByRole("radiogroup", { name: "送り方" }).getByRole("radio", { name: "直してほしい・相談する" }).check();
+  await page.getByLabel("メッセージ").fill(text);
+  await page.getByRole("button", { name: "送る", exact: true }).click();
+}
+
 /** いま開いているプロジェクトの番号(アドレスの #/p/<番号> から)。 */
 export function projectId(page: Page): string {
   const m = page.url().match(/#\/p\/(\d+)/);
