@@ -182,6 +182,10 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     const station = await devIsland.boundingBox();
     expect(track!.y).toBeGreaterThan(station!.y);
     expect(track!.y + track!.height).toBeLessThan(station!.y + station!.height);
+    // 下の段のメンバー(名札・吹き出し)は、路線・札・ラベルに重ならない(#91)
+    const lanes = await floor.locator(".of-track, .of-tk, .of-lbl").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0));
+    const crew = await devIsland.locator(".of-seat, .of-bubble").evaluateAll((els) => els.map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0));
+    for (const m of crew) for (const l of lanes) expect(m.bottom <= l.top || m.top >= l.bottom || m.right <= l.left || m.left >= l.right).toBe(true);
     // 開いているチケットは、その種類の路線に札(●#1)で乗る
     await expect(floor.locator('[data-ticket][data-kind-of="feature"]').first()).toBeVisible();
     await expect(floor).toContainText("丸が無い = 省略");
