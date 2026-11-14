@@ -24,3 +24,36 @@ describe("パソコンのオフィス: 島の箱の幅は 1 段の人数に合�
     expect(css).toMatch(/\.officefloor \.of-seat \{ width: 76px; \}/);
   });
 });
+
+// チケット 113: アーキテクトは受け口の下に立つメンバー、凡例は床の左下に重ねる(パソコンだけ。スマホは変えない)
+describe("パソコンのオフィス: アーキテクトと凡例(#113)", () => {
+  const desktop = css.slice(css.indexOf("---- チケット 113"));
+  it("チケット 113 のブロックは、701px 以上だけに効く(スマホの机・凡例の行は今のまま)", () => {
+    expect(desktop).toMatch(/^[^@]*@media \(min-width: 701px\) \{/);
+    expect(desktop.trimEnd().endsWith("}")).toBe(true);
+  });
+
+  it("アーキテクトの机は、パソコンでは枠を持たず、受け口と同じ幅 160px。DOM(data-loc=\"arch\"・机の名前)は残す", () => {
+    expect(desktop).toMatch(/\.of-side > \.of-desk\[data-loc="arch"\] \{[^}]*flex: 0 0 160px;[^}]*border: 0;/);
+    expect(office).toContain('loc="arch"');
+    expect(office).toContain("aria-label={`${role}の机`}");
+  });
+
+  it("島の下の段の高さ --of-below は Office.tsx の OF_BELOW(= 148)を .of-map に渡す。アーキテクトへの経路は、その段の下を回す", () => {
+    expect(office).toContain("const OF_BELOW = 148;");
+    expect(office).toMatch(/"--of-below": `\$\{OF_BELOW\}px`/);
+    expect(office).toMatch(/const low = geo!\.rowBottom \+ OF_BELOW - 4;/);
+    // 経路の端がアーキテクトの 8px 上(受け口の下の切れ端)になる、旧来の「箱の底から机の上へ」の直線に戻さない
+    expect(office).not.toContain("L ${e.x} ${e.top}");
+  });
+
+  it("床の下の行を島の下の段まで引き上げて、受け口の真下に置く", () => {
+    expect(desktop).toMatch(/\.of-side \{ margin-top: calc\(var\(--sp-2\) - var\(--of-below\)\)/);
+    expect(css).toMatch(/\.of-islands \{[^}]*padding: 152px 0 var\(--of-below\)/);
+  });
+
+  it("凡例は、幅 1001px 以上で引き出しが閉じているときだけ床の左下に重ねる。それ以外は流れの中(引き出しの手前まで)", () => {
+    expect(desktop).toMatch(/@media \(min-width: 1001px\) \{[^@]*:not\(:has\(\.of-drawer\)\) \.of-legend \{ position: absolute; left: var\(--sp-4\); bottom: var\(--sp-4\)/);
+    expect(desktop).toMatch(/\.of-legend \{ flex: 1 1 100%;[^}]*\}\s*\.officefloor:has\(\.of-drawer\) \.of-legend \{ margin-right: calc\(400px \+ var\(--sp-4\)\)/);
+  });
+});

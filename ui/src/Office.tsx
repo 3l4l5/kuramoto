@@ -154,10 +154,28 @@ function Station({ loc, data, stopsOf, children }: { loc: string; data: OfficeVi
   );
 }
 
-type Geo = { w: number; h: number; pos: Record<string, { x: number; top: number; bottom: number }>; rowBottom: number };
+type Geo = { w: number; h: number; pos: Record<string, { x: number; left: number; right: number; top: number; bottom: number }>; rowBottom: number };
 
 /** 駅の下に取る、路線を通すための帯の最小の高さ(style.css の .of-st > section の padding-bottom の既定値と同じ)。 */
 const BAND = 160;
+/** 折れ線を、角を半径 r で丸めた SVG のパスにする(角の前後の線が短いときは、その半分まで)。 */
+function rounded(pts: [number, number][], r: number): string {
+  let d = `M ${pts[0]![0]} ${pts[0]![1]}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [px, py] = pts[i - 1]!, [cx, cy] = pts[i]!, [nx, ny] = pts[i + 1]!;
+    const l1 = Math.hypot(cx - px, cy - py), l2 = Math.hypot(nx - cx, ny - cy);
+    const k = Math.min(r, l1 / 2, l2 / 2);
+    d += ` L ${cx - ((cx - px) / l1) * k} ${cy - ((cy - py) / l1) * k} Q ${cx} ${cy} ${cx + ((nx - cx) / l2) * k} ${cy + ((ny - cy) / l2) * k}`;
+  }
+  const last = pts[pts.length - 1]!;
+  return `${d} L ${last[0]} ${last[1]}`;
+}
+
+/**
+ * パソコンで、島の箱の下の段(下のメンバー・吹き出しが立つ高さ。style.css の --of-below)。.of-map に渡す。
+ * 受け口の真下に立つアーキテクトも、この段の中に立つので、アーキテクトへの相談の線はこの段の下を回す。
+ */
+const OF_BELOW = 148;
 /** 路線の間隔。路線名のラベル(20px)と、その下の札(24px)が、上の路線の札に重ならない高さ */
 const LANE_GAP = 48;
 /** 路線から、その名前のラベルの上端までの高さ。札(路線の上下 12px)の上に、ラベルを載せる */
@@ -186,7 +204,7 @@ function RouteMap({ data, kind, children }: { data: OfficeView; kind: string; ch
       const loc = el.dataset.loc!;
       if (loc === "done") continue;
       const r = el.getBoundingClientRect();
-      pos[loc] = { x: r.left - box.left + m.scrollLeft + r.width / 2, top: r.top - box.top, bottom: r.bottom - box.top };
+      pos[loc] = { x: r.left - box.left + m.scrollLeft + r.width / 2, left: r.left - box.left + m.scrollLeft, right: r.right - box.left + m.scrollLeft, top: r.top - box.top, bottom: r.bottom - box.top };
       if (loc !== "arch") bottom = Math.max(bottom, r.bottom - box.top);
     }
     const next: Geo = { w: m.scrollWidth, h: m.scrollHeight, pos, rowBottom: bottom };
@@ -216,8 +234,17 @@ function RouteMap({ data, kind, children }: { data: OfficeView; kind: string; ch
     const pa = geo?.pos[a], pb = geo?.pos[b];
     if (!pa || !pb) return null;
     if (a === "arch" || b === "arch") {
-      const [s, e] = a === "arch" ? [pb, pa] : [pa, pb];
-      return `M ${s.x} ${geo!.rowBottom} L ${e.x} ${e.top}`;
+      // アーキテクトは受け口の真下(島の下の段)に立つ。相手の箱の外側の縁(島は左、受け口は右)から出て、箱どうしのすき間を下り、
+      // 下の段のメンバー・吹き出しの下(OF_BELOW)を通って、アーキテクトの右横に着く。下の段のメンバーの真上は通らない
+      const arch = a === "arch" ? pa : pb;
+      const peerLoc = a === "arch" ? b : a;
+      const peer = a === "arch" ? pb : pa;
+      const out = peerLoc === "lead" ? peer.right : peer.left;
+      const gutter = out + (peerLoc === "lead" ? 28 : -28);
+      const low = geo!.rowBottom + OF_BELOW - 4;
+      const rise = arch.x + 54;
+      const at = arch.top + 80;
+      return rounded([[out, peer.bottom - 24], [gutter, peer.bottom - 24], [gutter, low], [rise, low], [rise, at], [arch.x + 42, at]], 10);
     }
     const y = Math.min(pa.top, pb.top) - 6;
     return `M ${pa.x} ${y} Q ${(pa.x + pb.x) / 2} ${y - 14 - Math.min(54, Math.abs(pa.x - pb.x) / 7)} ${pb.x} ${y}`;
@@ -253,7 +280,7 @@ function RouteMap({ data, kind, children }: { data: OfficeView; kind: string; ch
       })
     : [];
   return (
-    <div className="of-map" ref={map} data-kind={kind} style={{ "--of-band": `${band}px` } as React.CSSProperties}>
+    <div className="of-map" ref={map} data-kind={kind} style={{ "--of-band": `${band}px`, "--of-below": `${OF_BELOW}px` } as React.CSSProperties}>
       {children}
       {geo && (
         <svg className="of-rails" width={geo.w} height={geo.h} role="img" aria-label={`路線図: ${data.lines.map((l) => `${lineName(l)}は${["受け口", ...l.stops.map((s) => data.units.find((u) => u.id === s.unitId)?.name ?? s.role), "merge 待ち"].join("→")}`).join("、")}`}>

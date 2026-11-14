@@ -1103,10 +1103,7 @@ body { background: var(--bg); }
   .officefloor .of-ring { fill: none; stroke: var(--dev); stroke-width: 3; }
   .officefloor .of-person:hover .of-ring { display: inline; stroke: var(--line-strong); stroke-width: 2; }
   .officefloor .of-sel .of-ring, .officefloor .of-sel:hover .of-ring { display: inline; stroke: var(--dev); stroke-width: 3; }
-  /* 凡例は床の下に、左から右いっぱいに(右にメンバーの引き出しが開いているときは、その手前まで) */
-  .officefloor .of-side { flex-wrap: wrap; }
-  .officefloor .of-legend { flex: 1 1 100%; margin: 0; order: 1; }
-  .officefloor:has(.of-drawer) .of-legend { margin-right: calc(400px + var(--sp-4)); }
+  /* 凡例の置き方(床の左下に重ねる・引き出しの手前で止める)は、下のチケット 113 のブロック */
   .officefloor .of-legend-ask { height: 3px; border-top: 0; background: repeating-linear-gradient(90deg, var(--dev) 0 8px, transparent 8px 14px); border-radius: var(--r-pill); }
 }
 /* スマホ: 駅を縦に並べ、左の縦線が種類ごとの路線(丸の数字が停車の順番)。メンバーの引き出しは下からのシート */
@@ -1371,8 +1368,8 @@ body { background: var(--bg); }
   .officefloor .of-filter .ds-seg__opt[aria-checked="true"] { background: var(--bg); }
   /* 島(駅)の箱: 試作どおり、箱は幅 160px の「路線が通る帯」だけ。メンバーは箱の上(上の段)と下(下の段)に立つ。
      路線は箱の中を通り(e2e: 路線は駅の中)、メンバー・吹き出しは路線・札・ラベルに重ならない(#78・#91) */
-  .officefloor .of-islands { gap: calc(var(--sp-5) * 4); padding: 152px 0 148px; }
-  .officefloor .of-side { margin-top: 0; }
+  /* 島の箱の下の段(下のメンバー・吹き出しが立つ高さ)は --of-below。値は Office.tsx の OF_BELOW(アーキテクトへの相談の線を、この段の下に通すのにも使う)が .of-map に渡す。チケット 113 のアーキテクトもこの段に立つ */
+  .officefloor .of-islands { gap: calc(var(--sp-5) * 4); padding: 152px 0 var(--of-below); }
   /* 箱の幅は 160px を下限に、1 段に並ぶ人数(--per-row。Island が渡す)ぶんの席(76px + すき間)に合わせて広げる。人数の多い島でも、席が箱の外へはみ出して隣の島に重ならない */
   .officefloor .of-st > .of-island { flex: 0 0 max(160px, calc(var(--per-row, 2) * 84px)); min-width: 160px; }
   .officefloor .of-st > .of-desk { flex: 0 0 160px; }
@@ -1383,4 +1380,32 @@ body { background: var(--bg); }
   .officefloor .of-island > .of-seats.of-bottom:has(.of-bubble) { padding-bottom: 0; }
   .officefloor .of-st > .of-desk > .of-seat { position: absolute; left: calc(50% - 38px); bottom: 100%; margin: 0 0 var(--sp-4); z-index: 4; }
   .officefloor .of-island > .of-table { position: absolute; left: 0; right: 0; bottom: var(--sp-2); }
+}
+
+/* ---- チケット 113: パソコンのオフィスの、試作(office)との残りのずれ。スマホ(700px 以下)は変えない ---- */
+@media (min-width: 701px) {
+  /* アーキテクトは枠つきの机をやめ、受け口の箱の下に立つメンバーにする(試作)。DOM は変えず(机の相談の線の端 data-loc="arch"・「アーキテクトの机」の読み上げ・Tab の順はそのまま)、
+     床の下の行(of-side)を、島の下の段(--of-below)まで引き上げて、受け口の真下(幅 160px)に置く。メンバーの吹き出し・名札は、島の下の段のメンバーと同じ向き(名札が上、吹き出しが下) */
+  .officefloor .of-side { margin-top: calc(var(--sp-2) - var(--of-below)); padding-bottom: 0; }
+  .officefloor .of-side > .of-desk[data-loc="arch"] { flex: 0 0 160px; padding: 0; background: none; border: 0; box-shadow: none; align-items: center; gap: var(--sp-1); }
+  .officefloor .of-desk[data-loc="arch"] > h3 { align-self: center; display: inline-flex; align-items: center; height: var(--h-chip); padding: 0 var(--sp-3); border-radius: var(--r-pill); background: var(--art-role-arch); color: var(--surface); font-size: var(--fs-sm); font-weight: var(--fw-bold); white-space: nowrap; }
+  .officefloor .of-desk[data-loc="arch"] .of-seat { flex-direction: column-reverse; margin-top: 0; }
+  .officefloor .of-desk[data-loc="arch"] .of-bubble { bottom: auto; top: calc(100% - 4px); }
+  .officefloor .of-desk[data-loc="arch"] .of-bubble::after { bottom: auto; top: -7px; transform: translateX(-50%) rotate(225deg); }
+  /* merge 済みの山は、同じ段の右端(受け口の下のアーキテクトと、島の下のメンバーに重ならない) */
+  .officefloor .of-side > .of-donepile { margin-left: auto; }
+  /* 床が横にあふれるとき(島が多いとき)も、床の下の段は島と同じ幅にする */
+  .officefloor { display: flex; flex-direction: column; }
+  .officefloor .of-map { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: minmax(max-content, 1fr); align-content: start; }
+  /* 凡例: 既定は床の下の行(流れの中。受け口の真下のアーキテクトの下に折り返す)。右にメンバーの引き出しが開いているときは、その手前まで(#72) */
+  .officefloor .of-side { flex-wrap: wrap; }
+  .officefloor .of-legend { flex: 1 1 100%; order: 1; margin: var(--sp-2) 0 0; }
+  .officefloor:has(.of-drawer) .of-legend { margin-right: calc(400px + var(--sp-4)); }
+  .officefloor .of-map { padding-bottom: var(--sp-4); }
+}
+/* 幅が 1001px 以上で引き出しが閉じているときだけ、凡例を床の中の左下に重ねる(試作。床の最小の高さまで地図を伸ばして、凡例を床の底に付ける)。
+   狭い幅や引き出しが開いている間は、凡例が何行にも折り返してアーキテクト・吹き出しに重なるので、流れの中に置く */
+@media (min-width: 1001px) {
+  .officefloor:not(:has(.of-drawer)) .of-map { padding-bottom: 72px; }
+  .officefloor:not(:has(.of-drawer)) .of-legend { position: absolute; left: var(--sp-4); bottom: var(--sp-4); margin: 0; flex: none; max-width: calc(100% - var(--sp-4) * 2); z-index: 3; }
 }
