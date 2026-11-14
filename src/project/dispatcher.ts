@@ -853,6 +853,8 @@ export class Dispatcher {
       const renderTools = designs.length && this.deps.localHtmlRenderer && this.deps.urlRenderer
         ? renderPageTools(ws.path, ws.gitDir, this.deps.workspace, { html: this.deps.localHtmlRenderer, url: this.deps.urlRenderer, allowUrl: (await p.setting("sandbox_strict_sockets")) !== "1" })
         : [];
+      // お手本の画像と見比べる道具(定期レビューはチケットに属さないので、見比べはチケットには残さない)。形の差分と色の差分が返る
+      const compareTools = refs.size && this.deps.designStore ? compareScreenTools(p, this.deps.designStore, null, ws.path, ws.gitDir, refs, this.deps.workspace) : [];
       result = await harness.run({
         cwd: ws.path,
         confine: await confinementFor(p, ws, role),
@@ -860,7 +862,7 @@ export class Dispatcher {
         prompt: await periodicReviewPrompt(p, review, { id: run.id, lookedAt: run.looked_at }),
         model: use.model,
         effort: use.effort,
-        tools: [...periodicReviewTools(p, review, run.id), ...renderTools],
+        tools: [...periodicReviewTools(p, review, run.id), ...renderTools, ...compareTools],
         allowedTools: ["Read", "Glob", "Grep"],
         maxBudgetUsd: await this.runBudget(),
         signal: this.halt.signal,

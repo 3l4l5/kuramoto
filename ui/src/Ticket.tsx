@@ -585,7 +585,7 @@ export function QuestionItem({ x }: { x: QuestionView }) {
   );
 }
 
-/** 画面のデザインの見比べ(ADR-0034)。お手本(企画で合意した試作)・実装・違い(赤いところ)を並べる。 */
+/** 画面のデザインの見比べ(ADR-0034)。お手本(企画で合意した試作)・実装・違い(赤いところ)を並べ、色の差分(#95)を添える。 */
 function DesignCompare({ projectId, rows }: { projectId: number; rows: TicketView["designCompare"] }) {
   const src = (id: number | null) => (id ? `/api/projects/${projectId}/design-images/${id}` : "");
   return (
@@ -612,8 +612,56 @@ function DesignCompare({ projectId, rows }: { projectId: number; rows: TicketVie
               </figure>
             ))}
           </div>
+          {r.color && <ColorCompare color={r.color} name={r.name} src={src} />}
         </div>
       ))}
     </section>
+  );
+}
+
+/** 色の差分。形の差分に出ない色のずれ(背景が少し違う、など)を、ΔE の数値・色の差分の画像・主な色の比べで見せる。 */
+function ColorCompare({ color, name, src }: { color: NonNullable<TicketView["designCompare"][number]["color"]>; name: string; src: (id: number | null) => string }) {
+  const chip = (c: { hex: string; share: number; token: { name: string; deltaE: number } | null }) => (
+    <li key={c.hex}>
+      <span className="dc-swatch" style={{ background: c.hex }} aria-hidden="true" />
+      <code>{c.hex}</code> <span className="hint">{(c.share * 100).toFixed(1)}%{c.token ? `・${c.token.name}${c.token.deltaE > 0.5 ? "に近い(少し違う)" : ""}` : ""}</span>
+    </li>
+  );
+  return (
+    <div className="dc-color">
+      <div className="dc-head">
+        <b>色の差分</b>
+        <span className={color.ratio > 0 ? "bad" : "ok"}>ΔE&gt;{color.threshold} の画素 {(color.ratio * 100).toFixed(2)}%</span>
+        <span className="hint">平均 ΔE {color.meanDeltaE}・最大 ΔE {color.maxDeltaE}({color.method})</span>
+      </div>
+      <div className="dc-colorbody">
+        <figure>
+          <figcaption>色の差分(黄→橙→赤紫。違うほど濃い)</figcaption>
+          <a href={src(color.colorDiff)} target="_blank" rel="noreferrer">
+            <img src={src(color.colorDiff)} alt={`${name}の色の差分`} loading="lazy" />
+          </a>
+        </figure>
+        <div className="dc-palettes">
+          {([["お手本の主な色", color.referenceColors], ["実装の主な色", color.actualColors]] as const).map(([label, list]) => (
+            <div key={label}>
+              <h4>{label}</h4>
+              <ul className="dc-palette">{list.map(chip)}</ul>
+            </div>
+          ))}
+          {color.referenceOnly.length > 0 && (
+            <div>
+              <h4>お手本にあって実装に無い色</h4>
+              <ul className="dc-palette">{color.referenceOnly.map(chip)}</ul>
+            </div>
+          )}
+          {color.actualOnly.length > 0 && (
+            <div>
+              <h4>実装にだけある色</h4>
+              <ul className="dc-palette">{color.actualOnly.map(chip)}</ul>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

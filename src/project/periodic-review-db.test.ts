@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Connection } from "mysql2/promise";
+import { PNG } from "pngjs";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { ManualClock } from "../clock.js";
 import type { KuramotoConfig } from "../config.js";
@@ -9,7 +10,9 @@ import { connectTest, MYSQL_TEST_URL, resetDatabase } from "../db/mysql-test-sup
 import { startDatabase, type StartedDatabase } from "../db/startup.js";
 import { FakeHarness } from "../harness/fake.js";
 import { currentWorkspaceId, Hq } from "../hq.js";
+import { FileDesignStore, type Renderer } from "./design-visual.js";
 import { Dispatcher } from "./dispatcher.js";
+import { putArtifact, putScreen, upsertRequirement } from "./planning.js";
 import { createPeriodicReview, deletePeriodicReview, listPeriodicReviews, listPeriodicRuns, requestPeriodicReviews, setPeriodicReviewEnabled, startPeriodicRun, updatePeriodicReview, REVIEW_TEMPLATES } from "./periodic-review.js";
 import { Project } from "./project.js";
 import { StaticWorkspace } from "./workspace.js";
@@ -181,6 +184,57 @@ for (const kind of ["sqlite", "mysql"] as const) {
       expect(run!.createdTickets).toEqual(tickets.map((t) => t.number));
       expect(run!.lookedAt).toContain("390px");
       expect(run!.endedAt).not.toBeNull();
+    });
+
+    it("デザインの観点の定期レビューには、compare_screen で形の差分と色の差分が渡る(背景だけ #F5F5F5 の画面を撮ると、色の差分に出る)", async () => {
+      const ws = mkdtempSync(join(tmpdir(), "kuramoto-ws-"));
+      const storeDir = mkdtempSync(join(tmpdir(), "kuramoto-store-"));
+      cleanups.push(() => {
+        rmSync(ws, { recursive: true, force: true });
+        rmSync(storeDir, { recursive: true, force: true });
+      });
+      const { open } = await boot(kind);
+      const p = await open();
+      await upsertRequirement(p, { name: "一覧", acceptance: "並ぶ" });
+      await putArtifact(p, "screen", "designsystem", "main", {
+        principles: [],
+        tokens: [{ group: "color", name: "--color-bg", value: "#F5F5F5", use: "背景" }, { group: "color", name: "--color-surface", value: "#FFFFFF", use: "部品" }],
+        components: [],
+      });
+      await putScreen(p, "list", { name: "メモ一覧", device: "phone", requirements: ["R1"], variants: [{ id: "A", html: "<h1>一覧</h1>" }], chosen: "A", agreed: true });
+      const r = await createPeriodicReview(p, {}, "designer_screens");
+      expect(r.viewpoint).toContain("色の差分");
+      await p.pdb.update("messages", { available_at: "9999" }).execute();
+      await startPeriodicRun(p, r.id, "manual");
+      await p.pdb.update("messages", { available_at: "2000-01-01T00:00:00.000Z" }).where("kind", "=", "periodic_review").execute();
+      const flat = (color: [number, number, number]) => {
+        const img = new PNG({ width: 390, height: 20 });
+        for (let i = 0; i < 390 * 20; i++) img.data.set([...color, 255], i * 4);
+        return PNG.sync.write(img);
+      };
+      const render: Renderer = async () => flat([255, 255, 255]);
+      let prompt = "";
+      let tools: string[] = [];
+      let reply = "";
+      const harness = new FakeHarness(async (req, call) => {
+        prompt = req.prompt;
+        tools = req.tools.map((t) => t.name);
+        mkdirSync(join(ws, ".kuramoto/shots"), { recursive: true });
+        writeFileSync(join(ws, ".kuramoto/shots/list.png"), flat([245, 245, 245]));
+        reply = String(await call("compare_screen", { screen: "list", path: ".kuramoto/shots/list.png" }));
+        return { finalText: "問題なし" };
+      });
+      const d = new Dispatcher(p, { harnesses: { "claude-agent-sdk": harness }, workspace: new StaticWorkspace(ws), designStore: new FileDesignStore(storeDir), renderer: render, recheckMs: 10 });
+      await d.drain({ concurrency: 1, maxRuns: 1 });
+      expect(tools).toContain("compare_screen");
+      expect(prompt).toContain("色の差分");
+      expect(reply).toContain("お手本との違い: 0.0%");
+      expect(reply).toContain("色の差分");
+      expect(reply).toContain("#F5F5F5");
+      expect(reply).toContain("--color-bg");
+      const ev = (await p.events(20)).find((e) => e.type === "design_compared")!;
+      expect(ev.ticket_id).toBeNull();
+      expect(JSON.parse(ev.data).color).toMatchObject({ ratio: 1, method: "CIE76" });
     });
   });
 }
