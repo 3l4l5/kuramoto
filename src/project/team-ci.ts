@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Confinement } from "../harness/types.js";
 import { confinementFor } from "./confine.js";
+import { startConfinedBrowser, withBrowser, type StartBrowser } from "./confined-browser.js";
 import type { Project, TicketRow } from "./project.js";
 import type { Workspace } from "./workspace.js";
 
@@ -139,49 +140,8 @@ export async function lastTeamCi(p: Project, ticketId: number, maxChars = 3000):
   return s.length > maxChars ? `${s.slice(0, maxChars)}…` : s;
 }
 
-// ---- ブラウザの E2E(#93) ----
-// Chrome は、閉じ込めの中では起動できない(プロファイル・ソケット・Crashpad の置き場所が読み書きできない)。
-// 閉じ込めを広げる代わりに、閉じ込めの外(この Kuramoto のサーバー)で Playwright のブラウザサーバーを立て、
-// 閉じ込めの中の E2E(npm test)には、その wsEndpoint だけを環境変数で渡す。中では connect するだけで、Chrome は起動しない。
-
-/** 閉じ込めの中の E2E に渡す、ブラウザサーバーの wsEndpoint の環境変数。渡されたら、E2E はブラウザに繋がらないことも失敗にする。 */
-export const E2E_WS_ENDPOINT_ENV = "KURAMOTO_E2E_WS_ENDPOINT";
-
-export interface BrowserServer {
-  endpoint: string;
-  close(): Promise<void>;
-}
-export type StartBrowser = () => Promise<BrowserServer>;
-
-/** 閉じ込めの外で、Playwright のブラウザサーバーを立てる(Google Chrome。無ければ同梱の Chromium)。 */
-export const startPlaywrightBrowser: StartBrowser = async () => {
-  const { chromium } = await import("@playwright/test");
-  const options = { headless: true, timeout: 60_000 };
-  const server = await chromium.launchServer({ channel: "chrome", ...options }).catch(() => chromium.launchServer(options));
-  return { endpoint: server.wsEndpoint(), close: () => server.close() };
-};
-
-/** このコマンドが、ブラウザの E2E を流すか(playwright の設定があるリポジトリの、テストのコマンド)。 */
-export function wantsBrowser(command: string, cwd: string): boolean {
-  if (!/\b(test|e2e|test:e2e|playwright)\b/.test(command)) return false;
-  return ["ts", "js", "mjs", "cjs"].some((x) => existsSync(join(cwd, `playwright.config.${x}`)));
-}
-
-/**
- * コマンドの前にブラウザサーバーを立て、渡す環境変数と、あとで必ず呼ぶ close を返す。立てる必要が無ければ何もしない。
- * 立てられなかったときは error を返す(渡さずに進めると、E2E が「確かめていない」で通ってしまうため、落として知らせる)。
- * 閉じ込めの中から 127.0.0.1 に届かない設定(sandbox_strict_sockets)では、E2E そのものが動かないので立てない。
- */
-export async function withBrowser(command: string, cwd: string, conf: Confinement, start: StartBrowser): Promise<{ env: Record<string, string>; error?: string; close: () => Promise<void> }> {
-  const none = { env: {}, close: async () => {} };
-  if (!conf.allowLocalSockets || !wantsBrowser(command, cwd)) return none;
-  try {
-    const server = await start();
-    return { env: { [E2E_WS_ENDPOINT_ENV]: server.endpoint }, close: () => server.close().catch(() => undefined) };
-  } catch (e) {
-    return { ...none, error: `チームの CI: 閉じ込めの外でブラウザを起動できなかったので、画面の E2E を流せません(「${command}」は流していません): ${e instanceof Error ? e.message : String(e)}` };
-  }
-}
+// ブラウザの E2E(#93)のブラウザサーバーは、ブラウザ専用の狭い閉じ込めの中で立てる(confined-browser.ts)。
+export { E2E_WS_ENDPOINT_ENV, wantsBrowser, withBrowser, type BrowserServer, type StartBrowser } from "./confined-browser.js";
 
 /**
  * Claude Code と同じ閉じ込め(@anthropic-ai/sandbox-runtime)の中でコマンドを流す。
@@ -194,7 +154,7 @@ export class SandboxRunner implements CommandRunner {
   private queue: Promise<unknown> = Promise.resolve();
   private ready = false;
 
-  constructor(private readonly startBrowser: StartBrowser = startPlaywrightBrowser) {}
+  constructor(private readonly startBrowser: StartBrowser = startConfinedBrowser) {}
 
   /** 閉じ込めのための通信の中継を止める(プロセスを終えるとき)。 */
   async close(): Promise<void> {
@@ -204,22 +164,14 @@ export class SandboxRunner implements CommandRunner {
     this.ready = false;
   }
 
-  run(command: string, cwd: string, conf: Confinement, timeoutMs: number): Promise<{ code: number | null; output: string }> {
-    const next = this.queue.then(async () => {
-      // 画面の E2E を流すコマンドには、閉じ込めの外で立てたブラウザサーバーの宛先を渡す(終わったら必ず閉じる)
-      const browser = await withBrowser(command, cwd, conf, this.startBrowser);
-      if (browser.error) return { code: 1, output: browser.error };
-      try {
-        return await this.runOne(command, cwd, conf, timeoutMs, browser.env);
-      } finally {
-        await browser.close();
-      }
-    });
+  /** browser = true にすると、コマンドの中身に関わらずブラウザサーバーを立てる(閉じ込めの確かめ用)。 */
+  run(command: string, cwd: string, conf: Confinement, timeoutMs: number, browser = false): Promise<{ code: number | null; output: string }> {
+    const next = this.queue.then(() => this.runOne(command, cwd, conf, timeoutMs, browser));
     this.queue = next.catch(() => undefined);
     return next;
   }
 
-  private async runOne(command: string, cwd: string, conf: Confinement, timeoutMs: number, extraEnv: Record<string, string> = {}): Promise<{ code: number | null; output: string }> {
+  private async runOne(command: string, cwd: string, conf: Confinement, timeoutMs: number, forceBrowser: boolean): Promise<{ code: number | null; output: string }> {
     const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
     const config = {
       network: {
@@ -240,31 +192,40 @@ export class SandboxRunner implements CommandRunner {
       await SandboxManager.initialize(config);
       this.ready = true;
     } else SandboxManager.updateConfig(config);
-    const wrapped = await SandboxManager.wrapWithSandbox(command);
-    const env: NodeJS.ProcessEnv = { ...process.env, ...conf.env, ...extraEnv, CI: "1" };
-    for (const k of conf.hiddenEnv) delete env[k];
-    return new Promise((resolve) => {
-      const child = spawn("/bin/bash", ["-c", wrapped], { cwd, env });
-      let out = "";
-      const add = (b: Buffer) => {
-        out += b.toString();
-        if (out.length > 200_000) out = out.slice(-100_000);
-      };
-      child.stdout.on("data", add);
-      child.stderr.on("data", add);
-      const timer = setTimeout(() => {
-        out += `\n(${Math.round(timeoutMs / 60_000)} 分を過ぎたので止めました)`;
-        child.kill("SIGKILL");
-      }, timeoutMs);
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        SandboxManager.cleanupAfterCommand();
-        resolve({ code, output: SandboxManager.annotateStderrWithSandboxFailures(wrapped, out) });
+    // 画面の E2E を流すコマンドには、ブラウザ専用の狭い閉じ込めの中で立てたブラウザサーバーの宛先を渡す(終わったら必ず閉じる)。
+    // 立てられなければ、宛先を渡さずに流す(閉じ込めの無いブラウザには切り替えない)
+    const browser = await withBrowser(command, cwd, conf, this.startBrowser, forceBrowser);
+    try {
+      const wrapped = await SandboxManager.wrapWithSandbox(command);
+      const env: NodeJS.ProcessEnv = { ...process.env, ...conf.env, ...browser.env, CI: "1" };
+      for (const k of conf.hiddenEnv) delete env[k];
+      const r = await new Promise<{ code: number | null; output: string }>((resolve) => {
+        const child = spawn("/bin/bash", ["-c", wrapped], { cwd, env });
+        let out = "";
+        const add = (b: Buffer) => {
+          out += b.toString();
+          if (out.length > 200_000) out = out.slice(-100_000);
+        };
+        child.stdout.on("data", add);
+        child.stderr.on("data", add);
+        const timer = setTimeout(() => {
+          out += `\n(${Math.round(timeoutMs / 60_000)} 分を過ぎたので止めました)`;
+          child.kill("SIGKILL");
+        }, timeoutMs);
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          SandboxManager.cleanupAfterCommand();
+          resolve({ code, output: SandboxManager.annotateStderrWithSandboxFailures(wrapped, out) });
+        });
+        child.on("error", (e) => {
+          clearTimeout(timer);
+          resolve({ code: null, output: `${out}\n${e.message}` });
+        });
       });
-      child.on("error", (e) => {
-        clearTimeout(timer);
-        resolve({ code: null, output: `${out}\n${e.message}` });
-      });
-    });
+      // 知らせは末尾に付ける(出力の末尾だけがレビューに渡るため)
+      return browser.notice ? { ...r, output: `${r.output}\n${browser.notice}` } : r;
+    } finally {
+      await browser.close();
+    }
   }
 }

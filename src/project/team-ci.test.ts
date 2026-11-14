@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import type { AddressInfo } from "node:net";
@@ -12,6 +13,7 @@ import type { GitHub, PrStatus } from "../github/github.js";
 import { Dispatcher } from "./dispatcher.js";
 import { ownerMerge, type TeamCiHook } from "./merge.js";
 import { Project, type TicketRow } from "./project.js";
+import { browserSandboxConfig } from "./confined-browser.js";
 import { detectCommands, E2E_WS_ENDPOINT_ENV, runTeamCi, SandboxRunner, wantsBrowser, withBrowser, type CommandRunner } from "./team-ci.js";
 import { StaticWorkspace } from "./workspace.js";
 import { createTicket } from "./workflow.js";
@@ -192,7 +194,13 @@ describe("チームの CI(ADR-0028)", () => {
   });
 });
 
-describe("チームの CI: ブラウザの E2E は、閉じ込めの外で立てたブラウザサーバーに繋ぐ(#93)", () => {
+/** この環境で、sandbox-runtime(macOS は sandbox-exec)で閉じ込められるか。閉じ込めの中からは重ねられない。 */
+function canSandbox(): boolean {
+  if (process.platform !== "darwin") return false;
+  return spawnSync("/usr/bin/sandbox-exec", ["-p", "(version 1)(allow default)", "/usr/bin/true"]).status === 0;
+}
+
+describe("チームの CI: ブラウザの E2E は、ブラウザ専用の狭い閉じ込めの中で立てたブラウザサーバーに繋ぐ(#93)", () => {
   const conf: Confinement = { readable: [], writable: [], hidden: [], allowedDomains: [], hiddenEnv: [], allowLocalSockets: true, env: {} };
   const repoWith = (config: string | null) => {
     const dir = mkdtempSync(join(tmpdir(), "kuramoto-pw-"));
@@ -234,17 +242,71 @@ describe("チームの CI: ブラウザの E2E は、閉じ込めの外で立て
     }
   });
 
-  it("ブラウザサーバーを立てられなかったときは、宛先を渡さずに進めず、理由つきの失敗にする", async () => {
+  it("狭い閉じ込めの中でブラウザを立てられなかったときは、閉じ込めの無いブラウザには切り替えず、宛先を渡さずに進める(理由は知らせに入れる)", async () => {
     const dir = repoWith("playwright.config.ts");
+    let started = 0;
     try {
       const b = await withBrowser("npm test", dir, conf, async () => {
+        started++;
         throw new Error("Chrome が見つかりません");
       });
-      expect(b.error).toContain("画面の E2E を流せません");
-      expect(b.error).toContain("Chrome が見つかりません");
+      expect(b.env).toEqual({});
+      expect(b.notice).toContain("狭い閉じ込めの中でブラウザを起動できなかった");
+      expect(b.notice).toContain("Chrome が見つかりません");
+      expect(b.notice).toContain("閉じ込めの無いブラウザには切り替えません");
+      expect(started).toBe(1); // 立て直しや別の立て方は試さない
       await b.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("ブラウザ専用の閉じ込めは、書けるのはプロファイルの一時ディレクトリだけ・読めないのはホームと隠す場所・外には通信できない", () => {
+    const home = "/Users/someone";
+    const hidden = [`${home}/.kuramoto`, `${home}/.ssh`];
+    const c = browserSandboxConfig("/work/repo", { ...conf, hidden }, "/tmp/kuramoto-pw-abc", `${home}/.local/share/mise/installs/node/24/bin/node`, home);
+    expect(c.filesystem.allowWrite).toEqual(["/tmp/kuramoto-pw-abc"]); // リポジトリにも書けない
+    expect(c.filesystem.denyRead).toEqual([home, ...hidden]);
+    // ホームの下で読めるのは、node のツールチェーン・リポジトリの node_modules と package.json・Playwright のブラウザだけ
+    expect(c.filesystem.allowRead).toEqual([
+      `${home}/.local/share/mise/installs/node/24`,
+      "/work/repo/node_modules",
+      "/work/repo/package.json",
+      `${home}/Library/Caches/ms-playwright`,
+      `${home}/.cache/ms-playwright`,
+    ]);
+    expect(c.filesystem.allowRead.some((p) => p === home || hidden.some((h) => p.startsWith(h)))).toBe(false);
+    expect(c.network.allowedDomains).toEqual([]); // 許すドメインは無い(localhost だけ)
+  });
+
+  it("node がホームの外(/usr/local など)にあるときは、ホームの下の読める場所に node を足さない", () => {
+    const c = browserSandboxConfig("/work/repo", conf, "/tmp/kuramoto-pw-abc", "/usr/local/bin/node", "/Users/someone");
+    expect(c.filesystem.allowRead.every((p) => p.startsWith("/work/repo") || p.startsWith("/Users/someone/"))).toBe(true);
+  });
+
+  it("SandboxRunner は、ブラウザを立てられなくても npm test(コマンド)を流し、知らせを出力の末尾に付ける。宛先は渡さない", async () => {
+    if (!canSandbox()) return; // 閉じ込めの中など、閉じ込めを重ねられない環境では確かめられない(流せる環境の CI で確かめる)
+    const dir = mkdtempSync(join(tmpdir(), "kuramoto-srt-"));
+    writeFileSync(join(dir, "playwright.config.ts"), "export default {};");
+    let closed = 0;
+    try {
+      const r = new SandboxRunner(async () => {
+        throw new Error("狭い閉じ込めでは Chrome が起動できない");
+      });
+      const out = await r.run("echo endpoint=${KURAMOTO_E2E_WS_ENDPOINT:-none}; echo test", dir, { ...conf, hidden: [], allowedDomains: [], hiddenEnv: [] }, 60_000);
+      expect(out.code).toBe(0);
+      expect(out.output).toContain("endpoint=none");
+      expect(out.output.trimEnd().split("\n").at(-1)).toContain("狭い閉じ込めでは Chrome が起動できない");
+      // 立てたときは、宛先を渡し、コマンドが終わったら必ず閉じる
+      const ok = new SandboxRunner(async () => ({ endpoint: "ws://127.0.0.1:9/abc", close: async () => void closed++ }));
+      const out2 = await ok.run("echo endpoint=$KURAMOTO_E2E_WS_ENDPOINT; echo test; exit 3", dir, { ...conf, hidden: [], allowedDomains: [], hiddenEnv: [] }, 60_000);
+      expect(out2.code).toBe(3);
+      expect(out2.output).toContain("endpoint=ws://127.0.0.1:9/abc");
+      expect(closed).toBe(1);
+      await r.close();
+      await ok.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

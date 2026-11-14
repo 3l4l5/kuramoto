@@ -81,7 +81,7 @@ function freePort(): Promise<number> {
 /**
  * ブラウザに繋がるかを確かめる。できなければ理由(1 行目)を返す。
  * 起動できない環境と、画面が壊れて E2E が落ちたのとを見分けるため、E2E の本体の前に流す。
- * KURAMOTO_E2E_WS_ENDPOINT(チームの CI が閉じ込めの外で立てたブラウザサーバー)があれば、そこへ connect できるかを確かめる。無ければ Chrome を 1 回起動して閉じる。
+ * KURAMOTO_E2E_WS_ENDPOINT(チームの CI がブラウザ専用の狭い閉じ込めの中で立てたブラウザサーバー)があれば、そこへ connect できるかを確かめる。無ければ Chrome を 1 回起動して閉じる。
  */
 async function browserCheck(env: NodeJS.ProcessEnv): Promise<string | null> {
   try {
