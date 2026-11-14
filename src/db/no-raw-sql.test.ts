@@ -34,4 +34,9 @@ describe("DB への道の検査", () => {
     const bad = files.filter((f) => !NOT_MIGRATED.has(rel(f))).filter((f) => DIALECT_SQL.test(readFileSync(f, "utf8"))).map(rel);
     expect(bad).toEqual([]);
   });
+
+  it("pdb.from(表) はもう全部の列を選んでいる。続けて .selectAll() を書かない(MySQL は `select *, *` を構文エラーにする)", () => {
+    const bad = files.filter((f) => /\.from\("[a-z_]+"\)\s*\.selectAll\(\)/.test(readFileSync(f, "utf8"))).map(rel);
+    expect(bad).toEqual([]);
+  });
 });

@@ -137,12 +137,25 @@ export class Project {
       for (const m of FIXED_CAST) {
         await this.pdb.insert("members", { unit_id: null, name: m.name, look: m.role, is_base: 1, joined_at: this.now() }).execute();
       }
+      await this.seedPlan();
       // ノンストップで進めるため、チケット 1 枚の予算は無制限から始める(歯止めは全体の予算・島の予算で掛ける。ADR-0022)
       await this.setSetting("ticket_budget_usd", "unlimited");
       await this.setSetting("run_budget_usd", "2");
       await this.setSetting("max_attempts", "3");
       await this.setSetting("decision_timeout_sec", "3600");
     });
+  }
+
+  /**
+   * 企画の最初の行(段階 5 つ・要件の版 1・開発ルールの版 1)。SQLite のプロジェクト DB は最初のマイグレーションが入れるが、
+   * MySQL は 1 つの database に複数のプロジェクトが入り、マイグレーションはプロジェクトの行を作れないので、プロジェクトを開くときに入れる。
+   * SQLite では入っているので何もしない。
+   */
+  private async seedPlan(): Promise<void> {
+    if (await this.pdb.from("plan_stages").limit(1).executeTakeFirst()) return;
+    for (const stage of ["req", "infra", "flow", "screen", "model"]) await this.pdb.insert("plan_stages", { stage, mode: "agree", version: 1 }).execute();
+    await this.pdb.insert("requirements", { version: 1, created_at: "" }).execute();
+    await this.pdb.insert("dev_rule_versions", { version: 1, rules: "[]", created_at: "" }).execute();
   }
 
   // ---- 設定 ----

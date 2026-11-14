@@ -75,7 +75,7 @@ export async function pollIssues(p: Project, gh: GitHub): Promise<number> {
 
 /** まだリーダーが見ていない Issue(古い順)。 */
 export async function newIssues(p: Project, limit = ISSUES_PER_PATROL): Promise<IssueRow[]> {
-  return (await p.pdb.from("github_issues").selectAll().where("status", "=", "new").orderBy("id").limit(limit).execute()) as IssueRow[];
+  return (await p.pdb.from("github_issues").where("status", "=", "new").orderBy("id").limit(limit).execute()) as IssueRow[];
 }
 
 export async function hasNewIssues(p: Project): Promise<boolean> {
@@ -87,7 +87,7 @@ export async function hasNewIssues(p: Project): Promise<boolean> {
  * それでも決まらないとき(同じ番号が、まだ扱っていないものに 2 つ以上)は、リポジトリを指してもらうために ambiguous を返す。
  */
 export async function findIssue(p: Project, number: number, repo?: string): Promise<{ issue?: IssueRow; ambiguous?: string }> {
-  const all = (await p.pdb.from("github_issues").selectAll().where("number", "=", number).orderBy("id").execute()) as IssueRow[];
+  const all = (await p.pdb.from("github_issues").where("number", "=", number).orderBy("id").execute()) as IssueRow[];
   const rows = repo ? all.filter((r) => r.repo === repo) : all;
   const fresh = rows.filter((r) => r.status === "new");
   const pool = fresh.length ? fresh : rows;
@@ -181,7 +181,7 @@ const STATUS_TEXT: Record<IssueStatus, string> = { new: "まだ", ticketed: "チ
 export async function finishIssues(p: Project, shown: IssueRow[]): Promise<IssueRow[]> {
   const passed: IssueRow[] = [];
   for (const i of shown) {
-    const now = (await p.pdb.from("github_issues").selectAll().where("id", "=", i.id).executeTakeFirst()) as IssueRow | undefined;
+    const now = (await p.pdb.from("github_issues").where("id", "=", i.id).executeTakeFirst()) as IssueRow | undefined;
     if (!now || now.status !== "new") continue;
     await mark(p, now, "passed", null, "リーダーは何も決めませんでした");
     await say(p, `【GitHub Issue #${now.number}】「${now.title}」は、リーダーが何も決めなかったので見送りました。やるなら、そう返事をください(チケットにします)。\n${now.url}`);
