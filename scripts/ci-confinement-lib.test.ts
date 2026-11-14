@@ -43,6 +43,15 @@ describe("ci-confinement-lib.sh(閉じ込めの確かめの CI が、ログを�
     expect(r.out).toContain("終了コードが 0 ではない: 2");
   });
 
+  it("show_reasons: 「---」の行とその前後、末尾を出す", () => {
+    const r = run("前の行\n--- 確かめられなかった: 理由\n後の行\n", 'show_reasons "$f"');
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("::group::x.log");
+    expect(r.out).toContain("2:--- 確かめられなかった: 理由");
+    expect(r.out).toContain("前の行");
+    expect(r.out).toContain("後の行");
+  });
+
   it("どれか 1 つでも落ちれば、あとの確かめが通っても、最後は落ちる", () => {
     expect(run("a\n", 'need "$f" "^b"; need "$f" "^a"').code).toBe(1);
   });

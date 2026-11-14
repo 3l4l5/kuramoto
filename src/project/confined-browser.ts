@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Confinement } from "../harness/types.js";
 import { denyLocalPorts, needsLocalPortDeny } from "./local-ports.js";
 
@@ -74,9 +74,14 @@ export function browserSandboxConfig(cwd: string, conf: Confinement, profileDir:
 
 const shq = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
 
-/** 狭い閉じ込めの中で流す、ブラウザサーバーの起動のスクリプト(リポジトリの @playwright/test を使う。版が必ずそろう)。stdin が閉じたら終わる。 */
-const SERVER_SCRIPT = `
-const { chromium } = require("@playwright/test");
+/**
+ * 狭い閉じ込めの中で流す、ブラウザサーバーの起動のスクリプト(リポジトリの @playwright/test を使う。版が必ずそろう)。stdin が閉じたら終わる。
+ * `node -e` の require は、カレントディレクトリから探す。閉じ込めの中では、ホームの下のカレントディレクトリを getcwd できないことがあり、
+ * そのとき node は node 本体のディレクトリから探して「Cannot find module '@playwright/test'」になる(macOS ランナーで起きた)。
+ * カレントディレクトリに頼らず、リポジトリの node_modules の絶対パスで読む。
+ */
+export const serverScript = (cwd: string) => `
+const { chromium } = require(${JSON.stringify(join(resolve(cwd), "node_modules/@playwright/test"))});
 (async () => {
   const opts = { headless: true, timeout: 60000 };
   const server = await chromium.launchServer({ channel: "chrome", ...opts }).catch(() => chromium.launchServer(opts));
@@ -104,7 +109,7 @@ export const startConfinedBrowser: StartBrowser = async (cwd, conf) => {
     const inner = [
       "unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy",
       `export TMPDIR=${shq(profileDir)}`,
-      `exec ${shq(process.execPath)} -e ${shq(SERVER_SCRIPT)}`,
+      `exec ${shq(process.execPath)} -e ${shq(serverScript(cwd))}`,
     ].join("; ");
     // ブラウザサーバーの閉じ込めも、全体の設定の localhost の許可を引き継ぐので、npm test と同じポートを断る(ADR-0059)
     const raw = await SandboxManager.wrapWithSandbox(inner, undefined, browserSandboxConfig(cwd, conf, profileDir));

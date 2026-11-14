@@ -28,3 +28,14 @@ need_code() {
     fail=1
   fi
 }
+
+# show_reasons <ログ>: 失敗の理由を、ジョブのログに出す(artifact を開かなくても、注釈とログだけで読めるように)。
+# 「---」で始まる行(理由の行)とその前後、末尾の 100 行を、::group:: で囲んで出す。落ちたときだけ呼ぶ。
+show_reasons() {
+  echo "::group::$(basename "$1"): '---' で始まる行と、その前後"
+  grep -n -B5 -A20 -- '^---' "$1" || echo "(「---」で始まる行は無い)"
+  echo "::endgroup::"
+  echo "::group::$(basename "$1"): 末尾の 100 行"
+  tail -n 100 "$1"
+  echo "::endgroup::"
+}

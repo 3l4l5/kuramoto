@@ -102,6 +102,7 @@ jobs:
           forbid "$L/$D-a-confined.log" '^✗'
           forbid "$L/$D-a-confined.log" '^△'
           forbid "$L/$D-a-confined.log" '^--- (確かめられなかった|接続した側の確かめが動かなかった|playwright test --list が失敗した)'
+          [ "$fail" = 0 ] || show_reasons "$L/$D-a-confined.log"
           exit $fail
 
       - name: (b) 設定あり (ii) - 入口をわざと壊すと落ちる
@@ -118,6 +119,7 @@ jobs:
           [ -z "$(git status --short)" ] || { echo "::error::壊したまま戻っていない"; git checkout ui/src/PhoneBar.tsx; fail=1; }
           need "$L/$D-b-break.log" '^○ 入口を壊すと落ちた'
           forbid "$L/$D-b-break.log" '^(✗|---) (入口を壊したのに通った|確かめられなかった)'
+          [ "$fail" = 0 ] || show_reasons "$L/$D-b-break.log"
           exit $fail
 
       - name: (c) 設定なし(今の既定の振る舞い)
