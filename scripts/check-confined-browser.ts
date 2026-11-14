@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, networkInterfaces } from "node:os";
 import { join, resolve } from "node:path";
 import { Project } from "../src/project/project.js";
@@ -19,6 +19,7 @@ import { kuramotoHome } from "../src/hq.js";
  * (ii)  --break: PhoneBar の「チームの方針」の入口を壊して同じ実行をし、落ちる(終わったら元に戻す)
  * (iii) 接続した側から、次がどれも失敗する(外のブラウザサーバーの閉じ込めが効いている)
  *       - file:// で ~/.kuramoto の中のファイル(access-token など)と ~/.ssh の中のファイルを開く
+ *       - 読める場所(リポジトリの node_modules)の中に置いた、~/.kuramoto・~/.ssh へのシンボリックリンク(ファイル・ディレクトリ)経由で、同じファイルを開く(許した場所がリンクで広がらない)
  *       - newContext({ proxy }) を使った外への通信 / newRequest(ローカルの playwright と、ブラウザ側の context.request)で外の URL を取る
  *       対照として、リポジトリの package.json と localhost の確かめ用サーバーには繋がる(ブラウザそのものが壊れて「失敗」しているのではないことを見るため)
  * 終了コード: 0 = 通った / 1 = 落ちた(閉じ込めの穴・E2E の失敗) / 2 = 確かめられなかった(ブラウザが起動できなかったなど)
@@ -55,6 +56,13 @@ const body = async (page, url) => {
   for (const f of t.files) {
     r = await body(page, "file://" + f.path);
     out("file:// で " + f.label + " を開けない", !r.text.includes(f.marker), r.error || (r.text.includes(f.marker) ? "中身が読めた" : "開いたが中身は無い"));
+  }
+  // (iii) シンボリックリンク(読める node_modules の中に置いたリンク)経由
+  r = await body(page, "file://" + t.linkControl.path);
+  out("対照: node_modules の中のリンクが、許した場所(package.json)を指すなら開ける", r.text.includes('"name"'), r.error || "開けた");
+  for (const f of t.links) {
+    r = await body(page, "file://" + f.path);
+    out("node_modules 内のシンボリックリンク経由で " + f.label + " を開けない", !r.text.includes(f.marker), r.error || (r.text.includes(f.marker) ? "中身が読めた(リンクで読める場所が広がっている)" : "開いたが中身は無い"));
   }
   // (iii) 外への通信
   if (!t.lanIp) out("外への通信を確かめる LAN の IP", false, "非 loopback の IPv4 が無いので確かめられない");
@@ -100,6 +108,39 @@ function secretFiles(canary: string): { label: string; path: string; marker: str
     }
   }
   return list.filter((f) => f.marker.length >= 8);
+}
+
+/**
+ * 読める場所(リポジトリの node_modules)の中に、読めてはいけないファイル・ディレクトリへのシンボリックリンクを置く。
+ * 置いたリンクのパスと、消すためのパスを返す。ディレクトリへのリンクは、その中の確かめ用ファイル(canary)を開く。
+ */
+function plantLinks(repo: string, canary: string, files: { label: string; path: string; marker: string }[]) {
+  const dir = join(repo, "node_modules", ".kuramoto-probe-links");
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const links: { label: string; path: string; marker: string }[] = [];
+  const canaryMarker = readFileSync(canary, "utf8").trim();
+  // ファイルへのリンク
+  files.forEach((f, i) => {
+    const l = join(dir, `file-${i}`);
+    symlinkSync(f.path, l);
+    links.push({ label: `${f.label}(ファイルへのリンク)`, path: l, marker: f.marker });
+  });
+  // ディレクトリへのリンク(~/.kuramoto と ~/.ssh)
+  const dirLink = join(dir, "kuramoto-home");
+  symlinkSync(kuramotoHome(), dirLink);
+  links.push({ label: "~/.kuramoto の確かめ用ファイル(ディレクトリへのリンク)", path: join(dirLink, "e2e-probe-canary.txt"), marker: canaryMarker });
+  const sshDir = join(homedir(), ".ssh");
+  const sshFile = files.find((f) => f.path.startsWith(sshDir + "/"));
+  if (sshFile) {
+    const l = join(dir, "ssh-home");
+    symlinkSync(sshDir, l);
+    links.push({ label: `${sshFile.label}(ディレクトリへのリンク)`, path: join(l, sshFile.path.slice(sshDir.length + 1)), marker: sshFile.marker });
+  }
+  // 対照: 許した場所(package.json)を指すリンクは開ける(リンクそのものが壊れていないことを見る)
+  const control = join(dir, "control");
+  symlinkSync(join(repo, "package.json"), control);
+  return { dir, links, control: { path: control } };
 }
 
 async function main(): Promise<number> {
@@ -149,9 +190,12 @@ async function main(): Promise<number> {
     const server = createServer((_req, res) => res.end("CANARY-NET"));
     await new Promise<void>((ok) => server.listen(0, "0.0.0.0", ok));
     const probeFile = join(repo, "node_modules/.kuramoto-probe.cjs");
+    const linkDir = join(repo, "node_modules", ".kuramoto-probe-links");
     try {
       writeFileSync(probeFile, PROBE);
-      const targets = { cwd: repo, port: (server.address() as AddressInfo).port, lanIp: lanIp(), files: secretFiles(canary) };
+      const files = secretFiles(canary);
+      const planted = plantLinks(repo, canary, files);
+      const targets = { cwd: repo, port: (server.address() as AddressInfo).port, lanIp: lanIp(), files, links: planted.links, linkControl: planted.control };
       const r = await runner.run("node node_modules/.kuramoto-probe.cjs", repo, { ...conf, env: { ...conf.env, PROBE_TARGETS: JSON.stringify(targets) } }, 5 * 60_000, true);
       const probes = r.output.split("\n").filter((l) => l.startsWith("PROBE ")).map((l) => JSON.parse(l.slice(6)) as Probe);
       if (!probes.length) {
@@ -165,6 +209,7 @@ async function main(): Promise<number> {
       server.close();
       rmSync(canary, { force: true });
       rmSync(probeFile, { force: true });
+      rmSync(linkDir, { recursive: true, force: true });
     }
   } finally {
     await runner.close();

@@ -45,6 +45,7 @@ npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --break  # 
 2. **(ii) 入口を壊すと落ちる**(`--break`): `ui/src/PhoneBar.tsx` の `drawerTo("policy")` を `drawerTo(null)` にして同じ実行をし、`○ 入口を壊すと落ちた` が出る(終わったら元に戻す)。`✗ 入口を壊したのに通った` なら、E2E が画面を確かめていない。
 3. **(iii) 接続した側からの攻撃がどれも失敗する**: 次の行がすべて `○` になる。
    - `file://` で `~/.kuramoto` の確かめ用ファイルと `~/.kuramoto/access-token`、`~/.ssh` の鍵を開けない
+   - 読める場所(リポジトリの `node_modules`)の中に置いた、`~/.kuramoto`・`~/.ssh` へのシンボリックリンク(ファイルへのリンクと、ディレクトリへのリンク)経由でも、同じファイルを開けない(許した場所がリンクで広がらない)。対照として、許した場所(`package.json`)を指すリンクは開ける。リンクは確かめの間だけ `node_modules/.kuramoto-probe-links/` に置き、終わったら消す
    - `newContext({ proxy })` で外のプロキシ経由の通信ができない
    - `newRequest`(ローカルの playwright の `request.newContext` と、ブラウザ側の `context.request`)で外の URL を取れない
    - 対照として、リポジトリの `package.json` と localhost の確かめ用サーバーには繋がる(ブラウザそのものが壊れて「失敗」しているのではないことを見る)。`✗` が 1 つでもあれば閉じ込めに穴がある。
