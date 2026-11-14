@@ -32,7 +32,8 @@ git status --short
 npx tsx scripts/check-confined-browser.ts . --no-browser-server 2>&1 | tee $L/$D-c-no-browser-server.log
 
 # (d) 断るポート(閉じ込めの外から流す)。断るポートは BLOCKED、ほかのポート(mysql-test の 3307 など)は REACHED
-npx tsx scripts/check-denied-ports.ts 2>&1 | tee $L/$D-d-denied-ports.log
+#     main の #103(ADR-0060)で、Kuramoto 自身の MySQL(手元にあれば 127.0.0.1:3306 など)も断る既定に入った。Kuramoto が使っている MySQL のポートを --denied-port に渡すと、そこが BLOCKED になることも見る(mysql-test の 3307 は REACHED のまま)
+npx tsx scripts/check-denied-ports.ts --denied-port 3306 2>&1 | tee $L/$D-d-denied-ports.log
 #     team-ci.test.ts の「断るポート」の試験も、スキップされずに通ること("skipped" ではなく "passed")
 npx vitest run src/project/team-ci.test.ts --reporter=verbose 2>&1 | tee $L/$D-d-team-ci-test.log
 
@@ -48,7 +49,7 @@ grep -n -i "mysql\|KURAMOTO_TEST_DB\|Tests " $L/$D-a-confined.log $L/$D-c-no-bro
 | (a) | `--- npm test の終了コード: 0`・`○ E2E 15 件が通った`・(iii) の行がすべて `○`(`~/.kuramoto`・`~/.ssh` へのシンボリックリンク経由の読み取りが断られる行を含む)。終了コード 0 |
 | (b) | `○ 入口を壊すと落ちた`。`git status --short` に差分が出ない |
 | (c) | `△ 設定なし: …(知らせて通った)` か `○ 設定なし: …` |
-| (d) | `○ 断るポート…: BLOCKED`・`○ ほかのポート…: REACHED`・`○ mysql-test…: REACHED`・`○ 対照…: REACHED`。vitest の「断るポート」の試験が `✓`(`↓` = スキップならやり直し) |
+| (d) | `○ 断るポート…: BLOCKED`(`--denied-port` を渡したポートも BLOCKED)・`○ ほかのポート…: REACHED`・`○ mysql-test…: REACHED`・`○ 対照…: REACHED`。vitest の「断るポート」の試験が `✓`(`↓` = スキップならやり直し) |
 | (e) | npm test の MySQL の回が通っている(落ちていたら `docker compose ps` で mysql-test が healthy か見る) |
 
 想定と違う結果は、原因を書いて直すか、別のチケットにします。ログが揃うまで、既定(`confinedBrowserEnabled` は設定なし)は動かしません。
