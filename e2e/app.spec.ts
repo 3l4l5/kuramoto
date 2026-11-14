@@ -478,9 +478,25 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
 
   await test.step("生産性: トークン・金額・PR・手戻り・助けを求めた数が出て、日ごとの推移も見られる", async () => {
     await expect(page.getByRole("region", { name: "出来事" })).toContainText("PR #", { timeout: 20_000 });
-    await page.getByRole("group", { name: "プロジェクトの画面" }).getByRole("button", { name: "生産性" }).click();
-    // 共通ヘッダーはオフィスと同じ見た目のまま: いまの画面の行き先は文字だけで(枠つきの押された状態にはならない)、編成の版の札も出る
-    await expect(page.getByRole("group", { name: "プロジェクトの画面" }).getByRole("button", { name: "生産性" })).toHaveAttribute("aria-current", "page");
+    const nav = page.getByRole("group", { name: "プロジェクトの画面" });
+    const officeBox = await nav.boundingBox();
+    await nav.getByRole("button", { name: "生産性" }).click();
+    // 共通ヘッダーはオフィスと同じ形・同じ位置の切り替えスイッチのまま: いまの画面の行き先が選ばれ(灰の地)、編成の版の札も出る
+    await expect(nav.getByRole("button", { name: "生産性" })).toHaveAttribute("aria-current", "page");
+    await expect(nav.getByRole("button", { name: "オフィス" })).toHaveAttribute("aria-pressed", "false");
+    const metricsBox = await nav.boundingBox();
+    expect(metricsBox).toEqual(officeBox);
+    // ページの地は灰(--bg)、ヘッダーのスイッチの外枠と中のカード・パネルは白(--surface)
+    const colors = await page.evaluate(() => {
+      const v = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+      const rgb = (hex: string) => { const n = parseInt(hex.slice(1), 16); return `rgb(${n >> 16}, ${(n >> 8) & 255}, ${n & 255})`; };
+      return {
+        page: getComputedStyle(document.body).backgroundColor === rgb(v("--bg")),
+        nav: getComputedStyle(document.querySelector(".dads-bar .navsw")!).backgroundColor === rgb(v("--surface")),
+        panel: getComputedStyle(document.querySelector(".prod .panel")!).backgroundColor === rgb(v("--surface")),
+      };
+    });
+    expect(colors).toEqual({ page: true, nav: true, panel: true });
     await expect(page.locator(".dads-bar .verchip")).toContainText(/^編成 v\d+/);
     const tiles = page.getByRole("list", { name: "合計" });
     // 企画の試作(metrics)の並び: トークン・金額・PR / 完成・手戻り・人に助けを求めた・ルール違反・質問(島どうし)・経路が無くリーダーへ

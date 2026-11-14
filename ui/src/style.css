@@ -508,22 +508,19 @@ body { margin: 0; }
 
 
 @tailwind utilities;
-/* デジタル庁デザインシステム: 上部のバー・ページの地 */
-body { background: var(--surface); }
+/* ページの地は薄い灰(--bg)。共通ヘッダーは試作どおり、地の上にそのまま置く(帯は付けない)。その上の切り替え・ボタンと、
+   ページの中のカード・パネル・引き出しが白(--surface)。スマホの幅は、ヘッダーだけ白い帯(下の @media) */
+body { background: var(--bg); }
 .app { gap: 20px; }
-.dads-bar { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .dads-bar .brand b { font-size: var(--fs-xl); letter-spacing: .02em; }
 .dads-bar .crumb { gap: 2px; }
 .dads-bar .crumb [aria-current="page"] { text-decoration: none; color: var(--ink); font-weight: 700; }
 .dads-bar .tabs { display: inline-flex; gap: 4px; padding: 0; border: 0; background: transparent; }
 .dads-bar .eff { font-size: var(--fs-base); color: var(--muted); }
-/* 共通ヘッダーの、オフィス/ボード/ツリーの切り替え(試作どおり、名前のすぐ右の枠つきの切り替え)。ほかの画面への行き先は、そのとなりに文字だけで置く */
-.dads-bar .viewtabs { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
-.dads-bar .screens { gap: 0; }
-.dads-bar .screens .ds-btn { padding-inline: var(--sp-2); }
-/* いまの画面の行き先は、名前(パンくず)と同じく濃く太くする。枠つきにはしない(どの画面でもヘッダーの見た目を変えない) */
-.dads-bar .screens [aria-current="page"] { color: var(--ink); font-weight: 700; }
-.dads-bar:has(.viewtabs) { column-gap: var(--sp-2); }
+/* 共通ヘッダーの行き先は、どの画面でも同じ形・同じ位置の切り替えスイッチ(ds の SegmentNav。外枠が白、選んでいるのが灰) */
+.dads-bar .navsw { flex: none; }
+/* どの画面でもヘッダーの高さ(と、その中の並びの位置)を変えない: 生産性の指標の並びで高くならないよう、高さをそろえる */
+.dads-bar { min-height: calc(var(--h-control-sm) + var(--sp-2) + var(--sp-2)); }
 
 .hint { font-size: var(--fs-base); color: var(--muted); }
 .form .rrow { align-items: center; }
@@ -1200,9 +1197,11 @@ body { background: var(--surface); }
 /* ---- スマホ(幅 390px、未決 #21): あなたの対応・ボード・チケットの詳細。同じ画面を組み替える ---- */
 @media (max-width: 700px) {
   body { background: var(--bg); }
+  /* スマホの試作(phone-home・phone-office・phone-board)は、ヘッダーが白い帯で、灰色の地の上に部品が白 */
+  .dads-bar { margin: calc(-1 * var(--sp-4)) calc(-1 * var(--sp-4)) 0; padding: var(--sp-3) var(--sp-4); background: var(--surface); border-bottom: 1px solid var(--line); }
   .app { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
   /* 上の行は「Kuramoto / プロジェクト名 / 稼働の状態」だけ。画面の切り替えと引き出しは、下のタブとメニューへ移す */
-  .bar .tabs, .bar .drawerbtns, .bar .spacer, .bar .crumb .sep:first-of-type, .bar .crumb > .ds-btn:first-child { display: none; }
+  .bar .tabs, .bar .navsw, .bar .drawerbtns, .bar .spacer, .bar .crumb .sep:first-of-type, .bar .crumb > .ds-btn:first-child { display: none; }
   .app[data-route="home"] .bar .crumb > .ds-btn:first-child { display: inline-flex; }
   .bar .verchip { display: none; }
   .bar .workswitch { margin-left: auto; }
@@ -1341,5 +1340,5 @@ body { background: var(--surface); }
   .prod table.tickets tbody th { min-width: 8em; }
 }
 /* 生産性の画面の右上(ヘッダー)の指標 */
-.dads-bar .kpi { margin-left: auto; display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
+.dads-bar .kpi { margin-left: auto; padding: 0; border: 0; line-height: var(--lh-tight); display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
 .dads-bar .kpi b { display: block; font-family: var(--f-mono); font-size: var(--fs-lg); color: var(--ink); }

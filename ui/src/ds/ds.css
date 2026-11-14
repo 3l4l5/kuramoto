@@ -47,8 +47,12 @@ a.ds-btn { text-decoration: none; }
   height: var(--h-control-sm); padding: 0 var(--sp-3); border: 0; border-radius: var(--r-md); background: transparent;
   color: var(--muted); font-family: var(--f-body); font-size: var(--fs-md); font-weight: var(--fw-medium); cursor: pointer;
 }
-.ds-seg__opt[aria-checked="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.ds-seg__opt[aria-checked="true"], .ds-seg__opt[aria-pressed="true"], .ds-seg__opt[aria-current="page"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
 .ds-seg__opt:disabled { cursor: not-allowed; }
+/* 灰色の地(--bg)の上に置く切り替え(共通ヘッダーの行き先): 外枠が白、選んでいるのが灰 */
+.ds-seg--raised { background: var(--surface); }
+.ds-seg--raised .ds-seg__opt[aria-pressed="true"], .ds-seg--raised .ds-seg__opt[aria-current="page"] { background: var(--bg); }
+.ds-seg__group { display: inline-flex; }
 
 /* スイッチ */
 .ds-switch { display: inline-flex; align-items: center; gap: var(--sp-2); font-family: var(--f-body); font-size: var(--fs-md); color: var(--ink); background: none; border: 0; padding: 0; cursor: pointer; }

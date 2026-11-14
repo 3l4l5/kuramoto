@@ -100,6 +100,24 @@ export function Segmented<T extends string>({ options, value, onChange, label, c
   );
 }
 
+// 行き先の切り替え(ナビゲーション)。Segmented と同じ見た目で、押すと別の画面へ移る(ラジオではなくボタン)。
+// raised = 灰色の地(--bg)の上に置く形(外枠が白、選んでいるのが灰)。ふつうの Segmented は白い面の上に置く形(外枠が灰、選んでいるのが白)。
+export function SegmentNav({ label, raised, className, children }: { label: string; raised?: boolean; className?: string; children: ReactNode }) {
+  return (
+    <div role="group" aria-label={label} className={cx("ds-seg", raised && "ds-seg--raised", className)}>
+      {children}
+    </div>
+  );
+}
+export function SegmentNavButton({ on, mark = "pressed", className, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & {
+  on: boolean;
+  /** pressed = 選んでいる見方(aria-pressed)、current = いまの画面(aria-current) */
+  mark?: "pressed" | "current";
+}) {
+  const state = mark === "pressed" ? { "aria-pressed": on } : { "aria-current": on ? ("page" as const) : undefined };
+  return <button type="button" className={cx("ds-seg__opt", className)} {...state} {...rest} />;
+}
+
 // ---- スイッチ ----
 export function Switch({ checked, onChange, children, disabled, label, title }: {
   checked: boolean;
