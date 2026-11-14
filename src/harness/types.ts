@@ -49,6 +49,11 @@ export type Confinement = {
    * Chrome は起動のたびにプロファイルにソケットを作り、e2e テストは localhost でサーバーを立てる。
    */
   allowLocalSockets: boolean;
+  /**
+   * allowLocalSockets のときも、localhost のうち届かせないポート(Kuramoto 本体の API など。ADR-0059)。
+   * チームの CI の閉じ込め(SandboxRunner)と、その中のブラウザサーバーにだけ効く。担当のシェル(Claude Code の閉じ込め)は、ポートを選べないので効かない。
+   */
+  deniedLocalPorts?: number[];
   /** 起動に足す環境変数(ツールチェーンの設定など)。 */
   env: Record<string, string>;
 };

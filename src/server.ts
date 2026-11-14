@@ -16,7 +16,7 @@ import { GhCli, type GitHub } from "./github/github.js";
 import { ConfigError, loadStartupConfig } from "./config.js";
 import { DatabaseConnectError } from "./db/mysql.js";
 import { startDatabase } from "./db/startup.js";
-import { currentWorkspaceId, Hq, kuramotoHome, workDirFor, type ProjectRecord } from "./hq.js";
+import { currentWorkspaceId, Hq, kuramotoHome, kuramotoPort, workDirFor, type ProjectRecord } from "./hq.js";
 import { Dispatcher } from "./project/dispatcher.js";
 import { recoverStale } from "./project/inbox.js";
 import { autoMerge, autoMergeEnabled, ownerMerge, suggestedMergeOrder, type TeamCiHook } from "./project/merge.js";
@@ -1053,7 +1053,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     process.exit(1);
   }
 
-  const port = Number(process.env.KURAMOTO_PORT ?? 4300);
+  const port = kuramotoPort();
   const open = process.env.KURAMOTO_PUBLIC === "1";
   const token = open ? publicToken() : undefined;
   // 入口で今のワークスペースを決め、本部へ渡す。MySQL のときは、本部もプロジェクトもその上で動き、見張りを渡す

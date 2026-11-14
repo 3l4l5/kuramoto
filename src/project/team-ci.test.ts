@@ -14,6 +14,7 @@ import { Dispatcher } from "./dispatcher.js";
 import { ownerMerge, type TeamCiHook } from "./merge.js";
 import { Project, type TicketRow } from "./project.js";
 import { browserSandboxConfig, confinedBrowserEnabled } from "./confined-browser.js";
+import { denyLocalPorts, needsLocalPortDeny, parsePorts } from "./local-ports.js";
 import { detectCommands, E2E_WS_ENDPOINT_ENV, runTeamCi, SandboxRunner, wantsBrowser, withBrowser, type CommandRunner } from "./team-ci.js";
 import { StaticWorkspace } from "./workspace.js";
 import { createTicket } from "./workflow.js";
@@ -164,6 +165,68 @@ describe("チームの CI(ADR-0028)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it.skipIf(!canSandbox())("localhost を許していても、断るポート(Kuramoto 本体の API など)だけは、閉じ込めの中から届かない。ほかのポート(mysql-test の 3307・E2E・テストが立てるサーバー)には届く(ADR-0059)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kuramoto-srt-"));
+    const listen = async () => {
+      const s = createServer((c) => c.end());
+      await new Promise<void>((ok) => s.listen(0, "127.0.0.1", ok));
+      return { s, port: (s.address() as AddressInfo).port };
+    };
+    const api = await listen(); // Kuramoto 本体の API の代わり
+    const other = await listen(); // mysql-test の 3307 の代わり
+    try {
+      const conf: Confinement = { readable: [], writable: [], hidden: [], allowedDomains: ["registry.npmjs.org"], hiddenEnv: [], allowLocalSockets: true, deniedLocalPorts: [api.port], env: {} };
+      const r = new SandboxRunner();
+      const probe = (port: number) => `/usr/bin/nc -z -w 3 127.0.0.1 ${port} && echo REACHED || echo BLOCKED`;
+      expect((await r.run(probe(other.port), dir, conf, 60_000)).output).toContain("REACHED");
+      const blocked = (await r.run(probe(api.port), dir, conf, 60_000)).output;
+      expect(blocked).toContain("BLOCKED");
+      expect(blocked).not.toContain("REACHED");
+      // 断るポートが無ければ、どちらにも届く(今までと同じ)
+      expect((await r.run(probe(api.port), dir, { ...conf, deniedLocalPorts: [] }, 60_000)).output).toContain("REACHED");
+      await r.close();
+    } finally {
+      api.s.close();
+      other.s.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it.skipIf(process.platform !== "darwin")("sandbox-runtime が実際に返すコマンドの、localhost への接続の許可のあとに、ポートごとの断りが入る(書き方が変わったら止まる)", async () => {
+    const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
+    await SandboxManager.reset(); // 前の試験の設定を引き継がない
+    await SandboxManager.initialize({
+      network: { allowedDomains: ["github.com"], deniedDomains: [], strictAllowlist: true, allowAllUnixSockets: true, allowLocalBinding: true },
+      filesystem: { denyRead: [], allowRead: [], allowWrite: [tmpdir()], denyWrite: [] },
+    });
+    try {
+      const raw = await SandboxManager.wrapWithSandbox("echo hi");
+      const denied = denyLocalPorts(raw, [4300, 5432]);
+      expect(denied).toContain(`(allow network-outbound (remote ip "localhost:*")) (deny network-outbound (remote ip "localhost:4300")) (deny network-outbound (remote ip "localhost:5432"))`);
+      expect(denied.length).toBeGreaterThan(raw.length);
+    } finally {
+      await SandboxManager.reset();
+    }
+  }, 60_000);
+
+  it("denyLocalPorts: 許可の規則のすぐあとに断りを足す。引用符が \\\" のときも合わせる。規則が見つからなければ投げる。ポートが無ければ何もしない", () => {
+    const rule = `(allow network-outbound (remote ip "localhost:*"))`;
+    const wrapped = `env X=1 /usr/bin/sandbox-exec -p '(allow network-bind (local ip "*:*"))\n${rule}\n(allow system-socket)' bash -c 'echo hi'`;
+    expect(denyLocalPorts(wrapped, [])).toBe(wrapped);
+    const out = denyLocalPorts(wrapped, [4300, 4300, 0, 70000, 5432]);
+    expect(out).toContain(`${rule} (deny network-outbound (remote ip "localhost:4300")) (deny network-outbound (remote ip "localhost:5432"))\n(allow system-socket)`);
+    expect(out.match(/deny network-outbound/g)).toHaveLength(2);
+    const escaped = wrapped.replaceAll('"', '\\"');
+    expect(denyLocalPorts(escaped, [4300])).toContain(`(remote ip \\"localhost:*\\")) (deny network-outbound (remote ip \\"localhost:4300\\"))`);
+    expect(() => denyLocalPorts("env sandbox-exec -p '(version 1)' bash", [4300])).toThrow("緩めたまま流さない");
+    expect(parsePorts("4300, 5432\n6379 x 0 99999")).toEqual([4300, 5432, 6379]);
+    expect(parsePorts(null)).toEqual([]);
+    expect(needsLocalPortDeny(true, [4300], "darwin")).toBe(true);
+    expect(needsLocalPortDeny(false, [4300], "darwin")).toBe(false); // ソケットを閉じていれば、規則そのものが無い
+    expect(needsLocalPortDeny(true, [], "darwin")).toBe(false);
+    expect(needsLocalPortDeny(true, [4300], "linux")).toBe(false); // Linux はネットワークの名前空間が別
+  });
 
   it("チームの CI を使うなら、GitHub Actions の CI のためのチケット(main の CI を直す)は取りやめる。リーダーは、やることの無いチケットを手助けの中で取りやめられる", async () => {
     const runner = new FakeRunner(() => null);
