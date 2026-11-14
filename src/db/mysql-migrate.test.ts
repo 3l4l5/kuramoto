@@ -136,6 +136,19 @@ describe.skipIf(!conn)("MySQL(mysql-test)に流す", () => {
     await expect(ins(2, "nope")).rejects.toThrow();
   });
 
+  it("periodic_reviews(#89): target_kind・origin・status は決まった値だけ。実行の記録は定義にひも付き、定義を持たない記録は入らない", async () => {
+    await migrateMysql(c, MYSQL_MIGRATIONS);
+    await c.query("INSERT INTO projects (name, data_dir, status, created_at) VALUES ('a', '/a', 'running', '')");
+    const review = (kind: string) => c.query("INSERT INTO periodic_reviews (name, viewpoint, every_hours, role, target_kind, created_at, project_id) VALUES ('n', 'v', 24, 'qa', ?, '', 1)", [kind]);
+    await review("repo");
+    await expect(review("nope")).rejects.toThrow();
+    const run = (reviewId: number, origin = "manual", status = "queued") => c.query("INSERT INTO periodic_review_runs (review_id, origin, status, looked_at, created_at, project_id) VALUES (?, ?, ?, '', '', 1)", [reviewId, origin, status]);
+    await run(1);
+    await expect(run(1, "nope")).rejects.toThrow();
+    await expect(run(1, "manual", "nope")).rejects.toThrow();
+    await expect(run(99)).rejects.toThrow();
+  });
+
   it("one_run_per_ticket: 終わっていない起動はチケットに 1 つだけ(終わった起動はいくつでも)", async () => {
     await migrateMysql(c, MYSQL_MIGRATIONS);
     await c.query("INSERT INTO projects (name, data_dir, status, created_at) VALUES ('a', '/a', 'running', '')");

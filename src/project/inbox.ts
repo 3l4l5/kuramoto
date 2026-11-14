@@ -19,7 +19,7 @@ import type { Project } from "./project.js";
  * - member_chat: 責任者からメンバーへの話しかけ。宛先はそのメンバー。チケットは持たない(チケットの 1 チケット 1 起動を邪魔しない。ひも付けは payload)
  * - ask: 島への質問・相談(R16)。経路のある島の手すきの人が答える。チケットは持たない(質問のひも付けは payload の questionId)。答えは道具 reply で返す
  */
-export type MessageKind = "implement" | "fix" | "review" | "sec" | "qa" | "decide" | "answer" | "plan" | "chat" | "triage" | "unstick" | "patrol" | "member_chat" | "ask";
+export type MessageKind = "implement" | "fix" | "review" | "sec" | "qa" | "decide" | "answer" | "plan" | "chat" | "triage" | "unstick" | "patrol" | "periodic_review" | "member_chat" | "ask";
 
 export type MessageRow = {
   id: number;
@@ -61,8 +61,8 @@ export async function send(
  * - 着手優先: 新しい実装を先に取る。開発の中では直しを新しい実装より先にする(docs/design.md 5.2)
  */
 const ORDER: Record<Pull, MessageKind[]> = {
-  down: ["member_chat", "ask", "chat", "triage", "patrol", "plan", "unstick", "answer", "decide", "qa", "sec", "review", "fix", "implement"],
-  start: ["member_chat", "ask", "chat", "triage", "patrol", "plan", "unstick", "answer", "decide", "fix", "implement", "review", "sec", "qa"],
+  down: ["member_chat", "ask", "chat", "triage", "patrol", "periodic_review", "plan", "unstick", "answer", "decide", "qa", "sec", "review", "fix", "implement"],
+  start: ["member_chat", "ask", "chat", "triage", "patrol", "periodic_review", "plan", "unstick", "answer", "decide", "fix", "implement", "review", "sec", "qa"],
 };
 
 function orderSql(pull: Pull) {

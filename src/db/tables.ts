@@ -429,6 +429,37 @@ export interface TicketNotesTable {
   project_id: Generated<number>;
 }
 
+export interface PeriodicReviewsTable {
+  id: Generated<number>;
+  name: string;
+  viewpoint: string;
+  template: string | null;
+  every_hours: number;
+  role: string;
+  target_kind: "all_screens" | "screens" | "repo";
+  target_screens: Generated<string>;
+  enabled: Generated<number>;
+  last_run_at: string | null;
+  created_at: string;
+  project_id: Generated<number>;
+}
+
+export interface PeriodicReviewRunsTable {
+  id: Generated<number>;
+  review_id: number;
+  origin: "schedule" | "manual";
+  status: Generated<"queued" | "running" | "done" | "error">;
+  looked_at: Generated<string>;
+  created_tickets: Generated<string>;
+  skipped_duplicates: Generated<number>;
+  summary: string | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  ended_at: string | null;
+  project_id: Generated<number>;
+}
+
 export interface GithubIssuesTable {
   id: Generated<number>;
   repo: string;
@@ -533,6 +564,8 @@ export interface ProjectDatabase {
   ticket_notes: TicketNotesTable;
   ticket_questions: TicketQuestionsTable;
   github_issues: GithubIssuesTable;
+  periodic_review_runs: PeriodicReviewRunsTable;
+  periodic_reviews: PeriodicReviewsTable;
   tickets: TicketsTable;
   units: UnitsTable;
 }

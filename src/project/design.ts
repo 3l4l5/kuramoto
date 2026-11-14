@@ -21,9 +21,14 @@ export async function designFor(p: Project, ticket: TicketRow): Promise<DesignFi
   // デザインシステムの土台のチケットは、カタログに全部の画面を並べるので、全部の試作を渡す
   // 全画面を見比べるチケット(allScreens)も、全部の試作を渡す
   const all = refs.allScreens === true || (await isDesignSystemTicket(p, ticket));
+  return designFilesOf(p, (key, s) => all || linked.has(key) || !!(req && s.requirements.includes(req)));
+}
+
+/** 企画の画面のうち pick が選んだものの、試作の HTML(合意した版か最初の版)。 */
+export async function designFilesOf(p: Project, pick: (key: string, s: { requirements: string[] }) => boolean): Promise<DesignFile[]> {
   const out: DesignFile[] = [];
   for (const [key, s] of await screens(p)) {
-    if (!all && !linked.has(key) && !(req && s.requirements.includes(req))) continue;
+    if (!pick(key, s)) continue;
     const v = s.variants.find((x) => x.id === s.chosen) ?? s.variants[0];
     if (!v) continue;
     const safe = key.replace(/[^A-Za-z0-9_-]/g, "_");

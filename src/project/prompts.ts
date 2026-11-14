@@ -175,6 +175,7 @@ ${how}`;
     case "triage":
     case "unstick":
     case "patrol":
+    case "periodic_review":
     case "member_chat":
     case "ask":
       return "";

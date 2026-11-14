@@ -1,6 +1,6 @@
-import type { DbStatusView, DevRulesView, HqView, LeadChatView, MemberChatView, MemberNow, MemberView, OfficeView, ProductivityView, ProjectView, StudioView, TeamView, TicketView, UnitView } from "../../src/server.js";
+import type { DbStatusView, DevRulesView, HqView, LeadChatView, MemberChatView, MemberNow, MemberView, OfficeView, PeriodicReviewsView, ProductivityView, ProjectView, StudioView, TeamView, TicketView, UnitView } from "../../src/server.js";
 
-export type { DbStatusView, DevRulesView, HqView, LeadChatView, MemberChatView, MemberNow, MemberView, OfficeView, ProductivityView, ProjectView, StudioView, TeamView, TicketView, UnitView };
+export type { DbStatusView, DevRulesView, HqView, LeadChatView, MemberChatView, MemberNow, MemberView, OfficeView, PeriodicReviewsView, ProductivityView, ProjectView, StudioView, TeamView, TicketView, UnitView };
 
 let build: string | null = null;
 

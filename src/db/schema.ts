@@ -383,6 +383,24 @@ CREATE TABLE github_issues (id INTEGER PRIMARY KEY, repo TEXT NOT NULL, number I
 CREATE UNIQUE INDEX github_issues_project_issue ON github_issues(project_id, repo, number);
 CREATE INDEX github_issues_project_status ON github_issues(project_id, status);
 `,
+  // 24: 定期レビュー(#89)。観点・頻度・担当・対象を持つ定義(periodic_reviews)と、実行の記録(periodic_review_runs)。
+  //  - every_hours: 何時間ごとに起動するか(毎日 = 24・毎週 = 168)。次の起動は (last_run_at ?? created_at) + every_hours。
+  //  - role: 見る立場(designer / qa / review / sec / lead)。その役割の方針(モデル・深さ・重視すること)で動く。
+  //  - target_kind: all_screens(企画の全画面)/ screens(target_screens の key)/ repo(リポジトリ全体)
+  //  - template: 初期の観点(designer_screens など)から作ったときの印。
+  //  - 実行の記録: origin = schedule / manual、status = queued / running / done / error、created_tickets = 切ったチケットの番号(JSON)、skipped_duplicates = 重複で切らなかった数
+  //  - 新しい表なので project_id は最初から持つ。
+  `
+CREATE TABLE periodic_reviews (id INTEGER PRIMARY KEY, name TEXT NOT NULL, viewpoint TEXT NOT NULL, template TEXT, every_hours INTEGER NOT NULL,
+  role TEXT NOT NULL, target_kind TEXT NOT NULL CHECK (target_kind IN ('all_screens','screens','repo')), target_screens TEXT NOT NULL DEFAULT '[]',
+  enabled INTEGER NOT NULL DEFAULT 1, last_run_at TEXT, created_at TEXT NOT NULL, project_id INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX periodic_reviews_project_enabled ON periodic_reviews(project_id, enabled);
+CREATE TABLE periodic_review_runs (id INTEGER PRIMARY KEY, review_id INTEGER NOT NULL REFERENCES periodic_reviews(id),
+  origin TEXT NOT NULL CHECK (origin IN ('schedule','manual')), status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','running','done','error')),
+  looked_at TEXT NOT NULL DEFAULT '', created_tickets TEXT NOT NULL DEFAULT '[]', skipped_duplicates INTEGER NOT NULL DEFAULT 0, summary TEXT, error TEXT,
+  created_at TEXT NOT NULL, started_at TEXT, ended_at TEXT, project_id INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX periodic_review_runs_project_review ON periodic_review_runs(project_id, review_id, id);
+`,
 ];
 
 /** 版 21 で project_id を足す表(その時点のプロジェクト DB の全部)。版 21 の実行と索引に使うので、足さない(後の版の表は PROJECT_ID_TABLES にだけ足す)。 */
@@ -398,8 +416,9 @@ export const V21_TABLES = [
  * プロジェクト DB の全部の表(project_id を持つ)。表を足すときは、足す版で project_id も一緒に持たせ(新しい表なので ALTER は要らない)、
  * ここに足す(scope.test.ts・delete-project.test.ts・sqlite-to-mysql.test.ts が確かめる)。
  *  - 版 23: github_issues(見回りが取ってきた GitHub の Issue と、リーダーの扱い。#79)
+ *  - 版 24: periodic_reviews・periodic_review_runs(定期レビューの定義と実行の記録。#89)
  */
-export const PROJECT_ID_TABLES = [...V21_TABLES, "github_issues"] as const;
+export const PROJECT_ID_TABLES = [...V21_TABLES, "github_issues", "periodic_reviews", "periodic_review_runs"] as const;
 
 /**
  * 版 21 で足す索引(列は project_id の後ろ。名前は <表>_project_<列>)。

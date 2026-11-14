@@ -7,7 +7,7 @@ import { PROJECT_ID_TABLES } from "./schema.js";
  */
 export const PROJECT_DELETE_ORDER: (typeof PROJECT_ID_TABLES)[number][] = [
   "conflicts", "merges", "finding_comments", "findings", "rule_violations", "reviews", "run_steps", "runs",
-  "github_issues", "decisions", "design_images", "member_messages", "ticket_questions", "ticket_areas", "ticket_deps", "ticket_notes",
+  "periodic_review_runs", "periodic_reviews", "github_issues", "decisions", "design_images", "member_messages", "ticket_questions", "ticket_areas", "ticket_deps", "ticket_notes",
   "pull_requests", "sessions", "messages", "tickets", "members", "units", "formations", "policies",
   "plan_comments", "plan_artifacts", "plan_open_items", "plan_messages", "plan_stages", "requirement_items", "requirements",
   "dev_rules", "dev_rule_versions", "repos", "settings", "events", "lead_messages",

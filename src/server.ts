@@ -21,6 +21,7 @@ import { Dispatcher } from "./project/dispatcher.js";
 import { recoverStale } from "./project/inbox.js";
 import { autoMerge, autoMergeEnabled, ownerMerge, suggestedMergeOrder, type TeamCiHook } from "./project/merge.js";
 import { issueCommentEnabled } from "./project/issues.js";
+import { createPeriodicReview, deletePeriodicReview, periodicReviewsView, setPeriodicReviewEnabled, startPeriodicRun, updatePeriodicReview } from "./project/periodic-review.js";
 import { patrolMinutes, setPatrolMinutes, startPatrol } from "./project/patrol.js";
 import type { DbHealth, DbHealthState } from "./db/mysql-health.js";
 import { ciBlockAction, ciBlocked, githubDown } from "./project/outage.js";
@@ -572,6 +573,30 @@ export class KuramotoServer {
       await setDevRuleEnabled(p, Number(c), body.enabled === true);
       return await devRulesView(p);
     }
+    if (b === "periodic-reviews" && !c && method === "GET") return await periodicReviewsView(p);
+    if (b === "periodic-reviews" && !c && method === "POST") {
+      await createPeriodicReview(p, body, typeof body.template === "string" ? body.template : undefined);
+      return await periodicReviewsView(p);
+    }
+    if (b === "periodic-reviews" && c && !parts[4] && method === "POST") {
+      await updatePeriodicReview(p, Number(c), body);
+      return await periodicReviewsView(p);
+    }
+    if (b === "periodic-reviews" && c && parts[4] === "enabled" && method === "POST") {
+      await setPeriodicReviewEnabled(p, Number(c), body.enabled === true);
+      return await periodicReviewsView(p);
+    }
+    if (b === "periodic-reviews" && c && parts[4] === "delete" && method === "POST") {
+      await deletePeriodicReview(p, Number(c));
+      return await periodicReviewsView(p);
+    }
+    // 今すぐ実行(始業中でなければ、始業したときに動く)
+    if (b === "periodic-reviews" && c && parts[4] === "run" && method === "POST") {
+      const runId = await startPeriodicRun(p, Number(c), "manual");
+      if (runId === null) throw new Error("この定期レビューは、もう実行待ちか実行中です");
+      this.poke(id);
+      return await periodicReviewsView(p);
+    }
     if (b === "office" && method === "GET") return { ...(await officeView(p)), running: this.running.has(id) };
     // メンバーの今していること・話す欄(オフィスでメンバーを押して開く引き出し)
     if (b === "members" && c && parts[4] === "now" && method === "GET") return memberNow(p, Number(c));
@@ -939,6 +964,7 @@ export type ProjectView = Awaited<ReturnType<KuramotoServer["projectView"]>>;
 export type StudioView = Awaited<ReturnType<KuramotoServer["studioViewOf"]>>;
 export type TeamView = Awaited<ReturnType<typeof teamView>>;
 export type DevRulesView = Awaited<ReturnType<typeof devRulesView>>;
+export type PeriodicReviewsView = Awaited<ReturnType<typeof periodicReviewsView>>;
 export type ProductivityView = Awaited<ReturnType<typeof productivity>>;
 export type OfficeView = Awaited<ReturnType<typeof officeView>> & { running: boolean };
 export type { MemberView, UnitView };
