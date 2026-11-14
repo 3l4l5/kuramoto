@@ -102,14 +102,8 @@ describe("ワークフロー confinement-check", () => {
     for (const p of ['"src/project/confine*"', '"scripts/check-*"', '"e2e/**"']) expect(wf).toContain(p);
   });
 
-  it("continue-on-error は、(a) のステップだけ(ジョブには付けない)。(e) の MySQL の回は、落ちたらジョブを落とす。判定はゆるめない", () => {
-    const lines = wf.split("\n");
-    const at = lines.flatMap((l, i) => (/^\s*continue-on-error: true\s*$/.test(l) ? [i] : []));
-    expect(at).toHaveLength(1);
-    const stepName = (i: number) => lines.slice(0, i).reverse().find((l) => /^\s+- name:/.test(l)) ?? "";
-    expect(stepName(at[0])).toContain("(a) 設定あり");
-    // ステップの中(インデント 8)にあること = ジョブ直下(インデント 4)ではない
-    expect(lines[at[0]]).toMatch(/^ {8}continue-on-error: true$/);
+  it("continue-on-error は、どのステップ・ジョブにも付けない((a) は #118、(e) の MySQL の回は #116)。判定はゆるめない", () => {
+    expect(wf).not.toMatch(/^\s*continue-on-error:/m);
     // (e) は #116 で直った。既知の失敗として扱う仕組み(steps.e.outcome・::warning::)は残さない
     expect(wf).not.toContain("steps.e.outcome");
     expect(wf).not.toContain("#116 の既知の失敗");

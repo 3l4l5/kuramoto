@@ -84,7 +84,9 @@ const shq = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
 export const serverScript = (cwd: string) => `
 const { chromium } = require(${JSON.stringify(join(resolve(cwd), "node_modules/@playwright/test"))});
 (async () => {
-  const opts = { headless: true, timeout: 60000 };
+  // GPU プロセスは起動しない(ソフトウェア描画)。閉じ込めの中では GPU(IOKit・Metal)に届かず、GPU プロセスが落ち続けて描画のフレームが出なくなり、
+  // 要素が「安定」するのを待つ click(requestAnimationFrame を待つ)が時間切れになる(#118)。許可は足さず、ブラウザの起動オプションで避ける
+  const opts = { headless: true, timeout: 60000, args: ["--disable-gpu"] };
   // 確かめの CI(KURAMOTO_E2E_BROWSER_DEBUG=1)では、ブラウザの標準エラー(Chrome の落ちた理由)を、DEBUG の環境変数に頼らず、標準エラーに出す
   if (process.env.KURAMOTO_E2E_BROWSER_DEBUG === "1") {
     opts.logger = { isEnabled: (name) => name === "browser", log: (name, severity, message) => { if (name === "browser") process.stderr.write("[pw:browser] " + String(message).slice(0, 300) + "\\n"); } };
@@ -92,6 +94,21 @@ const { chromium } = require(${JSON.stringify(join(resolve(cwd), "node_modules/@
   const server = await chromium.launchServer({ channel: "chrome", ...opts }).catch((e) => { process.stderr.write("[pw:browser] channel chrome の起動に失敗: " + String((e && e.message) || e).split("\\n")[0].slice(0, 300) + "\\n"); return chromium.launchServer(opts); });
   server.on("close", () => process.stderr.write("[pw:browser] ブラウザサーバーが閉じた(ブラウザが終わった)\\n"));
   process.stdout.write("KURAMOTO_WS " + server.wsEndpoint() + "\\n");
+  // 確かめの CI では、描画のフレームが出るか(click の時間切れの原因の候補)を、ページを 1 枚開いて見て、結果を標準エラーに出す。ブラウザサーバーの動きには影響しない
+  if (process.env.KURAMOTO_E2E_BROWSER_DEBUG === "1") {
+    const note = (m) => process.stderr.write("[pw:probe] " + m + "\\n");
+    (async () => {
+      const browser = await chromium.connect(server.wsEndpoint(), { timeout: 15000 });
+      try {
+        note("ブラウザ: " + browser.version());
+        const page = await browser.newPage();
+        const raf = await Promise.race([page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r("ok")))), new Promise((r) => setTimeout(() => r("5 秒たっても返らない"), 5000))]);
+        note("requestAnimationFrame: " + raf);
+        const gpu = await page.evaluate(() => { const c = document.createElement("canvas"); return c.getContext("webgl") ? "webgl あり" : "webgl なし"; }).catch((e) => String(e.message).split("\\n")[0]);
+        note("canvas: " + gpu);
+      } finally { await browser.close().catch(() => {}); }
+    })().catch((e) => note("プローブが失敗: " + String((e && e.message) || e).split("\\n")[0].slice(0, 300)));
+  }
   const stop = () => server.close().catch(() => {}).then(() => process.exit(0));
   process.stdin.on("end", stop);
   process.stdin.on("close", stop);

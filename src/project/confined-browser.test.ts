@@ -17,6 +17,27 @@ describe("serverScript(狭い閉じ込めの中のブラウザサーバーの起
     expect(s).toContain('server.on("close"');
   });
 
+  it("GPU プロセスを使わない起動オプション(--disable-gpu)を渡す(閉じ込めの中で描画のフレームが出ず click が時間切れになるのを避ける。許可は足さない。#118)", () => {
+    const s = serverScript("/work/repo");
+    expect(s).toContain('args: ["--disable-gpu"]');
+    // Chrome の起動も、同梱の Chromium への切り替えも、同じ opts(起動オプション入り)で立てる
+    expect(s).toContain('launchServer({ channel: "chrome", ...opts })');
+    expect(s).toContain("chromium.launchServer(opts)");
+  });
+
+  it("確かめの CI(KURAMOTO_E2E_BROWSER_DEBUG=1)では、描画のフレームが出るかを調べて [pw:probe] に出す(ブラウザサーバーの動きは変えない)", () => {
+    const s = serverScript("/work/repo");
+    expect(s).toContain("[pw:probe]");
+    expect(s).toContain("requestAnimationFrame");
+    // 宛先の出力(KURAMOTO_WS)のあとで調べる(宛先を渡すのを遅らせない)
+    expect(s.indexOf("KURAMOTO_WS")).toBeLessThan(s.indexOf("[pw:probe]"));
+  });
+
+  it("ブラウザの起動オプションを入れたスクリプトは、node の構文として読める", () => {
+    const r = spawnSync(process.execPath, ["--check", "-"], { input: serverScript("/work/repo"), encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+  });
+
   it("カレントディレクトリが別の場所でも、そのパスの @playwright/test を読める", () => {
     const repo = mkdtempSync(join(tmpdir(), "cb-repo-"));
     const elsewhere = mkdtempSync(join(tmpdir(), "cb-cwd-"));
