@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { readdirSync, readFileSync, realpathSync } from "node:fs";
+import { createServer } from "node:net";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDisposableDb, SKIP_MYSQL_ENV, TEST_DB_ENV, type DisposableDb } from "../src/db/mysql-test-support.js";
@@ -9,6 +10,8 @@ import { createDisposableDb, SKIP_MYSQL_ENV, TEST_DB_ENV, type DisposableDb } fr
  * - SQLite の回: 全部の試験。mysql-test を使う試験の中身は飛ばす(KURAMOTO_TEST_DB=sqlite)
  * - MySQL の回: mysql-test(127.0.0.1:3307)に、この回だけの使い捨ての database を作り、mysql-test を使う試験だけを流して、終わったら消す
  *   (KURAMOTO_TEST_DB=mysql)。回ごとに別の database なので、複数の worktree から同時に流しても混ざらない
+ * - E2E の回: 画面のブラウザ E2E(e2e/。npm run test:e2e と同じ)。画面を作り直して、フェイクの担当のサーバーを空いているポートで立て、Chrome で主な操作を通す(#93)。
+ *   試験のファイルを指定したとき(絞り込みの実行)は流さない。飛ばしてよいときだけ、KURAMOTO_SKIP_E2E_TESTS=1 で明示する
  * - mysql-test に繋がらなければ、黙って飛ばさず、`docker compose up -d mysql-test` が要ると出して落とす。
  *   飛ばしてよいときだけ、KURAMOTO_SKIP_MYSQL_TESTS=1 で明示する
  * どちらかの回が落ちれば、終了コードは 0 にならない。引数は vitest にそのまま渡す(ファイルの絞り込みなど)。
@@ -44,10 +47,10 @@ function trapSignals(): void {
     });
 }
 
-/** vitest を 1 回流す。終了コードを返す。 */
-function vitest(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
+/** node で JS を 1 回流す(vitest・vite・playwright)。終了コードを返す。 */
+function runNode(script: string, args: string[], env: NodeJS.ProcessEnv): Promise<number> {
   return new Promise((done) => {
-    const child = spawn(process.execPath, [join(root, "node_modules/vitest/vitest.mjs"), "run", ...args], { cwd: root, env, stdio: "inherit" });
+    const child = spawn(process.execPath, [join(root, script), ...args], { cwd: root, env, stdio: "inherit" });
     current = child;
     child.on("close", (code, sig) => {
       current = undefined;
@@ -55,6 +58,28 @@ function vitest(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
     });
     child.on("error", () => done(1));
   });
+}
+
+/** vitest を 1 回流す。終了コードを返す。 */
+const vitest = (args: string[], env: NodeJS.ProcessEnv) => runNode("node_modules/vitest/vitest.mjs", ["run", ...args], env);
+
+/** 空いているポートを 1 つ選ぶ(ほかの作業場所の E2E や開発のサーバーと取り合わないため)。 */
+function freePort(): Promise<number> {
+  return new Promise((done, fail) => {
+    const srv = createServer();
+    srv.on("error", fail);
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address() as { port: number };
+      srv.close(() => done(port));
+    });
+  });
+}
+
+/** 画面を作り直して、ブラウザの E2E(Playwright)を流す。終了コードを返す。 */
+async function e2e(env: NodeJS.ProcessEnv): Promise<number> {
+  const built = await runNode("node_modules/vite/bin/vite.js", ["build"], env);
+  if (built !== 0 || interrupted) return built || 130;
+  return runNode("node_modules/@playwright/test/cli.js", ["test"], { ...env, E2E_PORT: String(await freePort()) });
 }
 
 /**
@@ -79,15 +104,19 @@ export function isMainModule(metaUrl: string, argv1: string | undefined): boolea
   return real(fileURLToPath(metaUrl)) === real(argv1);
 }
 
+/** ブラウザの E2E の回を飛ばすスイッチ(1 のとき飛ばす)。 */
+export const SKIP_E2E_ENV = "KURAMOTO_SKIP_E2E_TESTS";
+
 export type Deps = {
   vitest: (args: string[], env: NodeJS.ProcessEnv) => Promise<number>;
+  e2e: (env: NodeJS.ProcessEnv) => Promise<number>;
   createDb: () => Promise<DisposableDb>;
   mysqlFiles: () => string[];
   log: (line: string) => void;
   interrupted: () => boolean;
 };
 
-const real: Deps = { vitest, createDb: () => createDisposableDb(), mysqlFiles: () => findMysqlTestFiles(), log: (l) => console.log(l), interrupted: () => interrupted };
+const real: Deps = { vitest, e2e, createDb: () => createDisposableDb(), mysqlFiles: () => findMysqlTestFiles(), log: (l) => console.log(l), interrupted: () => interrupted };
 
 export async function main(args: string[], env: NodeJS.ProcessEnv = process.env, d: Deps = real): Promise<number> {
   const skip = env[SKIP_MYSQL_ENV] === "1";
@@ -116,8 +145,20 @@ export async function main(args: string[], env: NodeJS.ProcessEnv = process.env,
       mysql = await d.vitest(["--passWithNoTests", ...flags, ...(files.length ? files : d.mysqlFiles())], { ...env, [TEST_DB_ENV]: "mysql", KURAMOTO_MYSQL_TEST_URL: db!.url });
       if (d.interrupted()) return 130;
     }
-    if (sqlite !== 0 || mysql !== 0) d.log(`\n✗ 落ちた回: ${[sqlite !== 0 && "SQLite", mysql !== 0 && "MySQL"].filter(Boolean).join("・")}`);
-    return sqlite !== 0 || mysql !== 0 ? 1 : 0;
+    let browser = 0;
+    if (env[SKIP_E2E_ENV] === "1") {
+      d.log(`\n=== E2E の回: 飛ばしました(${SKIP_E2E_ENV}=1) ===`);
+    } else if (splitArgs(args).files.length > 0) {
+      d.log("\n=== E2E の回: 飛ばしました(試験のファイルを絞って流しているため) ===");
+    } else {
+      d.log("\n=== E2E の回(ブラウザで主な操作を通す。手元の Google Chrome が要ります) ===");
+      browser = await d.e2e(env);
+      if (d.interrupted()) return 130;
+      if (browser !== 0) d.log(`E2E の回が落ちました。画面の壊れなら直し、Chrome が無い・動かない環境だけ ${SKIP_E2E_ENV}=1 で飛ばせます(docs/e2e.md)`);
+    }
+    const failed = [sqlite !== 0 && "SQLite", mysql !== 0 && "MySQL", browser !== 0 && "E2E"].filter(Boolean);
+    if (failed.length > 0) d.log(`\n✗ 落ちた回: ${failed.join("・")}`);
+    return failed.length > 0 ? 1 : 0;
   } finally {
     await db?.drop().catch((e: unknown) => d.log(`使い捨ての database ${db!.name} を消せませんでした: ${e instanceof Error ? e.message : String(e)}`));
   }
