@@ -312,7 +312,7 @@ function Island({ u, running, onEdit, onOpen, onMember }: { u: OfficeView["units
   // すぐ取れる仕事が無く、順番待ちだけがあるときは、freeの理由を出す(ツールチップ・読み上げ)
   const idleText = !u.waiting.length && u.queued.length ? `free・順番待ち(${queuedSummary(u.queued)})` : undefined;
   return (
-    <section className={`of-island of-tone-${u.roleKeys[0] ?? "dev"} ${u.budget.exhausted ? "of-island-broke" : ""}`} data-loc={`unit:${u.id}`} aria-label={`島 ${u.name}`}>
+    <section className={`of-island of-tone-${u.roleKeys[0] ?? "dev"} ${u.budget.exhausted ? "of-island-broke" : ""}`} data-loc={`unit:${u.id}`} aria-label={`島 ${u.name}`} style={{ "--per-row": top.length } as React.CSSProperties}>
       <header>
         <div className="of-head-row">
           <h3>

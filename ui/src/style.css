@@ -1355,9 +1355,7 @@ body { background: var(--bg); }
 
 /* ---- チケット 109: パソコンのオフィスを試作(office)に合わせる。スマホ(700px 以下)は変えない ---- */
 @media (min-width: 701px) {
-  /* 床は共通ヘッダーのすぐ下(試作は 1 画面が「ヘッダー+床」)。あなたの対応・チケットを足す・指標などは、その下に続ける。判断待ちの数は、受け口の付箋(相談 N)でも見える */
-  .pview > .studionotice { order: -2; }
-  .pview > .officepanel:has(.officefloor) { order: -1; }
+  /* 床は共通ヘッダーのすぐ下(試作は 1 画面が「ヘッダー+床」)。あなたの対応・チケットを足す・指標などは、その下に続く(並びは Project.tsx の JSX の順)。判断待ちの数は、受け口の付箋(相談 N)でも見える */
   /* 床の外の「オフィス」の枠と見出しは出さず、床の枠だけにする(試作は枠が 1 重)。見出しは読み上げの名前(aria-label)で残る */
   .officepanel:has(.officefloor) { background: none; border: 0; padding: 0; }
   .officepanel:has(.officefloor) > .viewhead { display: none; }
@@ -1370,7 +1368,8 @@ body { background: var(--bg); }
      路線は箱の中を通り(e2e: 路線は駅の中)、メンバー・吹き出しは路線・札・ラベルに重ならない(#78・#91) */
   .officefloor .of-islands { gap: calc(var(--sp-5) * 4); padding: 152px 0 148px; }
   .officefloor .of-side { margin-top: 0; }
-  .officefloor .of-st > .of-island { flex: 0 0 160px; min-width: 160px; }
+  /* 箱の幅は 160px を下限に、1 段に並ぶ人数(--per-row。Island が渡す)ぶんの席(76px + すき間)に合わせて広げる。人数の多い島でも、席が箱の外へはみ出して隣の島に重ならない */
+  .officefloor .of-st > .of-island { flex: 0 0 max(160px, calc(var(--per-row, 2) * 84px)); min-width: 160px; }
   .officefloor .of-st > .of-desk { flex: 0 0 160px; }
   .officefloor .of-st > .of-shelf { flex: 0 0 180px; }
   .officefloor .of-island > .of-seats { position: absolute; left: 0; right: 0; z-index: 4; min-height: 0; padding: 0; }
