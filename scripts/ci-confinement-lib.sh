@@ -72,7 +72,9 @@ show_reasons() {
   grep -E -- 'FATAL|Check failed|SIGTRAP|Permission denied|crash|did exit|Operation not permitted' "$1" | cut -c1-220 | head -6 | annotate "2 Chrome の落ちた理由($n)" 700
   grep -F -- '[browser-server]' "$1" | cut -c1-200 | head -6 | annotate "3 ブラウザサーバーの先頭($n)" 700
   grep -F -- '[browser-server]' "$1" | cut -c1-200 | tail -6 | annotate "4 ブラウザサーバーの末尾($n)" 700
-  grep -E -A4 -- '^ +[0-9]+\) ' "$1" | grep -vE '^--$|^ *$' | cut -c1-140 | head -10 | annotate "5 落ちた E2E($n)" 700
+  # 落ちた E2E は、見出し(ファイル:行)・Error・Playwright の「waiting for」・失敗した行(コードの枠の「>」)だけに縮めて、2 つの注釈に分けて出す(1 件 600 文字ほどで切れるため)
+  grep -aE -- '^ +[0-9]+\) |^ +(Error|Expected|Received)|^ +> [0-9]+ \||waiting for' "$1" | sed -E 's/^ +([0-9]+\)) (e2e[^ ]*) .*/\1 \2/' | cut -c1-95 > "${RUNNER_TEMP:-/tmp}/failed-e2e.out"
+  head -n 9 "${RUNNER_TEMP:-/tmp}/failed-e2e.out" | annotate "5 落ちた E2E($n)" 700
   tail -n 10 "$1" | cut -c1-200 | annotate "6 末尾($n)" 700
   # 閉じ込めが断った操作(sandbox の deny)。Chrome のログと突き合わせる。全文はログの末尾に足して artifact に残す
   sandbox_denies > "${RUNNER_TEMP:-/tmp}/deny.out" 2>&1 || true
@@ -81,10 +83,9 @@ show_reasons() {
   # chrome の deny を、最初に出た時刻の順に(末尾ほど、あとから新しく出たもの)。ブラウザが閉じた時刻(ログの「ブラウザのプロセスが終わった」)と突き合わせる
   sandbox_denies_new > "${RUNNER_TEMP:-/tmp}/deny-new.out" 2>&1 || true
   { echo; echo "--- chrome の deny を、最初に出た時刻の順に($(wc -l < "${RUNNER_TEMP:-/tmp}/deny-new.out" | tr -d ' ') 種類)"; cat "${RUNNER_TEMP:-/tmp}/deny-new.out"; } >> "$1"
-  tail -n 8 "${RUNNER_TEMP:-/tmp}/deny-new.out" | cut -c1-100 | annotate "8 あとから出た chrome の deny($n)" 700
-  grep -E -- 'ブラウザのプロセスが終わった|ブラウザサーバーが閉じた' "$1" | cut -c1-150 | head -4 | annotate "9 ブラウザが終わった時刻($n)" 700
-  # 落ちた E2E の「期待と実際」(5 は先頭だけで切れるので、Expected / Received / Error と、ダウンロードの失敗の行だけを別に出す)
-  grep -aE -- '^ +(Expected|Received|Error:)|ダウンロードが失敗|Error: ' "$1" | cut -c1-200 | head -8 | annotate "10 期待と実際($n)" 700
+  sed -n '10,18p' "${RUNNER_TEMP:-/tmp}/failed-e2e.out" | annotate "8 落ちた E2E の続き($n)" 700
+  # 長いテストの手順ごとの経過時間(e2e/helpers.ts の timedSteps)。時間切れが、止まった手順か、全体の遅さかを見分ける
+  grep -aF -- '[e2e-time]' "$1" | cut -c1-90 | tail -n 9 | annotate "9 手順の経過時間($n)" 700
   echo "::group::$(basename "$1"): 末尾の 100 行"
   tail -n 100 "$1"
   echo "::endgroup::"

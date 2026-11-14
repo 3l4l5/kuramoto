@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { compareImages } from "../src/project/design-visual.js";
-import { createProject, fetchExport, projectId, seedKindTickets, sendToPlanner, shot } from "./helpers.js";
+import { createProject, fetchExport, projectId, seedKindTickets, sendToPlanner, shot, timedSteps } from "./helpers.js";
 
 /**
  * 画面の作りに依らないよう、ボタンの名前や見える文言で操作する。
@@ -14,12 +14,15 @@ const work = (page: Page) => page.getByRole("region", { name: "作業の場" });
 const chat = (page: Page) => page.getByRole("region", { name: "企画の 3 人との会話" });
 
 test("プロジェクトを作り、企画スタジオで 5 段階を決めてチームに渡し、オフィスで merge まで進む", async ({ page }) => {
-  await test.step("本部からプロジェクトを作ると、企画スタジオが開き、企画担当が聞き始める", async () => {
+  // 5 段階の合意からオフィスの merge までを 1 つのテストで通す長い流れ。閉じ込めの中のブラウザ(遠くから繋ぐ)では 90 秒に収まらないことがあるので、時間を長くとる(止まった手順があれば、呼び出しの記録に出る)
+  test.setTimeout(240_000);
+  const step = timedSteps();
+  await step("本部からプロジェクトを作ると、企画スタジオが開き、企画担当が聞き始める", async () => {
     await createProject(page, "予約サイト", "acme/reserve");
     await expect(chat(page).getByText("企画担当の咲季です。何のためのものですか?")).toBeVisible();
   });
 
-  await test.step("要件: 話しかけると作業中の様子が見え、終わると要件が書かれる", async () => {
+  await step("要件: 話しかけると作業中の様子が見え、終わると要件が書かれる", async () => {
     await sendToPlanner(page, "店舗の予約サイトを作りたい");
     await expect(chat(page).getByText("店舗の予約サイトを作りたい")).toBeVisible();
     await expect(chat(page).getByText("咲季が作業中")).toBeVisible();
@@ -31,7 +34,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expect(work(page).getByRole("tablist")).toHaveCount(0);
   });
 
-  await test.step("要件: 未決が残るうちは合意できず、答えると合意できる", async () => {
+  await step("要件: 未決が残るうちは合意できず、答えると合意できる", async () => {
     await expect(page.getByRole("button", { name: "この版に合意する", exact: true })).toBeDisabled();
     await page.getByRole("button", { name: "作らない(推奨)", exact: true }).click();
     await expect(page.getByRole("button", { name: "この版に合意する", exact: true })).toBeEnabled();
@@ -39,7 +42,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expect(gate(page, "要件")).toContainText("合意済み v1");
   });
 
-  await test.step("ユーザーフロー: 未決に自由な答えを書き、図に反映されたら合意する", async () => {
+  await step("ユーザーフロー: 未決に自由な答えを書き、図に反映されたら合意する", async () => {
     await gate(page, "ユーザーフロー").click();
     await expect(work(page).getByText("満席になったらどこへ戻すか")).toBeVisible();
     await page.getByLabel("別の答え").fill("近い枠を 3 つ出して戻す");
@@ -50,7 +53,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expect(gate(page, "ユーザーフロー")).toContainText("合意済み");
   });
 
-  await test.step("画面デザイン: 案を選び、試作の上にコメントを付けると直ってくる。全画面に合意する", async () => {
+  await step("画面デザイン: 案を選び、試作の上にコメントを付けると直ってくる。全画面に合意する", async () => {
     await gate(page, "画面デザイン").click();
     await expect(work(page).getByRole("button", { name: "この案にする", exact: true }).first()).toBeVisible();
     await work(page).getByRole("button", { name: "この案にする", exact: true }).first().click();
@@ -68,7 +71,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expect(gate(page, "画面デザイン")).toContainText("合意済み");
   });
 
-  await test.step("インフラ: 構成と見積もりが出て、戻せない未決に答えて合意する", async () => {
+  await step("インフラ: 構成と見積もりが出て、戻せない未決に答えて合意する", async () => {
     await gate(page, "インフラ").click();
     await expect(work(page).getByText("既存の AWS に載せる")).toBeVisible();
     await expect(work(page).getByText("戻せない")).toBeVisible();
@@ -77,7 +80,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expect(gate(page, "インフラ")).toContainText("合意済み");
   });
 
-  await test.step("アーキテクチャとデータ: アーキテクチャスタイルとデータ設計が出て、合意するとチームに渡せる", async () => {
+  await step("アーキテクチャとデータ: アーキテクチャスタイルとデータ設計が出て、合意するとチームに渡せる", async () => {
     await gate(page, "アーキテクチャとデータ").click();
     // 中身がアーキテクチャだけのうちは、タブを出さずにそのまま見せる
     await expect(work(page).getByText("モジュラーモノリス")).toBeVisible();
@@ -110,7 +113,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expect(work(page).getByText("空き枠を探す画面")).toBeVisible();
   });
 
-  await test.step("エクスポート: 要件と技術的な設計を Markdown でダウンロードできる", async () => {
+  await step("エクスポート: 要件と技術的な設計を Markdown でダウンロードできる", async () => {
     const md = (await fetchExport(page, "予約サイト")).body.toString("utf8");
     expect(md).toContain("# 予約サイト 設計書");
     expect(md).toContain("| R1 | 空き枠を探す |");
@@ -120,7 +123,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     expect(md).toContain("| slots | 新規 |");
   });
 
-  await test.step("オフィス: 始業するとチケットが merge 待ちまで進み、merge すると完了する", async () => {
+  await step("オフィス: 始業するとチケットが merge 待ちまで進み、merge すると完了する", async () => {
     await page.getByRole("group", { name: "プロジェクトの画面" }).getByRole("button", { name: "オフィス" }).click();
     const inbox = page.getByRole("region", { name: "あなたの対応", exact: true });
     await expect(inbox.getByText("今あなたが対応することはありません。")).toBeVisible();
@@ -266,7 +269,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expect(shelf.getByRole("button", { name: /を merge$/ })).toHaveCount(1);
   });
 
-  await test.step("リーダーと話す: 書いておくと、freeのときに返事が来る", async () => {
+  await step("リーダーと話す: 書いておくと、freeのときに返事が来る", async () => {
     await page.getByRole("button", { name: "リーダーと話す", exact: true }).click();
     const chat = page.getByRole("complementary", { name: "リーダーと話す" });
     await chat.getByLabel("リーダーへのメッセージ").fill("進み具合はどう?");
@@ -280,7 +283,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await shot(page, "leadchat");
   });
 
-  await test.step("本部: 稼働中のプロジェクトとして出て、merge 待ちが「あなたの対応」に並ぶ", async () => {
+  await step("本部: 稼働中のプロジェクトとして出て、merge 待ちが「あなたの対応」に並ぶ", async () => {
     await page.getByRole("button", { name: "本部", exact: true }).click();
     const card = page.locator("article", { hasText: "予約サイト" });
     await expect(card.getByText("稼働中")).toBeVisible();
@@ -361,10 +364,11 @@ test("エクスポートした設計書を本部で読み込むと、新しい�
 });
 
 test("編成と方針を変えると版が上がり、その版で動いたことが分かる。生産性の指標が見られる", async ({ page }) => {
+  const step = timedSteps();
   await createProject(page, "実験", "acme/experiment");
   await page.getByRole("group", { name: "プロジェクトの画面" }).getByRole("button", { name: "オフィス" }).click();
 
-  await test.step("編成: レビューの島にセキュリティを足すと工程が変わり、適用すると v2 になる", async () => {
+  await step("編成: レビューの島にセキュリティを足すと工程が変わり、適用すると v2 になる", async () => {
     await page.getByRole("button", { name: "編成", exact: true }).click();
     const drawer = page.getByRole("complementary", { name: "編成" });
     await expect(drawer.locator(".preview")).toHaveText("工程: 開発 → レビュー → merge 待ち");
@@ -409,7 +413,7 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(page.getByRole("region", { name: "編成", exact: true })).toContainText("島 3 開発 · 3/3 人 · Haiku 5.5 / low");
   });
 
-  await test.step("編成の 3 タブ: 連絡経路と流れを変えて、島の変更とまとめて 1 回で保存すると版が 1 つ上がる", async () => {
+  await step("編成の 3 タブ: 連絡経路と流れを変えて、島の変更とまとめて 1 回で保存すると版が 1 つ上がる", async () => {
     const drawer = page.getByRole("complementary", { name: "編成" });
     // 連絡経路: 開発の島 ↔ レビューの島、開発の島 ↔ リーダーを「質問・相談できる」にする
     await drawer.getByRole("tab", { name: /連絡経路/ }).click();
@@ -495,7 +499,7 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(drawer.getByText("既定の流れを使う", { exact: true })).toHaveCount(3);
   });
 
-  await test.step("方針: 開発を Sonnet 5.5 にして保存すると、次の実装はそのモデルで動く", async () => {
+  await step("方針: 開発を Sonnet 5.5 にして保存すると、次の実装はそのモデルで動く", async () => {
     await page.getByRole("button", { name: "チームの方針", exact: true }).click();
     const drawer = page.getByRole("complementary", { name: "チームの方針" });
     await expect(drawer.getByRole("tab", { name: "開発", exact: true })).toHaveAttribute("aria-selected", "true");
@@ -512,7 +516,7 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(page.getByRole("region", { name: "出来事" })).toContainText("が実装を始めました(Sonnet 5.5)", { timeout: 20_000 });
   });
 
-  await test.step("生産性: トークン・金額・PR・手戻り・助けを求めた数が出て、日ごとの推移も見られる", async () => {
+  await step("生産性: トークン・金額・PR・手戻り・助けを求めた数が出て、日ごとの推移も見られる", async () => {
     await expect(page.getByRole("region", { name: "出来事" })).toContainText("PR #", { timeout: 20_000 });
     const nav = page.getByRole("group", { name: "プロジェクトの画面" });
     const officeBox = await nav.boundingBox();

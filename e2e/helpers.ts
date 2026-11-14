@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { expect, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 /**
  * E2E の共通の道具。どのテストも、ここの「プロジェクトを作る」「画面の幅」「引き出し・下のタブの場所」を使う
@@ -52,6 +52,18 @@ export async function fetchExport(page: Page, name: string): Promise<{ filename:
   const filename = m ? decodeURIComponent(m[1]!) : "";
   expect(filename).toBe(`${name}-設計書.md`);
   return { filename, body: await res.body() };
+}
+
+/**
+ * 長いテストの手順(test.step)を、始まった時刻(テストの始めからの秒)つきで標準出力に残す。確かめの CI(閉じ込めの中のブラウザ)で、
+ * 90 秒の時間切れが「止まった手順があった」のか「全体が遅かった」のかを、ログから見分けるため(scripts/ci-confinement-lib.sh が [e2e-time] の行を注釈に出す)。
+ */
+export function timedSteps() {
+  const t0 = Date.now();
+  return <T>(title: string, body: () => Promise<T>) => {
+    console.log(`[e2e-time] ${Math.round((Date.now() - t0) / 1000)}s ▶ ${title.slice(0, 24)}`);
+    return test.step(title, body);
+  };
 }
 
 /** いま開いているプロジェクトの番号(アドレスの #/p/<番号> から)。 */
