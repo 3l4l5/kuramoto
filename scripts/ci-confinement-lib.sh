@@ -83,6 +83,8 @@ show_reasons() {
   { echo; echo "--- chrome の deny を、最初に出た時刻の順に($(wc -l < "${RUNNER_TEMP:-/tmp}/deny-new.out" | tr -d ' ') 種類)"; cat "${RUNNER_TEMP:-/tmp}/deny-new.out"; } >> "$1"
   tail -n 8 "${RUNNER_TEMP:-/tmp}/deny-new.out" | cut -c1-100 | annotate "8 あとから出た chrome の deny($n)" 700
   grep -E -- 'ブラウザのプロセスが終わった|ブラウザサーバーが閉じた' "$1" | cut -c1-150 | head -4 | annotate "9 ブラウザが終わった時刻($n)" 700
+  # 落ちた E2E の「期待と実際」(5 は先頭だけで切れるので、Expected / Received / Error と、ダウンロードの失敗の行だけを別に出す)
+  grep -aE -- '^ +(Expected|Received|Error:)|ダウンロードが失敗|Error: ' "$1" | cut -c1-200 | head -8 | annotate "10 期待と実際($n)" 700
   echo "::group::$(basename "$1"): 末尾の 100 行"
   tail -n 100 "$1"
   echo "::endgroup::"

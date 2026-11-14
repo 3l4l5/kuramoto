@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { expect, type Page } from "@playwright/test";
+import { expect, type Download, type Page } from "@playwright/test";
+import { E2E_TOKEN } from "./token.js";
 
 /**
  * E2E の共通の道具。どのテストも、ここの「プロジェクトを作る」「画面の幅」「引き出し・下のタブの場所」を使う
@@ -33,6 +34,22 @@ export async function sendToPlanner(page: Page, text: string) {
   await page.getByRole("radiogroup", { name: "送り方" }).getByRole("radio", { name: "直してほしい・相談する" }).check();
   await page.getByLabel("メッセージ").fill(text);
   await page.getByRole("button", { name: "送る", exact: true }).click();
+}
+
+/**
+ * ダウンロードのリンク(<a href download>)で落とすための準備。ブラウザの「ダウンロード」の要求には、Playwright の extraHTTPHeaders(Authorization)が付かず、
+ * 本体の API が 401 を返して、ダウンロードが失敗する(suggestedFilename が URL の名前になり、saveAs は「canceled」になる)。
+ * 人が使う道(端末に出た合言葉つきの URL を開く)と同じに、?token= を一度開いて、セッションの Cookie をこのブラウザに入れる。page.request は、ブラウザと Cookie を共有する。
+ */
+export async function signInForDownloads(page: Page) {
+  const res = await page.request.get(`/?token=${E2E_TOKEN}`);
+  expect(res.status()).toBe(200);
+  expect((await page.context().cookies()).map((c) => c.name)).toContain("kuramoto_session");
+}
+
+/** 落ちた(失敗した)ダウンロードは、理由と URL を付けて落とす(「canceled」だけでは、何が起きたか分からない)。 */
+export async function expectDownloaded(download: Download) {
+  expect(await download.failure(), `ダウンロードが失敗: ${download.url()}(名前: ${download.suggestedFilename()})`).toBeNull();
 }
 
 /** いま開いているプロジェクトの番号(アドレスの #/p/<番号> から)。 */

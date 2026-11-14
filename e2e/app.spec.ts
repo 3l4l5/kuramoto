@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { compareImages } from "../src/project/design-visual.js";
-import { createProject, projectId, seedKindTickets, sendToPlanner, shot } from "./helpers.js";
+import { createProject, expectDownloaded, projectId, seedKindTickets, sendToPlanner, shot, signInForDownloads } from "./helpers.js";
 
 /**
  * 画面の作りに依らないよう、ボタンの名前や見える文言で操作する。
@@ -15,6 +15,7 @@ const work = (page: Page) => page.getByRole("region", { name: "作業の場" });
 const chat = (page: Page) => page.getByRole("region", { name: "企画の 3 人との会話" });
 
 test("プロジェクトを作り、企画スタジオで 5 段階を決めてチームに渡し、オフィスで merge まで進む", async ({ page }) => {
+  await signInForDownloads(page);
   await test.step("本部からプロジェクトを作ると、企画スタジオが開き、企画担当が聞き始める", async () => {
     await createProject(page, "予約サイト", "acme/reserve");
     await expect(chat(page).getByText("企画担当の咲季です。何のためのものですか?")).toBeVisible();
@@ -115,6 +116,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     const download = page.waitForEvent("download");
     await page.getByRole("link", { name: "設計書をエクスポート(Markdown)" }).click();
     const file = await download;
+    await expectDownloaded(file);
     expect(file.suggestedFilename()).toBe("予約サイト-設計書.md");
     const md = await new Promise<string>((resolve, reject) => {
       void file.createReadStream().then((s) => {
@@ -335,6 +337,7 @@ test("段階を省く・お任せにするときは、何が起きるかを見�
 });
 
 test("エクスポートした設計書を本部で読み込むと、新しいプロジェクトとして企画の中身が戻る", async ({ page }) => {
+  await signInForDownloads(page);
   await createProject(page, "復元テスト", "acme/restore");
   await sendToPlanner(page, "店舗の予約サイトを作りたい");
   await expect(work(page).getByText("R1 空き枠を探す")).toBeVisible();
@@ -350,7 +353,9 @@ test("エクスポートした設計書を本部で読み込むと、新しい�
   await page.getByRole("link", { name: "設計書をエクスポート(Markdown)" }).click();
   // 閉じ込めの中のブラウザには遠くから繋ぐので、download.path() は使えない(「Path is not available when connecting remotely」)。saveAs で手元に保存する
   const file = join(mkdtempSync(join(tmpdir(), "kuramoto-e2e-dl-")), "design.md");
-  await (await download).saveAs(file);
+  const dl = await download;
+  await expectDownloaded(dl);
+  await dl.saveAs(file);
 
   await page.getByRole("button", { name: "本部", exact: true }).click();
   await shot(page, "home");
