@@ -46,3 +46,19 @@ Kuramoto の設計で下した判断を 1 件ずつ残します。状態は「�
 | [0040](0040-project-id-guard.md) | project_id の見張りと、同期の書き込みの見張り | 提案 |
 | [0041](0041-mysql-adapter.md) | MySQL のアダプタ(mysql2・TLS・受信箱の取り出し・切れたときの待ち) | 提案 |
 | [0042](0042-test-sqlite-and-mysql.md) | npm test は SQLite と MySQL の両方を流し、チームの CI で止める | 提案 |
+| [0043](0043-island-routes-and-ask.md) | 連絡経路を編成に持ち、島への質問・相談は経路があるときだけ届け、無ければリーダーに回す | 提案 |
+| [0044](0044-ticket-kind-flows.md) | チケットに種類(feature/bugfix/refactor/docs)を持たせ、種類ごとの流れで進め、開発より前の確認は申し送りにする | 提案 |
+| [0045](0045-member-chat.md) | メンバーとの会話は member_chat で起こし、今のチケットのセッションで答え、担当・工程は変えない | 提案 |
+| [0046](0046-chat-about-finished-ticket.md) | 終わったチケット(done・dropped)に話しかけられたら、メモを書かず既定のブランチの読むだけの場所で答える | 提案 |
+| [0047](0047-startup-config-file.md) | 起動の設定は ~/.kuramoto/config.yaml に書き、読めないときは黙って SQLite に戻さず起動しない | 提案 |
+| [0048](0048-lead-reads-github.md) | リーダーは GitHub の PR・CI・merge の状態を「読むだけ」の道具で見る | 提案 |
+| [0049](0049-release-finished-worktrees.md) | 終わったチケット(merge・すでに main に入っていた・取りやめ)の作業場所は、片付けた印を付けて消す | 提案 |
+| [0050](0050-delete-project.md) | プロジェクトは名前を打たせて削除でき、DB・作業場所・データの置き場所を消す(GitHub には触れない) | 提案 |
+| [0051](0051-patrol-picks-up-github-issues.md) | 見回りで GitHub の新しい Issue を拾い、リーダーが振り分ける | 提案 |
+| [0052](0052-periodic-review.md) | 定期レビューは「観点」を作って、何時間ごとに回し、見つけたものをチケットにする | 提案 |
+| [0053](0053-browser-e2e-in-team-ci.md) | 画面のブラウザ E2E をチームの CI で回す形 — 閉じ込めは広げず、外のブラウザに connect し、確かめるまでは既定で動かさない | 提案 |
+| [0054](0054-dev-rule-versions-and-drafts.md) | 開発ルールは版を持ち、編集中の下書きは「別のルールを選ぶ・閉じる」では確かめ、別の画面へ移っても残す | 提案 |
+| [0055](0055-office-as-route-map.md) | オフィスは「駅」と「路線」の路線図にして、種類ごとの流れ・連絡経路・答え待ちの質問を 1 枚に見せる | 提案 |
+| [0056](0056-phone-layout.md) | スマホ(390px)は CSS のメディアクエリで組み替え、下のタブ・全画面の引き出し・1 列の画面にする | 提案 |
+| [0057](0057-screens-follow-mockups.md) | 画面は試作と描画で見比べて合わせ、試作が見本用・実装と食い違うところは理由を書いて変える | 提案 |
+| [0058](0058-wording-free-and-skip.md) | 言葉の決め — 「手すき」は「free」、「通過」は「省略」にそろえる | 提案 |
