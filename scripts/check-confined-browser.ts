@@ -14,6 +14,7 @@ import { kuramotoHome } from "../src/hq.js";
  *
  *   npx tsx scripts/check-confined-browser.ts [リポジトリのパス]            # (i) と (iii)
  *   npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --break    # (ii) わざと入口を壊して、落ちることを確かめる
+ *   npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --no-browser-server  # 設定なし(KURAMOTO_E2E_CONFINED_BROWSER を付けない既定)の回。同じ SandboxRunner で npm test を流して、出力を残す
  *
  * (i)   チームの CI と同じ閉じ込めの中で npm test を流し、狭い閉じ込めの中のブラウザに繋いで E2E が通る
  * (ii)  --break: PhoneBar の「チームの方針」の入口を壊して同じ実行をし、落ちる(終わったら元に戻す)
@@ -25,11 +26,13 @@ import { kuramotoHome } from "../src/hq.js";
  * 終了コード: 0 = 通った / 1 = 落ちた(閉じ込めの穴・E2E の失敗) / 2 = 確かめられなかった(ブラウザが起動できなかったなど)
  */
 
-// この確かめは、ブラウザサーバーを狭い閉じ込めの中で立てる経路を明示して動かす(既定では動かない設定)
-process.env.KURAMOTO_E2E_CONFINED_BROWSER = "1";
-
 const repo = resolve(process.argv.slice(2).find((a) => !a.startsWith("--")) ?? ".");
 const BREAK = process.argv.includes("--break");
+const NO_BROWSER_SERVER = process.argv.includes("--no-browser-server");
+
+// 既定は、ブラウザサーバーを狭い閉じ込めの中で立てる経路を明示して動かす(チームの CI の既定は動かない設定)。--no-browser-server のときは付けず、設定なしの回にする
+if (NO_BROWSER_SERVER) delete process.env.KURAMOTO_E2E_CONFINED_BROWSER;
+else process.env.KURAMOTO_E2E_CONFINED_BROWSER = "1";
 
 type Probe = { name: string; ok: boolean; detail: string };
 
@@ -167,6 +170,12 @@ async function main(): Promise<number> {
       const r = await runner.run("npm test", repo, conf, 20 * 60_000);
       console.log(r.output.split("\n").slice(-60).join("\n"));
       console.log(`--- npm test の終了コード: ${r.code}`);
+      if (NO_BROWSER_SERVER) {
+        // 設定なしの回: ブラウザサーバーは立たず、E2E は「起動できなければ知らせて通す」。通ること・知らせが出たかを残す
+        const skipped = r.output.includes("ブラウザを起動できなかったので、画面の確かめは流していません");
+        console.log(skipped ? "△ 設定なし: Chrome が起動できず、画面の E2E は流れていない(知らせて通った)" : "○ 設定なし: 閉じ込めの中で Chrome が起動でき、E2E が流れた");
+        return r.code === 0 ? 0 : 1;
+      }
       const browserNotice = r.output.includes("狭い閉じ込めの中でブラウザを起動できなかった");
       if (browserNotice) {
         console.log("--- 確かめられなかった: 狭い閉じ込めの中でブラウザを起動できなかった(上の出力の理由を見る)。閉じ込めの無いブラウザには切り替えていない");
