@@ -102,7 +102,7 @@ describe("連絡経路の保存(R16)", () => {
       [3, ["flows"]],
       [4, ["routes", "units"]],
     ]);
-    expect(marks[0]).toMatchObject({ day: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
+    expect(marks[0]).toMatchObject({ day: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) });
     // 札を押したときの説明: 経路は結んだ組み合わせ、流れは変えた種類、島は設定を変えた島と、外した経路
     expect(marks[0]!.detail).toEqual([expect.stringMatching(/^連絡経路: .+ ↔ .+ を「質問・相談できる」にした$/)]);
     expect(marks[1]!.detail).toEqual(["流れ: 既定の並びを変えた"]);

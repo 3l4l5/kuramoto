@@ -5,6 +5,7 @@ import { api, type ProductivityView } from "./api";
 import { usd } from "./format";
 import { Btn } from "./ui";
 import { KINDS, KIND_SHAPE } from "./kind";
+import { axisLabel, axisRange, axisX, stamp, trendTimes } from "./efficiencyAxis";
 
 /**
  * 開発生産性(docs/design.md 8 章、企画の試作 metrics に合わせた並び)。トークン・金額・PR・手戻り・人間に助けを求めた数を、記録から数えて見せる。
@@ -91,7 +92,7 @@ export function ProductivityPage({ id }: { id: number }) {
       </section>
 
       {/* どの表示にしても、この図は残る(R16)。日が 1 つも無いとき(記録も編成の版も無い)は、中身の無い枠だけが残らないよう、枠ごと出さない */}
-      {efficiencyDays(data).length > 0 && (
+      {trendTimes(data.flow.efficiencyDaily, data.flow.formationMarks).length > 0 && (
         <section className="panel" aria-label="フロー効率の推移">
           <EfficiencyTrend data={data} />
         </section>
@@ -202,26 +203,24 @@ function BarChart({ title, rows, fmt, tick = (l) => l.slice(5) }: { title: strin
 }
 
 /**
- * フロー効率の推移(折れ線)と、編成の版が上がった日(縦の点線と札)。札には何を変えたか(連絡経路 / 流れ / 島)を出す(R16)。
- * 効率が上がり下がりしたのが編成を変えたせいかを、日付で見比べられる。
+ * フロー効率の推移(折れ線)と、編成の版が上がった時(縦の点線と札)。札には何を変えたか(連絡経路 / 流れ / 島)を出す(R16)。
+ * 横軸は時刻の連続した軸(ui/src/efficiencyAxis.ts)。点線は版が上がった時刻の位置に置くので、同じ日に何度変えても別の位置に出る。
+ * 効率の点は日ごとの集計のまま、その日の最後の merge の時刻に置く。
  */
 const CHANGED_LABEL: Record<string, string> = { routes: "連絡経路", flows: "流れ", units: "島" };
-/** 推移に並ぶ日(効率の記録がある日と、編成の版が上がった日)。 */
-export const efficiencyDays = (data: ProductivityView) => [...new Set([...data.flow.efficiencyDaily.map((r) => r.day), ...data.flow.formationMarks.map((m) => m.day)])].sort();
-
 function EfficiencyTrend({ data }: { data: ProductivityView }) {
   const [picked, setPicked] = useState<number | null>(null); // 押した札の版
   const rows = data.flow.efficiencyDaily;
   const marks = data.flow.formationMarks;
-  const days = efficiencyDays(data);
+  const range = axisRange(trendTimes(rows, marks))!;
   const W = 386, L = 34, R = 8, B = 36;
-  const x = (day: string) => (days.length === 1 ? (L + W - R) / 2 : L + (days.indexOf(day) / (days.length - 1)) * (W - L - R));
+  const x = (at: string) => axisX(Date.parse(at), range, L, W - R);
   // 札は、横に重なるものを別の段に積む(同じ日に版が複数上がっても、札が重ならず読める)。段の数だけ上の余白を広げ、グラフ本体の高さは変えない
   const CARD_H = 20, LANE_GAP = 4, GAP_X = 4;
   const cards = marks.map((m) => {
     const text = `v${m.version} ${m.changed.map((c) => CHANGED_LABEL[c] ?? c).join("・")}`;
     const w = text.length * 12 + 12;
-    const left = Math.min(Math.max(x(m.day) - w / 2, 0), W - w);
+    const left = Math.min(Math.max(x(m.at) - w / 2, 0), W - w);
     return { m, text, w, left, lane: 0 };
   });
   const lanes: { left: number; right: number }[][] = [];
@@ -237,8 +236,8 @@ function EfficiencyTrend({ data }: { data: ProductivityView }) {
   const top = Math.max(0.5, ...rows.map((r) => r.value));
   const y = (v: number) => T + (1 - v / top) * (H - T - B);
   return (
-    <figure className="chart" aria-label="フロー効率の推移と編成を変えた日">
-      <figcaption className="sub">フロー効率の推移 · 編成を変えた日</figcaption>
+    <figure className="chart" aria-label="フロー効率の推移と編成を変えた時">
+      <figcaption className="sub">フロー効率の推移 · 編成を変えた時</figcaption>
       <div className="plot">
         {/* 札は押せるボタンなので、svg には role="img" を付けない(img の子は支援技術から見えない)。数字の要約は別の文に持たせる */}
         <p className="sr-only">フロー効率の推移: {rows.map((r) => `${r.day} ${Math.round(r.value * 100)}%`).join("、") || "まだありません"}</p>
@@ -249,8 +248,8 @@ function EfficiencyTrend({ data }: { data: ProductivityView }) {
           <text x={0} y={H - B + 4} className="tick">0%</text>
           <text x={0} y={y(top / 2) + 4} className="tick">{Math.round((top / 2) * 100)}%</text>
           <text x={0} y={y(top) + 4} className="tick">{Math.round(top * 100)}%</text>
-          {rows.length > 1 && <polyline fill="none" className="line" stroke="var(--dev)" strokeWidth={2} points={rows.map((r) => `${x(r.day)},${y(r.value)}`).join(" ")} />}
-          {rows.length > 0 && <circle cx={x(rows.at(-1)!.day)} cy={y(rows.at(-1)!.value)} r={4} fill="var(--dev)" />}
+          {rows.length > 1 && <polyline fill="none" className="line" stroke="var(--dev)" strokeWidth={2} points={rows.map((r) => `${x(r.at)},${y(r.value)}`).join(" ")} />}
+          {rows.length > 0 && <circle cx={x(rows.at(-1)!.at)} cy={y(rows.at(-1)!.value)} r={4} fill="var(--dev)" />}
           {cards.map(({ m, text, w, left, lane }) => (
             <g
               key={m.version}
@@ -260,7 +259,7 @@ function EfficiencyTrend({ data }: { data: ProductivityView }) {
               role="button"
               tabIndex={0}
               aria-pressed={picked === m.version}
-              aria-label={`${text} の変えたことを${picked === m.version ? "閉じる" : "見る"}`}
+              aria-label={`${text}(${stamp(Date.parse(m.at))})の変えたことを${picked === m.version ? "閉じる" : "見る"}`}
               onClick={() => setPicked(picked === m.version ? null : m.version)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -269,13 +268,20 @@ function EfficiencyTrend({ data }: { data: ProductivityView }) {
                 }
               }}
             >
-              <line x1={x(m.day)} x2={x(m.day)} y1={laneY(lane) + CARD_H} y2={H - B} stroke="var(--lead)" strokeDasharray="4 3" />
+              <line x1={x(m.at)} x2={x(m.at)} y1={laneY(lane) + CARD_H} y2={H - B} stroke="var(--lead)" strokeDasharray="4 3" />
               <rect x={left} y={laneY(lane)} width={w} height={CARD_H} rx={6} fill="var(--lead-soft)" stroke={picked === m.version ? "var(--lead)" : "none"} />
               <text x={left + 6} y={laneY(lane) + 14} style={{ fill: "var(--lead)", fontSize: "var(--fs-xs)" }}>{text}</text>
             </g>
           ))}
-          <text x={L} y={H - 8} className="tick">{days[0]!.slice(5)}</text>
-          <text x={W - R} y={H - 8} textAnchor="end" className="tick">{days.at(-1)!.slice(5)}</text>
+          {/* 軸の端のラベル: 期間が短いときは時刻まで。時刻が 1 つだけなら、真ん中に 1 つ */}
+          {range.max > range.min ? (
+            <>
+              <text x={L} y={H - 8} className="tick">{axisLabel(range.min, range)}</text>
+              <text x={W - R} y={H - 8} textAnchor="end" className="tick">{axisLabel(range.max, range)}</text>
+            </>
+          ) : (
+            <text x={(L + W - R) / 2} y={H - 8} textAnchor="middle" className="tick">{axisLabel(range.min, range)}</text>
+          )}
         </svg>
       </div>
       {(() => {
@@ -283,11 +289,11 @@ function EfficiencyTrend({ data }: { data: ProductivityView }) {
         if (mark)
           return (
             <div className="markdetail" role="status">
-              <b>v{mark.version} で変えたこと</b>
+              <b>v{mark.version} で変えたこと</b> <span className="hint">{stamp(Date.parse(mark.at))}</span>
               <ul>{mark.detail.map((d) => <li key={d}>{d}</li>)}</ul>
             </div>
           );
-        return <p className="hint">{marks.length > 0 ? "札を押すと、その版で変えたこと(例: 開発 ↔ レビューを「質問・相談できる」に)が出る" : "編成を変えた日はまだありません。編成の版が上がると、その日に縦の点線と札が入ります。"}</p>;
+        return <p className="hint">{marks.length > 0 ? "札を押すと、その版で変えたこと(例: 開発 ↔ レビューを「質問・相談できる」に)が出る" : "編成を変えた時はまだありません。編成の版が上がると、その時刻の位置に縦の点線と札が入ります。"}</p>;
       })()}
     </figure>
   );
