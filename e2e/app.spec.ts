@@ -44,7 +44,8 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expect(work(page).getByText("満席になったらどこへ戻すか")).toBeVisible();
     await page.getByLabel("別の答え").fill("近い枠を 3 つ出して戻す");
     await page.getByRole("button", { name: "答える", exact: true }).click();
-    await expect(work(page).getByText("満席のお知らせ")).toBeVisible();
+    // 図の箱は role=button・aria-label=ラベルで、SVG の <title> と <text> にも同じ文言があるので、文言では引かず、箱の名前で引く
+    await expect(work(page).getByRole("button", { name: "満席のお知らせ", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "この版に合意する", exact: true }).click();
     await expect(gate(page, "ユーザーフロー")).toContainText("合意済み");
   });
