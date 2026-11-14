@@ -236,6 +236,10 @@ jobs:
           SQL
 
       - name: (e) MySQL の回(mysql-test に届いて通る)
+        env:
+          # vitest の出力に色の制御文字(ESC[...m)が混ざると、「Tests  N passed」の行を判定で読めない。色を付けない
+          NO_COLOR: "1"
+          FORCE_COLOR: "0"
         run: |
           . scripts/ci-confinement-lib.sh
           # E2E の回を飛ばした npm test(SQLite の回 → MySQL の回)を、閉じ込めの外で全文流して、MySQL の回の出力を残す。
@@ -248,6 +252,8 @@ jobs:
             echo "--- E2E の回を飛ばした npm test(閉じ込めの外・全文)の MySQL の回。終了コード: $rc"
             sed -n '/^=== MySQL の回/,$p' "$RUNNER_TEMP/npm-test-mysql.out"
           } 2>&1 | tee "$L/$D-e-mysql-rounds.log"
+          # vitest の要約の行を、注釈に残す(判定が読めなかったとき、色・書式の違いかどうかが、ログを開かずに分かる)
+          echo "::notice title=(e) vitest の要約::$(grep -a -E '(Test Files|Tests) ' "$L/$D-e-mysql-rounds.log" | cat -v | tr '\n' '|')"
           need_code "(e) npm test" "$rc"
           need "$L/$D-e-mysql-rounds.log" '^=== MySQL の回\(mysql-test の使い捨ての database'
           forbid "$L/$D-e-mysql-rounds.log" '(飛ばしました\(KURAMOTO_SKIP_MYSQL_TESTS|mysql-test\(127\.0\.0\.1:3307\)に繋がりません)'

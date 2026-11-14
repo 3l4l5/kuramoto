@@ -35,6 +35,12 @@ describe("ci-confinement-lib.sh(閉じ込めの確かめの CI が、ログを�
     expect(r.out).toContain("✗ 閉じ込めに穴がある");
   });
 
+  it("need / forbid: ログに制御文字(色の ESC など)があっても、その先の行まで読む", () => {
+    const log = "○ 前の行\n\x1b[32m✓\x1b[39m 色つきの行 \x07\x08\nTests  12 passed (12)\n✗ 落ちた回: MySQL\n";
+    expect(run(log, 'need "$f" "Tests +[0-9]+ passed"').code).toBe(0);
+    expect(run(log, 'forbid "$f" "^✗ 落ちた回"').code).toBe(1);
+  });
+
   it("need_code: 終了コードが期待(既定 0)と違えば落とす", () => {
     expect(run("", 'need_code "手順" 0').code).toBe(0);
     expect(run("", 'need_code "手順" 2 2').code).toBe(0);
