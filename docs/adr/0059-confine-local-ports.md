@@ -13,7 +13,7 @@
 
 **localhost は許したまま、Kuramoto 本体のポートだけ(と、プロジェクトの設定で足したポート)を断る。**
 
-- 断るポート: `KURAMOTO_PORT`(既定 4300)と、プロジェクトの設定 `sandbox_deny_local_ports`(ポート番号を、改行・カンマ・空白で区切る。例: 本番の DB のポート)。
+- 断るポート: `KURAMOTO_PORT`(既定 4300)・Kuramoto 自身の MySQL のポート(手元にあるとき。ADR-0060)と、プロジェクトの設定 `sandbox_deny_local_ports`(ポート番号を、改行・カンマ・空白で区切る。例: 本番の DB のポート)。
 - 断り方: sandbox-runtime が書く `(allow network-outbound (remote ip "localhost:*"))` のすぐあとに、`(deny network-outbound (remote ip "localhost:<port>"))` を足す(Seatbelt はあとの規則が勝つ)。`wrapWithSandbox` が返すコマンドの中の規則を書き換える(`src/project/local-ports.ts`)。許可の規則が見つからなければ(sandbox-runtime の版で書き方が変わったとき)、緩めたまま流さずに止める。`@anthropic-ai/sandbox-runtime` は版を固定してあるので、上げるときはこの試験(`team-ci.test.ts`)が教える。
 - 効く場所: チームの CI の閉じ込め(SandboxRunner)と、その中のブラウザサーバー(confined-browser.ts)。
 - Linux の閉じ込めは、ネットワークの名前空間が別でホストの localhost には元から届かないので、何もしない。

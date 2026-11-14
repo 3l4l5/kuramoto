@@ -63,19 +63,23 @@ export type MysqlHandle = {
   pool: Pool;
   /** プールの上の Kysely(トランザクションは専用の接続) */
   kysely: Kysely<any>;
+  /** 接続先がこのマシン(ループバック)のとき、そのポート。閉じ込めの中から断るポートに入れる(ADR-0060)。外の DB のときは無い */
+  localPort?: number;
   /** 1 往復して生きていることを確かめる。timeoutMs で返らなければ投げる。 */
   ping(timeoutMs?: number): Promise<void>;
   close(): Promise<void>;
 };
 
 export function openMysql(cfg: MysqlConfig, opts: { readFile?: (path: string) => Buffer } = {}): MysqlHandle {
-  const pool = createPool(poolOptions(cfg, opts.readFile));
+  const options = poolOptions(cfg, opts.readFile);
+  const pool = createPool(options);
   // 接続が切れたときに、プールが未処理の 'error' で落ちないようにする(切れたかどうかは見張りが ping で見る)
   pool.on("error", () => {});
   const kysely = new Kysely<any>({ dialect: new MysqlDialect({ pool }) });
   return {
     pool,
     kysely,
+    ...(isLoopbackHost(options.host ?? "") && options.port ? { localPort: options.port } : {}),
     async ping(timeoutMs = 3_000) {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
