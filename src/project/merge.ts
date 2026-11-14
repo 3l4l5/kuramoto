@@ -103,7 +103,12 @@ async function mergeTicket(p: Project, gh: GitHub, ticketId: number, by: "owner"
     await gh.merge(pr.full_name, pr.number);
     await addMerge(p, pr.id, "merged", JSON.stringify({ ok: true }));
   }
-  if (!(await claimDone(p, ticket.id))) return alreadyDone(ticket);
+  if (!(await claimDone(p, ticket.id))) {
+    // 同時に done にした別の流れがいれば、後始末はそちらに任せる。merge の確認の途中で merge 待ちから外れていた(持ち主に戻った等)だけなら、
+    // GitHub では merge 済みなので、従来どおり done にして先へ進む
+    if ((await p.ticket(ticket.id)).stage === "done") return alreadyDone(ticket);
+    await p.setStage(ticket.id, "done");
+  }
   await p.event(by, "merged", ticket.id, { number: ticket.number, by });
   // 確認で見つかった範囲外のことは、merge したときにまとめて別チケットにする
   await flushFollowups(p, ticket);

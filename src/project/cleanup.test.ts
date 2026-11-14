@@ -104,6 +104,16 @@ describe("merge した(done になった)チケットの作業場所の片付け
     expect(ws.cleaned).toEqual([{ repo: REPO, ticketNumber: t.number }]);
   });
 
+  it("merge の最中に merge 待ちから外れていても(GitHub では merge 済み)、done にして片付ける", async () => {
+    const { p, t } = await mergeWaiting();
+    const ws = new StaticWorkspace("/tmp/ws");
+    const gh = github("OPEN");
+    gh.merge = async () => void run(p.db, "UPDATE tickets SET stage = 'dev' WHERE id = ?", [t.id]);
+    expect(await ownerMerge(p, gh, t.id, "owner", { workspace: ws })).toEqual({ result: "merged" });
+    expect((await p.ticket(t.id)).stage).toBe("done");
+    expect(ws.cleaned).toEqual([{ repo: REPO, ticketNumber: t.number }]);
+  });
+
   it("チームの自動 merge でも消す", async () => {
     const { p, t } = await mergeWaiting();
     const ws = new StaticWorkspace("/tmp/ws");
