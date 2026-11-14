@@ -6,6 +6,7 @@
 .ds-cat__h2 { margin: 0 0 var(--sp-1); font-size: var(--fs-lg); }
 .ds-cat__note, .ds-cat__muted { margin: 0 0 var(--sp-2); color: var(--muted); font-size: var(--fs-sm); }
 .ds-cat__sample { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); border: 1px dashed var(--line-strong); }
+.ds-cat__on-bg { display: inline-flex; padding: var(--sp-3); border-radius: var(--r-md); background: var(--bg); }
 .ds-cat__line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
 .ds-cat__top { align-items: flex-start; gap: var(--sp-4); }
 .ds-cat__col { display: flex; flex-direction: column; gap: var(--sp-2); }

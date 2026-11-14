@@ -508,22 +508,18 @@ body { margin: 0; }
 
 
 @tailwind utilities;
-/* デジタル庁デザインシステム: 上部のバー・ページの地 */
-body { background: var(--surface); }
+/* ページの地は薄い灰(--bg)。共通ヘッダーは試作どおり、地の上にそのまま置く(帯は付けない)。その上の切り替え・ボタンと、
+   ページの中のカード・パネル・引き出しが白(--surface)。スマホの幅は、ヘッダーだけ白い帯(下の @media) */
+body { background: var(--bg); }
 .app { gap: 20px; }
-.dads-bar { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .dads-bar .brand b { font-size: var(--fs-xl); letter-spacing: .02em; }
 .dads-bar .crumb { gap: 2px; }
 .dads-bar .crumb [aria-current="page"] { text-decoration: none; color: var(--ink); font-weight: 700; }
-.dads-bar .tabs { display: inline-flex; gap: 4px; padding: 0; border: 0; background: transparent; }
 .dads-bar .eff { font-size: var(--fs-base); color: var(--muted); }
-/* 共通ヘッダーの、オフィス/ボード/ツリーの切り替え(試作どおり、名前のすぐ右の枠つきの切り替え)。ほかの画面への行き先は、そのとなりに文字だけで置く */
-.dads-bar .viewtabs { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
-.dads-bar .screens { gap: 0; }
-.dads-bar .screens .ds-btn { padding-inline: var(--sp-2); }
-/* いまの画面の行き先は、名前(パンくず)と同じく濃く太くする。枠つきにはしない(どの画面でもヘッダーの見た目を変えない) */
-.dads-bar .screens [aria-current="page"] { color: var(--ink); font-weight: 700; }
-.dads-bar:has(.viewtabs) { column-gap: var(--sp-2); }
+/* 共通ヘッダーの行き先は、どの画面でも同じ形・同じ位置の切り替えスイッチ(ds の SegmentNav。外枠が白、選んでいるのが灰) */
+.dads-bar .navsw { flex: none; }
+/* どの画面でもヘッダーの高さ(と、その中の並びの位置)を変えない: 生産性の指標の並びで高くならないよう、高さをそろえる */
+.dads-bar { min-height: calc(var(--h-control-sm) + var(--sp-2) + var(--sp-2)); }
 
 .hint { font-size: var(--fs-base); color: var(--muted); }
 .form .rrow { align-items: center; }
@@ -1191,8 +1187,8 @@ body { background: var(--surface); }
 
 /* ---- 見方の切り替え(オフィス / ボード / ツリー)。パソコンでは右寄せの並び ---- */
 .viewhead { display: flex; align-items: center; gap: var(--sp-2); }
-/* パソコンの幅では、オフィス/ボード/ツリーの切り替えは共通ヘッダー(.viewtabs)に出す。枠の上のは、スマホの幅だけ */
-.viewsw { display: none; gap: var(--sp-1); margin-left: auto; }
+/* パソコンの幅では、オフィス/ボード/ツリーの切り替えは共通ヘッダー(.navsw)に出す。枠の上のは、スマホの幅だけ */
+.viewhead .viewsw { display: none; margin-left: auto; }
 .stagetabs, .tk-tabs, .phonebar, .phonemenu, .tk-phone, .tk-short, .tk-kindsheet { display: none; }
 /* 共通ヘッダーの引き出しのボタン: 包みは並びに影響させず、親(.bar)の gap でそのまま並べる */
 .drawerbtns { display: contents; }
@@ -1200,9 +1196,11 @@ body { background: var(--surface); }
 /* ---- スマホ(幅 390px、未決 #21): あなたの対応・ボード・チケットの詳細。同じ画面を組み替える ---- */
 @media (max-width: 700px) {
   body { background: var(--bg); }
+  /* スマホの試作(phone-home・phone-office・phone-board)は、ヘッダーが白い帯で、灰色の地の上に部品が白 */
+  .dads-bar { margin: calc(-1 * var(--sp-3)) calc(-1 * var(--sp-4)) 0; padding: var(--sp-3) var(--sp-4); background: var(--surface); border-bottom: 1px solid var(--line); }
   .app { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
   /* 上の行は「Kuramoto / プロジェクト名 / 稼働の状態」だけ。画面の切り替えと引き出しは、下のタブとメニューへ移す */
-  .bar .tabs, .bar .drawerbtns, .bar .spacer, .bar .crumb .sep:first-of-type, .bar .crumb > .ds-btn:first-child { display: none; }
+  .bar .tabs, .bar .navsw, .bar .drawerbtns, .bar .spacer, .bar .crumb .sep:first-of-type, .bar .crumb > .ds-btn:first-child { display: none; }
   .app[data-route="home"] .bar .crumb > .ds-btn:first-child { display: inline-flex; }
   .bar .verchip { display: none; }
   .bar .workswitch { margin-left: auto; }
@@ -1240,8 +1238,9 @@ body { background: var(--surface); }
   /* ボード: 工程を上のタブ(件数つき、横にすべる)にして、1 列ずつ見る */
   .officepanel { background: none; border: 0; padding: 0; }
   .viewhead h2 { display: none; }
-  .viewsw { display: flex; flex: 1; margin-left: 0; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
-  .viewsw > .ds-btn { flex: 1 1 0; min-width: 0; }
+  /* 試作(phone-board)どおり、幅いっぱいに均等に並ぶ切り替え(外枠が灰、選んでいるのが白) */
+  .viewhead .viewsw { display: flex; flex: 1; margin-left: 0; }
+  .viewhead .viewsw > .ds-seg__opt { flex: 1 1 0; min-width: 0; padding-inline: var(--sp-1); }
   .board-wrap { overflow-x: visible; }
   .kindbar .kindnote { display: none; }
   .stagetabs { display: flex; gap: var(--sp-4); overflow-x: auto; margin: 0 calc(-1 * var(--sp-4)) var(--sp-3); padding: 0 var(--sp-4); border-bottom: 1px solid var(--line); }
@@ -1341,5 +1340,5 @@ body { background: var(--surface); }
   .prod table.tickets tbody th { min-width: 8em; }
 }
 /* 生産性の画面の右上(ヘッダー)の指標 */
-.dads-bar .kpi { margin-left: auto; display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
+.dads-bar .kpi { margin-left: auto; padding: 0; border: 0; line-height: var(--lh-tight); display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-5); font-size: var(--fs-sm); color: var(--muted); }
 .dads-bar .kpi b { display: block; font-family: var(--f-mono); font-size: var(--fs-lg); color: var(--ink); }

@@ -4,7 +4,7 @@
  */
 import { useState, type ReactNode } from "react";
 import tokensCss from "./tokens.css?raw";
-import { Button, Chip, Desk, DeskPaper, Drawer, List, ListItem, Member, Notice, SectionHeading, Segmented, Switch, TextField } from ".";
+import { Button, Chip, Desk, DeskPaper, Drawer, List, ListItem, Member, Notice, SectionHeading, Segmented, SegmentNav, SegmentNavButton, Switch, TextField } from ".";
 
 type Token = { name: string; value: string; note: string };
 export function parseTokens(css: string): Token[] {
@@ -104,6 +104,15 @@ function Components() {
       </Block>
       <Block title="切り替え(セグメント)" note="通常・選んでいる">
         <Segmented label="必須か" value={seg} onChange={setSeg} options={[{ value: "must", label: "必須" }, { value: "skip", label: "省略" }]} />
+      </Block>
+      <Block title="行き先の切り替え(共通ヘッダー)" note="灰色の地(--bg)の上に置く形: 外枠が白(--surface)、選んでいるのが灰(--bg)と影。白い面の上では上のセグメント(外枠が灰、選んでいるのが白)">
+        <div className="ds-cat__on-bg">
+          <SegmentNav label="行き先の見本" raised>
+            <SegmentNavButton on mark="current">オフィス</SegmentNavButton>
+            <SegmentNavButton on={false} mark="current">ボード</SegmentNavButton>
+            <SegmentNavButton on={false} mark="current">ツリー</SegmentNavButton>
+          </SegmentNav>
+        </div>
       </Block>
       <Block title="スイッチ" note="オン・オフ">
         <div className="ds-cat__line"><Switch checked={on} onChange={setOn} /><Switch checked={off} onChange={setOff} /></div>

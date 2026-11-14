@@ -14,7 +14,7 @@ import { Btn } from "./ui";
 import { Chip } from "./ds";
 import { PhoneBar } from "./PhoneBar";
 import { WorkSwitch } from "./WorkSwitch";
-import { OfficeViewSwitch } from "./OfficeViewSwitch";
+import { ProjectNav } from "./OfficeViewSwitch";
 import { clearRequestedTab, useFormationUi } from "./formationUi";
 
 export function App() {
@@ -30,16 +30,8 @@ export function App() {
   useEffect(() => {
     if (!guard.confirming && drawer !== "formation") clearRequestedTab();
   }, [guard.confirming, drawer]);
-  // オフィス(と、その中のチケット)では、オフィス/ボード/ツリーの切り替えが画面の切り替えの代わりに出るので、「オフィス」のボタンは重ねない
+  // オフィス(と、その中のチケット)では、オフィス/ボード/ツリーのどれかが選ばれた状態になる。ほかの画面では、いまの画面の行き先が選ばれる
   const inOffice = route.name === "project" || route.name === "ticket";
-  const screens: [string, string, string, boolean][] = inProject
-    ? [
-        ["studio", "企画スタジオ", `#/p/${route.id}/studio`, route.name === "studio"],
-        ...(inOffice ? [] : [["office", "オフィス", `#/p/${route.id}`, false] as [string, string, string, boolean]]),
-        ["metrics", "生産性", `#/p/${route.id}/metrics`, route.name === "metrics"],
-        ["settings", "設定", `#/p/${route.id}/settings`, route.name === "settings"],
-      ]
-    : [];
   return (
     <div className="app" data-route={route.name}>
       <header className="bar dads-bar">
@@ -57,16 +49,7 @@ export function App() {
             </>
           )}
         </nav>
-        {inOffice && <OfficeViewSwitch className="tabs viewtabs" home={route.name === "ticket" ? `#/p/${route.id}` : undefined} />}
-        {inProject && (
-          <div className="tabs screens" role="group" aria-label="プロジェクトの画面">
-            {screens.map(([key, label, hash, on]) => (
-              <Btn key={key} kind="text" size="sm" aria-current={on ? "page" : undefined} onClick={() => go(hash)}>
-                {label}
-              </Btn>
-            ))}
-          </div>
-        )}
+        {inProject && <ProjectNav id={route.id} route={route.name} />}
         <div className="spacer" />
         {inProject && <FormationChip id={route.id} />}
         {route.name === "metrics" && <MetricsKpi id={route.id} />}
