@@ -55,7 +55,7 @@ export async function ciTools(p: Project, gh: GitHub | undefined, ctx: { ticket?
     defineTool({
       name: "ci_status",
       description:
-        "チケットの PR の CI の今を、Kuramoto が GitHub から取ってくる(あなたの作業場所からは GitHub は見えない)。落ちた確認・落ちたステップ・GitHub の注記・失敗したログの末尾と、main の最近の CI の実行が分かる。",
+        "チケットの PR の CI の今を、Kuramoto が GitHub から取ってくる(あなたの作業場所からは GitHub は見えない)。落ちた確認・落ちたステップ・GitHub の注記・失敗したログの末尾と、PR の向き先(チームが使うブランチ)の最近の CI の実行が分かる。",
       input: { number: z.number().int().optional().describe("チケット番号(省くとこのチケット)") },
       handler: async (a) => {
         const t = await target(a.number);

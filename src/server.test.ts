@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FakeHarness } from "./harness/fake.js";
 import { Hq } from "./hq.js";
+import { teamBranch } from "./project/team-branch.js";
 import { StaticWorkspace } from "./project/workspace.js";
 import { KuramotoServer } from "./server.js";
 import { leadMessages } from "./project/leadchat.js";
@@ -115,6 +116,36 @@ describe("ローカルサーバー", () => {
     hq.removeDataDir(join(home, "acme", "web"));
     expect(existsSync(join(home, "acme"))).toBe(false);
     hq.removeDataDir(join(home, "acme", "web")); // もう無くても通る
+  });
+
+  it("設定で、チームが使うブランチを見られて変えられる。存在しないブランチは保存を断り、空にすると未設定に戻る", async () => {
+    const w = new StaticWorkspace("/tmp/ws", { branches: ["main", "develop"] });
+    const { call, app } = await boot({ workspaceFor: () => w });
+    const { json: created } = await call("POST", "/api/projects", { name: "お試し", repos: [{ fullName: "acme/shop", role: "API" }] });
+    const url = `/api/projects/${created.id}/settings`;
+    const repos = [{ fullName: "acme/shop", role: "API" }];
+    expect((await call("GET", url)).json.teamBranch).toBe("");
+    // 無いブランチは断る(保存されない)
+    const bad = await call("POST", url, { name: "お試し", repos, teamBranch: "nope" });
+    expect(bad.status).toBeGreaterThanOrEqual(400);
+    expect(JSON.stringify(bad.json)).toContain("nope");
+    expect((await call("GET", url)).json.teamBranch).toBe("");
+    // ブランチ名として使えない形は、リポジトリに問い合わせる前に断る
+    expect((await call("POST", url, { name: "お試し", repos, teamBranch: "-D" })).status).toBeGreaterThanOrEqual(400);
+    // ある(リポジトリごとに確かめる)
+    await call("POST", url, { name: "お試し", repos, teamBranch: " develop " });
+    expect((await call("GET", url)).json.teamBranch).toBe("develop");
+    expect(w.checkedBranches).toContainEqual({ repo: "acme/shop", branch: "develop" });
+    expect(await teamBranch(app.project(created.id))).toBe("develop");
+    // 変えていなければ確かめ直さない・送らなければ変わらない
+    const n = w.checkedBranches.length;
+    await call("POST", url, { name: "お試し", repos, teamBranch: "develop" });
+    await call("POST", url, { name: "お試し", repos });
+    expect(w.checkedBranches.length).toBe(n);
+    expect((await call("GET", url)).json.teamBranch).toBe("develop");
+    // 空にすると未設定(今どおり origin/HEAD → main)に戻る
+    await call("POST", url, { name: "お試し", repos, teamBranch: "" });
+    expect((await call("GET", url)).json.teamBranch).toBe("");
   });
 
   it("作業場所を消せなくても(投げても)DB の削除は進み、ログに残す", async () => {

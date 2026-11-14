@@ -27,6 +27,7 @@ import { patrolMinutes, setPatrolMinutes, startPatrol } from "./project/patrol.j
 import type { DbHealth, DbHealthState } from "./db/mysql-health.js";
 import { ciBlockAction, ciBlocked, githubDown } from "./project/outage.js";
 import { fetchGithubSnapshot, markExisting } from "./project/onboard.js";
+import { setTeamBranch, teamBranch } from "./project/team-branch.js";
 import { runTeamCi, SandboxRunner, teamCiEnabled, type CommandRunner } from "./project/team-ci.js";
 import { leadReply } from "./project/leadchat.js";
 import { FileDesignStore, imageRow, blockRenderPort, playwrightLocalHtmlRenderer, playwrightRenderer, playwrightUrlRenderer, referenceImage, type DesignStore, type Renderer, type UrlRenderer } from "./project/design-visual.js";
@@ -247,7 +248,7 @@ export class KuramotoServer {
     // merge の直前にチームの CI を流す口(ADR-0028)
     const teamCi: TeamCiHook = {
       run: (t, repo, branch) => runTeamCi(p, workspace, this.checkRunner, t, repo, branch),
-      baseSha: (repo) => workspace.baseSha?.(repo) ?? Promise.resolve(""),
+      baseSha: async (repo) => (await workspace.baseSha?.(repo, await teamBranch(p))) ?? "",
     };
     const dispatcher = new Dispatcher(p, {
       harnesses: this.harnesses,
@@ -686,6 +687,8 @@ export class KuramotoServer {
         planWeb: await planWebEnabled(p),
         planWebDomains: (await planWebDomains(p)).join("\n"),
         ciMode: await teamCiEnabled(p) ? "team" : "github",
+        // チームが使うブランチ(作業の起点・PR の向き先)。空なら各リポジトリの origin/HEAD(無ければ main)
+        teamBranch: (await teamBranch(p)) ?? "",
         // チームの CI で流すコマンド(リポジトリごと)。空なら package.json から決める
         ciCommands: Object.fromEntries(await Promise.all((await p.repos()).map(async (r) => [r.full_name, (await p.setting(`team_ci_commands:${r.full_name}`)) ?? ""] as const))),
       };
@@ -698,6 +701,7 @@ export class KuramotoServer {
       if (total !== undefined && total !== null && !(Number.isFinite(total) && total > 0)) throw new Error("全体の予算は 0 より大きい金額か、無制限にしてください");
       if (budget !== undefined) await setDefaultTicketBudget(p, budget);
       if (total !== undefined) await setProjectBudget(p, total);
+      if (typeof body.teamBranch === "string" && body.teamBranch.trim() !== ((await teamBranch(p)) ?? "")) await this.saveTeamBranch(p, id, body.teamBranch.trim());
       if (typeof body.nonstop === "boolean") await p.setSetting("nonstop", body.nonstop ? "1" : "0");
       if (typeof body.autoMerge === "boolean") await p.setSetting("auto_merge", body.autoMerge ? "1" : "0");
       if (typeof body.resumeChecks === "boolean") await p.setSetting("resume_checks", body.resumeChecks ? "1" : "0");
@@ -723,6 +727,18 @@ export class KuramotoServer {
       return out;
     }
     return undefined;
+  }
+
+  /** チームが使うブランチを保存する。空なら未設定に戻す。指定されたブランチが、どれかのリポジトリの origin に無ければ断る。 */
+  private async saveTeamBranch(p: Project, id: number, branch: string): Promise<void> {
+    if (branch) {
+      const workspace = this.workspaceFor(this.record(id).data_dir);
+      for (const r of await p.repos()) {
+        const err = await workspace.checkBranch?.(r.full_name, branch);
+        if (err) throw new Error(err);
+      }
+    }
+    await setTeamBranch(p, branch);
   }
 
   private async studioRoute(p: Project, id: number, method: string, parts: string[], body: Record<string, unknown>): Promise<unknown> {

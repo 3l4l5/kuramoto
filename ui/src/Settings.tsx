@@ -11,7 +11,7 @@ import { usd } from "./format";
 
 const REPO_ROLES = ["フロント", "API", "インフラ", "その他"];
 const repoOk = (r: string) => /^(?!\.{1,2}\/)(?!.*\/\.{1,2}$)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r);
-type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean; resumeChecks: boolean; patrolMin: number; issueComment: boolean; planWeb: boolean; planWebDomains: string; ciMode: "team" | "github"; ciCommands: Record<string, string> };
+type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean; resumeChecks: boolean; patrolMin: number; issueComment: boolean; planWeb: boolean; planWebDomains: string; teamBranch: string; ciMode: "team" | "github"; ciCommands: Record<string, string> };
 
 /** プロジェクトの設定: 名前とリポジトリ(足す・外す・役割を変える)。 */
 export function SettingsPage({ id }: { id: number }) {
@@ -26,6 +26,7 @@ export function SettingsPage({ id }: { id: number }) {
   const [resumeOn, setResume] = useState(true);
   const [issueCommentOn, setIssueComment] = useState(false);
   const [patrolMin, setPatrolMin] = useState("5");
+  const [branch, setBranch] = useState("");
   const [ciMode, setCiMode] = useState<"team" | "github">("github");
   const [planWeb, setPlanWeb] = useState(true);
   const [planWebDomains, setPlanWebDomains] = useState("");
@@ -41,6 +42,7 @@ export function SettingsPage({ id }: { id: number }) {
     setIssueComment(data.issueComment);
     setResume(data.resumeChecks);
     setPatrolMin(String(data.patrolMin));
+    setBranch(data.teamBranch);
     setCiMode(data.ciMode);
     setPlanWeb(data.planWeb);
     setPlanWebDomains(data.planWebDomains);
@@ -55,10 +57,10 @@ export function SettingsPage({ id }: { id: number }) {
   const set = (i: number, patch: Partial<{ r: string; role: string }>) => setRepos(repos.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const list = repos.filter((x) => x.r).map((x) => ({ fullName: x.r, role: x.role }));
   const budgetOk = totalOk(budget);
-  const changed = name !== data.name || JSON.stringify(list) !== JSON.stringify(data.repos) || budget !== data.ticketBudgetUsd || total !== data.projectBudgetUsd || nonstopOn !== data.nonstop || autoMergeOn !== data.autoMerge || resumeOn !== data.resumeChecks || patrolMin !== String(data.patrolMin) || issueCommentOn !== data.issueComment || planWeb !== data.planWeb || planWebDomains !== data.planWebDomains || ciMode !== data.ciMode || JSON.stringify(ciCommands) !== JSON.stringify(data.ciCommands);
+  const changed = name !== data.name || JSON.stringify(list) !== JSON.stringify(data.repos) || budget !== data.ticketBudgetUsd || total !== data.projectBudgetUsd || nonstopOn !== data.nonstop || autoMergeOn !== data.autoMerge || resumeOn !== data.resumeChecks || patrolMin !== String(data.patrolMin) || issueCommentOn !== data.issueComment || planWeb !== data.planWeb || planWebDomains !== data.planWebDomains || branch.trim() !== data.teamBranch || ciMode !== data.ciMode || JSON.stringify(ciCommands) !== JSON.stringify(data.ciCommands);
   const patrolOk = /^\d+$/.test(patrolMin);
   const invalid = !name.trim() || !list.length || list.some((x) => !repoOk(x.fullName)) || !budgetOk || !totalOk(total) || !patrolOk;
-  const save = () => act(() => post(`/projects/${id}/settings`, { name: name.trim(), repos: list, ticketBudgetUsd: budget, projectBudgetUsd: total, nonstop: nonstopOn, autoMerge: autoMergeOn, resumeChecks: resumeOn, patrolMin: Number(patrolMin), issueComment: issueCommentOn, planWeb, planWebDomains, ciMode, ciCommands }), "プロジェクトの設定を保存しました");
+  const save = () => act(() => post(`/projects/${id}/settings`, { name: name.trim(), repos: list, ticketBudgetUsd: budget, projectBudgetUsd: total, nonstop: nonstopOn, autoMerge: autoMergeOn, resumeChecks: resumeOn, patrolMin: Number(patrolMin), issueComment: issueCommentOn, planWeb, planWebDomains, teamBranch: branch.trim(), ciMode, ciCommands }), "プロジェクトの設定を保存しました");
 
   return (
     <section aria-label="プロジェクトの設定">
@@ -142,6 +144,15 @@ export function SettingsPage({ id }: { id: number }) {
             </>
           )}
         </fieldset>
+        <div>
+          <label className="h" htmlFor="ps-branch">
+            チームが使うブランチ
+          </label>
+          <div className="hint" style={{ marginBottom: 6 }}>
+            担当が作業を始める起点のブランチで、PR の向き先にもなります(merge 済みの判定と、このブランチの CI の見張りも同じものを使います)。空なら、リポジトリの既定のブランチ(origin/HEAD。無ければ main)です。変えても、すでに出した PR の向き先は変わりません。保存するとき、登録したすべてのリポジトリにそのブランチがあるかを確かめます。
+          </div>
+          <Input id="ps-branch" className="font-mono" placeholder="main" value={branch} onChange={(e) => setBranch(e.target.value)} />
+        </div>
         <fieldset className="runmode">
           <legend className="h">CI</legend>
           <Select aria-label="CI の扱い"value={ciMode} onChange={(e) => setCiMode(e.target.value as "team" | "github")}>
@@ -149,7 +160,7 @@ export function SettingsPage({ id }: { id: number }) {
             <option value="github">GitHub Actions の CI を待つ</option>
           </Select>
           <div className="hint">
-            チームの CI では、担当が PR を出すたびに Kuramoto がこの PC で(エージェントと同じ閉じ込めの中で)、PR を最新の main と合わせて確認のコマンドを流します。通ったものだけをレビューに回し、merge の直前にも main が進んでいれば流し直します。GitHub の CI を待たないので速く、Actions の利用枠も使いません。切り替えると、リポジトリの GitHub Actions を止めます(戻すと動かします)。ブランチ保護で CI の確認を必須にしていると merge できないので、そのときは必須を外してください。
+            チームの CI では、担当が PR を出すたびに Kuramoto がこの PC で(エージェントと同じ閉じ込めの中で)、PR をチームが使うブランチの最新と合わせて確認のコマンドを流します。通ったものだけをレビューに回し、merge の直前にもそのブランチが進んでいれば流し直します。GitHub の CI を待たないので速く、Actions の利用枠も使いません。切り替えると、リポジトリの GitHub Actions を止めます(戻すと動かします)。ブランチ保護で CI の確認を必須にしていると merge できないので、そのときは必須を外してください。
           </div>
           {ciMode === "team" &&
             list.map((x) => (

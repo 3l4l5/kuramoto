@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { teamBranch } from "./team-branch.js";
 import type { Confinement } from "../harness/types.js";
 import { confinementFor } from "./confine.js";
 import { startConfinedBrowser, withBrowser, type StartBrowser } from "./confined-browser.js";
@@ -79,7 +80,7 @@ function tail(s: string): string {
  */
 export async function runTeamCi(p: Project, ws: Workspace, runner: CommandRunner, ticket: TicketRow, repo: string, branch: string): Promise<TeamCiResult> {
   if (!ws.prepareCheck) throw new Error("この作業場所では、チームの CI を流せません");
-  const prep = await ws.prepareCheck({ repo, ticketNumber: ticket.number, branch });
+  const prep = await ws.prepareCheck({ repo, ticketNumber: ticket.number, branch, base: await teamBranch(p) });
   const base = { sha: prep.sha, base: prep.base, baseSha: prep.baseSha };
   let result: TeamCiResult;
   if (prep.conflict) {
@@ -126,7 +127,7 @@ export function teamCiFindings(r: TeamCiResult): { severity: string; body: strin
   const failed = r.results.filter((x) => !x.ok);
   return failed.map((x) => ({
     severity: "high",
-    body: `チームの CI の「${x.command}」が落ちました(終了コード ${x.code ?? "なし(時間切れか止められた)"}、${Math.round(x.ms / 1000)} 秒。PR のコミット ${r.sha.slice(0, 7)} を main ${r.baseSha.slice(0, 7)} と合わせた状態)。\n出力(末尾):\n\`\`\`\n${x.output || "(出力なし)"}\n\`\`\``,
+    body: `チームの CI の「${x.command}」が落ちました(終了コード ${x.code ?? "なし(時間切れか止められた)"}、${Math.round(x.ms / 1000)} 秒。PR のコミット ${r.sha.slice(0, 7)} を ${r.base} ${r.baseSha.slice(0, 7)} と合わせた状態)。\n出力(末尾):\n\`\`\`\n${x.output || "(出力なし)"}\n\`\`\``,
   }));
 }
 
@@ -135,7 +136,7 @@ export async function lastTeamCi(p: Project, ticketId: number, maxChars = 3000):
   const v = await p.setting(`team_ci:${ticketId}`);
   if (!v) return "";
   const r = JSON.parse(v) as TeamCiResult;
-  const head = `## 最後のチームの CI(${r.ok ? "通った" : r.conflict ? "main と衝突" : "落ちた"}。コミット ${r.sha.slice(0, 7)} を main ${r.baseSha.slice(0, 7)} と合わせて流した)\n${r.results.map((x) => `- ${x.ok ? "○" : "×"} ${x.command}(${Math.round(x.ms / 1000)} 秒)`).join("\n")}`;
+  const head = `## 最後のチームの CI(${r.ok ? "通った" : r.conflict ? `${r.base} と衝突` : "落ちた"}。コミット ${r.sha.slice(0, 7)} を ${r.base} ${r.baseSha.slice(0, 7)} と合わせて流した)\n${r.results.map((x) => `- ${x.ok ? "○" : "×"} ${x.command}(${Math.round(x.ms / 1000)} 秒)`).join("\n")}`;
   const body = r.ok ? "" : `\n${teamCiFindings(r).map((f) => f.body).join("\n")}`;
   const s = head + body;
   return s.length > maxChars ? `${s.slice(0, maxChars)}…` : s;

@@ -1,3 +1,4 @@
+import { teamBranchLabel } from "./team-branch.js";
 import { z } from "zod";
 import { ROLE_LABEL, type Role } from "../domain/roles.js";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
@@ -59,6 +60,7 @@ export async function askLeadToUnstick(p: Project, ticket: TicketRow, msg: Messa
 
 /** リーダーが調べる材料: チケット・止まった仕事・最近の起動・最後の起動の途中経過・これまでの助言。 */
 export async function unstickPrompt(p: Project, ticket: TicketRow, payload: StuckPayload): Promise<string> {
+  const base = await teamBranchLabel(p);
   const runs = await p.pdb.k
     .selectFrom("runs as r")
     .innerJoin("members as m", "m.id", "r.member_id")
@@ -105,8 +107,8 @@ ${notes.map((n) => `- ${n.who === "lead" ? "リーダー" : "責任者"}: ${n.bo
 - 直せそうなら retry_with_advice で、担当への具体的な助言(何が原因で、どこをどう直すか・何を避けるか)を渡してやり直させます。同じ助言の繰り返しは避けます。
 - 担当が同じところで詰まり続けているなら、reassign で別のメンバーか島に渡します(新しい目で見てもらう)。
 - チケットが大きすぎる・手元で確かめられない部分がある(例: 本番の CI でしか動かない)なら、split_and_retry で残りを別チケットに切り出し、今のチケットは確かめられる範囲に絞ってやり直させます。切り出したチケットは、親の画面・要件のひも付けを引き継ぎます。全画面を試作と見比べるチケットなら all_screens: true にします。
-- このチケットの変更が、すでに main に入っている(別のチケットで先に入った・重複していた)なら、close_as_already_done で完了にします。git log origin/main でコミットを確かめ、受け入れ条件を満たしているかも見てから呼びます。保留にはしません。
-${await teamCiEnabled(p) ? "- CI はチームの CI を使っています(GitHub Actions は止めてあり、merge にも使いません)。落ちたなら、上の「最後のチームの CI」の出力で原因を見立てます。GitHub の CI の失敗は理由にしません。" : `- CI が落ちているなら、上の「最後に落ちた CI」と、ci_status・ci_run(ジョブ・ステップ・GitHub の注記・ログ)・ci_settings(秘密情報の名前)で原因を見立てます。作業場所からは GitHub は見えませんが、これらの道具は Kuramoto が外で GitHub を見て答えます。責任者に「ログを貼ってほしい」「やり直してほしい」とは頼みません(ci_rerun で自分でやり直せます)。ジョブが始まってもいない(ステップが 1 つも動いていない)なら、注記に理由(請求・使用額の上限・ランナー)が書かれています。原因がコードなら retry_with_advice で直し方を、main でも落ちているなら main の CI を直すチケットに任せて待つよう伝えます。ワークフローの設定・秘密情報など責任者にしかできないことが原因なら hold にします。`}
+- このチケットの変更が、すでに ${base} に入っている(別のチケットで先に入った・重複していた)なら、close_as_already_done で完了にします。git log origin/${base} でコミットを確かめ、受け入れ条件を満たしているかも見てから呼びます。保留にはしません。
+${await teamCiEnabled(p) ? "- CI はチームの CI を使っています(GitHub Actions は止めてあり、merge にも使いません)。落ちたなら、上の「最後のチームの CI」の出力で原因を見立てます。GitHub の CI の失敗は理由にしません。" : `- CI が落ちているなら、上の「最後に落ちた CI」と、ci_status・ci_run(ジョブ・ステップ・GitHub の注記・ログ)・ci_settings(秘密情報の名前)で原因を見立てます。作業場所からは GitHub は見えませんが、これらの道具は Kuramoto が外で GitHub を見て答えます。責任者に「ログを貼ってほしい」「やり直してほしい」とは頼みません(ci_rerun で自分でやり直せます)。ジョブが始まってもいない(ステップが 1 つも動いていない)なら、注記に理由(請求・使用額の上限・ランナー)が書かれています。原因がコードなら retry_with_advice で直し方を、${base} でも落ちているなら ${base} の CI を直すチケットに任せて待つよう伝えます。ワークフローの設定・秘密情報など責任者にしかできないことが原因なら hold にします。`}
 - 直すコードが無い・やることが無いチケット(GitHub の CI のためだけのもの、仕様が変わっていらなくなったものなど)は、hold にせず drop_ticket で理由を書いて取りやめます。
 - 仕様が決まっていないなら、受け入れ条件と設計から仮に決め、その前提を助言に書いて進めます。
 - hold(保留)は、責任者にしかできないことが要るときだけです(秘密情報やアカウントの登録・外のサービスの契約・権限の付与など)。そのときは責任者に何をしてほしいかを具体的に書きます。
@@ -124,9 +126,9 @@ export function unstickTools(
     defineTool({
       name: "close_as_already_done",
       description:
-        "このチケットの変更が、すでに main に入っていて、やることが無いときに完了にする(別のチケット・PR で先に入った、重複していた)。Kuramoto がコミットが main に入っていることを確かめ、開いたままの PR があれば閉じる。",
+        "このチケットの変更が、すでにチームのブランチ(main など)に入っていて、やることが無いときに完了にする(別のチケット・PR で先に入った、重複していた)。Kuramoto がコミットがそのブランチに入っていることを確かめ、開いたままの PR があれば閉じる。",
       input: {
-        commit: z.string().min(4).describe("このチケットの変更が入った main 上のコミット(SHA)"),
+        commit: z.string().min(4).describe("このチケットの変更が入ったチームのブランチ上のコミット(SHA)"),
         reason: z.string().min(1).describe("何がどこで入っていたか(受け入れ条件を満たしていることも含めて)"),
       },
       handler: async (a) => {
