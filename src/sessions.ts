@@ -1,13 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
 
-/** 画面の Cookie に入れるセッションの有効期間(ミリ秒)。短くして、漏れても長く使われないようにする(ADR-0061)。 */
+/** 画面が持つセッションの有効期間(ミリ秒)。短くして、漏れても長く使われないようにする(ADR-0061)。 */
 export const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 
 /**
  * 画面(ブラウザ)に渡すセッション(ADR-0061)。
- * Cookie はポートで分けられず、担当が立てた localhost の別ポートのサーバーにも送られる。
- * そこで Cookie には、合言葉そのものではなく、本体だけが覚えているセッション ID を入れる。
- * - 合言葉(~/.kuramoto/access-token)は Cookie にもどこにも出ない。漏れても、ID の分だけ(有効期間内)で済む。
+ * 画面は、合言葉そのものではなく、本体だけが覚えているセッション ID を持つ。
+ * ID は POST /api/session で合言葉と引き換えに渡し、画面が localStorage(オリジンごと)に持って Authorization: Bearer で送る(ADR-0062)。
+ * Cookie は使わない(Cookie はポートで分けられず、担当が立てた localhost の別ポートのサーバーにも送られるため)。
+ * - 合言葉(~/.kuramoto/access-token)は ID にもどこにも出ない。漏れても、ID の分だけ(有効期間内)で済む。
  * - 本体は ID のハッシュだけを覚える(メモリの中。再起動で全部失効する)。期限が切れたもの・失効させたものは通さない。
  * - 失効: 1 つ(ログアウト)・全部(`revokeAll`)。合言葉を作り直さなくても、漏れた ID を止められる。
  */
@@ -20,7 +21,7 @@ export class Sessions {
     private readonly now: () => number = Date.now,
   ) {}
 
-  /** 新しいセッションを作り、ID を返す(Cookie に入れる値)。ついでに期限切れを捨てる。 */
+  /** 新しいセッションを作り、ID を返す(画面が localStorage に持ち、Authorization: Bearer で送る値)。ついでに期限切れを捨てる。 */
   issue(): string {
     this.sweep();
     const id = randomBytes(32).toString("base64url");

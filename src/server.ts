@@ -420,10 +420,11 @@ export class KuramotoServer {
   async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
-      if (!this.allowed(req, url, res)) return;
+      const who = this.allowed(req, url, res);
+      if (who === false) return;
       if (!url.pathname.startsWith("/api/")) return await this.serveStatic(url.pathname, res);
       if (req.method !== "GET" && req.headers["x-kuramoto"] !== "1") return send(res, 403, { error: "ヘッダーがありません" });
-      if (this.revokeSession(req, url, res)) return;
+      if (this.sessionApi(req, url, res, who)) return;
       const exp = req.method === "GET" && url.pathname.match(/^\/api\/projects\/(\d+)\/studio\/export$/);
       if (exp) return await this.sendExport(Number(exp[1]), res);
       const expZip = req.method === "GET" && url.pathname.match(/^\/api\/projects\/(\d+)\/studio\/export\.zip$/);
@@ -441,17 +442,21 @@ export class KuramotoServer {
   }
 
   /**
-   * 入ってよいか。だめなら応答を返して false。localhost からも合言葉(セッションの Cookie・Authorization: Bearer)を求める。
-   * 合言葉つきの URL で来たら、合言葉ではなく新しいセッション ID を Cookie に入れて、合言葉を外した URL へ送り直す(ADR-0061)。
-   * 先に Host を見て、open でなければ localhost 以外の名前(DNS rebinding など)を断る。
+   * 入ってよいか(ADR-0062)。だめなら応答を返して false、通ってよければ何で通ったかを返す。
+   * - 先に Host を見て、open でなければ localhost 以外の名前(DNS rebinding など)を断る。
+   * - 画面のファイル(`/api/` でないもの)は、合言葉なしで配る。`<script type="module" src>` は Authorization を付けられないため。
+   *   配るのは index.html・JS・CSS・フォントだけで、データは含まない(Kuramoto のリポジトリと同じで秘密ではない)。
+   * - `/api/` は、`Authorization: Bearer`(合言葉、または POST /api/session で受け取ったセッション ID)を求める。localhost からも同じ。
+   *   Bearer は画面の JS が自分で付ける。ブラウザが自動で付けないので、担当が立てた別ポートのサーバーには届かない。
    */
-  private allowed(req: IncomingMessage, url: URL, res: ServerResponse): boolean {
+  private allowed(req: IncomingMessage, url: URL, res: ServerResponse): Credential | null | false {
     const token = this.deps.accessToken;
     if (!this.deps.open && !isLocalHost(req.headers.host)) {
       send(res, 403, { error: "localhost からだけ使えます" });
       return false;
     }
     const cookies = parseCookies(req.headers.cookie);
+    // 移行用: 前の画面は、合言葉つきの URL(?token=)を開くと Cookie にセッション ID を入れてもらう。画面を #k= に替える PR で、この道と Cookie を無くす。
     const given = url.searchParams.get("token");
     if (given !== null && sameSecret(given, token)) {
       url.searchParams.delete("token");
@@ -459,17 +464,16 @@ export class KuramotoServer {
       res.end();
       return false;
     }
-    const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
-    if (this.sessions.valid(cookies[SESSION_COOKIE]) || (bearer && sameSecret(bearer, token))) return true;
+    if (!url.pathname.startsWith("/api/")) return null;
+    const bearer = bearerOf(req);
+    if (bearer && sameSecret(bearer, token)) return { via: "token" };
+    if (bearer && this.sessions.valid(bearer)) return { via: "session" };
+    // 移行用: 前の画面の Cookie のセッション ID も、画面を替えるまでは通す(新しくは発行しない道だけが残る)
+    if (this.sessions.valid(cookies[SESSION_COOKIE])) return { via: "cookie" };
     // 前の版が Cookie に入れていた合言葉は、もう通さない。ブラウザに残っていたら消す(漏れた疑いのある値を持たせない)
     const clear = legacyCookieClear(cookies);
-    if (url.pathname.startsWith("/api/")) {
-      res.writeHead(401, { "content-type": "application/json; charset=utf-8", "x-kuramoto-build": BUILD_ID, ...(clear.length ? { "set-cookie": clear } : {}) });
-      res.end(JSON.stringify({ error: "合言葉(トークン)が要ります。Kuramoto を起動した端末に出ている URL を開いてください" }));
-    } else {
-      res.writeHead(401, { "content-type": "text/html; charset=utf-8", ...(clear.length ? { "set-cookie": clear } : {}) });
-      res.end('<!doctype html><meta charset="utf-8"><title>Kuramoto</title><p style="font-family:sans-serif;padding:24px">Kuramoto を開くには、起動した端末に出ている「合言葉つきの URL」を開いてください。</p>');
-    }
+    res.writeHead(401, { "content-type": "application/json; charset=utf-8", "x-kuramoto-build": BUILD_ID, ...(clear.length ? { "set-cookie": clear } : {}) });
+    res.end(JSON.stringify({ error: "合言葉(トークン)が要ります。Kuramoto を起動した端末に出ている URL を開いてください" }));
     return false;
   }
 
@@ -477,11 +481,29 @@ export class KuramotoServer {
     return `${SESSION_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${this.sessions.maxAgeSeconds}`;
   }
 
-  /** セッションの失効(ADR-0061)。DELETE /api/session はこのブラウザだけ、POST /api/session/revoke-all はすべて。 */
-  private revokeSession(req: IncomingMessage, url: URL, res: ServerResponse): boolean {
+  /**
+   * セッションの API(ADR-0061・0062)。
+   * - POST /api/session: 合言葉(Authorization: Bearer)で新しいセッション ID を作って返す。画面が localStorage に持つ。セッション ID では作れない(期限を延ばす道にしない)。
+   * - DELETE /api/session: この ID(Authorization: Bearer)のセッションだけ失効する(ログアウト)。
+   * - POST /api/session/revoke-all: すべて失効する。
+   */
+  private sessionApi(req: IncomingMessage, url: URL, res: ServerResponse, who: Credential | null): boolean {
+    const cookies = parseCookies(req.headers.cookie);
+    if (url.pathname === "/api/session" && req.method === "POST") {
+      if (who?.via !== "token") {
+        send(res, 401, { error: "セッションを作るには、合言葉(Authorization: Bearer <合言葉>)が要ります" });
+        return true;
+      }
+      const clear = legacyCookieClear(cookies);
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "x-kuramoto-build": BUILD_ID, "cache-control": "no-store", ...(clear.length ? { "set-cookie": clear } : {}) });
+      res.end(JSON.stringify({ id: this.sessions.issue(), expiresIn: this.sessions.maxAgeSeconds }));
+      return true;
+    }
     if (url.pathname === "/api/session" && req.method === "DELETE") {
-      this.sessions.revoke(parseCookies(req.headers.cookie)[SESSION_COOKIE]);
-      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "x-kuramoto-build": BUILD_ID, "set-cookie": `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0` });
+      this.sessions.revoke(bearerOf(req));
+      const cookieId = cookies[SESSION_COOKIE];
+      this.sessions.revoke(cookieId); // 移行用: 前の画面の Cookie のセッション
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "x-kuramoto-build": BUILD_ID, ...(cookieId ? { "set-cookie": `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0` } : {}) });
       res.end(JSON.stringify({ ok: true }));
       return true;
     }
@@ -1023,6 +1045,14 @@ const LEGACY_TOKEN_COOKIE = "kuramoto_token";
 
 function legacyCookieClear(cookies: Record<string, string>): string[] {
   return LEGACY_TOKEN_COOKIE in cookies ? [`${LEGACY_TOKEN_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`] : [];
+}
+
+/** 何で通ったか。token=合言葉、session=Authorization: Bearer のセッション ID、cookie=移行用の前の画面の Cookie。 */
+type Credential = { via: "token" | "session" | "cookie" };
+
+/** Authorization: Bearer <値> の値。 */
+function bearerOf(req: IncomingMessage): string | undefined {
+  return req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
 }
 
 function sameSecret(a: string, b: string): boolean {
