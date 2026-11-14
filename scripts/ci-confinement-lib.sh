@@ -86,6 +86,9 @@ show_reasons() {
   sed -n '10,18p' "${RUNNER_TEMP:-/tmp}/failed-e2e.out" | annotate "8 落ちた E2E の続き($n)" 700
   # 長いテストの手順ごとの経過時間(e2e/helpers.ts の timedSteps)。時間切れが、止まった手順か、全体の遅さかを見分ける
   grep -aF -- '[e2e-time]' "$1" | cut -c1-90 | tail -n 9 | annotate "9 手順の経過時間($n)" 700
+  # 接続した側の確かめ(check-confined-browser の「参考:」の行。判定には入れない記録)。1 件 700 文字ほどで切れるので 2 つに分ける
+  grep -a -- '^参考: ' "$1" | sed -E 's/^参考: //' | cut -c1-130 | sed -n '1,5p' | annotate "10 接続した側の参考 1($n)" 700
+  grep -a -- '^参考: ' "$1" | sed -E 's/^参考: //' | cut -c1-130 | sed -n '6,10p' | annotate "11 接続した側の参考 2($n)" 700
   echo "::group::$(basename "$1"): 末尾の 100 行"
   tail -n 100 "$1"
   echo "::endgroup::"

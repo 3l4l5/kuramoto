@@ -78,6 +78,14 @@ describe("ci-confinement-lib.sh(閉じ込めの確かめの CI が、ログを�
     for (const l of r.out.split("\n")) if (l.startsWith("::error")) expect(l.length).toBeLessThan(900);
   });
 
+  it("show_reasons: 接続した側の「参考:」の行を、2 つの短い注釈に分けて出す(判定の行ではない)", () => {
+    const lines = Array.from({ length: 8 }, (_, i) => `参考: 診断 ${i + 1}: 開けた`).join("\n");
+    const r = run(`✗ 落ちた回: X\n${lines}\n`, 'show_reasons "$f"');
+    expect(r.out).toMatch(/^::error title=10 接続した側の参考 1\(x\.log\)::診断 1: 開けた.*診断 5: 開けた/m);
+    expect(r.out).toMatch(/^::error title=11 接続した側の参考 2\(x\.log\)::診断 6: 開けた.*診断 8: 開けた/m);
+    expect(r.out).not.toMatch(/title=1 ✗△\?---\(x\.log\)::[^\n]*参考/);
+  });
+
   it("どれか 1 つでも落ちれば、あとの確かめが通っても、最後は落ちる", () => {
     expect(run("a\n", 'need "$f" "^b"; need "$f" "^a"').code).toBe(1);
   });
