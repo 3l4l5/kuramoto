@@ -13,7 +13,7 @@ function run(log: string, body: string) {
   try {
     const f = join(dir, "x.log");
     writeFileSync(f, log);
-    const r = spawnSync("bash", ["-c", `. "${lib}"; f="${f}"; ${body}; exit $fail`], { encoding: "utf8" });
+    const r = spawnSync("bash", ["-c", `. "${lib}"; f="${f}"; ${body}; exit $fail`], { encoding: "utf8", env: { ...process.env, SKIP_DENY_LOG: "1", RUNNER_TEMP: dir } });
     return { code: r.status, out: r.stdout + r.stderr };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -62,11 +62,14 @@ describe("ci-confinement-lib.sh(閉じ込めの確かめの CI が、ログを�
     expect(r.out).toMatch(/::error title=期待どおりではない::.*\^b.*%0A.*\^c.*%0A.*終了コードが 0 ではない: 2/);
   });
 
-  it("show_reasons: ✗ の行と末尾も 1 件の注釈に入る(注釈は 10 件までなので、1 件にまとめる)", () => {
-    const r = run("%\n✗ 落ちた回: X\n○ ok\n", 'show_reasons "$f"');
-    expect(r.out.match(/^::error title=理由\(x\.log\)::/gm)).toHaveLength(1);
-    expect(r.out).toMatch(/::error title=理由\(x\.log\)::.*✗ 落ちた回: X.*%0A.*○ ok/);
-    expect(r.out).toContain("%25");
+  it("show_reasons: ✗ の行・Chrome の落ちた理由・末尾を、短い注釈に分けて出す(注釈は 1 件 700 文字ほどで切れるため)。中身が無い注釈は出さない", () => {
+    const r = run("%\n✗ 落ちた回: X\n[browser-server] FATAL: Check failed\n○ ok\n", 'show_reasons "$f"');
+    expect(r.out).toMatch(/^::error title=1 ✗△\?---\(x\.log\)::✗ 落ちた回: X/m);
+    expect(r.out).toMatch(/^::error title=2 Chrome の落ちた理由\(x\.log\)::.*FATAL/m);
+    expect(r.out).toMatch(/^::error title=3 ブラウザサーバーの先頭/m);
+    expect(r.out).not.toMatch(/title=5 落ちた E2E/);
+    expect(r.out).toMatch(/title=6 末尾\(x\.log\)::.*%25.*%0A/);
+    for (const l of r.out.split("\n")) if (l.startsWith("::error")) expect(l.length).toBeLessThan(900);
   });
 
   it("どれか 1 つでも落ちれば、あとの確かめが通っても、最後は落ちる", () => {

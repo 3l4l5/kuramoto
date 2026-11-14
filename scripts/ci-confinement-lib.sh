@@ -12,11 +12,22 @@ add_reason() {
   fail=1
 }
 
-# annotate <タイトル> : 標準入力を、複数行の 1 件のエラー注釈として出す(色の制御文字を除き、64KB の上限に収まるよう先頭 30000 文字まで)
+# annotate <タイトル> [最大の文字数] : 標準入力を、複数行の 1 件のエラー注釈として出す(色の制御文字を除く)。
+# ci_status / ci_run は注釈を 1 件 700 文字ほどで切る。読みたいものは、短い注釈に分けて出す(1 ステップ 10 件まで)
 annotate() {
+  local body
+  body="$(perl -pe 's/\e\[[0-9;]*[A-Za-z]//g' | head -c "${2:-30000}")"
+  [ -n "$body" ] || return 0
   printf '::error title=%s::' "$1"
-  perl -pe 's/\e\[[0-9;]*[A-Za-z]//g; s/%/%25/g; s/\r/%0D/g; s/\n/%0A/g' | head -c 30000
+  printf '%s\n' "$body" | perl -pe 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g'
   echo
+}
+
+# sandbox_denies: 閉じ込め(seatbelt)が断った操作のログ(macOS の統一ログ)から、ブラウザ・Chrome に関わる行を出す。直近 30 分。
+sandbox_denies() {
+  [ -z "${SKIP_DENY_LOG:-}" ] || return 0
+  { log show --last 30m --style compact --predicate 'eventMessage CONTAINS "deny"' 2>&1 || sudo log show --last 30m --style compact --predicate 'eventMessage CONTAINS "deny"' 2>&1; } \
+    | grep -iE 'Sandbox|deny' | grep -iE 'chrom|headless|node|playwright' | cut -c1-260
 }
 
 # need <ログ> <拡張正規表現>: その行が 1 つはあること
@@ -46,18 +57,18 @@ show_reasons() {
   echo "::group::$(basename "$1"): '---' で始まる行と、その前後"
   grep -n -B5 -A20 -- '^---' "$1" || echo "(「---」で始まる行は無い)"
   echo "::endgroup::"
-  # ci_status の注釈は 1 ステップ 10 件までなので、読みたいものは 1 件の長い注釈にまとめる:
-  # ✗ △ ? --- の行・E2E の落ちた試験の名前と件数・ブラウザの落ちた理由(Chrome の FATAL など)・末尾の 60 行
-  {
-    echo "[✗ △ ? --- の行]"
-    grep -E -- '^(✗|△|\?|---)' "$1" | cut -c1-300 | head -20
-    echo
-    echo "[E2E の落ちた試験・件数・ブラウザの落ちた理由]"
-    grep -E -- '^ +[0-9]+\) |[0-9]+ (failed|passed|flaky|did not run)|FATAL|Check failed|crash|\[browser-server\]|Timeout|has been closed|ProcessSingleton|Operation not permitted|deny' "$1" | cut -c1-300 | head -30
-    echo
-    echo "[末尾の 60 行]"
-    tail -n 60 "$1" | cut -c1-300
-  } | annotate "理由($(basename "$1"))"
+  # ci_status の注釈は 1 ステップ 10 件まで、1 件 700 文字ほどで切れる。読みたいものを、短い注釈に分けて出す
+  local n; n="$(basename "$1")"
+  grep -E -- '^(✗|△|\?|---)' "$1" | cut -c1-200 | annotate "1 ✗△?---($n)" 700
+  grep -E -- 'FATAL|Check failed|SIGTRAP|Permission denied|crash|did exit|Operation not permitted' "$1" | cut -c1-220 | head -6 | annotate "2 Chrome の落ちた理由($n)" 700
+  grep -F -- '[browser-server]' "$1" | cut -c1-200 | head -6 | annotate "3 ブラウザサーバーの先頭($n)" 700
+  grep -F -- '[browser-server]' "$1" | cut -c1-200 | tail -6 | annotate "4 ブラウザサーバーの末尾($n)" 700
+  grep -E -- '^ +[0-9]+\) |Error:|[0-9]+ (failed|did not run)' "$1" | grep -v 'Test Files' | cut -c1-200 | head -8 | annotate "5 落ちた E2E($n)" 700
+  tail -n 10 "$1" | cut -c1-200 | annotate "6 末尾($n)" 700
+  # 閉じ込めが断った操作(sandbox の deny)。Chrome のログと突き合わせる。全文はログの末尾に足して artifact に残す
+  sandbox_denies > "${RUNNER_TEMP:-/tmp}/deny.out" 2>&1 || true
+  { echo; echo "--- sandbox の deny(log show。chrome・node・playwright に関わる行。$(wc -l < "${RUNNER_TEMP:-/tmp}/deny.out" | tr -d ' ') 行)"; head -n 150 "${RUNNER_TEMP:-/tmp}/deny.out"; } >> "$1"
+  head -n 8 "${RUNNER_TEMP:-/tmp}/deny.out" | cut -c1-200 | annotate "7 sandbox の deny($n)" 700
   echo "::group::$(basename "$1"): 末尾の 100 行"
   tail -n 100 "$1"
   echo "::endgroup::"
@@ -66,7 +77,7 @@ show_reasons() {
 # finish: 貯めた理由を 1 件の注釈として出し、落ちていれば 1 で終わる(各ステップの最後に呼ぶ)
 finish() {
   if [ "$fail" != 0 ]; then
-    printf '%s' "$reasons" | annotate "期待どおりではない"
+    printf '%s' "$reasons" | annotate "期待どおりではない" 3000
     exit 1
   fi
   exit 0
