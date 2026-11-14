@@ -83,12 +83,15 @@ export class Project {
   private readonly sqlite: Db | undefined;
   /** スコープつきの口(このファイルのプロジェクトの project_id の行だけを見る・書く)。 */
   readonly pdb: ProjectDb;
+  /** この MySQL が、このマシン(ループバック)で待ち受けているポート。閉じ込めの中から断るポートに入れる(ADR-0060)。SQLite・外の DB では無い */
+  readonly mysqlLocalPort: number | undefined;
 
   /** 直接 new せず Project.open を使う(開いたあとの seed・席埋めが非同期のため)。 */
   private constructor(path: string, readonly clock: Clock, projectId?: number, mysql?: MysqlHandle) {
     if (mysql) {
       if (projectId === undefined) throw new Error("MySQL でプロジェクトを開くには、プロジェクトの id が要ります");
       this.pdb = new ProjectDb(mysql.kysely, projectId);
+      this.mysqlLocalPort = mysql.localPort;
     } else {
       this.sqlite = openDb(path, PROJECT_MIGRATIONS, { projectId });
       this.pdb = new ProjectDb(this.sqlite, projectId ?? 0);

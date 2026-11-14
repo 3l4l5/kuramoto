@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Kysely, MysqlAdapter, MysqlIntrospector, MysqlQueryCompiler, type DatabaseConnection, type Driver, type QueryResult } from "kysely";
 import { describe, expect, it } from "vitest";
 import { mysqlDialect } from "./dialect/mysql.js";
-import { connectMysql, DatabaseConnectError, describeConnectError, isLoopbackHost, poolOptions } from "./mysql.js";
+import { connectMysql, DatabaseConnectError, describeConnectError, isLoopbackHost, openMysql, poolOptions } from "./mysql.js";
 import { DbHealth, isConnectionError } from "./mysql-health.js";
 import { sqliteHasProjects, startDatabase, SQLITE_NOT_MIGRATED } from "./startup.js";
 import { openDb } from "./sqlite.js";
@@ -33,6 +33,17 @@ describe("プールの設定と TLS", () => {
   it("ループバックの判定", () => {
     for (const h of ["localhost", "127.0.0.1", "127.1.2.3", "::1", "[::1]"]) expect(isLoopbackHost(h)).toBe(true);
     for (const h of ["db.example.com", "10.0.0.5", "127.0.0.1.evil.com"]) expect(isLoopbackHost(h)).toBe(false);
+  });
+
+  it("openMysql は、手元(ループバック)の DB のポートを localPort に持つ(ポートの省略は 3306)。外の DB では持たない(ADR-0060)", async () => {
+    const open = async (cfg: Parameters<typeof openMysql>[0], opts?: Parameters<typeof openMysql>[1]) => {
+      const h = openMysql(cfg, opts);
+      await h.close();
+      return h.localPort;
+    };
+    expect(await open({ url: "mysql://u@127.0.0.1:3307/db" })).toBe(3307);
+    expect(await open({ url: "mysql://u@localhost/db" })).toBe(3306);
+    expect(await open({ url: "mysql://u@db.example.com:3306/db", tls: { ca: "/ca.pem" } }, { readFile: () => Buffer.from("PEM") })).toBeUndefined();
   });
 
   it("接続できなかったときの理由には、パスワードを含めない", () => {
@@ -224,6 +235,21 @@ describe("KURAMOTO_DATABASE_URL は閉じ込めの中へ渡さない", () => {
       expect(conf.hiddenEnv).toContain(DATABASE_URL_ENV);
     } finally {
       delete process.env[DATABASE_URL_ENV];
+    }
+  });
+
+  it("Kuramoto 自身の MySQL が手元にあるときは、そのポートも、閉じ込めの中から断るポートに入る(ADR-0060)。設定で足したポートと重ならない。SQLite・外の DB では足さない", async () => {
+    const saved = process.env.KURAMOTO_PORT;
+    delete process.env.KURAMOTO_PORT;
+    try {
+      const ports = async (mysqlLocalPort: number | undefined, setting?: string) =>
+        (await confinementFor({ setting: async () => setting, mysqlLocalPort } as never, { gitDir: "/g", path: "/w" } as never, "qa")).deniedLocalPorts;
+      expect(await ports(3306)).toEqual([4300, 3306]);
+      expect(await ports(3306, "3306 6379")).toEqual([4300, 3306, 6379]);
+      expect(await ports(undefined)).toEqual([4300]);
+    } finally {
+      if (saved === undefined) delete process.env.KURAMOTO_PORT;
+      else process.env.KURAMOTO_PORT = saved;
     }
   });
 });
