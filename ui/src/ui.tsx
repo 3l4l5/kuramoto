@@ -23,8 +23,3 @@ export function Btn({ kind = "outline", size = "md", type = "button", ...rest }:
   return <Button type={type} variant={VARIANT[kind]} size={small(size) ? "sm" : "md"} {...rest} />;
 }
 
-/** リンクをボタンの見た目で出す(ダウンロードなど)。 */
-export function LinkBtn({ kind = "outline", size = "md", className, ...rest }: ComponentProps<"a"> & { kind?: BtnKind; size?: BtnSize }) {
-  const cls = ["ds-btn", `ds-btn--${VARIANT[kind]}`, small(size) && "ds-btn--sm", className].filter(Boolean).join(" ");
-  return <a className={cls} {...rest} />;
-}
