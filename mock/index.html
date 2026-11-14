@@ -954,7 +954,7 @@ table.vt th { color: var(--muted); font-weight: 500; }
         n.tag.className = 'tag idle'; n.tag.innerHTML = '<span class="name">おつかれさま</span>';
       } else {
         n.tag.className = 'tag idle';
-        n.tag.innerHTML = '<span class="name"><b>' + m.look.n + '</b>' + (m.base ? '待機中 <span class="zz">z</span>' : '手すき') + helper + '</span>';
+        n.tag.innerHTML = '<span class="name"><b>' + m.look.n + '</b>' + (m.base ? '待機中 <span class="zz">z</span>' : 'free') + helper + '</span>';
       }
     }));
     for (const [id, n] of nodes) if (!alive.has(id)) { n.p.remove(); n.tag.remove(); n.lap.remove(); nodes.delete(id); }
@@ -1283,7 +1283,7 @@ table.vt th { color: var(--muted); font-weight: 500; }
       + fd.units.map((u, i) => '<div class="knobs"><div style="display:flex;gap:8px;align-items:center"><label class="sr" for="f-' + i + 'name">島の名前</label><input type="text" id="f-' + i + 'name" data-fn="' + i + '" value="' + u.name + '" style="flex:1;height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink);font:inherit;font-weight:700">'
         + (fd.units.length > 1 ? '<button type="button" class="x" data-fdel="' + i + '" aria-label="この島を消す">×</button>' : '') + '</div>'
         + '<div class="opts">' + ORDER.map((r) => '<label><input type="checkbox" data-fr="' + i + '" value="' + r + '"' + (u.roles.includes(r) ? ' checked' : '') + '>' + ROLES[r].name + '</label>').join('') + '</div>'
-        + sl(i, 'max', '最大人数', 1, lim[i], ' 人') + sl(i, 'summonAt', '応援を呼ぶ待ち件数', 1, 6, ' 件') + sl(i, 'idleSec', '手すきで帰るまで', 2, 30, ' 秒') + '</div>').join('')
+        + sl(i, 'max', '最大人数', 1, lim[i], ' 人') + sl(i, 'summonAt', '応援を呼ぶ待ち件数', 1, 6, ' 件') + sl(i, 'idleSec', 'freeで帰るまで', 2, 30, ' 秒') + '</div>').join('')
       + (fd.units.length < 2 ? '<button type="button" id="f-add" style="height:34px;border-radius:8px;border:1px dashed var(--line);background:var(--bg)">+ 島を足す(2 つまで)</button>' : '')
       + '<div><span class="h" style="font-size:13px;font-weight:700">仕事の取り方</span><div class="opts">'
       + [['down', '下流優先(仕掛かりを先に片付ける)'], ['start', '着手優先(新しいチケットから取る)']].map(([k, l]) => '<label><input type="radio" name="pull" value="' + k + '"' + (fd.pull === k ? ' checked' : '') + '>' + l + '</label>').join('') + '</div>'

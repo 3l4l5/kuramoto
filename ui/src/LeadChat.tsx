@@ -6,7 +6,7 @@ import { duration, useAct, useNow } from "./hooks";
 import { Btn } from "./ui";
 import { Input } from "./ds";
 
-/** リーダーとのチャット(非同期)。書いておけば、リーダーが手すきのときに返事をする。 */
+/** リーダーとのチャット(非同期)。書いておけば、リーダーがfreeのときに返事をする。 */
 export function LeadChat({ id }: { id: number }) {
   const { data } = useQuery({ queryKey: ["lead-chat", id], queryFn: () => api<LeadChatView>("GET", `/projects/${id}/lead-chat`), refetchInterval: 2000 });
   const act = useAct();
@@ -40,7 +40,7 @@ export function LeadChat({ id }: { id: number }) {
         {w && (
           <li className="lc-work" aria-live="polite">
             {w.state === "queued" ? (
-              <span className="hint">{data.lead}が手すきになったら読みます</span>
+              <span className="hint">{data.lead}がfreeになったら読みます</span>
             ) : (
               <span className="hint">
                 {data.lead}が返事を書いています · 経過 {duration(Math.max(0, Math.round((now - Date.parse(w.startedAt)) / 1000)))}

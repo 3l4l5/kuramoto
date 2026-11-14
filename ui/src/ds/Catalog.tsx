@@ -147,10 +147,10 @@ function Components() {
           <Notice tone="ok">この流れで保存できます</Notice>
         </div>
       </Block>
-      <Block title="吹き出しとアバター" note="作業中・手すき">
+      <Block title="吹き出しとアバター" note="作業中・free">
         <div className="ds-cat__line ds-cat__members">
           <Member bubble="#42 実装中…" cloth="dev" />
-          <Member bubble="♪ 手すき" idle cloth="review" hair="dark" />
+          <Member bubble="♪ free" idle cloth="review" hair="dark" />
         </div>
       </Block>
       <Block title="机(オフィスの絵)">

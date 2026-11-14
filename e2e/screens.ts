@@ -1,6 +1,6 @@
 /**
  * 画面の見た目を撮り直すためのフェイクのデータ(E2E_SCREENS=1 で e2e/server.ts が使う)。
- * プロジェクトとチケット 5 件・開発ルール 4 件を API で作り、ツリー・ボードに出る 5 つの状態(作業中・あなたの番・止まっている・待ち・手すき)は
+ * プロジェクトとチケット 5 件・開発ルール 4 件を API で作り、ツリー・ボードに出る 5 つの状態(作業中・あなたの番・止まっている・待ち・free)は
  * 画面データ(GET /api/projects/:id)の tickets を差し替えて作る。担当を動かさずに、いつでも同じ絵を撮れる。
  * 撮り方は docs/screenshots/80/README.md。
  */
@@ -47,7 +47,7 @@ export function withTreeStates(view: ProjectView): ProjectView {
         return { ...t, stage: "decision", started: true, triaging: false };
       case 3: // 待ち: #1 が終わるのを待っている
         return { ...t, stage: "dev", triaging: false, waitFor: [1] };
-      case 4: // 手すき: レビューで、手が空くのを待っている
+      case 4: // free: レビューで、手が空くのを待っている
         return { ...t, stage: "review", started: true, triaging: false };
       case 5: // 止まっている: 「直すまで進めない」ルールに反している
         return { ...t, stage: "dev", started: true, triaging: false, ruleBlocked: ["テストを足す"] };

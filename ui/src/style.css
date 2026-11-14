@@ -1066,7 +1066,7 @@ body { background: var(--bg); }
 .officefloor .of-drawer footer { display: flex; gap: var(--sp-2); padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--line); margin-top: var(--sp-3); }
 .officefloor .of-drawer footer .ds-input { flex: 1; }
 /* パソコン(試作 office どおり): 駅の名前は上の縁に乗る丸いラベル、路線の名前も黒い丸いラベル。
-   メンバーの選択は頭の青い輪、手すきは「♪ 手すき」の付箋の吹き出し。机の絵は出さず、駅の下に「待ち N」だけ出す。スマホは下のスマホ用の指定で今のまま */
+   メンバーの選択は頭の青い輪、freeは「♪ free」の付箋の吹き出し。机の絵は出さず、駅の下に「待ち N」だけ出す。スマホは下のスマホ用の指定で今のまま */
 @media (min-width: 701px) {
   .officefloor .of-desk[data-loc="lead"] { --c: var(--lead); }
   .officefloor .of-shelf { --c: var(--ok); }

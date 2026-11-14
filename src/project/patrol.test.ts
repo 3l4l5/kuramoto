@@ -400,7 +400,7 @@ describe("リーダーの見回り(ADR-0026)", () => {
       expect(found[0]!.reason).toContain(`#${gone.number}`);
     });
 
-    it("手すきの席があるのに、取りかかれるはずの先頭が一定時間取られていないものを見つける(待っているものも道連れに数える)", async () => {
+    it("freeの席があるのに、取りかかれるはずの先頭が一定時間取られていないものを見つける(待っているものも道連れに数える)", async () => {
       const { p, clock, make } = await setup();
       await p.saveFormation({ pull: "down", units: [{ name: "開発の島", roles: ["dev"], maxMembers: 2, summonAt: 2, idleSec: 600 }] });
       const head = await make("先頭");

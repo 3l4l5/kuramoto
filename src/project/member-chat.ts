@@ -36,7 +36,7 @@ export function isFinishedTicket(t: Pick<TicketRow, "stage">): boolean {
   return t.stage === "done" || t.stage === "dropped";
 }
 
-/** メンバーが「今」持っているチケット: 起動中ならその起動のチケット、手すきなら直前に動いたチケット。話しかけた内容はここにひも付く。 */
+/** メンバーが「今」持っているチケット: 起動中ならその起動のチケット、freeなら直前に動いたチケット。話しかけた内容はここにひも付く。 */
 export async function currentTicketOf(p: Project, memberId: number): Promise<{ ticketId: number; role: Role } | null> {
   // 起動中のものを先に、無ければ直前の起動(チケットか、聞かれたチケットを持つもの)
   const withTicket = () =>
@@ -180,14 +180,14 @@ export function memberChatTools(p: Project, member: MemberRow, ticket: TicketRow
 
 export type MemberNow = {
   member: { id: number; name: string; unit: string | null; helper: boolean };
-  /** working: 起動中。chatting: 責任者と話している最中(チケットの仕事は止まっている)。idle: 手すき(last に直前に終えたチケット)。 */
+  /** working: 起動中。chatting: 責任者と話している最中(チケットの仕事は止まっている)。idle: free(last に直前に終えたチケット)。 */
   state: "working" | "chatting" | "idle";
   ticket: { id: number; number: number; title: string; kind: string; stage: string; rounds: number; activeMin: number; tokens: number } | null;
   /** 今の起動の種類(実装・直し・レビューなど) */
   doing: { kind: string; role: string; model: string | null; live: string | null; startedAt: string } | null;
-  /** 手すきのとき、直前に終えたチケット */
+  /** freeのとき、直前に終えたチケット */
   last: { number: number; title: string; endedAt: string; outcome: string | null } | null;
-  /** 直近の手順(起動中ならその起動、手すきなら直前の起動。古い順) */
+  /** 直近の手順(起動中ならその起動、freeなら直前の起動。古い順) */
   steps: { at: string; kind: string; text: string }[];
   /** そのメンバーの直近の出来事(古い順) */
   events: { at: string; type: string; ticket: number | null }[];
@@ -207,7 +207,7 @@ export async function memberNow(p: Project, memberId: number, steps = 8): Promis
     .orderBy("r.id", "desc")
     .limit(1)
     .executeTakeFirst();
-  // 起動中でないとき(手すき)は、直前に終えたチケットの仕事
+  // 起動中でないとき(free)は、直前に終えたチケットの仕事
   const lastRun = open
     ? null
     : ((await inScope(p.pdb, "runs").where("member_id", "=", memberId).where("ticket_id", "is not", null).where("ended_at", "is not", null).orderBy("id", "desc").limit(1).executeTakeFirst()) as unknown as

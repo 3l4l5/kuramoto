@@ -260,7 +260,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     await expect(shelf.getByRole("button", { name: /を merge$/ })).toHaveCount(1);
   });
 
-  await test.step("リーダーと話す: 書いておくと、手すきのときに返事が来る", async () => {
+  await test.step("リーダーと話す: 書いておくと、freeのときに返事が来る", async () => {
     await page.getByRole("button", { name: "リーダーと話す", exact: true }).click();
     const chat = page.getByRole("complementary", { name: "リーダーと話す" });
     await chat.getByLabel("リーダーへのメッセージ").fill("進み具合はどう?");

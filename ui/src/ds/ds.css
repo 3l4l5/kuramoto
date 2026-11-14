@@ -120,7 +120,7 @@ a.ds-btn { text-decoration: none; }
 
 /* ---- 絵(art): ここから下は絵の形の大きさだけ直書きしてよい ---- */
 
-/* 吹き出しとアバター(作業中・手すき) */
+/* 吹き出しとアバター(作業中・free) */
 .ds-member { position: relative; display: inline-flex; flex-direction: column; align-items: center; font-family: var(--f-body); }
 .ds-bubble { padding: var(--sp-1) var(--sp-2); border: 2px solid var(--art-outline); border-radius: var(--r-lg); background: var(--surface); font-size: var(--fs-xs); line-height: var(--lh-tight); white-space: nowrap; box-shadow: var(--shadow); color: var(--ink); }
 .ds-bubble--idle { background: var(--art-note); box-shadow: none; }

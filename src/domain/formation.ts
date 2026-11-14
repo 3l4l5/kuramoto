@@ -10,7 +10,7 @@ export type UnitSpec = {
   maxMembers: number;
   /** 待ちがこの件数以上で応援を呼ぶ。 */
   summonAt: number;
-  /** 手すきがこの秒数続くと応援は帰る。 */
+  /** freeがこの秒数続くと応援は帰る。 */
   idleSec: number;
   /** 受け持つリポジトリ(owner/repo)。空ならすべて(ADR-0019)。 */
   repos?: string[];

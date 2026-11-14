@@ -488,7 +488,7 @@ describe("編成", () => {
     expect(runs[1]!.member_id).not.toBe(runs[0]!.member_id);
   });
 
-  it("島のメンバーは最大人数ぶんずっといる。応援は呼ばず、手すきが続いても帰らない。人数を変えると席替えで増減する(ADR-0023)", async () => {
+  it("島のメンバーは最大人数ぶんずっといる。応援は呼ばず、freeが続いても帰らない。人数を変えると席替えで増減する(ADR-0023)", async () => {
     const { p, d, clock } = await setup(script());
     const seats = async () => Promise.all((await p.currentFormation()).units.map(async (u) => (await p.membersOfUnit(u.id)).length));
     expect(await seats()).toEqual([4, 3]); // 既定の編成: 開発 4 人・レビュー 3 人

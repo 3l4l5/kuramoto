@@ -137,7 +137,7 @@ export function UnitDialog({ projectId, unitId, close, onEdit }: { projectId: nu
                       {m.work.lastStep ? <span className="hint"> · {m.work.lastStep}</span> : null}
                     </span>
                   ) : (
-                    <span className="hint">手すき</span>
+                    <span className="hint">free</span>
                   )}
                 </li>
               ))}

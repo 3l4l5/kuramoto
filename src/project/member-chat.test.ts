@@ -264,7 +264,7 @@ describe("終わったチケット(done・dropped)について話しかける", 
 });
 
 describe("メンバーの今していること", () => {
-  it("手すきなら「手すき」と直前に終えたチケット、起動中ならチケットの種類・工程・往復・経過・トークンと直近の手順", async () => {
+  it("freeなら「free」と直前に終えたチケット、起動中ならチケットの種類・工程・往復・経過・トークンと直近の手順", async () => {
     const { p, d } = await setup(() => undefined);
     const { ticket, member } = await worked(p, d);
     const idle = await memberNow(p, member.id);
