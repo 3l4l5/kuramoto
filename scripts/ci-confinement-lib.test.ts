@@ -21,11 +21,11 @@ function run(log: string, body: string) {
 }
 
 describe("ci-confinement-lib.sh(閉じ込めの確かめの CI が、ログを読む道具)", () => {
-  it("need: 期待の行があれば通り、無ければエラー注釈を出して落とす", () => {
+  it("need: 期待の行があれば通り、無ければ理由を貯めて落とす(注釈は finish が 1 件にまとめる)", () => {
     expect(run("○ 入口を壊すと落ちた\n", 'need "$f" "^○ 入口を壊すと落ちた"').code).toBe(0);
     const r = run("✗ 入口を壊したのに通った\n", 'need "$f" "^○ 入口を壊すと落ちた"');
     expect(r.code).toBe(1);
-    expect(r.out).toContain("::error::x.log に期待の行が無い");
+    expect(r.out).toContain("FAIL: x.log に期待の行が無い");
   });
 
   it("forbid: 出てはいけない行があれば落とす(その行も出す)。無ければ通る", () => {
@@ -50,6 +50,23 @@ describe("ci-confinement-lib.sh(閉じ込めの確かめの CI が、ログを�
     expect(r.out).toContain("2:--- 確かめられなかった: 理由");
     expect(r.out).toContain("前の行");
     expect(r.out).toContain("後の行");
+  });
+
+  it("finish: 貯めた理由を、改行を %0A にした 1 件の注釈にまとめて出し、落ちる。何も無ければ通る", () => {
+    const ok = run("a\n", 'need "$f" "^a"; finish');
+    expect(ok.code).toBe(0);
+    expect(ok.out).not.toContain("::error");
+    const r = run("a\n", 'need "$f" "^b"; need "$f" "^c"; need_code 手順 2; finish');
+    expect(r.code).toBe(1);
+    expect(r.out.match(/^::error title=期待どおりではない::/gm)).toHaveLength(1);
+    expect(r.out).toMatch(/::error title=期待どおりではない::.*\^b.*%0A.*\^c.*%0A.*終了コードが 0 ではない: 2/);
+  });
+
+  it("show_reasons: ✗ の行と末尾も 1 件の注釈に入る(注釈は 10 件までなので、1 件にまとめる)", () => {
+    const r = run("%\n✗ 落ちた回: X\n○ ok\n", 'show_reasons "$f"');
+    expect(r.out.match(/^::error title=理由\(x\.log\)::/gm)).toHaveLength(1);
+    expect(r.out).toMatch(/::error title=理由\(x\.log\)::.*✗ 落ちた回: X.*%0A.*○ ok/);
+    expect(r.out).toContain("%25");
   });
 
   it("どれか 1 つでも落ちれば、あとの確かめが通っても、最後は落ちる", () => {

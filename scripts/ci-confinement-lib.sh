@@ -3,29 +3,40 @@
 # 期待の文言は docs/e2e-logs/README.md の「照合の手順」と同じ(scripts/check-*.ts と e2e/auth.spec.ts が出す文字列)。
 
 fail=0
+reasons=""
+
+# 失敗の理由を貯める(注釈は 1 ステップに 10 件までなので、finish で 1 件にまとめて出す)
+add_reason() {
+  reasons="${reasons}${1}"$'\n'
+  echo "FAIL: $1"
+  fail=1
+}
+
+# annotate <タイトル> : 標準入力を、複数行の 1 件のエラー注釈として出す(色の制御文字を除き、64KB の上限に収まるよう先頭 30000 文字まで)
+annotate() {
+  printf '::error title=%s::' "$1"
+  perl -pe 's/\e\[[0-9;]*[A-Za-z]//g; s/%/%25/g; s/\r/%0D/g; s/\n/%0A/g' | head -c 30000
+  echo
+}
 
 # need <ログ> <拡張正規表現>: その行が 1 つはあること
 need() {
   if ! grep -Eq -- "$2" "$1"; then
-    echo "::error::$(basename "$1") に期待の行が無い: $2"
-    fail=1
+    add_reason "$(basename "$1") に期待の行が無い: $2"
   fi
 }
 
 # forbid <ログ> <拡張正規表現>: その行が 1 つも無いこと
 forbid() {
   if grep -Eq -- "$2" "$1"; then
-    echo "::error::$(basename "$1") に出てはいけない行がある: $2"
-    grep -En -- "$2" "$1" | head -5
-    fail=1
+    add_reason "$(basename "$1") に出てはいけない行がある: $2 → $(grep -En -- "$2" "$1" | head -5 | cut -c1-300 | tr '\n' '|')"
   fi
 }
 
 # need_code <手順の名前> <終了コード> [期待の終了コード(既定 0)]
 need_code() {
   if [ "$2" != "${3:-0}" ]; then
-    echo "::error::$1 の終了コードが ${3:-0} ではない: $2"
-    fail=1
+    add_reason "$1 の終了コードが ${3:-0} ではない: $2"
   fi
 }
 
@@ -35,11 +46,28 @@ show_reasons() {
   echo "::group::$(basename "$1"): '---' で始まる行と、その前後"
   grep -n -B5 -A20 -- '^---' "$1" || echo "(「---」で始まる行は無い)"
   echo "::endgroup::"
-  # ci_status の注釈には、::group:: の中のログは出ない。理由の行は、エラー注釈としても出す(1 行 400 文字まで、12 行まで)
-  grep -E -- '^---|ブラウザサーバー|理由:|Error|ProcessSingleton|sandbox|Operation not permitted|Executable' "$1" | cut -c1-400 | head -12 | while IFS= read -r l; do echo "::error title=理由($(basename "$1"))::$l"; done
-  # E2E の落ちた試験の名前・件数・ブラウザの落ちた理由(Chrome の FATAL など)も、注釈に出す(30 行まで)
-  grep -E -- '^ +[0-9]+\) |[0-9]+ (failed|passed|flaky|did not run)|FATAL|Check failed|crash|\[browser-server\]|Timeout|closed' "$1" | cut -c1-300 | head -30 | while IFS= read -r l; do echo "::error title=E2E($(basename "$1"))::$l"; done
+  # ci_status の注釈は 1 ステップ 10 件までなので、読みたいものは 1 件の長い注釈にまとめる:
+  # ✗ △ ? --- の行・E2E の落ちた試験の名前と件数・ブラウザの落ちた理由(Chrome の FATAL など)・末尾の 60 行
+  {
+    echo "[✗ △ ? --- の行]"
+    grep -E -- '^(✗|△|\?|---)' "$1" | cut -c1-300 | head -20
+    echo
+    echo "[E2E の落ちた試験・件数・ブラウザの落ちた理由]"
+    grep -E -- '^ +[0-9]+\) |[0-9]+ (failed|passed|flaky|did not run)|FATAL|Check failed|crash|\[browser-server\]|Timeout|has been closed|ProcessSingleton|Operation not permitted|deny' "$1" | cut -c1-300 | head -30
+    echo
+    echo "[末尾の 60 行]"
+    tail -n 60 "$1" | cut -c1-300
+  } | annotate "理由($(basename "$1"))"
   echo "::group::$(basename "$1"): 末尾の 100 行"
   tail -n 100 "$1"
   echo "::endgroup::"
+}
+
+# finish: 貯めた理由を 1 件の注釈として出し、落ちていれば 1 で終わる(各ステップの最後に呼ぶ)
+finish() {
+  if [ "$fail" != 0 ]; then
+    printf '%s' "$reasons" | annotate "期待どおりではない"
+    exit 1
+  fi
+  exit 0
 }

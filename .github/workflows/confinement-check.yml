@@ -49,9 +49,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+        timeout-minutes: 10
       # ランナーには Google Chrome はあるが、Playwright のブラウザ(chromium・headless shell)は入っていない。
       # ブラウザ専用の狭い閉じ込めの中のブラウザサーバーが、Chrome を起動できないときの代わり(Playwright の Chromium)に要る
       - run: npx playwright install chromium
+        timeout-minutes: 10
 
       - name: 準備(ログの置き場所と日付・ホームのダミー)
         run: |
@@ -76,10 +78,11 @@ jobs:
           . scripts/ci-confinement-lib.sh
           need "$L/$D-env.log" 'Google Chrome'
           need "$L/$D-env.log" 'e2e/auth\.spec\.ts'
-          exit $fail
+          finish
 
       - name: (a) 設定あり (i)(iii) - 閉じ込めの中のブラウザ E2E と、シンボリックリンク経由の読み取りの断り
         if: ${{ !cancelled() }}
+        timeout-minutes: 30
         run: |
           . scripts/ci-confinement-lib.sh
           set +e
@@ -95,7 +98,7 @@ jobs:
           set -e
           { echo; echo "--- e2e/auth.spec.ts を、閉じ込めの外で直に流した出力(playwright test e2e/auth.spec.ts)。終了コード: $auth_rc"; cat "$RUNNER_TEMP/auth.out"; } | tee -a "$L/$D-a-confined.log"
           need_code "(a) e2e/auth.spec.ts" "$auth_rc"
-          [ "$(grep -c '✓.*auth\.spec\.ts' "$RUNNER_TEMP/auth.out")" -ge 4 ] || { echo "::error::auth.spec.ts の ✓ が 4 本無い"; fail=1; }
+          [ "$(grep -c '✓.*auth\.spec\.ts' "$RUNNER_TEMP/auth.out")" -ge 4 ] || add_reason "auth.spec.ts の ✓ が 4 本無い"
           need "$L/$D-a-confined.log" '^--- npm test の終了コード: 0'
           need "$L/$D-a-confined.log" '^○ E2E [0-9]+ 件が通った'
           need "$L/$D-a-confined.log" '^○ 接続した側からの攻撃は、どれも失敗した'
@@ -105,10 +108,11 @@ jobs:
           forbid "$L/$D-a-confined.log" '^△'
           forbid "$L/$D-a-confined.log" '^--- (確かめられなかった|接続した側の確かめが動かなかった|playwright test --list が失敗した)'
           [ "$fail" = 0 ] || show_reasons "$L/$D-a-confined.log"
-          exit $fail
+          finish
 
       - name: (b) 設定あり (ii) - 入口をわざと壊すと落ちる
         if: ${{ !cancelled() }}
+        timeout-minutes: 30
         run: |
           . scripts/ci-confinement-lib.sh
           set +e
@@ -118,14 +122,15 @@ jobs:
           need_code "(b) check-confined-browser --break" "$rc"
           # 終わったら PhoneBar.tsx は元に戻る(差分が無いことを見る)
           { echo "--- git status --short(空なら元に戻っている)"; git status --short; } 2>&1 | tee -a "$L/$D-b-break.log"
-          [ -z "$(git status --short)" ] || { echo "::error::壊したまま戻っていない"; git checkout ui/src/PhoneBar.tsx; fail=1; }
+          [ -z "$(git status --short)" ] || { git checkout ui/src/PhoneBar.tsx; add_reason "壊したまま戻っていない"; }
           need "$L/$D-b-break.log" '^○ 入口を壊すと落ちた'
           forbid "$L/$D-b-break.log" '^(✗|---) (入口を壊したのに通った|確かめられなかった)'
           [ "$fail" = 0 ] || show_reasons "$L/$D-b-break.log"
-          exit $fail
+          finish
 
       - name: (c) 設定なし(今の既定の振る舞い)
         if: ${{ !cancelled() }}
+        timeout-minutes: 30
         run: |
           . scripts/ci-confinement-lib.sh
           set +e
@@ -136,10 +141,11 @@ jobs:
           # 起動できて E2E が流れた(○)か、起動できず知らせて通った(△)。どちらも既定の振る舞いのとおり。? は流れたか分からないので落とす
           need "$L/$D-c-no-browser-server.log" '^(○|△) 設定なし:'
           need "$L/$D-c-no-browser-server.log" '^--- npm test の終了コード: 0'
-          exit $fail
+          finish
 
       - name: (d) 断るポートが BLOCKED、ほかのポートは REACHED
         if: ${{ !cancelled() }}
+        timeout-minutes: 15
         run: |
           . scripts/ci-confinement-lib.sh
           # Kuramoto 自身の MySQL(127.0.0.1:3306)の代わりに、3306 で待ち受けるものを立てて、--denied-port 3306 が BLOCKED になることを見る(立っていないと見ない)。
@@ -167,7 +173,7 @@ jobs:
           t="$L/$D-d-team-ci-test.log"
           need "$t" '✓.*localhost を許していても、断るポート'
           forbid "$t" '(↓|skipped).*断るポート'
-          exit $fail
+          finish
 
       - name: ログ(env・a〜d)を artifact に上げる
         if: ${{ always() }}
@@ -245,7 +251,7 @@ jobs:
           forbid "$L/$D-e-mysql-rounds.log" '(飛ばしました\(KURAMOTO_SKIP_MYSQL_TESTS|mysql-test\(127\.0\.0\.1:3307\)に繋がりません)'
           need "$L/$D-e-mysql-rounds.log" 'Tests +[0-9]+ passed'
           forbid "$L/$D-e-mysql-rounds.log" '^✗ 落ちた回'
-          exit $fail
+          finish
 
       - name: ログ(e)を artifact に上げる
         if: ${{ always() }}
