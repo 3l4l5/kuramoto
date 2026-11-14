@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { PNG } from "pngjs";
 import pixelmatch from "pixelmatch";
 import { inScope } from "../db/count.js";
+import { compareColors, type ColorComparison, type ColorToken } from "./design-color.js";
 import type { Project } from "./project.js";
 
 /**
@@ -165,10 +166,14 @@ export type Comparison = {
   /** 大きさの違い(幅・高さ)の注意。同じなら空 */
   sizeNote: string;
   diff: Buffer;
+  /** 色の差分(形の差分とは別。画素ごとの ΔE と、主な色の比べ。#95) */
+  color: ColorComparison;
+  /** 色の差分を色付けした画像 */
+  colorDiff: Buffer;
 };
 
 /** 2 枚の画像を比べる。大きさが違えば、重なる範囲(左上から)で比べ、大きさの違いも知らせる。 */
-export function compareImages(reference: Buffer, actual: Buffer): Comparison {
+export function compareImages(reference: Buffer, actual: Buffer, tokens: ColorToken[] = []): Comparison {
   const a = PNG.sync.read(reference);
   const b = PNG.sync.read(actual);
   const w = Math.min(a.width, b.width);
@@ -184,29 +189,45 @@ export function compareImages(reference: Buffer, actual: Buffer): Comparison {
   const notes: string[] = [];
   if (a.width !== b.width) notes.push(`幅が違います(お手本 ${a.width}px・実装 ${b.width}px)。同じ幅で撮り直してください`);
   if (Math.abs(a.height - b.height) > Math.max(a.height, b.height) * 0.1) notes.push(`高さが大きく違います(お手本 ${a.height}px・実装 ${b.height}px)。要素の抜けや余白の違いを確かめてください`);
-  return { ratio: w * h ? n / (w * h) : 1, sizeNote: notes.join("。"), diff: PNG.sync.write(diff) };
+  // 形の差分(pixelmatch の threshold 0.1)は色の小さなずれを拾わないので、色の差(ΔE)を別に測る
+  const color = compareColors({ data: crop(a), width: w, height: h }, { data: crop(b), width: w, height: h }, w, h, tokens);
+  return { ratio: w * h ? n / (w * h) : 1, sizeNote: notes.join("。"), diff: PNG.sync.write(diff), color: color.stats, colorDiff: color.image };
 }
 
-/** 実装のスクリーンショットを受け取り、お手本と比べて残す。 */
+/** 見比べの結果の、色の差分(出来事・チケットの画面に残す分)。画像は colorDiff の id。 */
+export type ColorResult = ColorComparison & { colorDiff: number };
+
+/**
+ * 実装のスクリーンショットを受け取り、お手本と比べて残す。
+ * ticketId が null なのは、定期レビュー(チケットに属さない見比べ)。
+ * 色の差分の画像は、形の差分と同じく kind = diff で残す(出来事の color_diff が、どちらが色の差分かを指す。kind を足さないので、マイグレーションは要らない)。
+ */
 export async function recordComparison(
   p: Project,
   store: DesignStore,
-  a: { ticketId: number; screenKey: string; reference: { id: number; png: Buffer }; actual: Buffer },
-): Promise<Comparison & { actualId: number; diffId: number }> {
-  const c = compareImages(a.reference.png, a.actual);
+  a: { ticketId: number | null; screenKey: string; reference: { id: number; png: Buffer }; actual: Buffer; tokens?: ColorToken[] },
+): Promise<Comparison & { actualId: number; diffId: number; colorDiffId: number }> {
+  const c = compareImages(a.reference.png, a.actual, a.tokens);
   const stamp = p.now().replace(/[:.]/g, "-");
-  const actualKey = `tickets/${a.ticketId}/${a.screenKey}-${stamp}-actual.png`;
-  const diffKey = `tickets/${a.ticketId}/${a.screenKey}-${stamp}-diff.png`;
+  const dir = a.ticketId === null ? "periodic" : `tickets/${a.ticketId}`;
+  const actualKey = `${dir}/${a.screenKey}-${stamp}-actual.png`;
+  const diffKey = `${dir}/${a.screenKey}-${stamp}-diff.png`;
+  const colorDiffKey = `${dir}/${a.screenKey}-${stamp}-color-diff.png`;
   await store.put(actualKey, a.actual);
   await store.put(diffKey, c.diff);
+  await store.put(colorDiffKey, c.colorDiff);
   const actualId = await record(p, { ticket_id: a.ticketId, screen_key: a.screenKey, kind: "actual", store_key: actualKey, ...size(a.actual), diff_ratio: c.ratio });
   const diffId = await record(p, { ticket_id: a.ticketId, screen_key: a.screenKey, kind: "diff", store_key: diffKey, ...size(c.diff), diff_ratio: c.ratio });
-  await p.event("system", "design_compared", a.ticketId, { screen: a.screenKey, ratio: c.ratio, reference: a.reference.id, actual: actualId, diff: diffId });
-  return { ...c, actualId, diffId };
+  const colorDiffId = await record(p, { ticket_id: a.ticketId, screen_key: a.screenKey, kind: "diff", store_key: colorDiffKey, ...size(c.colorDiff), diff_ratio: c.color.ratio });
+  const color: ColorResult = { ...c.color, colorDiff: colorDiffId };
+  await p.event("system", "design_compared", a.ticketId, { screen: a.screenKey, ratio: c.ratio, reference: a.reference.id, actual: actualId, diff: diffId, color });
+  return { ...c, actualId, diffId, colorDiffId };
 }
 
-/** チケットの画面ごとの、最新の見比べ(お手本・実装・違い)。 */
-export async function latestComparisons(p: Project, ticketId: number): Promise<{ screen: string; ratio: number; at: string; reference: number | null; actual: number; diff: number }[]> {
+export type LatestComparison = { screen: string; ratio: number; at: string; reference: number | null; actual: number; diff: number; /** 色の差分(色の差分を持たない前の記録では null) */ color: ColorResult | null };
+
+/** チケットの画面ごとの、最新の見比べ(お手本・実装・違い・色の差分)。 */
+export async function latestComparisons(p: Project, ticketId: number): Promise<LatestComparison[]> {
   // 画像と、見比べたときの出来事を、それぞれ 1 文で取って突き合わせる
   const [images, events] = await Promise.all([
     inScope(p.pdb, "design_images").where("ticket_id", "=", ticketId).where("kind", "=", "actual").orderBy("id", "desc").execute(),
@@ -219,12 +240,12 @@ export async function latestComparisons(p: Project, ticketId: number): Promise<{
   }
   const rows = images.map((d) => ({ screen_key: d.screen_key, diff_ratio: d.diff_ratio as number, created_at: d.created_at, data: dataOf.get(d.id) ?? "" }));
   const seen = new Set<string>();
-  const out: { screen: string; ratio: number; at: string; reference: number | null; actual: number; diff: number }[] = [];
+  const out: LatestComparison[] = [];
   for (const r of rows) {
     if (seen.has(r.screen_key) || !r.data) continue;
     seen.add(r.screen_key);
-    const d = JSON.parse(r.data) as { reference: number; actual: number; diff: number };
-    out.push({ screen: r.screen_key, ratio: r.diff_ratio, at: r.created_at, reference: d.reference ?? null, actual: d.actual, diff: d.diff });
+    const d = JSON.parse(r.data) as { reference: number; actual: number; diff: number; color?: ColorResult };
+    out.push({ screen: r.screen_key, ratio: r.diff_ratio, at: r.created_at, reference: d.reference ?? null, actual: d.actual, diff: d.diff, color: d.color ?? null });
   }
   return out;
 }

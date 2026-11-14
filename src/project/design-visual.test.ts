@@ -7,6 +7,7 @@ import { ManualClock } from "../clock.js";
 import { FakeHarness, fixedAll, withResolutions } from "../harness/fake.js";
 import { ticketView } from "./ticket.js";
 import { createServer } from "node:http";
+import { colorDistance, deltaE76, rgbToLab } from "./design-color.js";
 import { blockRenderPort, compareImages, FileDesignStore, isLocalUrl, playwrightLocalHtmlRenderer, playwrightRenderer, playwrightUrlRenderer, referenceImage, renderableUrl, type Renderer, type UrlRenderer } from "./design-visual.js";
 import { Dispatcher } from "./dispatcher.js";
 import { agreeBlocker, putArtifact, putScreen, upsertRequirement, type DesignSystem } from "./planning.js";
@@ -43,6 +44,58 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
     expect(compareImages(a, a).ratio).toBe(0);
     expect(compareImages(a, png(40, 40, [255, 255, 255], [0, 0, 0])).ratio).toBeCloseTo(0.5, 1);
     expect(compareImages(a, png(30, 40, [255, 255, 255])).sizeNote).toContain("幅が違います");
+  });
+
+  it("形は同じで色だけ少し違う(背景 #FFFFFF と #F5F5F5)と、形の差分は 0 のまま、色の差分ははっきり出る(CIE76)", () => {
+    const white = png(40, 40, [255, 255, 255]);
+    const grey = png(40, 40, [245, 245, 245]);
+    const c = compareImages(white, grey);
+    expect(c.ratio).toBe(0); // pixelmatch(threshold 0.1)は、この差を拾わない
+    expect(c.color.method).toBe("CIE76");
+    expect(c.color.ratio).toBe(1);
+    expect(c.color.meanDeltaE).toBeGreaterThan(3);
+    expect(c.color.maxDeltaE).toBeCloseTo(colorDistance(0xffffff, 0xf5f5f5), 1);
+    const img = PNG.sync.read(c.colorDiff); // 色の差分の画像。違う画素は塗られる(黄など。白っぽい薄い色ではない)
+    expect(img.width).toBe(40);
+    expect([img.data[0], img.data[1], img.data[2]]).not.toEqual([255, 255, 255]);
+  });
+
+  it("全く同じ 2 枚では、色の差分は 0", () => {
+    const a = png(40, 40, [255, 255, 255], [47, 103, 212]);
+    const c = compareImages(a, a);
+    expect(c.ratio).toBe(0);
+    expect(c.color).toMatchObject({ ratio: 0, meanDeltaE: 0, maxDeltaE: 0, referenceOnly: [], actualOnly: [] });
+  });
+
+  it("目で分からない程度の違い(ΔE 2.3 以下)は、色の差分に数えない", () => {
+    const c = compareImages(png(20, 20, [255, 255, 255]), png(20, 20, [253, 253, 253]));
+    expect(c.color.maxDeltaE).toBeLessThan(2.3);
+    expect(c.color.ratio).toBe(0);
+  });
+
+  it("主な色を並べ、お手本にだけある色・実装にだけある色を挙げる。トークンに近い色にはトークン名を添える", () => {
+    // お手本: 白と青(トークン)。実装: 白と、トークンに近いが少し違う青 + ほぼ見えない程度の赤は入れない
+    const ref = png(40, 40, [255, 255, 255], [47, 103, 212]);
+    const act = png(40, 40, [255, 255, 255], [212, 47, 47]);
+    const tokens = [{ name: "--color-primary", value: "#2f67d4" }, { name: "--color-danger", value: "#d42f2f" }];
+    const c = compareImages(ref, act, tokens).color;
+    expect(c.referenceColors.map((x) => x.hex)).toEqual(expect.arrayContaining(["#FFFFFF", "#2F67D4"]));
+    expect(c.referenceOnly.map((x) => x.hex)).toEqual(["#2F67D4"]);
+    expect(c.actualOnly.map((x) => x.hex)).toEqual(["#D42F2F"]);
+    expect(c.referenceOnly[0]!.token).toMatchObject({ name: "--color-primary", deltaE: 0 });
+    expect(c.actualOnly[0]!.token).toMatchObject({ name: "--color-danger", deltaE: 0 });
+    expect(c.referenceColors.find((x) => x.hex === "#FFFFFF")!.token).toBeNull();
+    // トークンと少し違う色(#2F67D4 → #3468D0)は、近いトークンと、少し違うことが分かる
+    const near = compareImages(png(40, 40, [255, 255, 255]), png(40, 40, [255, 255, 255], [52, 104, 208]), tokens).color;
+    expect(near.actualOnly[0]!.token!.name).toBe("--color-primary");
+    expect(near.actualOnly[0]!.token!.deltaE).toBeGreaterThan(0.5);
+  });
+
+  it("ΔE(CIE76)の検算: 白 L=100、白と #F5F5F5 は約 3.5、同じ色は 0", () => {
+    expect(rgbToLab(255, 255, 255)[0]).toBeCloseTo(100, 1);
+    expect(rgbToLab(0, 0, 0)[0]).toBeCloseTo(0, 1);
+    expect(colorDistance(0xffffff, 0xf5f5f5)).toBeCloseTo(3.46, 1);
+    expect(deltaE76(rgbToLab(10, 20, 30), rgbToLab(10, 20, 30))).toBe(0);
   });
 
   it("お手本の画像は、同じ試作なら描き直さない", async () => {
@@ -95,10 +148,25 @@ describe("画面を画像で見比べる(ADR-0034)", () => {
       expect(workspace.designs.map((d) => d.file)).toEqual(expect.arrayContaining([".kuramoto/design/list.html", ".kuramoto/design/list.png", ".kuramoto/design/tokens.css", ".kuramoto/design/components.html", ".kuramoto/design/shots/list-diff.png"]));
       expect(replies[0]).toContain("お手本との違い: 50.0%");
       expect(replies[0]).toContain("違いが大きい");
+      // 形の差分に加えて、色の差分(ΔE・画像・主な色の比べ)が QA に渡る
+      expect(replies[0]).toContain("色の差分");
+      expect(replies[0]).toContain("ΔE");
+      expect(replies[0]).toContain("shots/list-color-diff.png");
+      expect(replies[0]).toContain("実装にだけある色: #C80000");
+      expect(workspace.designs.map((d) => d.file)).toContain(".kuramoto/design/shots/list-color-diff.png");
+      expect(dev).toContain("色の差分");
+      expect(qa).toContain("色の差分");
       expect(replies[1]).toContain("お手本はありません");
       const v = await ticketView(p, t.id);
       expect(v.designCompare).toMatchObject([{ screen: "list", name: "メモ一覧", ratio: 0.5 }]);
       expect(v.designCompare[0]!.reference).toBeTruthy();
+      // 画面(チケットの詳細)に出す、色の差分の数値と画像
+      const color = v.designCompare[0]!.color!;
+      expect(color).toMatchObject({ method: "CIE76", threshold: 2.3 });
+      expect(color.ratio).toBeCloseTo(0.5, 1);
+      expect(color.maxDeltaE).toBeGreaterThan(10);
+      expect(color.colorDiff).toBeGreaterThan(v.designCompare[0]!.diff);
+      expect(color.actualOnly.map((x) => x.hex)).toContain("#C80000");
     } finally {
       rmSync(ws, { recursive: true, force: true });
       rmSync(storeDir, { recursive: true, force: true });

@@ -3,6 +3,8 @@ import { isAbsolute, join, relative } from "node:path";
 import { z } from "zod";
 import { defineTool, type KuramotoTool } from "../harness/types.js";
 import { DESIGN_DIR, DIFF_WARN } from "./design.js";
+import { describeColorComparison } from "./design-color.js";
+import { designSystem } from "./planning.js";
 import { DEVICE_WIDTH, recordComparison, renderableUrl, type DesignStore, type Renderer, type UrlRenderer } from "./design-visual.js";
 import type { Project, TicketRow } from "./project.js";
 import type { Workspace } from "./workspace.js";
@@ -19,11 +21,13 @@ function workspaceFile(wsPath: string, path: string): { path: string } | { error
 /**
  * 実装した画面のスクリーンショットを、お手本の画像と見比べる道具(ADR-0034)。開発と QA に渡す。
  * 担当は作業場所に保存したスクリーンショットの場所を渡し、Kuramoto が比べて、違いの割合と違いを色付けした画像を返す。
+ * 形の差分に加えて、色の差分(ΔE・色の差分の画像・主な色の比べ。#95)も返す。
+ * ticket が null のときは、定期レビューの見比べ(チケットには残さない)。
  */
 export function compareScreenTools(
   p: Project,
   store: DesignStore,
-  ticket: TicketRow,
+  ticket: TicketRow | null,
   wsPath: string,
   gitDir: string,
   refs: Map<string, { id: number; png: Buffer }>,
@@ -32,7 +36,7 @@ export function compareScreenTools(
   return [
     defineTool({
       name: "compare_screen",
-      description: `実装した画面のスクリーンショット(PNG・ページ全体・お手本と同じ幅)を、企画で合意したお手本の画像と比べる。違う画素の割合と、違うところを赤く塗った画像(作業場所の ${DESIGN_DIR}/shots/ に置く)が返る。`,
+      description: `実装した画面のスクリーンショット(PNG・ページ全体・お手本と同じ幅)を、企画で合意したお手本の画像と比べる。違う画素の割合(形の差分)と、違うところを赤く塗った画像(作業場所の ${DESIGN_DIR}/shots/ に置く)に加えて、色の差分(色の差 ΔE が目で分かる画素の割合・平均と最大の ΔE・色の差分の画像・お手本と実装の主な色の比べ)が返る。形が同じでも、背景色などの色のずれは色の差分にだけ出るので、両方を確かめる。`,
       input: {
         screen: z.string().describe(`画面の key(${[...refs.keys()].join("・")})`),
         path: z.string().describe("作業場所に保存したスクリーンショットの場所(作業場所からの相対パス。例: .kuramoto/shots/list.png)"),
@@ -44,17 +48,19 @@ export function compareScreenTools(
         if ("error" in full) return full.error;
         let c;
         try {
-          c = await recordComparison(p, store, { ticketId: ticket.id, screenKey: a.screen, reference: ref, actual: readFileSync(full.path) });
+          c = await recordComparison(p, store, { ticketId: ticket?.id ?? null, screenKey: a.screen, reference: ref, actual: readFileSync(full.path), tokens: ((await designSystem(p))?.tokens ?? []).filter((t) => t.group === "color") });
         } catch (e) {
           return `比べられませんでした(PNG の画像を渡してください): ${(e instanceof Error ? e.message : String(e)).slice(0, 200)}`;
         }
         const diffFile = `${DESIGN_DIR}/shots/${a.screen}-diff.png`;
-        await ws.writeDesign?.(wsPath, gitDir, [{ file: diffFile, data: c.diff }]);
+        const colorDiffFile = `${DESIGN_DIR}/shots/${a.screen}-color-diff.png`;
+        await ws.writeDesign?.(wsPath, gitDir, [{ file: diffFile, data: c.diff }, { file: colorDiffFile, data: c.colorDiff }]);
         const pct = (c.ratio * 100).toFixed(1);
         return [
           `お手本との違い: ${pct}%(目安は ${Math.round(DIFF_WARN * 100)}% 以下)。`,
           c.sizeNote,
           `違うところを赤く塗った画像: ${diffFile}(お手本: ${DESIGN_DIR}/${a.screen}.png)。開いて、どこが違うかを確かめてください。`,
+          describeColorComparison(c.color, colorDiffFile),
           c.ratio > DIFF_WARN ? "違いが大きいので、並び・要素・文言・色・余白を見直してください。" : "",
         ]
           .filter(Boolean)

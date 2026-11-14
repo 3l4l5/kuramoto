@@ -850,7 +850,14 @@ body { background: var(--bg); }
 .designcompare figure { margin: 0; }
 .designcompare figcaption { font-size: var(--fs-sm); color: var(--muted); }
 .designcompare img { width: 100%; max-height: 360px; object-fit: contain; object-position: top; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); }
-@media (max-width: 640px) { .designcompare .dc-imgs { grid-template-columns: 1fr; } }
+.designcompare .dc-color { margin: 0 0 14px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.designcompare .dc-colorbody { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 12px; margin-top: 6px; }
+.designcompare .dc-palettes { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 16px; align-content: start; }
+.designcompare .dc-palettes h4 { margin: 0 0 4px; font-size: var(--fs-sm); color: var(--muted); font-weight: 700; }
+.designcompare .dc-palette { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: var(--fs-sm); }
+.designcompare .dc-palette li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.designcompare .dc-swatch { width: 16px; height: 16px; border-radius: var(--r-sm); border: 1px solid var(--line); flex: none; }
+@media (max-width: 640px) { .designcompare .dc-imgs, .designcompare .dc-colorbody { grid-template-columns: 1fr; } }
 
 /* 企画スタジオのチャット: 質問か、直してほしいか */
 .askmode { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 14px 6px; font-size: var(--fs-md); }
