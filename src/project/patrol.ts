@@ -184,7 +184,7 @@ function cyclePath(start: number, comp: Set<number>, waits: Map<number, number[]
   return [start, start];
 }
 
-/** 開発の席に手すきがあるか(空いている席・割り当ての無い手すきの人)。 */
+/** 開発の席にfreeがあるか(空いている席・割り当ての無いfreeの人)。 */
 async function devSeatFree(p: Project): Promise<boolean> {
   const busy = new Set<number>((await p.pdb.from("runs").select("member_id").where("ended_at", "is", null).execute()).map((r) => r.member_id));
   for (const m of (await p.pdb.from("messages").select("to_member_id").where("status", "=", "pending").where("to_member_id", "is not", null).execute()).map((r) => r.to_member_id)) if (m !== null) busy.add(m);
@@ -200,7 +200,7 @@ async function devSeatFree(p: Project): Promise<boolean> {
  * - 待ちの循環: A は B を待ち、B は A を待つ(長い輪も)
  * - merge 済みなのに終わっていない待ち先: PR は merged なのに、ボードで done になっていないチケットを、ほかが待っている
  * - 取りやめた待ち先: 待ち先が dropped なのに待ちが残っている
- * - 手すきがいるのに取られない先頭: 待つものが無く、席も空いているのに、一定時間(設定 patrol_stuck_min、既定 10 分)誰にも取られていない
+ * - freeがいるのに取られない先頭: 待つものが無く、席も空いているのに、一定時間(設定 patrol_stuck_min、既定 10 分)誰にも取られていない
  */
 export async function detectDeadlocks(p: Project): Promise<Deadlock[]> {
   const all = (await p.pdb.from("tickets").select(["id", "number", "stage", "triaged"]).execute()) as DeadTicket[];
@@ -473,14 +473,14 @@ async function openPrNumbers(p: Project, ticketIds: number[]): Promise<Map<numbe
   return out;
 }
 
-const DEADLOCK_LABEL: Record<Deadlock["kind"], string> = { cycle: "待ちの循環", "merged-wait": "merge 済みなのに done でない待ち先", "dropped-wait": "取りやめた待ち先", "idle-head": "手すきがいるのに取られない先頭" };
+const DEADLOCK_LABEL: Record<Deadlock["kind"], string> = { cycle: "待ちの循環", "merged-wait": "merge 済みなのに done でない待ち先", "dropped-wait": "取りやめた待ち先", "idle-head": "freeがいるのに取られない先頭" };
 
 /** デッドロックの解消の手順(プロンプトに入れる)。 */
 const DEADLOCK_STEPS = `- デッドロック(上の「デッドロック」の節): 見つかったものを 1 件ずつ、原因を見立てて解消します。自分で直せるものは plan_work、仕組みの不具合は create_ticket で使い分けます。
   - 自分で直せるもの(待ちの付け直し・担当の割り当て)は plan_work で直します。plan_work は、書いたチケットの after を書いたものに置き換えるので、残したい待ちも after にすべて書きます(areas は省けば変わりません)。
     - 待ちの循環: どちらが先かを決め、輪を切る方の after から外します。
     - 取りやめた待ち先: after から外すか、代わりに待つべきチケットに付け直します。
-    - 手すきがいるのに取られない先頭: assignee に手すきのメンバーか島の名前を書いて割り当て直します。それでも取られないなら、仕組みの不具合を疑います。
+    - freeがいるのに取られない先頭: assignee にfreeのメンバーか島の名前を書いて割り当て直します。それでも取られないなら、仕組みの不具合を疑います。
   - 仕組み側の不具合が原因のもの(merge 済みなのにボードで done にならない・待ち先が進んでいるのに待ちが解けない・席が空いて待ちも無いのに取られない理由が分からない、など)は、plan_work では根本が直りません。create_ticket で「解消するチケット」(kind は bugfix。見つけた事実・どのチケットが止まっているか・直すべきところの見立てを本文に書く)を作ります。同じ原因のチケットがボードに(開いたまま)既にあれば、作りません。待たされているチケットは、plan_work で待ちを外して先に進めて構いません。
   - 解消したものも、様子を見るものも、報告に書きます。一度見せたデッドロックは、続いていても次の見回りでは(しばらく)見せません。`;
 

@@ -38,10 +38,10 @@
   --art-leaf: #5aa469; /* 絵: 植物の葉 */
   --art-pot: #d9825b; /* 絵: 植木鉢 */
   --art-mug: #e98aa0; /* 絵: マグの縁 */
-  --art-note: #fff4c2; /* 絵: 付箋・手すきの吹き出しの地 */
+  --art-note: #fff4c2; /* 絵: 付箋・freeの吹き出しの地 */
   --art-zz: #8aa0d8; /* 絵: 終業中の zz */
   --art-laptop: #9aa3b2; /* 絵: ノート PC(ふだん) */
-  --art-laptop-idle: #b9c4d6; /* 絵: 手すきのメンバーの服 */
+  --art-laptop-idle: #b9c4d6; /* 絵: freeのメンバーの服 */
   --art-laptop-on: #7fb8f0; /* 絵: ノート PC(作業中) */
   --art-floor: #f7efe3; /* 絵: オフィスの床 */
   --art-wall: #efe3d0; /* 絵: オフィスの壁 */

@@ -74,7 +74,7 @@ export async function unstickPrompt(p: Project, ticket: TicketRow, payload: Stuc
   const budget = await ticketBudgetUsd(p, ticket.id);
   const spent = await ticketSpentUsd(p, ticket.id);
   const pr = await p.pdb.from("pull_requests").select(["number", "head"]).where("ticket_id", "=", ticket.id).limit(1).executeTakeFirst();
-  const who = payload.resume.toMemberId ? (await p.member(payload.resume.toMemberId)).name : `${ROLE_LABEL[payload.resume.toRole as Role] ?? payload.resume.toRole}の手すきの人`;
+  const who = payload.resume.toMemberId ? (await p.member(payload.resume.toMemberId)).name : `${ROLE_LABEL[payload.resume.toRole as Role] ?? payload.resume.toRole}のfreeの人`;
   return `チケットの仕事が同じように失敗し続けて止まりました。原因を調べて、チームが先に進めるように手助けしてください。
 
 ## チケット #${ticket.number}: ${ticket.title}
@@ -156,7 +156,7 @@ export function unstickTools(
       name: "reassign",
       description: "止まった仕事を、別のメンバーか島に渡してやり直させる。助言はチケットのメモになる。",
       input: {
-        to: z.string().min(1).describe("渡す相手。メンバーの名前か島の名前(島なら手すきの人が取る)"),
+        to: z.string().min(1).describe("渡す相手。メンバーの名前か島の名前(島ならfreeの人が取る)"),
         advice: z.string().min(1).describe("新しい担当への助言(ここまでの経緯・原因の見立て・避けること)"),
       },
       handler: async (a) => {
@@ -168,7 +168,7 @@ export function unstickTools(
         if (!unit && !member) return `「${a.to}」は${ROLE_LABEL[role as Role] ?? role}の島のメンバーでも島でもありません。今の島: ${(await Promise.all(units.map(async (u) => `${u.name}(${(await p.membersOfUnit(u.id)).map((m) => m.name).join("・")})`))).join("、")}`;
         await p.addNote(ticket.id, `【手助け・担当替え】${a.advice}`, "lead");
         await p.setSetting(`unstick_count:${ticket.id}`, String(await unstickCount(p, ticket.id) + 1));
-        // 開発なら持ち主ごと替える(新しい担当がブランチの続きから進める)。島を指したら、持ち主を外して手すきの人に取らせる
+        // 開発なら持ち主ごと替える(新しい担当がブランチの続きから進める)。島を指したら、持ち主を外してfreeの人に取らせる
         if (role === "dev") await p.pdb.update("tickets", { owner_member_id: member?.id ?? null }).where("id", "=", ticket.id).execute();
         const kind = role === "dev" ? (member ? "answer" : "implement") : payload.resume.kind;
         await resumeWork(p, ticket, {

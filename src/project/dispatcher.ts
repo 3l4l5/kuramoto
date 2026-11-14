@@ -264,7 +264,7 @@ export class Dispatcher {
       const busy = (await this.busyMemberIds()).has(m.id);
       return busy ? "wait" : { msg, role: msg.to_role, ticket: null, member: m };
     }
-    // 島への質問は、質問の宛先の島の手すきの人が受ける(聞いた本人は除く。チケットは持たない)
+    // 島への質問は、質問の宛先の島のfreeの人が受ける(聞いた本人は除く。チケットは持たない)
     if (msg.kind === "ask") return await this.assignAsk(msg);
     const ticket = msg.ticket_id === null ? null : await p.ticket(msg.ticket_id);
     if (ticket && (ticket.stage === "dropped" || ticket.stage === "done")) {
@@ -345,7 +345,7 @@ export class Dispatcher {
         if (busy.has(m.id)) return "wait";
         return { msg, role, ticket, member: m };
       }
-      // 持ち主が席にいない(席替えで島を離れた)。呼び戻して席を増やすことはせず、島の手すきの人が引き継ぐ(ADR-0023)
+      // 持ち主が席にいない(席替えで島を離れた)。呼び戻して席を増やすことはせず、島のfreeの人が引き継ぐ(ADR-0023)
       const free = (await Promise.all(affordable.map((u) => p.membersOfUnit(u.id)))).flat().filter((x) => !busy.has(x.id) && (role === "dev" || x.id !== ticket?.owner_member_id));
       if (!free.length) return "wait";
       const next = await this.leastLoaded(free);
@@ -400,7 +400,7 @@ export class Dispatcher {
   /** いま起動している(終わっていない)メンバーの id。 */
   private async busyMemberIds(): Promise<Set<number>> {
     const rows = await this.p.pdb.from("runs").select("member_id").where("ended_at", "is", null).execute();
-    // 起こしたが、まだ起動の行を書いていない人も、手すきとは見なさない(書くまでに DB を何度か待つので、その間に同じ人へ次の仕事を渡さない)
+    // 起こしたが、まだ起動の行を書いていない人も、freeとは見なさない(書くまでに DB を何度か待つので、その間に同じ人へ次の仕事を渡さない)
     return new Set([...rows.map((r) => r.member_id), ...this.starting]);
   }
 
@@ -421,7 +421,7 @@ export class Dispatcher {
 
   // ---- 起こす ----
 
-  /** 起こしたが、まだ終わっていない人(起動の行を書く前から、手すきから外す)。 */
+  /** 起こしたが、まだ終わっていない人(起動の行を書く前から、freeから外す)。 */
   private readonly starting = new Set<number>();
 
   async execute(job: Job): Promise<void> {

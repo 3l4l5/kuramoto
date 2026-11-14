@@ -119,7 +119,7 @@ export async function markIssueTicketed(p: Project, repo: string, issue: number)
 
 /**
  * 開いている PR を引き継ぐ。チケットを作って PR をひも付け、確認の最初の工程から続ける(確認の工程が無ければ merge 待ちへ)。
- * 指摘で差し戻されたら、開発の島の手すきの人が PR のブランチの続きから直す。
+ * 指摘で差し戻されたら、開発の島のfreeの人が PR のブランチの続きから直す。
  */
 export async function adoptPull(p: Project, a: { repo: string; number: number; title?: string; body?: string; requirementItemId?: number }): Promise<TicketRow | string> {
   const s = await snapshotOf(p);

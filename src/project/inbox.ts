@@ -17,7 +17,7 @@ import type { Project } from "./project.js";
  * - unstick: 詰まったチケットの手助けをリーダーへ(原因を調べ、やり直させるか保留する)
  * - patrol: リーダーの定期の見回り(重複と、回り続けているチケットに手を打つ)。チケットを持たない
  * - member_chat: 責任者からメンバーへの話しかけ。宛先はそのメンバー。チケットは持たない(チケットの 1 チケット 1 起動を邪魔しない。ひも付けは payload)
- * - ask: 島への質問・相談(R16)。経路のある島の手すきの人が答える。チケットは持たない(質問のひも付けは payload の questionId)。答えは道具 reply で返す
+ * - ask: 島への質問・相談(R16)。経路のある島のfreeの人が答える。チケットは持たない(質問のひも付けは payload の questionId)。答えは道具 reply で返す
  */
 export type MessageKind = "implement" | "fix" | "review" | "sec" | "qa" | "decide" | "answer" | "plan" | "chat" | "triage" | "unstick" | "patrol" | "periodic_review" | "member_chat" | "ask";
 

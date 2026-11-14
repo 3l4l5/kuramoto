@@ -1,6 +1,6 @@
 /**
  * オフィスの登場人物の絵(ちびキャラ)。髪の色と髪型は人ごと、服の色は今している役割で変わる。
- * 手すきのときは目を閉じて居眠りする。髪の色・髪型は原作の雰囲気に寄せたもの。
+ * freeのときは目を閉じて居眠りする。髪の色・髪型は原作の雰囲気に寄せたもの。
  */
 type Hair = "long" | "short" | "twin" | "pony" | "bob";
 type Look = { hair: string; style: Hair; ribbon?: string; ahoge?: boolean };

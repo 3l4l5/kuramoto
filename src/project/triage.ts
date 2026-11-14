@@ -10,7 +10,7 @@ import { dropTicket } from "./workflow.js";
  * リーダーの交通整理。新しいチケットが入ると、リーダーが「どの順で・誰が」やるかを決める。
  * - 先に終わらせるべきチケット(土台・同じファイルを触るもの)を after に書くと、それが merge されるまで着手しない。
  * - 触りそうな場所(areas)が同じチケットは同時に開発しない。先に取りかかった方が merge されてから次が始まる(ADR-0024)。
- * - 担当を名指しすると、その人が手すきになったときに取る。名指ししなければ手すきの人が取る(島のメンバーは最大人数ぶんずっといる)。
+ * - 担当を名指しすると、その人がfreeになったときに取る。名指ししなければfreeの人が取る(島のメンバーは最大人数ぶんずっといる)。
  * 交通整理が済むまで、そのチケットの実装は始めない。
  */
 
@@ -214,7 +214,7 @@ ${islands}
 - できるだけ並列に進めます。島には最大人数ぶんのメンバーがずっといて、同時に実装できます。
 - 同時に進めると衝突するもの(土台・共通の設定・同じファイルや同じ表を触るもの)は、先に終わらせるチケットを after に書きます。after のチケットが merge されるまで、そのチケットには着手しません。並べすぎると遅くなるので、本当に必要なものだけにします。
 - 触りそうな場所を areas に書きます。ファイルのパス(例: scripts/ci-screenshots.mjs)か、機能のまとまり(例: 認証、メモ一覧)です。同じ場所を書いたチケットどうしは同時に開発せず、先に取りかかった方が merge されてから次が始まります(順番は自動で決まるので、after に書かなくて構いません)。迷ったら、主に書き換えるファイルを 1〜3 個書きます。package.json のような、どのチケットも少し触る共通のファイルは書きません(全部が一列に並んでしまうため)。
-- 担当(assignee)には、メンバーの名前か島の名前を書けます。島の名前を書くと、その島の手すきの人に割り当てます。メンバーを名指しすると、その人が手すきになるまで待ちます。省くと、受け持つ島の手すきの人が取ります。
+- 担当(assignee)には、メンバーの名前か島の名前を書けます。島の名前を書くと、その島のfreeの人に割り当てます。メンバーを名指しすると、その人がfreeになるまで待ちます。省くと、受け持つ島のfreeの人が取ります。
 - 交通整理するチケットが、ほかのチケット(交通整理するものどうしも含む)と同じことを扱っていたら、drop_as_duplicate で重複として片付けます。中身は残す方のメモに移ります。片付けたチケットは plan_work に含めません。
 - 担当への申し送りがあれば note に書きます(チケットのメモになり、担当が読みます)。
 - 全部のチケットについて plan_work を 1 回で呼んでください。最後のテキストは、責任者への短い報告(並列に進めるもの・順番待ちにしたものとその理由)にします。`;
@@ -231,7 +231,7 @@ export function triageTools(p: Project): KuramotoTool[] {
             number: z.number().int().describe("チケット番号"),
             after: z.array(z.number().int()).default([]).describe("先に merge されている必要があるチケット番号"),
             areas: z.array(z.string()).default([]).describe("触りそうな場所(ファイルのパスか機能のまとまり)。同じ場所を書いたチケットは同時に開発しない"),
-            assignee: z.string().optional().describe("担当にしたい人の名前、または島の名前(島なら手すきの人に割り当てる)。省くと手すきの人が取る"),
+            assignee: z.string().optional().describe("担当にしたい人の名前、または島の名前(島ならfreeの人に割り当てる)。省くとfreeの人が取る"),
             note: z.string().optional().describe("担当への申し送り"),
           }),
         ),
@@ -313,23 +313,23 @@ export async function planWork(p: Project, items: { number: number; after?: numb
         const areas = [...new Set(it.areas.map(normalizeArea).filter(Boolean))];
         if (areas.length) await p.pdb.insert("ticket_areas", areas.map((area) => ({ ticket_id: t.id, area }))).execute();
       }
-      let who = "手すきの人";
+      let who = "freeの人";
       if (it.assignee) {
         const devUnits = (await p.currentFormation()).units.filter((u) => u.roles.includes("dev" as WorkRole));
         const island = devUnits.find((u) => u.name === it.assignee);
         let m = (await Promise.all(devUnits.map((u) => p.membersOfUnit(u.id)))).flat().find((x) => x.name === it.assignee);
         if (island) {
-          // 島を指定: 手すき(まだ割り当てのない人)がいればその人。いなければ、島の誰かが空いたら取る
+          // 島を指定: free(まだ割り当てのない人)がいればその人。いなければ、島の誰かが空いたら取る
           const runningNow = await p.pdb.from("runs").select("member_id").where("ended_at", "is", null).execute();
           const queued = await p.pdb.from("messages").select("to_member_id").where("status", "=", "pending").where("kind", "=", "implement").where("to_member_id", "is not", null).execute();
           const busy = new Set<number>([...runningNow.map((r) => r.member_id), ...queued.map((r) => r.to_member_id!)]);
           m = (await p.membersOfUnit(island.id)).find((x) => !busy.has(x.id));
-          if (!m) out.push(`${island.name} に手すきの人がいないので、#${it.number} は ${island.name} の誰かが空いたら取ります`);
+          if (!m) out.push(`${island.name} にfreeの人がいないので、#${it.number} は ${island.name} の誰かが空いたら取ります`);
         }
         if (m) {
           await p.pdb.update("messages", { to_member_id: m.id }).where("ticket_id", "=", t.id).where("kind", "=", "implement").where("status", "=", "pending").execute();
           who = m.name;
-        } else if (!island) out.push(`${it.assignee} は開発の島にいません。#${it.number} は手すきの人が取ります`);
+        } else if (!island) out.push(`${it.assignee} は開発の島にいません。#${it.number} はfreeの人が取ります`);
       }
       if (it.note?.trim()) await p.addNote(t.id, it.note, "lead");
       await p.event((await p.fixedMember("lead")).name, "ticket_planned", t.id, { after: it.after ?? [], areas: await areasOf(p, t.id), assignee: who });
@@ -338,7 +338,7 @@ export async function planWork(p: Project, items: { number: number; after?: numb
   return [`${items.length} 件を決めました。`, ...out].join("\n");
 }
 
-/** リーダーに渡す、チームの今。島ごとの役割・受け持ち・最大人数・メンバー(作業中のチケット / 割り当て待ち / 手すき)・待ちの件数。 */
+/** リーダーに渡す、チームの今。島ごとの役割・受け持ち・最大人数・メンバー(作業中のチケット / 割り当て待ち / free)・待ちの件数。 */
 export async function teamStatus(p: Project): Promise<string> {
   const runningRows = await p.pdb.k
     .selectFrom("runs as r")
@@ -368,7 +368,7 @@ export async function teamStatus(p: Project): Promise<string> {
       const ms = members.map((m) => {
         const r = running.get(m.id);
         const queue = assigned.filter((a) => a.to_member_id === m.id).map((a) => `#${a.number}`);
-        const state = r ? `#${r.number ?? "?"} の${r.kind}中` : "手すき";
+        const state = r ? `#${r.number ?? "?"} の${r.kind}中` : "free";
         return `${m.name}: ${state}${queue.length ? ` / 次に ${queue.join("・")}` : ""}`;
       });
       const waiting = u.roles.reduce((n, r) => n + (waitingBy.get(r) ?? 0), 0);
@@ -377,7 +377,7 @@ export async function teamStatus(p: Project): Promise<string> {
   return lines.join("\n");
 }
 
-/** 交通整理の起動に失敗し続けたら、止めずに流す(手すきの人が番号順に取る)。 */
+/** 交通整理の起動に失敗し続けたら、止めずに流す(freeの人が番号順に取る)。 */
 export async function giveUpTriage(p: Project): Promise<void> {
   await p.pdb.transaction(async () => markTriaged(p, (await untriaged(p)).map((t) => t.id)));
 }

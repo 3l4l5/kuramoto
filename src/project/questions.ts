@@ -8,7 +8,7 @@ import type { MemberRow, Project, TicketRow, UnitRow } from "./project.js";
 
 /**
  * 島への質問・相談(R16)。
- * - 経路がある島へ聞くと、受信箱の ask で相手の島の手すきの人を起こして答えてもらう。
+ * - 経路がある島へ聞くと、受信箱の ask で相手の島のfreeの人を起こして答えてもらう。
  * - 経路が無い(または相手がリーダー)ときは、リーダーに回す。経路が無かったことは「やりとり」に残る。
  * - 質問と答えは ticket_questions に残り、チケットの「やりとり」に並ぶ。聞いたチケットの担当・工程は変わらない。
  * - 答える起動は、チケットの起動ではなく about_ticket_id でそのチケットにひも付く(金額はそのチケットに数える)。
@@ -71,7 +71,7 @@ export async function askQuestion(p: Project, from: MemberRow, ticket: TicketRow
   }
   if (!target && !to.trim()) return "宛先がありません。島の名前かリーダーを指定してください。";
 
-  // 経路があって、相手が島のときだけ、相手の島の手すきの人が答える
+  // 経路があって、相手が島のときだけ、相手の島のfreeの人が答える
   if (target && mine && hasRoute(formation.routes, mine.name, target.name)) {
     await p.pdb.transaction(async () => {
       const qid = await p.pdb.dialect.insertedId(p.pdb.insert("ticket_questions", { ticket_id: ticket.id, from_member_id: from.id, to_target: target.name, body: text, asked_at: p.now() }));
@@ -79,7 +79,7 @@ export async function askQuestion(p: Project, from: MemberRow, ticket: TicketRow
       await send(p, { ticketId: null, toRole: target.roles[0]!, kind: "ask", payload: { questionId: qid } satisfies AskPayload });
       await p.event(from.name, "question_asked", ticket.id, { to: target.name, routedToLead: false });
     });
-    return `${target.name} に送りました。手すきの人が答えます。答えを待たずに作業を続けてください(答えはこのチケットのやりとりに残り、次の仕事の指示に入ります)。`;
+    return `${target.name} に送りました。freeの人が答えます。答えを待たずに作業を続けてください(答えはこのチケットのやりとりに残り、次の仕事の指示に入ります)。`;
   }
 
   // 経路が無い(島が無い・結ばれていない・担当への質問): リーダーに回し、そのことを残す
@@ -98,7 +98,7 @@ export function askTools(p: Project, member: MemberRow, ticket: TicketRow): Kura
     defineTool({
       name: "ask_island",
       description:
-        "ほかの島(またはリーダー)に質問・相談する。経路がある島なら、その島の手すきの人が答える。経路が無い相手への質問は、リーダーに回る。答えを待たずに作業を続け、答えは次の仕事の指示に入る。担当や工程は変わらない。",
+        "ほかの島(またはリーダー)に質問・相談する。経路がある島なら、その島のfreeの人が答える。経路が無い相手への質問は、リーダーに回る。答えを待たずに作業を続け、答えは次の仕事の指示に入る。担当や工程は変わらない。",
       input: { to: z.string().describe("宛先の島の名前(編成の島)。リーダーなら「リーダー」"), question: z.string().describe("聞きたいこと。背景と、答えてほしいことを具体的に") },
       handler: (a) => askQuestion(p, member, ticket, a.to, a.question),
     }),
@@ -107,7 +107,7 @@ export function askTools(p: Project, member: MemberRow, ticket: TicketRow): Kura
 
 // ---- 答える側 ----
 
-/** 答える島を決める: 質問の宛先の島。席にいて、手すきで、聞いた本人でない人から選ぶのは dispatcher。 */
+/** 答える島を決める: 質問の宛先の島。席にいて、freeで、聞いた本人でない人から選ぶのは dispatcher。 */
 export async function targetUnit(p: Project, q: QuestionRow): Promise<UnitRow | undefined> {
   return (await p.currentFormation()).units.find((u) => u.name === q.to_target);
 }

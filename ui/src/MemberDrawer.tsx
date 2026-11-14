@@ -10,7 +10,7 @@ import { TicketLink } from "./Ticket";
 
 /**
  * オフィスでメンバーを押すと右に開く引き出し(スマホでは下からのシート)。
- * 上: 今のチケット(種類・工程・往復・経過・トークン)と直近の手順。手すきなら「手すき」と直前に終えたチケット。
+ * 上: 今のチケット(種類・工程・往復・経過・トークン)と直近の手順。freeなら「free」と直前に終えたチケット。
  * 下: そのメンバーと話す欄。話した内容はそのチケットのメモに書き足され、担当や工程は変わらない。
  * 返事を書いている間は、経過の秒数を出す。
  */
@@ -18,7 +18,7 @@ import { TicketLink } from "./Ticket";
 const STAGE: Record<string, string> = { dev: "開発", review: "レビュー", sec: "セキュリティ", qa: "QA", decision: "判断待ち", merge: "merge 待ち", done: "完了", dropped: "取りやめ" };
 /** 種類のチップの色(バグ修正は warn、機能は dev の色)。試作 office.html に合わせる */
 const KIND_TONE: Record<string, ChipTone> = { feature: "default", bugfix: "warn", refactor: "review", docs: "design" };
-const STATE_LABEL: Record<MemberNow["state"], string> = { working: "作業中", chatting: "会話中", idle: "手すき" };
+const STATE_LABEL: Record<MemberNow["state"], string> = { working: "作業中", chatting: "会話中", idle: "free" };
 
 export function MemberDrawer({ projectId, memberId, canChat, close }: { projectId: number; memberId: number; canChat: boolean; close: () => void }) {
   const qc = useQueryClient();
@@ -77,7 +77,7 @@ export function MemberDrawer({ projectId, memberId, canChat, close }: { projectI
       </header>
       <div className="of-drawer-body">
         <section aria-label="今のチケット">
-          <p className="of-sh">{now?.state === "idle" ? "手すき" : "今のチケット"}</p>
+          <p className="of-sh">{now?.state === "idle" ? "free" : "今のチケット"}</p>
           {now && t && now.state !== "idle" && (
             <div className="of-now">
               <div className="of-now-t">

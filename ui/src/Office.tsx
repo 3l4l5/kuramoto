@@ -309,8 +309,8 @@ function Island({ u, running, onEdit, onOpen, onMember }: { u: OfficeView["units
   const seats = Array.from({ length: u.max }, (_, i) => u.members[i] ?? null);
   const top = seats.slice(0, Math.ceil(u.max / 2));
   const bottom = seats.slice(Math.ceil(u.max / 2));
-  // すぐ取れる仕事が無く、順番待ちだけがあるときは、手すきの理由を出す(ツールチップ・読み上げ)
-  const idleText = !u.waiting.length && u.queued.length ? `手すき・順番待ち(${queuedSummary(u.queued)})` : undefined;
+  // すぐ取れる仕事が無く、順番待ちだけがあるときは、freeの理由を出す(ツールチップ・読み上げ)
+  const idleText = !u.waiting.length && u.queued.length ? `free・順番待ち(${queuedSummary(u.queued)})` : undefined;
   return (
     <section className={`of-island of-tone-${u.roleKeys[0] ?? "dev"} ${u.budget.exhausted ? "of-island-broke" : ""}`} data-loc={`unit:${u.id}`} aria-label={`島 ${u.name}`}>
       <header>
@@ -387,9 +387,9 @@ function Seat({ m, below, running, waitingFor, onOpen }: { m: Member | null; bel
 }
 
 /**
- * 席にいるメンバー。名札と短い状態(何番を何しているか・手すき)と、吹き出し(今していること)だけを出す。
+ * 席にいるメンバー。名札と短い状態(何番を何しているか・free)と、吹き出し(今していること)だけを出す。
  * モデル・経過時間・途中経過・これまでの仕事は、押すと開く様子のモーダルで見せる。
- * 終業中で手すきなら居眠り、始業していて手すきなら起きて仕事を待つ。
+ * 終業中でfreeなら居眠り、始業していてfreeなら起きて仕事を待つ。
  */
 function Person({ m, below, title, running, waitingFor, onOpen }: { m: { id: number; name: string; helper?: boolean; joinedAt?: string; work: Work | null }; below?: boolean; title?: string; running: boolean; waitingFor?: string; onOpen: (id: number) => void }) {
   const now = useNow();
@@ -404,7 +404,7 @@ function Person({ m, below, title, running, waitingFor, onOpen }: { m: { id: num
     ? `${w.ticket ? `#${w.ticket} ` : ""}${w.kind}中${quiet >= QUIET_WARN_SEC ? `・${duration(quiet)}動きなし` : ""}`
     : asleep
       ? "終業中"
-      : (waitingFor ?? "手すき・仕事を待っています");
+      : (waitingFor ?? "free・仕事を待っています");
   return (
     <button
       type="button"
@@ -419,10 +419,10 @@ function Person({ m, below, title, running, waitingFor, onOpen }: { m: { id: num
           <span>{say}</span>
         </div>
       )}
-      {/* 手すきのメンバーは、直前の仕事の代わりに「♪ 手すき」を話す(パソコン。スマホは名札の「手すき」で出す) */}
+      {/* freeのメンバーは、直前の仕事の代わりに「♪ free」を話す(パソコン。スマホは名札の「free」で出す) */}
       {!w && !asleep && (
         <div className="of-bubble of-bubble-free">
-          <span>♪ 手すき</span>
+          <span>♪ free</span>
         </div>
       )}
       <Avatar name={m.name} asleep={asleep} className={`of-r-${role}`} />
@@ -431,12 +431,12 @@ function Person({ m, below, title, running, waitingFor, onOpen }: { m: { id: num
           zz
         </span>
       )}
-      {/* 下には名前と「手すき」だけ。何をしているか・手すきの理由・応援かは、押すと開く様子のモーダルと、読み上げ・ツールチップで伝える */}
+      {/* 下には名前と「free」だけ。何をしているか・freeの理由・応援かは、押すと開く様子のモーダルと、読み上げ・ツールチップで伝える */}
       <div className="of-tag">
         <b>{m.name}</b>
         {selected && <span className="of-selmark">選択中</span>}
         {/* 暇しているかだけは、押さなくても一目でわかるようにする */}
-        {!w && !asleep && <span className="of-free">手すき</span>}
+        {!w && !asleep && <span className="of-free">free</span>}
       </div>
     </button>
   );

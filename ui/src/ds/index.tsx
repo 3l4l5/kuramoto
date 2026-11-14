@@ -250,7 +250,7 @@ export function Avatar({ cloth = "dev", hair = "light" }: { cloth?: Cloth; hair?
 export function Bubble({ idle, children }: { idle?: boolean; children: ReactNode }) {
   return <span className={cx("ds-bubble", idle && "ds-bubble--idle")}>{children}</span>;
 }
-/** 吹き出しを頭の上に載せたメンバー。idle で手すき(付箋色の吹き出し) */
+/** 吹き出しを頭の上に載せたメンバー。idle でfree(付箋色の吹き出し) */
 export function Member({ bubble, idle, cloth, hair, width = 120 }: { bubble?: ReactNode; idle?: boolean; cloth?: Cloth; hair?: "light" | "dark"; width?: number }) {
   return (
     <span className="ds-member ds-art" style={{ width }}>

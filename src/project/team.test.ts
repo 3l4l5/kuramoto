@@ -466,7 +466,7 @@ describe("同じ場所を触るチケットは同時に開発しない(ADR-0024)
 });
 
 describe("島を離れた持ち主の直し(ADR-0023)", () => {
-  it("持ち主が席替えで島を離れていたら、呼び戻さずに島の手すきの人が引き継ぐ。島の人数は最大人数のまま", async () => {
+  it("持ち主が席替えで島を離れていたら、呼び戻さずに島のfreeの人が引き継ぐ。島の人数は最大人数のまま", async () => {
     const p = await Project.open(":memory:", new ManualClock());
     await p.addRepo("acme/shop", "API");
     const formation = (n: number) => ({ pull: "down" as const, units: [{ name: "開発の島", roles: ["dev" as const], maxMembers: n, summonAt: 2, idleSec: 600 }] });
@@ -527,7 +527,7 @@ describe("重複したチケットを片付ける", () => {
 });
 
 describe("リーダーの割り当ての権限", () => {
-  it("リーダーは島とメンバーの今を見て、島を名指しして割り当てられる。手すきがいなければ、島の誰かが空いたら取る", async () => {
+  it("リーダーは島とメンバーの今を見て、島を名指しして割り当てられる。freeがいなければ、島の誰かが空いたら取る", async () => {
     const { teamStatus, triageTools, planWork } = await import("./triage.js");
     const p = await Project.open(":memory:", new ManualClock());
     await p.addRepo("acme/shop", "API");
@@ -536,18 +536,18 @@ describe("リーダーの割り当ての権限", () => {
     const b = await createTicket(p, { title: "B" });
     const c = await createTicket(p, { title: "C" });
     const [m1, m2] = await p.membersOfUnit((await p.currentFormation()).units[0]!.id);
-    expect(await teamStatus(p)).toContain(`- フロント(開発): 2/2 人 / 待ち 3 件\n  ${m1!.name}: 手すき\n  ${m2!.name}: 手すき`);
+    expect(await teamStatus(p)).toContain(`- フロント(開発): 2/2 人 / 待ち 3 件\n  ${m1!.name}: free\n  ${m2!.name}: free`);
 
-    // 島を名指し: 1・2 件目は手すきの 2 人に、3 件目は島の誰かが空いたら
+    // 島を名指し: 1・2 件目はfreeの 2 人に、3 件目は島の誰かが空いたら
     const out = await planWork(p, [
       { number: 1, assignee: "フロント" },
       { number: 2, assignee: "フロント" },
       { number: 3, assignee: "フロント" },
     ]);
-    expect(out).toContain("フロント に手すきの人がいない");
+    expect(out).toContain("フロント にfreeの人がいない");
     const to = (t: { id: number }) => get<{ to_member_id: number | null }>(p.db, "SELECT to_member_id FROM messages WHERE ticket_id = ? AND kind = 'implement'", [t.id])!.to_member_id;
     expect([to(a), to(b), to(c)]).toEqual([m1!.id, m2!.id, null]);
-    expect(await teamStatus(p)).toContain(`${m2!.name}: 手すき / 次に #2`);
+    expect(await teamStatus(p)).toContain(`${m2!.name}: free / 次に #2`);
     // 応援を呼ぶ道具は無い(メンバーはずっといる)
     expect(triageTools(p).map((t) => t.name)).not.toContain("call_helper");
   });

@@ -296,7 +296,7 @@ function RoutesTab({ draft, ids, setDraft, errors }: TabProps & { ids: string[];
   };
   return (
     <div className="pol">
-      <p className="hint">経路があると、メンバーが相手の島に質問を送れ、手すきの人が答えます。チケットの担当・工程は変わりません。担当を変えたいときはリーダーに相談します。</p>
+      <p className="hint">経路があると、メンバーが相手の島に質問を送れ、freeの人が答えます。チケットの担当・工程は変わりません。担当を変えたいときはリーダーに相談します。</p>
       <div>
         <SectionHeading>島どうし</SectionHeading>
         <List label="島どうしの連絡経路">{pairs.filter((p) => p.group === "islands").map(row)}</List>

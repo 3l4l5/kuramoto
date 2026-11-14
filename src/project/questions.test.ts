@@ -112,7 +112,7 @@ describe("連絡経路の保存(R16)", () => {
 });
 
 describe("島への質問・相談(R16)", () => {
-  it("経路あり: 相手の島の手すきの人が答える。答えはやりとりに残り、担当・工程は変わらず、金額はチケットに数える", async () => {
+  it("経路あり: 相手の島のfreeの人が答える。答えはやりとりに残り、担当・工程は変わらず、金額はチケットに数える", async () => {
     const { p, d, harness } = await setup();
     const { ticket, owner } = await worked(p, d);
     const before = await state(p, ticket.id);
