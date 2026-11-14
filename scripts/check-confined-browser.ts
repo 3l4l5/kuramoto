@@ -173,7 +173,15 @@ async function main(): Promise<number> {
       if (NO_BROWSER_SERVER) {
         // 設定なしの回: ブラウザサーバーは立たず、E2E は「起動できなければ知らせて通す」。通ること・知らせが出たかを残す
         const skipped = r.output.includes("ブラウザを起動できなかったので、画面の確かめは流していません");
-        console.log(skipped ? "△ 設定なし: Chrome が起動できず、画面の E2E は流れていない(知らせて通った)" : "○ 設定なし: 閉じ込めの中で Chrome が起動でき、E2E が流れた");
+        // ○ は、npm test が通り、知らせが無く、E2E の件数(「15 passed」)が出力にあるときだけ。それ以外は E2E が流れたか分からない(E2E の回より前で落ちた・回ごと飛ばした、など)
+        const ran = r.code === 0 && !skipped && /\b15 passed\b/.test(r.output);
+        console.log(
+          skipped
+            ? "△ 設定なし: Chrome が起動できず、画面の E2E は流れていない(知らせて通った)"
+            : ran
+              ? "○ 設定なし: 閉じ込めの中で Chrome が起動でき、E2E 15 件が流れた"
+              : "? 設定なし: E2E が流れたか分からない(npm test の終了コードか、出力に「15 passed」が無い。E2E の回より前で落ちた・回ごと飛ばした・件数が変わった可能性。上の出力を見る)",
+        );
         return r.code === 0 ? 0 : 1;
       }
       const browserNotice = r.output.includes("狭い閉じ込めの中でブラウザを起動できなかった");
