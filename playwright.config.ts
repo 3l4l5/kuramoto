@@ -4,7 +4,7 @@ import { defineConfig } from "@playwright/test";
  * E2E テスト。ビルドした画面(ui/dist)を、フェイクの担当で動くサーバー(e2e/server.ts)にかける。
  * 画面の作りに依らないよう、ボタンの名前や見える文言で操作する(生 JS から React に移したときも同じテストで確かめた)。
  */
-const port = 4390;
+const port = Number(process.env.E2E_PORT ?? 4390);
 
 export default defineConfig({
   testDir: "e2e",
