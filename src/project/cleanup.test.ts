@@ -72,6 +72,38 @@ describe("merge した(done になった)チケットの作業場所の片付け
     expect(sessionPaths(p)).toEqual([null]);
   });
 
+  it("同じチケットを同時に ownerMerge しても(外で merge 済み)、done・記録・片付けは 1 回だけ", async () => {
+    const { p, t } = await mergeWaiting("MERGED");
+    const ws = new StaticWorkspace("/tmp/ws");
+    const gh = github("MERGED");
+    gh.prStatus = async () => {
+      await new Promise((r) => setTimeout(r, 5)); // 2 つとも「merge 待ち」を見てから、先へ進む
+      return { state: "MERGED", mergeable: "MERGEABLE", ci: "success" };
+    };
+    const results = await Promise.all([ownerMerge(p, gh, t.id, "team", { workspace: ws }), ownerMerge(p, gh, t.id, "team", { workspace: ws })]);
+    expect(results.filter((r) => r.result === "merged")).toHaveLength(1);
+    expect(results.filter((r) => r.result === "blocked")).toHaveLength(1);
+    expect((await p.ticket(t.id)).stage).toBe("done");
+    expect(ws.cleaned).toEqual([{ repo: REPO, ticketNumber: t.number }]);
+    expect(all(p.db, "SELECT id FROM merges")).toHaveLength(1);
+    expect(all(p.db, "SELECT id FROM events WHERE type = 'merged'")).toHaveLength(1);
+  });
+
+  it("見回り(refreshMergedWaits)を同時に呼んでも、同じ merge 待ちは 1 回だけ拾って片付ける", async () => {
+    const { p, t } = await mergeWaiting("OPEN");
+    const ws = new StaticWorkspace("/tmp/ws");
+    const gh = github("MERGED");
+    const inner = gh.prStatus;
+    gh.prStatus = async (...a) => {
+      await new Promise((r) => setTimeout(r, 5));
+      return inner(...a);
+    };
+    const counts = await Promise.all([refreshMergedWaits(p, gh, { workspace: ws }), refreshMergedWaits(p, gh, { workspace: ws })]);
+    expect(counts.sort()).toEqual([0, 1]);
+    expect((await p.ticket(t.id)).stage).toBe("done");
+    expect(ws.cleaned).toEqual([{ repo: REPO, ticketNumber: t.number }]);
+  });
+
   it("チームの自動 merge でも消す", async () => {
     const { p, t } = await mergeWaiting();
     const ws = new StaticWorkspace("/tmp/ws");

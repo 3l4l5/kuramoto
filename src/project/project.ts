@@ -175,6 +175,26 @@ export class Project {
     await this.pdb.dialect.upsert(this.pdb.insert("settings", { key, value }), ["project_id", "key"], ["value"]).execute();
   }
 
+  /**
+   * 設定を、読んだ値(expected。まだ無ければ undefined)のままのときだけ value に書き換える(条件つき更新)。
+   * 読んで・書くまでの間にほかの処理が書き換えていたら false を返し、何も書かない。同時に走る処理のうち 1 つだけが true を受ける(取り合いに使う)。
+   * 前提: value は expected と違う値にする(MySQL は値が変わらない更新を 0 件と数える)。
+   */
+  async claimSetting(key: string, expected: string | undefined, value: string): Promise<boolean> {
+    if (expected === undefined) {
+      // まだ行が無い: 主キー(project_id, key)の衝突で、先に入れた 1 つだけが勝つ
+      try {
+        await this.pdb.insert("settings", { key, value }).execute();
+        return true;
+      } catch (e) {
+        if ((await this.setting(key)) !== undefined) return false;
+        throw e;
+      }
+    }
+    const r = await this.pdb.update("settings", { value }).where("key", "=", key).where("value", "=", expected).executeTakeFirst();
+    return Number(r.numUpdatedRows) === 1;
+  }
+
   async addRepo(fullName: string, role: string): Promise<number> {
     if (!isRepoFullName(fullName)) throw new Error(`owner/repo の形ではありません: ${fullName}`);
     return this.pdb.dialect.insertedId(this.pdb.insert("repos", { full_name: fullName, role }));

@@ -46,8 +46,9 @@ async function mergeTicket(p: Project, gh: GitHub, ticketId: number, by: "owner"
 
   // 外(GitHub の画面など)で先に merge された: 「PR が MERGED です」と断り続けず、完了にする(待っているチケットが解ける)
   if (statuses.every(([, s]) => s.state === "MERGED")) {
+    // 同じチケットを同時に処理している別の流れ(見回りの背景と直の呼び出しなど)が先に done にしたら、記録・後始末を二重にしない
+    if (!(await claimDone(p, ticket.id))) return alreadyDone(ticket);
     for (const [pr] of statuses) await addMerge(p, pr.id, "merged", JSON.stringify({ external: true }));
-    await p.setStage(ticket.id, "done");
     await p.event(by, "merged", ticket.id, { number: ticket.number, by, external: true });
     await flushFollowups(p, ticket);
     await recheckConflicts(p, gh, prs);
@@ -102,7 +103,7 @@ async function mergeTicket(p: Project, gh: GitHub, ticketId: number, by: "owner"
     await gh.merge(pr.full_name, pr.number);
     await addMerge(p, pr.id, "merged", JSON.stringify({ ok: true }));
   }
-  await p.setStage(ticket.id, "done");
+  if (!(await claimDone(p, ticket.id))) return alreadyDone(ticket);
   await p.event(by, "merged", ticket.id, { number: ticket.number, by });
   // 確認で見つかった範囲外のことは、merge したときにまとめて別チケットにする
   await flushFollowups(p, ticket);
@@ -110,6 +111,14 @@ async function mergeTicket(p: Project, gh: GitHub, ticketId: number, by: "owner"
   await recheckConflicts(p, gh, prs);
   return { result: "merged" };
 }
+
+/** merge 待ちのままのときだけ done にする(条件つき更新)。同時に走る処理のうち、done にできた 1 つだけが true を受け、あとの記録・後始末を受け持つ。 */
+async function claimDone(p: Project, ticketId: number): Promise<boolean> {
+  const r = await p.pdb.update("tickets", { stage: "done" }).where("id", "=", ticketId).where("stage", "=", "merge").executeTakeFirst();
+  return Number(r.numUpdatedRows) === 1;
+}
+
+const alreadyDone = (ticket: TicketRow): MergeResult => ({ result: "blocked", reason: `チケット #${ticket.number} は、ほかの処理がすでに merge 済みにしました` });
 
 /**
  * CI が落ちていた(ADR-0027)。エージェントの作業場所からは GitHub が見えないので、Kuramoto がログを取ってきて決める。
