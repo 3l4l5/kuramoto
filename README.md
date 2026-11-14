@@ -16,7 +16,7 @@ Node 24 以上が要ります。エージェントを実際に動かすには `c
 npm install
 npm start            # 画面をビルドして起動。http://localhost:4300 を開く(KURAMOTO_PORT で変更可)
 npm run start:public # 他の PC からも開けるように起動。ターミナルに出る「合言葉つきの URL」を開く(合言葉は ~/.kuramoto/access-token。KURAMOTO_TOKEN で指定も可)
-npm test             # SQLite の回・MySQL の回・E2E の回を流す(チームの CI もこれ)。MySQL の回は要 docker compose up -d mysql-test(飛ばすなら KURAMOTO_SKIP_MYSQL_TESTS=1。docs/mysql.md)。E2E の回を飛ばすなら KURAMOTO_SKIP_E2E_TESTS=1(docs/e2e.md)
+npm test             # SQLite の回・MySQL の回・E2E の回を流す(チームの CI もこれ)。MySQL の回は要 docker compose up -d mysql-test(飛ばすなら KURAMOTO_SKIP_MYSQL_TESTS=1。docs/mysql.md)。E2E の回は Chrome が起動できるときだけ流れる(飛ばすなら KURAMOTO_SKIP_E2E_TESTS=1。docs/e2e.md)
 npm run test:e2e     # 画面の E2E テストだけ(手元の Google Chrome を使う。本物の Claude と GitHub は使わない。書き方は docs/e2e.md)
 npm run dev:ui       # 画面を作るとき: Vite の開発サーバー(http://localhost:5173)。/api は npm start のサーバーへ回す
 ```

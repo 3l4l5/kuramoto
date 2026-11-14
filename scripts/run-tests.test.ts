@@ -7,7 +7,7 @@ import type { DisposableDb } from "../src/db/mysql-test-support.js";
 import { findMysqlTestFiles, isMainModule, main, splitArgs, type Deps } from "./run-tests.js";
 
 /** vitest と mysql-test の代わり。呼ばれた回と、使い捨ての database を作った・消した順を残す。 */
-function fake(over: { sqlite?: number; mysql?: number; e2e?: number; createFails?: boolean; interruptAfterFirst?: boolean } = {}) {
+function fake(over: { sqlite?: number; mysql?: number; e2e?: number; browser?: string; createFails?: boolean; interruptAfterFirst?: boolean } = {}) {
   const calls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
   const events: string[] = [];
   const lines: string[] = [];
@@ -21,8 +21,10 @@ function fake(over: { sqlite?: number; mysql?: number; e2e?: number; createFails
     },
     e2e: async () => {
       e2eRuns++;
+      events.push("e2e");
       return over.e2e ?? 0;
     },
+    browserCheck: async () => over.browser ?? null,
     createDb: async () => {
       if (over.createFails) throw new Error("mysql-test(127.0.0.1:3307)に繋がりません。`docker compose up -d mysql-test` が要ります");
       events.push("create");
@@ -44,14 +46,14 @@ describe("npm test(SQLite の回と MySQL の回)", () => {
     expect(f.calls[0]!.args).toEqual([]);
     expect(f.calls[1]!.args).toEqual(["--passWithNoTests", "src/db/a.test.ts"]);
     expect(f.calls[1]!.env.KURAMOTO_MYSQL_TEST_URL).toBe("mysql://u:p@127.0.0.1:3307/kuramoto_test_x");
-    expect(f.events).toEqual(["create", "drop"]);
+    expect(f.events).toEqual(["create", "drop", "e2e"]);
   });
 
   it("MySQL の回だけで落ちても、終了コードは 0 にならない(SQLite の回だけ落ちても同じ)。database は消す", async () => {
     const m = fake({ mysql: 1 });
     expect(await main([], {}, m.deps)).toBe(1);
     expect(m.lines.join("\n")).toContain("落ちた回: MySQL");
-    expect(m.events).toEqual(["create", "drop"]);
+    expect(m.events).toEqual(["create", "drop", "e2e"]);
     const s = fake({ sqlite: 1 });
     expect(await main([], {}, s.deps)).toBe(1);
     expect(s.lines.join("\n")).toContain("落ちた回: SQLite");
@@ -104,7 +106,23 @@ describe("npm test(SQLite の回と MySQL の回)", () => {
     expect(await main([], {}, ng.deps)).toBe(1);
     expect(ng.lines.join("\n")).toContain("落ちた回: E2E");
     expect(ng.calls.length).toBe(2); // E2E の回が落ちても、ほかの回の結果は出す
-    expect(ng.events).toEqual(["create", "drop"]);
+    expect(ng.events).toEqual(["create", "drop", "e2e"]); // E2E の回は、使い捨ての database を消したあとに流す
+    expect(ng.lines.join("\n")).toContain("画面の壊れです");
+  });
+
+  it("ブラウザを起動できないときは、画面の壊れとは別に「確かめていない」と大きく知らせ、既定では失敗にしない。E2E の本体は流さない", async () => {
+    const f = fake({ browser: "browserType.launch: Failed to create a ProcessSingleton" });
+    expect(await main([], {}, f.deps)).toBe(0);
+    expect(f.e2eRuns()).toBe(0);
+    const out = f.lines.join("\n");
+    expect(out).toContain("ブラウザを起動できなかったので、画面の確かめは流していません");
+    expect(out).toContain("ProcessSingleton");
+    expect(out).not.toContain("落ちた回");
+    // KURAMOTO_E2E_REQUIRE_BROWSER=1 なら、起動できないことも失敗にする(理由は画面の壊れではないと出る)
+    const strict = fake({ browser: "no chrome" });
+    expect(await main([], { KURAMOTO_E2E_REQUIRE_BROWSER: "1" }, strict.deps)).toBe(1);
+    expect(strict.lines.join("\n")).toContain("画面が壊れたのではありません");
+    expect(strict.e2eRuns()).toBe(0);
   });
 
   it("E2E の回は、KURAMOTO_SKIP_E2E_TESTS=1 のときと、試験のファイルを絞ったときだけ飛ばす(飛ばしたと出す)", async () => {
