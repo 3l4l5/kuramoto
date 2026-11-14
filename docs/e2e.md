@@ -20,7 +20,7 @@ E2E_SHOTS=/tmp/shots npm run test:e2e     # 画面ごとのスクリーンショ
 
 `npm test` の最後の回が E2E です(SQLite の回 → MySQL の回 → E2E の回)。チームの CI は `npm test` を閉じ込め(sandbox-runtime)の中で流します。閉じ込めの中では Chrome は起動できない(プロファイル・ソケット・Crashpad の置き場所が書けない)ので、`npm test` の閉じ込め(`src/project/confine.ts`)は広げず、ブラウザは別に立てて繋ぐ作りにしています。
 
-**ただし、そのブラウザサーバーを立てる経路は、既定では動きません**(環境変数 `KURAMOTO_E2E_CONFINED_BROWSER=1` のときだけ動く)。狭い閉じ込めの中で Chrome が実際に起動するかを、Kuramoto のサーバー(Chrome が動く場所)でまだ確かめていないためです(下の「閉じ込めの確かめ」)。**既定を「設定なし」のままにする判断(#96)**: 実機(Kuramoto のサーバー)で、狭い閉じ込めの中の Chrome の起動と、閉じ込めの制限(下の (iii))を確かめた記録が、まだありません(下の「確かめの記録」)。閉じ込めの制限が効いている確かめが無いまま、PR のコードが動く場所の近くでブラウザサーバーを既定で立てるのは、隠しているファイルを読まれる・外へ送られる危険の方が大きいので、既定は動かさないままにします。記録で (i)(ii)(iii) がすべて通ったら、`confinedBrowserEnabled`(`src/project/confined-browser.ts`)の既定を反転し、この段落を書き換えます。
+**ただし、そのブラウザサーバーを立てる経路は、既定では動きません**(環境変数 `KURAMOTO_E2E_CONFINED_BROWSER=1` のときだけ動く)。狭い閉じ込めの中で Chrome が実際に起動するかを、CI の macOS ランナー(Chrome が動く場所)で流した記録がまだ表に無いためです(下の「閉じ込めの確かめ」)。**既定を「設定なし」のままにする判断(#96)**: CI の macOS ランナーで、狭い閉じ込めの中の Chrome の起動と、閉じ込めの制限(下の (iii))を確かめた記録が、まだありません(下の「確かめの記録」)。閉じ込めの制限が効いている確かめが無いまま、PR のコードが動く場所の近くでブラウザサーバーを既定で立てるのは、隠しているファイルを読まれる・外へ送られる危険の方が大きいので、既定は動かさないままにします。記録で (i)(ii)(iii) がすべて通ったら、`confinedBrowserEnabled`(`src/project/confined-browser.ts`)の既定を反転し、この段落を書き換えます。
 
 - **既定(設定が無い)**: ブラウザサーバーは立てず、`KURAMOTO_E2E_WS_ENDPOINT` も渡さない。E2E の回は、手元の閉じ込めの中と同じに、先に Chrome を 1 回起動できるか確かめる。起動できなければ「⚠ ブラウザを起動できなかったので、画面の確かめは流していません」と出して**通す**(チームの CI では今は、画面の E2E は流れない)。閉じ込めの無いブラウザが動く経路は無い。
 - **`KURAMOTO_E2E_CONFINED_BROWSER=1`(Kuramoto のサーバーの環境変数)**: チームの CI の runner(`src/project/team-ci.ts` の `SandboxRunner`)が、playwright の設定(`playwright.config.*`)があるリポジトリのテストのコマンド(`npm test`・`npm run test:e2e`)の前に、Playwright のブラウザサーバー(`chromium.launchServer()`、Google Chrome)を**ブラウザ専用の狭い閉じ込め**の中で立てる(`src/project/confined-browser.ts`)。リポジトリの `@playwright/test` で立てるので、繋ぐ側と版が必ずそろう。
@@ -31,9 +31,11 @@ E2E_SHOTS=/tmp/shots npm run test:e2e     # 画面ごとのスクリーンショ
   - 中では、`playwright.config.ts` が `connectOptions` で、渡された宛先に connect する(Chrome は起動しない)。画面を配るサーバー(`e2e/server.ts`)は `npm test` の側で立てる。宛先が渡されたときは、ブラウザに繋がらないことも**失敗**にする(「確かめていない」で通さない)。
   - **狭い閉じ込めの中でブラウザが立たなかったときも、閉じ込めの無いブラウザには切り替えない。** 宛先を渡さずに `npm test` を流し(出力の末尾に「⚠ チームの CI: ブラウザ専用の狭い閉じ込めの中でブラウザを起動できなかった…」と理由が付く)、既定と同じ「確かめていない」で通る。
 
-### 閉じ込めの確かめ(Kuramoto のサーバーで流す)
+### 閉じ込めの確かめ(CI の macOS ランナーで流す)
 
-閉じ込めの中(担当・レビューの作業場所など)からは閉じ込めを重ねられないので流せません。**Chrome が動く Kuramoto のサーバーで、責任者が流します。** このスクリプトは `KURAMOTO_E2E_CONFINED_BROWSER=1` を自分で付けて、チームの CI と同じ実行(`SandboxRunner`)をします。
+閉じ込めの中(担当・レビューの作業場所など)からは閉じ込めを重ねられないので、そこでは流せません。**実機のログは、GitHub Actions のワークフロー `confinement-check`(`.github/workflows/confinement-check.yml`)が macOS のランナー(`macos-latest`。`sandbox-exec` と Google Chrome がある)で流し、artifact `e2e-logs` に残します。責任者が手で流す手順はありません。** このスクリプトは `KURAMOTO_E2E_CONFINED_BROWSER=1` を自分で付けて、チームの CI と同じ実行(`SandboxRunner`)をします。
+
+ワークフローが流すもの(手元の Mac でも、同じコマンドを流せます):
 
 ```sh
 npx tsx scripts/check-confined-browser.ts [リポジトリのパス]          # (i) と (iii)
@@ -63,17 +65,27 @@ npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --no-browse
 
 ### 確かめの記録
 
-流した出力の全文は [`docs/e2e-logs/`](e2e-logs/README.md) に置き、流した日・環境(OS・Chrome の版・Kuramoto のコミット)・流した場所(実機 / CI)とログのファイルを、ここの表に書きます。**まだ流していません。** 作業場所は閉じ込めの中で、Chrome も入れ子の閉じ込めも動かせないため、(a)〜(e) と `e2e/auth.spec.ts` を流す作業は**別チケット**です。ログは、**#114 の CI(GitHub Actions の macOS ランナー)の artifact から取り**(責任者が実機で流す形ではありません)、取れたら表を埋めて、既定を設定ありにするかを決めます(#96・#98・#101 から引き継いだ確かめを含む)。実行手順・ログのファイル名・ログを見るときの照合の手順は [`docs/e2e-logs/README.md`](e2e-logs/README.md) にあります。
+流した出力の全文は [`docs/e2e-logs/`](e2e-logs/README.md) に置き、流した日・環境(OS・Chrome の版・Kuramoto のコミット)・流した場所(CI)とログのファイルを、ここの表に書きます。**ログは、ワークフロー `confinement-check` の artifact `e2e-logs`(7 本の `.log`)から取ります**(責任者が実機で流す形ではありません。Actions の画面の実行ページの「Artifacts」から落とすか、`gh run download <run-id> -n e2e-logs`)。取れたら表を埋めて、既定を設定ありにするかを決めます(#96・#98・#101 から引き継いだ確かめを含む)。実行手順・ログのファイル名・ログを見るときの照合の手順は [`docs/e2e-logs/README.md`](e2e-logs/README.md) にあります。
 
-ログが無い行は「未実施」のままにします(想像で埋めない)。**既定は動かしません**(上の「既定を『設定なし』のままにする判断」。この表の (i)(ii)(iii) がすべて通ってから、別チケットで決める)。
+#### ワークフロー `confinement-check`
 
-| 回 | コマンド | 結果 | 日 | 流した場所(実機 / CI) | OS | Chrome の版 | コミット | ログのファイル | 流すチケット |
+- **起動のきっかけ**: `workflow_dispatch`(Actions の画面・`gh workflow run confinement-check` から手動で)と、閉じ込め・認証まわり(`src/project/confine*`・`team-ci*`・`confined-browser*`・`src/access-token*`・`src/sessions*`・`e2e/**`・`playwright.config.ts`・`scripts/check-*`・`scripts/e2e-count*`・`scripts/run-tests*`・このワークフロー)を触る PR。
+- **流す順**: 環境(env)→ (a) → (b) → (c) → (d) → (e)。ログのファイル名と中身は [`docs/e2e-logs/README.md`](e2e-logs/README.md) の表のとおり(`<日付>-env` / `a-confined` / `b-break` / `c-no-browser-server` / `d-denied-ports` / `d-team-ci-test` / `e-mysql-rounds` の `.log`)。どれかが落ちても、あとの手順は流し、ログは artifact に上げる。
+- **期待どおりでなければジョブを落とす**: 各手順が、終了コードと、README の「照合の手順」の行(`○ E2E N 件が通った`・`○ 入口を壊すと落ちた`・`○ 断るポートだけが BLOCKED になった` など)を見て、`✗`・`△`・`?`・「見ていない」(`- …`)・スキップが 1 つでもあれば落とす(`scripts/ci-confinement-lib.sh`)。ログが 7 本揃っていなければ落とす。
+- **ホームのダミー**: ランナーのホームはまっさらなので、(a) (iii) の「`~/.kuramoto`・`~/.ssh` へのシンボリックリンク経由の読み取りが断られる」確かめのために、ダミーの `~/.kuramoto/access-token` と `~/.ssh/id_dummy` を作ってから流す。
+- **`e2e/auth.spec.ts`**: (a) の E2E の回で流れる。`check-confined-browser.ts` は `npm test` の出力の最後の 60 行だけを出すので、行が切れないよう、閉じ込めの外で `auth.spec.ts` だけを直に流した出力を、見出しつきで (a) のログの末尾に足す(✓ が 4 本あることを見る)。
+- **(c) 設定なし**: 起動できて E2E が流れた(`○`)か、起動できず知らせて通った(`△`)かの、どちらでも終了コード 0 なら既定の振る舞いのとおり。どちらだったかはログの行で分かる。
+- **(d)**: `--denied-port 3306` の BLOCKED を見るため、3306 で待ち受けるだけのプロセスを立ててから流す(立っていないと、そのポートは「見ていない」になる)。
+- **(e) MySQL の回は、macOS のランナーの上で、brew の mysql で立てる**(ubuntu のジョブには分けていない)。理由: (a)(c) は閉じ込めの中で `npm test`(SQLite の回 → MySQL の回 → E2E の回)を流すので、MySQL の回が mysql-test(127.0.0.1:3307)に届くのは、閉じ込め(`sandbox-exec`)が動く macOS のジョブの中でなければならない。macOS のランナー(Apple シリコン)には docker(Docker Desktop・colima)が入っておらず、`docker compose up -d mysql-test` が使えないので、`brew install mysql@8.4` で、`compose.yaml` の mysql-test と同じ設定(127.0.0.1:3307・utf8mb4_bin・UTC・テスト専用の資格情報)で立てる。(e) のログには、(a)(c) のログの抜き出し(README の手順どおり)に加えて、E2E の回を飛ばした `npm test` を閉じ込めの外で全文流した MySQL の回の出力を足す(`check-confined-browser.ts` が出すのは `npm test` の最後の 60 行だけで、MySQL の回が切れることがあるため)。
+  - brew の mysql が立たないなど、macOS のランナーで MySQL を使えなくなったときだけ、(e) を ubuntu のジョブ(`services: mysql`)に分ける。分けたら、(a)(c) の `npm test` は `KURAMOTO_SKIP_MYSQL_TESTS=1` で MySQL の回を飛ばし、(e) の ubuntu のジョブの `npm test` の MySQL の回を `e-mysql-rounds.log` にして、その理由をここに書き直す。
+
+| 回 | コマンド | 結果 | 日 | 流した場所(CI) | OS | Chrome の版 | コミット | ログのファイル | 流すチケット |
 |---|---|---|---|---|---|---|---|---|---|
-| 設定あり (i)(iii) | `check-confined-browser.ts <repo>`(E2E 全件・`e2e/auth.spec.ts` を含む) | 未実施 | | | | | | | 別チケット(#114 の CI の流し) |
-| 設定あり (ii) | `check-confined-browser.ts <repo> --break` | 未実施 | | | | | | | 別チケット(#114 の CI の流し) |
-| 設定なし | `check-confined-browser.ts <repo> --no-browser-server` | 未実施 | | | | | | | 別チケット(#114 の CI の流し) |
-| 断るポート(ADR-0059・0060) | `check-denied-ports.ts --denied-port <Kuramoto 自身の MySQL のポート>` と、`team-ci.test.ts` の「断るポート」の試験 | 未実施 | | | | | | | 別チケット(#114 の CI の流し) |
-| mysql-test | (a)(c) のログの、MySQL の回(127.0.0.1:3307) | 未実施 | | | | | | | 別チケット(#114 の CI の流し) |
+| 設定あり (i)(iii) | `check-confined-browser.ts <repo>`(E2E 全件・`e2e/auth.spec.ts` を含む) | 未実施 | | | | | | | #112(`confinement-check` の artifact から) |
+| 設定あり (ii) | `check-confined-browser.ts <repo> --break` | 未実施 | | | | | | | #112(`confinement-check` の artifact から) |
+| 設定なし | `check-confined-browser.ts <repo> --no-browser-server` | 未実施 | | | | | | | #112(`confinement-check` の artifact から) |
+| 断るポート(ADR-0059・0060) | `check-denied-ports.ts --denied-port <Kuramoto 自身の MySQL のポート>` と、`team-ci.test.ts` の「断るポート」の試験 | 未実施 | | | | | | | #112(`confinement-check` の artifact から) |
+| mysql-test | (a)(c) のログの、MySQL の回(127.0.0.1:3307) | 未実施 | | | | | | | #112(`confinement-check` の artifact から) |
 
 ## ファイルの分け方
 
