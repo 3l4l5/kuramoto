@@ -147,11 +147,16 @@ function plantLinks(repo: string, canary: string, files: { label: string; path: 
   return { dir, links, control: { path: control } };
 }
 
-/** E2E の試験の件数(`playwright test --list`。閉じ込めの外で数える)。数えられなければ null。 */
+/** E2E の試験の件数(`playwright test --list`。閉じ込めの外で数える)。数えられなければ null(理由は 1 行出す)。 */
 function countE2eTests(cwd: string): number | null {
   try {
-    return parseListTotal(execFileSync("npx", ["playwright", "test", "--list"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000 }));
-  } catch {
+    const total = parseListTotal(execFileSync("npx", ["playwright", "test", "--list"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000 }));
+    if (total === null) console.log("--- playwright test --list の出力に「Total: N tests」が無く、件数を数えられなかった");
+    return total;
+  } catch (e) {
+    const err = e as { stderr?: Buffer | string; message?: string };
+    const reason = String(err.stderr || err.message || e).trim().split("\n").find((l) => l.trim()) ?? "不明";
+    console.log(`--- playwright test --list が失敗した(件数の突き合わせはしない): ${reason}`);
     return null;
   }
 }
