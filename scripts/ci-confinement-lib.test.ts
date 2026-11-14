@@ -95,4 +95,17 @@ describe("ワークフロー confinement-check", () => {
     expect(wf).toContain("workflow_dispatch:");
     for (const p of ['"src/project/confine*"', '"scripts/check-*"', '"e2e/**"']) expect(wf).toContain(p);
   });
+
+  it("continue-on-error は、(a) のステップと mysql ジョブにだけ。(a) の判定はゆるめない", () => {
+    const lines = wf.split("\n");
+    const at = lines.flatMap((l, i) => (/^\s*continue-on-error: true\s*$/.test(l) ? [i] : []));
+    expect(at).toHaveLength(2);
+    const stepName = (i: number) => lines.slice(0, i).reverse().find((l) => /^\s+- name:/.test(l)) ?? "";
+    const jobName = (i: number) => lines.slice(0, i).reverse().find((l) => /^  [a-z]+:\s*$/.test(l)) ?? "";
+    expect(stepName(at[0])).toContain("(a) 設定あり");
+    expect(jobName(at[1]).trim()).toBe("mysql:");
+    for (const n of ["need_code \"(a) check-confined-browser\"", "'^○ E2E [0-9]+ 件が通った'", "forbid \"$L/$D-a-confined.log\" '^✗'"]) {
+      expect(wf, `(a) の判定 ${n}`).toContain(n);
+    }
+  });
 });
