@@ -12,6 +12,7 @@ npx playwright test -g "編成"             # 名前で絞る
 E2E_SHOTS=/tmp/shots npm run test:e2e     # 画面ごとのスクリーンショットを残す(お手本との見比べ用)
 ```
 
+- 本体は localhost からも合言葉を求める(ADR-0059)ので、テスト用のサーバーには固定の合言葉(`e2e/token.ts`)を渡し、`playwright.config.ts` が `Authorization: Bearer` で渡す。合言葉なしの確かめは `e2e/auth.spec.ts`(その中だけ渡さない)。撮り直しのときにブラウザで開くなら、サーバーが出す `?token=` つきの URL を使う。
 - テスト用のサーバー(`e2e/server.ts`)は、本物の Claude と GitHub を使わず、台本どおりに動くフェイクの担当で動きます。データは回ごとの空の置き場所で、プロジェクトはテストの中で作ります。
 - 落ちたときの画面・手順は `test-results/` に残ります(git には入りません)。
 

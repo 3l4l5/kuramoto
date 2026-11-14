@@ -20,7 +20,10 @@ const leadSaid = async (p: Project, text: string) => (await leadMessages(p)).som
 const cleanups: (() => void)[] = [];
 afterEach(() => cleanups.splice(0).forEach((f) => f()));
 
-async function boot(opts: { workspaceFor?: (dataDir: string) => import("./project/workspace.js").Workspace; publicToken?: string; renderer?: import("./project/design-visual.js").Renderer; dbHealth?: DbHealth } = {}) {
+/** テストの合言葉(ADR-0059)。API と画面は localhost からも合言葉を求めるので、call は Authorization: Bearer で渡す。 */
+const TOKEN = "s3cret";
+
+async function boot(opts: { workspaceFor?: (dataDir: string) => import("./project/workspace.js").Workspace; open?: boolean; renderer?: import("./project/design-visual.js").Renderer; dbHealth?: DbHealth } = {}) {
   const home = mkdtempSync(join(tmpdir(), "kuramoto-srv-"));
   const harness = new FakeHarness(async (req, call) => {
     if (req.tools.some((t) => t.name === "submit_pr")) await call("submit_pr", { summary: "", responses: fixedAll(req.prompt) });
@@ -29,13 +32,13 @@ async function boot(opts: { workspaceFor?: (dataDir: string) => import("./projec
   });
   const github = { openPulls: async () => [{ number: 3, title: "途中の PR", body: "", head: "wip", url: "u", draft: false, author: "a" }], openIssues: async () => [], merged: [] as number[], actions: [] as string[], setActionsEnabled: async (r: string, on: boolean) => void github.actions.push(`${r}:${on}`), prStatus: async () => ({ state: "OPEN" as const, mergeable: "MERGEABLE" as const, ci: "success" as const }), merge: async (_r: string, n: number) => void github.merged.push(n), comment: async () => "" };
   writeFileSync(join(home, "index.html"), "<!doctype html><title>Kuramoto</title>");
-  const app = new KuramotoServer({ hq: new Hq(home), webDir: home, harnesses: { "claude-agent-sdk": harness }, github, workspaceFor: () => new StaticWorkspace(home, { prNumber: () => 5 }), ...opts });
+  const app = new KuramotoServer({ hq: new Hq(home), webDir: home, harnesses: { "claude-agent-sdk": harness }, github, workspaceFor: () => new StaticWorkspace(home, { prNumber: () => 5 }), accessToken: TOKEN, ...opts });
   const server: Server = createServer((req, res) => void app.handle(req, res));
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as { port: number }).port;
   cleanups.push(() => { app.close(); server.close(); app.hq.close(); rmSync(home, { recursive: true, force: true }); });
   const call = async (method: string, path: string, body?: unknown, headers: Record<string, string> = { "x-kuramoto": "1" }) => {
-    const res = await fetch(`http://localhost:${port}${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: body ? JSON.stringify(body) : undefined });
+    const res = await fetch(`http://localhost:${port}${path}`, { method, headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}`, ...headers }, body: body ? JSON.stringify(body) : undefined });
     return { status: res.status, json: (await res.json().catch(() => null)) as any, text: res.headers.get("content-type") };
   };
   return { app, call, github, port };
@@ -387,31 +390,61 @@ describe("ローカルサーバー", () => {
     expect(status).toBe(403);
   });
 
-  it("公開するときは、localhost 以外からの接続に合言葉を求め、合言葉つきの URL で Cookie を渡す", async () => {
-    const { call, port } = await boot({ publicToken: "s3cret" });
-    const get = (path: string, headers: Record<string, string>) =>
-      new Promise<{ status: number; headers: Record<string, unknown> }>((resolve) => {
-        request({ host: "127.0.0.1", port, path, headers: { host: "192.168.1.20:4300", ...headers } }, (res) => {
-          res.resume();
-          resolve({ status: res.statusCode ?? 0, headers: res.headers });
-        }).end();
-      });
-    // この PC 自身(localhost)は合言葉なしで使える
+  /** 合言葉の確かめ用に、Host と Authorization・Cookie を自分で決めて送る(fetch は Host を変えられない)。 */
+  const rawGet = (port: number, path: string, headers: Record<string, string> = {}, method = "GET") =>
+    new Promise<{ status: number; headers: Record<string, unknown>; body: string }>((resolve) => {
+      request({ host: "127.0.0.1", port, path, method, headers: { host: `localhost:${port}`, ...headers } }, (res) => {
+        let body = "";
+        res.on("data", (c) => (body += c));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body }));
+      }).end();
+    });
+
+  it("localhost からも、API と画面のすべてで合言葉を求める(合言葉なし・違う合言葉は 401)", async () => {
+    const { call, port } = await boot();
+    // 合言葉を渡した呼び出しは通る
     expect((await call("GET", "/api/hq")).status).toBe(200);
-    // 他の PC: 合言葉が無ければ断る。違っていても断る
-    expect((await get("/api/hq", {})).status).toBe(401);
-    expect((await get("/", {})).status).toBe(401);
-    expect((await get("/?token=wrong", {})).status).toBe(401);
-    // 合言葉つきの URL は Cookie を渡して、合言葉を外した URL へ送り直す
-    const r = await get("/projects/1?token=s3cret", {});
+    // 合言葉なし: 読み取りの API・書き込みの API・画面(HTML)のどれも 401。独自ヘッダーがあっても同じ
+    expect((await rawGet(port, "/api/hq")).status).toBe(401);
+    expect((await rawGet(port, "/api/projects", { "x-kuramoto": "1" }, "POST")).status).toBe(401);
+    expect((await rawGet(port, "/api/db")).status).toBe(401);
+    const page = await rawGet(port, "/");
+    expect(page.status).toBe(401);
+    expect(page.body).toContain("合言葉つきの URL");
+    expect(page.body).not.toContain(TOKEN); // 合言葉を渡す道は作らない
+    expect((await rawGet(port, "/api/hq")).body).not.toContain(TOKEN);
+    // 違う合言葉・Cookie も断る。合言葉の長さが違っても落ちない
+    for (const h of <Record<string, string>[]>[{ authorization: "Bearer wrong" }, { authorization: "Bearer" }, { cookie: "kuramoto_token=nope" }, { cookie: "kuramoto_token=" }]) {
+      expect((await rawGet(port, "/api/hq", h)).status).toBe(401);
+    }
+    expect((await rawGet(port, "/?token=wrong")).status).toBe(401);
+    // 合言葉つきなら書き込みもできるが、独自ヘッダーが無ければ今までどおり 403
+    expect((await rawGet(port, "/api/projects", { authorization: `Bearer ${TOKEN}` }, "POST")).status).toBe(403);
+  });
+
+  it("合言葉つきの URL を一度開くと Cookie(1 年・HttpOnly)に入り、以後は Cookie で通る。localhost も他の PC からも同じ", async () => {
+    const { port } = await boot({ open: true });
+    const r = await rawGet(port, `/projects/1?token=${TOKEN}`);
     expect(r.status).toBe(303);
-    expect(r.headers.location).toBe("/projects/1");
-    expect(String(r.headers["set-cookie"])).toContain("kuramoto_token=s3cret");
-    expect(String(r.headers["set-cookie"])).toContain("HttpOnly");
-    // 以後は Cookie で通る
-    expect((await get("/api/hq", { cookie: "kuramoto_token=s3cret" })).status).toBe(200);
-    expect((await get("/api/hq", { authorization: "Bearer s3cret" })).status).toBe(200);
-    expect((await get("/api/hq", { cookie: "kuramoto_token=nope" })).status).toBe(401);
+    expect(r.headers.location).toBe("/projects/1"); // 合言葉は URL から外す
+    const cookie = String(r.headers["set-cookie"]);
+    expect(cookie).toContain(`kuramoto_token=${TOKEN}`);
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("SameSite=Strict");
+    expect(cookie).toContain(`Max-Age=${60 * 60 * 24 * 365}`);
+    // 以後は Cookie で通る(画面も API も)。Authorization: Bearer でも通る
+    expect((await rawGet(port, "/", { cookie: `kuramoto_token=${TOKEN}` })).status).toBe(200);
+    expect((await rawGet(port, "/api/hq", { cookie: `kuramoto_token=${TOKEN}` })).status).toBe(200);
+    expect((await rawGet(port, "/api/hq", { authorization: `Bearer ${TOKEN}` })).status).toBe(200);
+    // 他の PC(Host が localhost 以外)も、open なら、合言葉があれば入れて、無ければ 401
+    const lan = { host: "192.168.1.20:4300" };
+    expect((await rawGet(port, "/api/hq", lan)).status).toBe(401);
+    expect((await rawGet(port, "/api/hq", { ...lan, cookie: `kuramoto_token=${TOKEN}` })).status).toBe(200);
+  });
+
+  it("open でないときは、合言葉があっても localhost 以外の Host は断る(403)", async () => {
+    const { port } = await boot();
+    expect((await rawGet(port, "/api/hq", { host: "192.168.1.20:4300", authorization: `Bearer ${TOKEN}` })).status).toBe(403);
   });
 
   it("設計書を、画面のお手本の画像と一緒に zip で書き出す(デザインシステムの節つき)", async () => {
@@ -425,7 +458,7 @@ describe("ローカルサーバー", () => {
     const { putScreen, putArtifact } = await import("./project/planning.js");
     await putArtifact(p, "screen", "designsystem", "main", { principles: ["青 1 色"], tokens: [{ group: "color", name: "--color-primary", value: "#2f67d4", use: "主ボタン" }], components: [{ name: "主ボタン", use: "確定", states: ["通常"], html: "<button>保存</button>" }] });
     await putScreen(p, "list", { name: "メモ一覧", device: "phone", requirements: [], variants: [{ id: "A", html: "<p>一覧</p>" }], chosen: "A", agreed: true });
-    const res = await fetch(`http://localhost:${port}/api/projects/${created.id}/studio/export.zip`);
+    const res = await fetch(`http://localhost:${port}/api/projects/${created.id}/studio/export.zip`, { headers: { authorization: `Bearer ${TOKEN}` } });
     expect(res.headers.get("content-type")).toBe("application/zip");
     const dir = mkdtempSync(join(tmpdir(), "kuramoto-zip-"));
     try {

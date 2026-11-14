@@ -72,7 +72,7 @@ async function boot(kind: Kind) {
   });
   const github = fakeGithub();
   const ws = new StaticWorkspace(home, { prNumber: () => 5 });
-  const app = new KuramotoServer({ hq, webDir: home, harnesses: { "claude-agent-sdk": harness }, github: github as unknown as GitHub, workspaceFor: () => ws, dbHealth: health });
+  const app = new KuramotoServer({ hq, webDir: home, harnesses: { "claude-agent-sdk": harness }, github: github as unknown as GitHub, workspaceFor: () => ws, dbHealth: health, accessToken: "flow-token" });
   const server: Server = createServer((req, res) => void app.handle(req, res));
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as { port: number }).port;
@@ -84,7 +84,7 @@ async function boot(kind: Kind) {
     rmSync(home, { recursive: true, force: true });
   });
   const call = async (method: string, path: string, body?: unknown) => {
-    const res = await fetch(`http://localhost:${port}${path}`, { method, headers: { "content-type": "application/json", "x-kuramoto": "1" }, body: body ? JSON.stringify(body) : undefined });
+    const res = await fetch(`http://localhost:${port}${path}`, { method, headers: { "content-type": "application/json", "x-kuramoto": "1", authorization: "Bearer flow-token" }, body: body ? JSON.stringify(body) : undefined });
     return { status: res.status, json: (await res.json().catch(() => null)) as any };
   };
   return { app, call, github, ws, health, home };

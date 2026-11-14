@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { post } from "./api";
+import { useEffect, useSyncExternalStore } from "react";
+import { isUnauthorized, post, subscribeUnauthorized } from "./api";
 import { Home } from "./Home";
 import { go, useDbStatus, useProject, useRoute, useStudio } from "./hooks";
 import { NewProject } from "./NewProject";
@@ -66,6 +66,7 @@ export function App() {
           </>
         )}
       </header>
+      <UnauthorizedBanner />
       <DbDownBanner />
       {route.name === "home" && <Home />}
       {route.name === "new" && <NewProject />}
@@ -75,6 +76,20 @@ export function App() {
       {route.name === "metrics" && <ProductivityPage id={route.id} />}
       {route.name === "settings" && <SettingsPage id={route.id} />}
       {inProject && route.name !== "ticket" && <PhoneBar id={route.id} drawer={drawer} moveTo={moveTo} />}
+    </div>
+  );
+}
+
+/** 合言葉が通らないとき(401)、どの画面でも一番上に出す。通るようになったら消える(ADR-0059)。 */
+function UnauthorizedBanner() {
+  const unauthorized = useSyncExternalStore(subscribeUnauthorized, isUnauthorized);
+  if (!unauthorized) return null;
+  return (
+    <div className="budgetalert" role="alert">
+      <p>
+        <b>合言葉が通りません。</b>
+        Kuramoto を起動した端末に出ている「合言葉つきの URL」を開いてください(一度開けば、このブラウザでは 1 年間通ります)。
+      </p>
     </div>
   );
 }

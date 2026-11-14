@@ -1,5 +1,6 @@
 import { defineConfig } from "@playwright/test";
 import { BROWSER_CHANNEL, E2E_WS_ENDPOINT_ENV } from "./e2e/browser.js";
+import { E2E_TOKEN } from "./e2e/token.js";
 
 /**
  * E2E テスト。ビルドした画面(ui/dist)を、フェイクの担当で動くサーバー(e2e/server.ts)にかける。
@@ -18,6 +19,8 @@ export default defineConfig({
   reporter: [["list"]],
   use: {
     baseURL: `http://localhost:${port}`,
+    // 本体は localhost からも合言葉を求める(ADR-0059)ので、画面も API も Authorization: Bearer で渡す。合言葉が無いときの確かめは auth.spec.ts
+    extraHTTPHeaders: { authorization: `Bearer ${E2E_TOKEN}` },
     headless: true,
     viewport: { width: 1400, height: 1000 },
     // 閉じ込めの外で立てたブラウザに繋ぐ(渡されたとき)。無ければ、手元の Google Chrome を起動する
@@ -25,6 +28,7 @@ export default defineConfig({
   },
   webServer: {
     command: "npx tsx e2e/server.ts",
+    // 合言葉が無い呼び出しは 401 を返す(Playwright は 401 も「サーバーが立った」と見なす)
     url: `http://localhost:${port}/api/hq`,
     env: { E2E_PORT: String(port), E2E_WEB_DIR: "ui/dist" },
     reuseExistingServer: false,
