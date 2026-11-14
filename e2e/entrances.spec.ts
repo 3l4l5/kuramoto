@@ -12,21 +12,22 @@ test("1280px: 共通ヘッダーの行き先(オフィス/ボード/ツリー・
   await page.setViewportSize(PC);
   await createProject(page, "入口パソコン", "acme/entrance-pc");
 
-  // 企画スタジオ: 画面の切り替えは「企画スタジオ・オフィス・生産性・設定」。オフィスだけの切り替え・引き出しのボタンは出ない
+  // 企画スタジオ: 切り替えスイッチはどの画面でも同じ形で、いまの画面(企画スタジオ)が選ばれ、見方(オフィス/ボード/ツリー)は選ばれない。引き出しのボタンは出ない
   await expect(screens(page).getByRole("button", { name: "企画スタジオ" })).toHaveAttribute("aria-current", "page");
-  await expect(views(page)).toHaveCount(0);
+  for (const v of ["オフィス", "ボード", "ツリー"]) await expect(views(page).getByRole("button", { name: v })).toHaveAttribute("aria-pressed", "false");
   await expect(headerDrawer(page, "編成")).toHaveCount(0);
 
-  await screens(page).getByRole("button", { name: "オフィス" }).click();
+  await views(page).getByRole("button", { name: "オフィス" }).click();
   await expect(region(page, "オフィスの床")).toBeVisible();
-  // オフィスでは、画面の切り替えに「オフィス」を重ねず、オフィス/ボード/ツリーの切り替えと、編成・チームの方針・リーダーのボタンが出る
-  await expect(screens(page).getByRole("button", { name: "オフィス" })).toHaveCount(0);
+  // オフィスでは、見方の「オフィス」が選ばれ、編成・チームの方針・リーダーのボタンが出る
   await expect(views(page).getByRole("button", { name: "オフィス" })).toHaveAttribute("aria-pressed", "true");
+  await expect(screens(page).getByRole("button", { name: "企画スタジオ" })).not.toHaveAttribute("aria-current", "page");
   for (const name of ["編成", "チームの方針", "リーダーと話す"] as const) await expect(headerDrawer(page, name)).toBeVisible();
 
   await views(page).getByRole("button", { name: "ボード" }).click();
   await expect(region(page, "ボード")).toBeVisible();
   await expect(views(page).getByRole("button", { name: "ボード" })).toHaveAttribute("aria-pressed", "true");
+  await expect(views(page).getByRole("button", { name: "オフィス" })).toHaveAttribute("aria-pressed", "false");
 
   await views(page).getByRole("button", { name: "ツリー" }).click();
   await expect(region(page, "ツリー")).toBeVisible();
@@ -35,6 +36,8 @@ test("1280px: 共通ヘッダーの行き先(オフィス/ボード/ツリー・
   await screens(page).getByRole("button", { name: "生産性" }).click();
   await expect(region(page, "生産性")).toBeVisible();
   await expect(screens(page).getByRole("button", { name: "生産性" })).toHaveAttribute("aria-current", "page");
+  // 生産性にいるあいだは、見方は選ばれない
+  await expect(views(page).getByRole("button", { name: "ツリー" })).toHaveAttribute("aria-pressed", "false");
 
   await screens(page).getByRole("button", { name: "設定" }).click();
   await expect(region(page, "プロジェクトの設定")).toBeVisible();

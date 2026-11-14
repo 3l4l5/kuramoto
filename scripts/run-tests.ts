@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, realpathSync } from "node:fs";
 import { createServer } from "node:net";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BROWSER_CHANNEL } from "../e2e/browser.js";
+import { BROWSER_CHANNEL, E2E_WS_ENDPOINT_ENV } from "../e2e/browser.js";
 import { createDisposableDb, SKIP_MYSQL_ENV, TEST_DB_ENV, type DisposableDb } from "../src/db/mysql-test-support.js";
 
 /**
@@ -12,7 +12,8 @@ import { createDisposableDb, SKIP_MYSQL_ENV, TEST_DB_ENV, type DisposableDb } fr
  * - MySQL の回: mysql-test(127.0.0.1:3307)に、この回だけの使い捨ての database を作り、mysql-test を使う試験だけを流して、終わったら消す
  *   (KURAMOTO_TEST_DB=mysql)。回ごとに別の database なので、複数の worktree から同時に流しても混ざらない
  * - E2E の回: 画面のブラウザ E2E(e2e/。npm run test:e2e と同じ)。MySQL の database を消したあとに、画面を作り直して、フェイクの担当のサーバーを空いているポートで立て、Chrome で主な操作を通す(#93)。
- *   先に Chrome を 1 回起動できるか確かめ、できないとき(閉じ込めの中など)は、画面の壊れとは別の「確かめていない」知らせを出して通す(KURAMOTO_E2E_REQUIRE_BROWSER=1 なら失敗にする)。
+ *   先にブラウザに繋がるか(KURAMOTO_E2E_WS_ENDPOINT が無ければ Chrome を 1 回起動できるか)を確かめ、できないとき(手元の閉じ込めの中など)は、画面の壊れとは別の「確かめていない」知らせを出して通す
+ *   (KURAMOTO_E2E_REQUIRE_BROWSER=1 か、チームの CI が KURAMOTO_E2E_WS_ENDPOINT を渡したときは失敗にする)。
  *   試験のファイルを指定したとき(絞り込みの実行)は流さない。飛ばすと決めているときだけ、KURAMOTO_SKIP_E2E_TESTS=1 で明示する
  * - mysql-test に繋がらなければ、黙って飛ばさず、`docker compose up -d mysql-test` が要ると出して落とす。
  *   飛ばしてよいときだけ、KURAMOTO_SKIP_MYSQL_TESTS=1 で明示する
@@ -78,13 +79,15 @@ function freePort(): Promise<number> {
 }
 
 /**
- * ブラウザ(Chrome)を 1 回だけ起動して閉じ、起動できるかを確かめる。できなければ理由(1 行目)を返す。
- * 起動できない環境(閉じ込めの中など)と、画面が壊れて E2E が落ちたのとを見分けるため、E2E の本体の前に流す。
+ * ブラウザに繋がるかを確かめる。できなければ理由(1 行目)を返す。
+ * 起動できない環境と、画面が壊れて E2E が落ちたのとを見分けるため、E2E の本体の前に流す。
+ * KURAMOTO_E2E_WS_ENDPOINT(チームの CI が閉じ込めの外で立てたブラウザサーバー)があれば、そこへ connect できるかを確かめる。無ければ Chrome を 1 回起動して閉じる。
  */
-async function browserCheck(): Promise<string | null> {
+async function browserCheck(env: NodeJS.ProcessEnv): Promise<string | null> {
   try {
     const { chromium } = await import("@playwright/test");
-    const browser = await chromium.launch({ channel: BROWSER_CHANNEL, headless: true, timeout: 60_000 });
+    const endpoint = env[E2E_WS_ENDPOINT_ENV];
+    const browser = endpoint ? await chromium.connect(endpoint, { timeout: 60_000 }) : await chromium.launch({ channel: BROWSER_CHANNEL, headless: true, timeout: 60_000 });
     await browser.close();
     return null;
   } catch (e) {
@@ -123,14 +126,17 @@ export function isMainModule(metaUrl: string, argv1: string | undefined): boolea
 
 /** ブラウザの E2E の回を飛ばすスイッチ(1 のとき飛ばす)。 */
 export const SKIP_E2E_ENV = "KURAMOTO_SKIP_E2E_TESTS";
-/** ブラウザを起動できないとき、既定は「画面の確かめはしていない」と大きく知らせて通す。1 にすると、起動できないことも失敗にする。 */
+/**
+ * ブラウザを起動できないとき、既定は「画面の確かめはしていない」と大きく知らせて通す。1 にすると、起動できないことも失敗にする。
+ * KURAMOTO_E2E_WS_ENDPOINT が渡されているとき(チームの CI)は、1 と同じ扱い: ブラウザに繋がらないことも失敗にする。
+ */
 export const REQUIRE_BROWSER_ENV = "KURAMOTO_E2E_REQUIRE_BROWSER";
 
 export type Deps = {
   vitest: (args: string[], env: NodeJS.ProcessEnv) => Promise<number>;
   e2e: (env: NodeJS.ProcessEnv) => Promise<number>;
   /** ブラウザを起動できるか。できなければ理由、できれば null */
-  browserCheck: () => Promise<string | null>;
+  browserCheck: (env: NodeJS.ProcessEnv) => Promise<string | null>;
   createDb: () => Promise<DisposableDb>;
   mysqlFiles: () => string[];
   log: (line: string) => void;
@@ -187,11 +193,11 @@ async function e2eRound(args: string[], env: NodeJS.ProcessEnv, d: Deps): Promis
     return "ok";
   }
   d.log("\n=== E2E の回(ブラウザで主な操作を通す。Google Chrome が要ります) ===");
-  const why = await d.browserCheck();
+  const why = await d.browserCheck(env);
   if (d.interrupted()) return "interrupted";
   if (why) {
-    if (env[REQUIRE_BROWSER_ENV] === "1") {
-      d.log(`\n✗ ブラウザを起動できません(画面が壊れたのではありません): ${why}\n  ${REQUIRE_BROWSER_ENV}=1 なので失敗にします。`);
+    if (env[REQUIRE_BROWSER_ENV] === "1" || env[E2E_WS_ENDPOINT_ENV]) {
+      d.log(`\n✗ ブラウザに繋がりません(画面が壊れたのではありません): ${why}\n  ${env[E2E_WS_ENDPOINT_ENV] ? `${E2E_WS_ENDPOINT_ENV} が渡されている(チームの CI)` : `${REQUIRE_BROWSER_ENV}=1`}ので、失敗にします。`);
       return "failed";
     }
     d.log(

@@ -125,6 +125,17 @@ describe("npm test(SQLite の回と MySQL の回)", () => {
     expect(strict.e2eRuns()).toBe(0);
   });
 
+  it("チームの CI がブラウザサーバーの宛先(KURAMOTO_E2E_WS_ENDPOINT)を渡したときは、ブラウザに繋がらないことも失敗にする。繋がれば E2E の本体を流す", async () => {
+    const env = { KURAMOTO_E2E_WS_ENDPOINT: "ws://127.0.0.1:1234/x" };
+    const down = fake({ browser: "connect ECONNREFUSED" });
+    expect(await main([], env, down.deps)).toBe(1);
+    expect(down.lines.join("\n")).toContain("KURAMOTO_E2E_WS_ENDPOINT が渡されている");
+    expect(down.e2eRuns()).toBe(0);
+    const up = fake();
+    expect(await main([], env, up.deps)).toBe(0);
+    expect(up.e2eRuns()).toBe(1);
+  });
+
   it("E2E の回は、KURAMOTO_SKIP_E2E_TESTS=1 のときと、試験のファイルを絞ったときだけ飛ばす(飛ばしたと出す)", async () => {
     const env = fake();
     expect(await main([], { KURAMOTO_SKIP_E2E_TESTS: "1" }, env.deps)).toBe(0);

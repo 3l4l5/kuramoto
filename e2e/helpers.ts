@@ -55,10 +55,13 @@ export async function shot(page: Page, name: string) {
 
 // ---- 場所(パソコン) ----
 
-/** 共通ヘッダーの「企画スタジオ / オフィス / 生産性 / 設定」。 */
+/**
+ * 共通ヘッダーの行き先の切り替えスイッチ(#88)。「オフィス / ボード / ツリー」と「企画スタジオ / 生産性 / 設定」が、どの画面でも同じ形で並ぶ。
+ * 選ばれている行き先は、見方は aria-pressed、いまの画面は aria-current="page"。
+ */
 export const screens = (page: Page) => page.getByRole("group", { name: "プロジェクトの画面" });
-/** オフィス・チケットの画面の「オフィス / ボード / ツリー」の切り替え。 */
-export const views = (page: Page) => page.getByRole("group", { name: "オフィスの見方" });
+/** そのうちの「オフィス / ボード / ツリー」(見方)。スマホの幅では共通ヘッダーが隠れるので、パソコン用。 */
+export const views = (page: Page) => screens(page).getByRole("group", { name: "オフィスの見方" });
 /** 共通ヘッダーの「編成 / チームの方針 / リーダーと話す」(オフィスとチケットの画面にだけ出る)。 */
 export const headerDrawer = (page: Page, name: "編成" | "チームの方針" | "リーダーと話す") => page.getByRole("button", { name, exact: true });
 

@@ -12,7 +12,7 @@ import type { GitHub, PrStatus } from "../github/github.js";
 import { Dispatcher } from "./dispatcher.js";
 import { ownerMerge, type TeamCiHook } from "./merge.js";
 import { Project, type TicketRow } from "./project.js";
-import { detectCommands, runTeamCi, SandboxRunner, type CommandRunner } from "./team-ci.js";
+import { detectCommands, E2E_WS_ENDPOINT_ENV, runTeamCi, SandboxRunner, wantsBrowser, withBrowser, type CommandRunner } from "./team-ci.js";
 import { StaticWorkspace } from "./workspace.js";
 import { createTicket } from "./workflow.js";
 
@@ -189,5 +189,62 @@ describe("チームの CI(ADR-0028)", () => {
     // チームの CI では、GitHub の CI を調べる道具は渡さない
     const { ciTools } = await import("./ci-tools.js");
     expect(await ciTools(p, { ciDetail: async () => ({}) } as never, { rerun: true })).toEqual([]);
+  });
+});
+
+describe("チームの CI: ブラウザの E2E は、閉じ込めの外で立てたブラウザサーバーに繋ぐ(#93)", () => {
+  const conf: Confinement = { readable: [], writable: [], hidden: [], allowedDomains: [], hiddenEnv: [], allowLocalSockets: true, env: {} };
+  const repoWith = (config: string | null) => {
+    const dir = mkdtempSync(join(tmpdir(), "kuramoto-pw-"));
+    if (config) writeFileSync(join(dir, config), "export default {};");
+    return dir;
+  };
+
+  it("playwright の設定があるリポジトリのテストのコマンドだけが、ブラウザを要る", () => {
+    const dir = repoWith("playwright.config.ts");
+    try {
+      expect(wantsBrowser("npm test", dir)).toBe(true);
+      expect(wantsBrowser("npm run test:e2e", dir)).toBe(true);
+      expect(wantsBrowser("npm ci", dir)).toBe(false);
+      expect(wantsBrowser("npm run lint", dir)).toBe(false);
+      expect(wantsBrowser("npm test", repoWith(null))).toBe(false); // playwright の設定が無い
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("要るコマンドには、立てたブラウザサーバーの宛先を環境変数で渡し、close で閉じる。要らないコマンドでは立てない", async () => {
+    const dir = repoWith("playwright.config.ts");
+    const events: string[] = [];
+    const start = async () => {
+      events.push("start");
+      return { endpoint: "ws://127.0.0.1:9/abc", close: async () => void events.push("close") };
+    };
+    try {
+      const b = await withBrowser("npm test", dir, conf, start);
+      expect(b.env).toEqual({ [E2E_WS_ENDPOINT_ENV]: "ws://127.0.0.1:9/abc" });
+      await b.close();
+      expect(events).toEqual(["start", "close"]);
+      expect((await withBrowser("npm ci", dir, conf, start)).env).toEqual({});
+      // ソケットを閉じた設定(sandbox_strict_sockets)では、E2E そのものが動かないので立てない
+      expect((await withBrowser("npm test", dir, { ...conf, allowLocalSockets: false }, start)).env).toEqual({});
+      expect(events).toEqual(["start", "close"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ブラウザサーバーを立てられなかったときは、宛先を渡さずに進めず、理由つきの失敗にする", async () => {
+    const dir = repoWith("playwright.config.ts");
+    try {
+      const b = await withBrowser("npm test", dir, conf, async () => {
+        throw new Error("Chrome が見つかりません");
+      });
+      expect(b.error).toContain("画面の E2E を流せません");
+      expect(b.error).toContain("Chrome が見つかりません");
+      await b.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

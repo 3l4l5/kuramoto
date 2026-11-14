@@ -17,22 +17,23 @@ E2E_SHOTS=/tmp/shots npm run test:e2e     # 画面ごとのスクリーンショ
 
 ## チームの CI
 
-`npm test` の最後の回が E2E です(SQLite の回 → MySQL の回 → E2E の回)。チームの CI は `npm test` を流すので、**ブラウザが起動できる環境では**、E2E が落ちると merge 待ちに進みません。
+`npm test` の最後の回が E2E です(SQLite の回 → MySQL の回 → E2E の回)。チームの CI は `npm test` を閉じ込め(sandbox-runtime)の中で流します。閉じ込めの中では Chrome は起動できない(プロファイル・ソケット・Crashpad の置き場所が読み書きできない)ので、**ブラウザは閉じ込めの外で立てて、中からは繋ぐだけ**にしています。閉じ込めの読み書きできる場所は広げていません。
 
-- E2E の回は、MySQL の使い捨ての database を消したあとに流します(長くかかっても database が残りません)。
-- 先に Chrome を 1 回起動できるか確かめます。落ちた理由で見分けます。
-  - **起動できた → E2E が落ちた**: 画面の壊れです。失敗にします。`test-results/` に落ちた画面と手順が残ります。
-  - **起動できない**(閉じ込めの中で Chrome が `ProcessSingleton` などで起動できない環境): 画面が壊れたのではないので、全部の PR を止めないよう、既定では失敗にせず、「⚠ ブラウザを起動できなかったので、画面の確かめは流していません」と出して通します。この環境では画面の確かめは流れていないので、Chrome が動く場所(手元)で `npm run test:e2e` を流してください。
-  - 起動できないことも失敗にしたい環境(Chrome が動くと分かっている CI)では `KURAMOTO_E2E_REQUIRE_BROWSER=1`。
-- 試験のファイルを絞って流すとき(`npm test src/foo.test.ts`)は E2E の回を流しません。
-- E2E の回は、空いているポートを選んで、画面を作り直してから流します。全体で 12 分(`playwright.config.ts` の `globalTimeout`)を超えたら止めます。チームの CI の時間切れ(既定 20 分)に収まらないときは、E2E を `npm test` から外して、プロジェクトの設定の CI コマンドに `npm run test:e2e` を別に足します。
-- 回ごと飛ばすと決めているときだけ、`KURAMOTO_SKIP_E2E_TESTS=1 npm test` と明示します(黙って飛ばしません)。
+1. チームの CI の runner(`src/project/team-ci.ts` の `SandboxRunner`)が、playwright の設定(`playwright.config.*`)があるリポジトリのテストのコマンド(`npm test`・`npm run test:e2e`)の前に、閉じ込めの外(Kuramoto のサーバー)で Playwright のブラウザサーバー(`chromium.launchServer()`、Google Chrome)を立てる。
+2. その `wsEndpoint` を環境変数 `KURAMOTO_E2E_WS_ENDPOINT` で、中の `npm test` に渡す。コマンドが終わったら(落ちても時間切れでも)必ずブラウザサーバーを閉じる。
+3. 中では、`playwright.config.ts` が `connectOptions` で、渡された宛先に connect する(Chrome は起動しない)。画面を配るサーバー(`e2e/server.ts`)は中で立て、外のブラウザが `localhost` で開く。
+4. `KURAMOTO_E2E_WS_ENDPOINT` が渡されたときは、ブラウザに繋がらないことも**失敗**にする(「確かめていない」で通さない)。外でブラウザサーバーを立てられなかったときも、理由つきで失敗にする。
+- 閉じ込めの中から `127.0.0.1` に届かない設定(プロジェクトの設定 `sandbox_strict_sockets` = 1)では、E2E そのものが動かないので、ブラウザサーバーは立てません(手元と同じ「確かめていない」の知らせになります)。
+- 手元の実行(`KURAMOTO_E2E_WS_ENDPOINT` が無い): E2E の回は、先に Chrome を 1 回起動できるか確かめます。起動できれば流し、落ちたら画面の壊れとして失敗にします(`test-results/` に落ちた画面と手順が残ります)。起動できないとき(手元の閉じ込めの中など)は、画面が壊れたのではないので、失敗にせず「⚠ ブラウザを起動できなかったので、画面の確かめは流していません」と出して通します。起動できないことも失敗にするには `KURAMOTO_E2E_REQUIRE_BROWSER=1`。
+- E2E の回は、MySQL の使い捨ての database を消したあとに、空いているポートを選んで、画面を作り直してから流します。全体で 12 分(`playwright.config.ts` の `globalTimeout`)を超えたら止めます。チームの CI の時間切れ(既定 20 分)に収まらないときは、E2E を `npm test` から外して、プロジェクトの設定の CI コマンドに `npm run test:e2e` を別に足します。
+- 試験のファイルを絞って流すとき(`npm test src/foo.test.ts`)は E2E の回を流しません。回ごと飛ばすと決めているときだけ、`KURAMOTO_SKIP_E2E_TESTS=1 npm test` と明示します(黙って飛ばしません)。
+- ブラウザサーバーを立てる側(Kuramoto のサーバー)と、繋ぐ側(リポジトリの `@playwright/test`)の Playwright の版は、そろえてください(ずれると connect が断られます)。
 
 ## ファイルの分け方
 
 | ファイル | 中身 |
 |---|---|
-| `browser.ts` | E2E が使うブラウザの指定(`playwright.config.ts` と、`npm test` の「起動できるか」の確かめで共通) |
+| `browser.ts` | E2E が使うブラウザの指定と、ブラウザサーバーの宛先の環境変数(`playwright.config.ts` と、`npm test` の「繋がるか」の確かめで共通) |
 | `helpers.ts` | 共通の道具。プロジェクトを作る・種類つきのチケットを用意する・画面の幅(`PC` 1280px・`PHONE` 390px)・ヘッダー/下のタブ/引き出しの場所 |
 | `entrances.spec.ts` | 入口。共通ヘッダーと下のタブの行き先、編成の引き出しのタブ、ボードの絞り込みとチケット詳細 |
 | `policy.spec.ts` | チームの方針の入口(オフィス・チケット詳細・スマホのメニュー)と、開発ルールの選択・下書きを捨てるときの確かめ |
@@ -43,7 +44,7 @@ E2E_SHOTS=/tmp/shots npm run test:e2e     # 画面ごとのスクリーンショ
 ## 書き方
 
 - **場所は role と名前で指す**: `getByRole("button", { name: "編成", exact: true })`・`getByRole("complementary", { name: "チームの方針" })`・`getByLabel("名前")`。クラス名・並び順(`nth`)・見た目の文字の一部には頼りません。画面の作りが変わっても壊れにくくするためです。名前が部分一致で重なるときは `exact: true`。
-- **共通ヘッダーの場所は `helpers.ts` を通す**: `screens(page)`(企画スタジオ・オフィス・生産性・設定)、`views(page)`(オフィス/ボード/ツリー)、`headerDrawer(page, "編成")`。ヘッダーの作りが変わったら、`helpers.ts` の 1 か所を直します。
+- **共通ヘッダーの場所は `helpers.ts` を通す**: `screens(page)`(切り替えスイッチ全体。企画スタジオ・生産性・設定と、その中の見方)、`views(page)`(オフィス/ボード/ツリー。選ばれているのは `aria-pressed`、いまの画面は `aria-current`)、`headerDrawer(page, "編成")`。ヘッダーの作りが変わったら、`helpers.ts` の 1 か所を直します。
 - **幅を決める**: パソコンは `page.setViewportSize(PC)`、スマホは `PHONE`(ファイル全体なら `test.use({ viewport: PHONE })`)。ヘッダーのボタンはスマホでは隠れ、下のタブとメニューが同じ行き先を持ちます。両方の幅で通す操作は、`openDrawer(page, "pc" | "phone", "編成")` のように幅の違いを helpers に閉じ込めて、同じ中身のテストを 2 回回します。
 - **待つのは `expect`**: 固定の待ち時間(`waitForTimeout`)は使いません。`expect(...).toBeVisible()` などは自動でやり直して待ちます。
 - **データは API で作る**: 画面で作る必要のない前提(チケットなど)は `page.request.post(...)` で作ります(書き込みには `WRITE` の印が要ります)。
