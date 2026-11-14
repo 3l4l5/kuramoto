@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import type { AddressInfo } from "node:net";
@@ -13,6 +12,7 @@ import type { GitHub, PrStatus } from "../github/github.js";
 import { Dispatcher } from "./dispatcher.js";
 import { ownerMerge, type TeamCiHook } from "./merge.js";
 import { Project, type TicketRow } from "./project.js";
+import { canSandbox } from "./can-sandbox.js";
 import { browserSandboxConfig, confinedBrowserEnabled } from "./confined-browser.js";
 import { denyLocalPorts, needsLocalPortDeny, parsePorts } from "./local-ports.js";
 import { detectCommands, E2E_WS_ENDPOINT_ENV, runTeamCi, SandboxRunner, wantsBrowser, withBrowser, type CommandRunner } from "./team-ci.js";
@@ -126,7 +126,7 @@ describe("チームの CI(ADR-0028)", () => {
     expect(await ownerMerge(p, gh, b.id, "team")).toMatchObject({ result: "blocked" });
   });
 
-  it.skipIf(process.platform !== "darwin")("閉じ込めの中で流す: 作業場所は書けて、ホームの認証情報は読めない", async () => {
+  it.skipIf(!canSandbox())("閉じ込めの中で流す: 作業場所は書けて、ホームの認証情報は読めない", async () => {
     const dir = mkdtempSync(join(tmpdir(), "kuramoto-srt-"));
     mkdirSync(join(dir, "sub"));
     try {
@@ -148,7 +148,7 @@ describe("チームの CI(ADR-0028)", () => {
     }
   }, 60_000);
 
-  it.skipIf(process.platform !== "darwin")("閉じ込めの中から 127.0.0.1 のポート(mysql-test の 3307 と同じ作り)に届く。ソケットを閉じた設定(sandbox_strict_sockets)では届かない", async () => {
+  it.skipIf(!canSandbox())("閉じ込めの中から 127.0.0.1 のポート(mysql-test の 3307 と同じ作り)に届く。ソケットを閉じた設定(sandbox_strict_sockets)では届かない", async () => {
     const dir = mkdtempSync(join(tmpdir(), "kuramoto-srt-"));
     const server = createServer((c) => c.end());
     await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
@@ -256,12 +256,6 @@ describe("チームの CI(ADR-0028)", () => {
     expect(await ciTools(p, { ciDetail: async () => ({}) } as never, { rerun: true })).toEqual([]);
   });
 });
-
-/** この環境で、sandbox-runtime(macOS は sandbox-exec)で閉じ込められるか。閉じ込めの中からは重ねられない。 */
-function canSandbox(): boolean {
-  if (process.platform !== "darwin") return false;
-  return spawnSync("/usr/bin/sandbox-exec", ["-p", "(version 1)(allow default)", "/usr/bin/true"]).status === 0;
-}
 
 describe("チームの CI: ブラウザの E2E は、ブラウザ専用の狭い閉じ込めの中で立てたブラウザサーバーに繋ぐ(#93)", () => {
   const conf: Confinement = { readable: [], writable: [], hidden: [], allowedDomains: [], hiddenEnv: [], allowLocalSockets: true, env: {} };

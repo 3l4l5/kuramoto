@@ -235,12 +235,13 @@ describe("設定ファイル", () => {
 
   it("起動時: mysql も止めずに通し、1 行だけ出す(パスワードは出さない。繋ぐのは入口の startDatabase)", () => {
     const path = join(tmp(), "config.yaml");
-    writeFileSync(path, "database:\n  type: mysql\n  url: mysql://u:pw@h/db\n", { mode: 0o600 });
+    writeFileSync(path, "database:\n  type: mysql\n  url: mysql://u:s3cr3t-kuramoto@h/db\n", { mode: 0o600 });
     const lines: string[] = [];
     const c = loadStartupConfig((l) => lines.push(l), path, {});
     expect(c.database).toMatchObject({ type: "mysql" });
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("MySQL h / db");
-    expect(lines[0]).not.toContain("pw");
+    // パスワードの目印は、一時ディレクトリの名前(ランダム)に偶然入らない文字列にする("pw" だと、パスに入って落ちることがあった)
+    expect(lines[0]).not.toContain("s3cr3t-kuramoto");
   });
 });

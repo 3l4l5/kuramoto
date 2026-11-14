@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Confinement } from "../harness/types.js";
 import { denyLocalPorts, needsLocalPortDeny } from "./local-ports.js";
+import { allowChromiumMachRegister, needsMachRegister } from "./mach-register.js";
 
 /**
  * チームの CI の、画面(ブラウザ)の E2E のためのブラウザサーバー(#93)。
@@ -74,12 +75,22 @@ export function browserSandboxConfig(cwd: string, conf: Confinement, profileDir:
 
 const shq = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
 
-/** 狭い閉じ込めの中で流す、ブラウザサーバーの起動のスクリプト(リポジトリの @playwright/test を使う。版が必ずそろう)。stdin が閉じたら終わる。 */
-const SERVER_SCRIPT = `
-const { chromium } = require("@playwright/test");
+/**
+ * 狭い閉じ込めの中で流す、ブラウザサーバーの起動のスクリプト(リポジトリの @playwright/test を使う。版が必ずそろう)。stdin が閉じたら終わる。
+ * `node -e` の require は、カレントディレクトリから探す。閉じ込めの中では、ホームの下のカレントディレクトリを getcwd できないことがあり、
+ * そのとき node は node 本体のディレクトリから探して「Cannot find module '@playwright/test'」になる(macOS ランナーで起きた)。
+ * カレントディレクトリに頼らず、リポジトリの node_modules の絶対パスで読む。
+ */
+export const serverScript = (cwd: string) => `
+const { chromium } = require(${JSON.stringify(join(resolve(cwd), "node_modules/@playwright/test"))});
 (async () => {
   const opts = { headless: true, timeout: 60000 };
-  const server = await chromium.launchServer({ channel: "chrome", ...opts }).catch(() => chromium.launchServer(opts));
+  // 確かめの CI(KURAMOTO_E2E_BROWSER_DEBUG=1)では、ブラウザの標準エラー(Chrome の落ちた理由)を、DEBUG の環境変数に頼らず、標準エラーに出す
+  if (process.env.KURAMOTO_E2E_BROWSER_DEBUG === "1") {
+    opts.logger = { isEnabled: (name) => name === "browser", log: (name, severity, message) => { if (name === "browser") process.stderr.write("[pw:browser] " + String(message).slice(0, 300) + "\\n"); } };
+  }
+  const server = await chromium.launchServer({ channel: "chrome", ...opts }).catch((e) => { process.stderr.write("[pw:browser] channel chrome の起動に失敗: " + String((e && e.message) || e).split("\\n")[0].slice(0, 300) + "\\n"); return chromium.launchServer(opts); });
+  server.on("close", () => process.stderr.write("[pw:browser] ブラウザサーバーが閉じた(ブラウザが終わった)\\n"));
   process.stdout.write("KURAMOTO_WS " + server.wsEndpoint() + "\\n");
   const stop = () => server.close().catch(() => {}).then(() => process.exit(0));
   process.stdin.on("end", stop);
@@ -104,14 +115,20 @@ export const startConfinedBrowser: StartBrowser = async (cwd, conf) => {
     const inner = [
       "unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy",
       `export TMPDIR=${shq(profileDir)}`,
-      `exec ${shq(process.execPath)} -e ${shq(SERVER_SCRIPT)}`,
+      `exec ${shq(process.execPath)} -e ${shq(serverScript(cwd))}`,
     ].join("; ");
     // ブラウザサーバーの閉じ込めも、全体の設定の localhost の許可を引き継ぐので、npm test と同じポートを断る(ADR-0059)
     const raw = await SandboxManager.wrapWithSandbox(inner, undefined, browserSandboxConfig(cwd, conf, profileDir));
-    const wrapped = needsLocalPortDeny(conf.allowLocalSockets, conf.deniedLocalPorts) ? denyLocalPorts(raw, conf.deniedLocalPorts ?? []) : raw;
-    const env: NodeJS.ProcessEnv = { ...process.env, ...conf.env, CI: "1" };
+    const denied = needsLocalPortDeny(conf.allowLocalSockets, conf.deniedLocalPorts) ? denyLocalPorts(raw, conf.deniedLocalPorts ?? []) : raw;
+    // macOS の Chromium は、起動時に mach-register が要る。ブラウザ専用の閉じ込めにだけ、その 1 行を足す(mach-register.ts)
+    const wrapped = needsMachRegister() ? allowChromiumMachRegister(denied) : denied;
+    // 確かめの CI(KURAMOTO_E2E_BROWSER_DEBUG=1)では、ブラウザの落ちた理由(Chrome の FATAL など)を読めるよう、ブラウザサーバーの標準エラーを残す
+    const debug = process.env.KURAMOTO_E2E_BROWSER_DEBUG === "1";
+    const env: NodeJS.ProcessEnv = { ...process.env, ...conf.env, CI: "1", ...(debug ? { DEBUG: "pw:browser" } : {}) };
     for (const k of conf.hiddenEnv) delete env[k];
-    const child = spawn("/bin/bash", ["-c", wrapped], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+    // カレントディレクトリは、閉じ込めの中で読める・書ける profileDir にする。リポジトリ(ホームの下)のままだと、ホームを読めない閉じ込めの中で
+    // process.cwd() が「EPERM: uv_cwd」で落ちる(macOS ランナーで起きた)。スクリプトはリポジトリを絶対パスで読むので、cwd は要らない
+    const child = spawn("/bin/bash", ["-c", wrapped], { cwd: profileDir, env, stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     const endpoint = await new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => fail(new Error(`${START_TIMEOUT_MS / 1000} 秒たってもブラウザサーバーが立ちませんでした`)), START_TIMEOUT_MS);
@@ -127,6 +144,7 @@ export const startConfinedBrowser: StartBrowser = async (cwd, conf) => {
       });
       child.stderr.on("data", (b: Buffer) => {
         out += b.toString();
+        if (debug) for (const l of b.toString().split("\n")) if (l.trim()) process.stderr.write(`[browser-server] ${l.slice(0, 300)}\n`);
       });
       child.on("error", fail);
       child.on("close", (code) => fail(new Error(`ブラウザサーバーが終わりました(終了コード ${code ?? "なし"})`)));
