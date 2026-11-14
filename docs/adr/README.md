@@ -65,3 +65,4 @@ Kuramoto の設計で下した判断を 1 件ずつ残します。状態は「�
 | [0059](0059-confine-local-ports.md) | チームの CI の閉じ込めから、Kuramoto 本体のポート(と設定で足したポート)にだけは届かせない。担当のシェルからは、本体の API に合言葉を掛けて守る | 提案 |
 | [0060](0060-confine-own-mysql-port.md) | Kuramoto 自身の MySQL(このマシンにあるとき)のポートも、閉じ込めから断る既定に入れる | 提案 |
 | [0061](0061-session-cookie.md) | 画面の Cookie には合言葉そのものを入れず、本体だけが検証できる短期(8 時間)のセッション ID を入れる。失効でき、前の版の Cookie は通さない。成果物は別のホスト名で開く | 提案 |
+| [0062](0062-origin-bound-credential.md) | Cookie が担当の別ポートのサーバーに届くこと自体を無くす検討 — 案 A(localStorage + Authorization)を推奨、鍵の署名は後から足せる。実装は責任者の確認のあと | 提案 |
