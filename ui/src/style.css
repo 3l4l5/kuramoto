@@ -539,7 +539,7 @@ body { background: var(--bg); }
 .compose-hint { padding: 8px 12px 0; }
 .pinform { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .swork .agree { margin-left: auto; }
-.exportbtn { margin-left: auto; text-decoration: none; }
+.exportbtn { margin-left: auto; }
 .scrlist { display: flex; gap: 6px; flex-wrap: wrap; }
 .scrlist .d { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 6px; }
 .issue .acts, .skipask .acts { display: flex; gap: 8px; flex-wrap: wrap; }

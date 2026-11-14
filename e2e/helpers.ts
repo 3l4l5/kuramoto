@@ -36,21 +36,35 @@ export async function sendToPlanner(page: Page, text: string) {
 }
 
 /**
- * 設計書(Markdown)のエクスポートのリンクが、ダウンロードの印(download)つきで、名前と中身の正しいファイルを返すことを確かめて、名前と中身を返す。
- * ブラウザの「ダウンロード」の動き(ファイルに書く)は通さず、リンクの宛先を page.request(Authorization つき)で取る。
+ * 設計書(Markdown)の「エクスポート」ボタンを押して、画面が fetch(Authorization つき。Cookie には頼らない)で取り、
+ * 名前と中身の正しいファイルを保存しようとすることを確かめて、名前と中身を返す。
+ * ブラウザの「ダウンロード」の動き(ファイルに書く)は通さず、保存の最後の一押し(download の印つきの a.click())だけ、そこで止めて名前を記録する。
  * 理由: 閉じ込めの中のブラウザは、ダウンロードのファイルを書くときに、書ける場所の外(ユーザーの一時ディレクトリ /private/var/folders/…/T/.org.chromium.Chromium.*)へ
  * 書こうとして sandbox に断られ、ダウンロードが canceled で失敗する(run 43609097616)。この許可は足さない(閉じ込めを広げない)。
  */
 export async function fetchExport(page: Page, name: string): Promise<{ filename: string; body: Buffer }> {
-  const link = page.getByRole("link", { name: "設計書をエクスポート(Markdown)" });
-  expect(await link.evaluate((a) => a.hasAttribute("download")), "リンクに download の印がある").toBe(true);
-  const res = await page.request.get((await link.getAttribute("href"))!);
+  await page.evaluate(() => {
+    const w = window as unknown as { __saved?: string[] };
+    if (w.__saved) return;
+    w.__saved = [];
+    const orig = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      if (this.hasAttribute("download")) w.__saved!.push(this.download);
+      else orig.call(this);
+    };
+  });
+  const [res] = await Promise.all([
+    page.waitForResponse((r) => new URL(r.url()).pathname.endsWith("/studio/export")),
+    page.getByRole("button", { name: "設計書をエクスポート(Markdown)" }).click(),
+  ]);
   expect(res.status()).toBe(200);
   const disposition = res.headers()["content-disposition"] ?? "";
   expect(disposition).toMatch(/^attachment;/);
   const m = /filename\*=UTF-8''([^;]+)/.exec(disposition);
   const filename = m ? decodeURIComponent(m[1]!) : "";
   expect(filename).toBe(`${name}-設計書.md`);
+  // 画面が、その名前で保存しようとした
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __saved?: string[] }).__saved?.at(-1))).toBe(filename);
   return { filename, body: await res.body() };
 }
 
