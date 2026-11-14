@@ -14,6 +14,7 @@ import type { Harness } from "./harness/types.js";
 import { GhCli, type GitHub } from "./github/github.js";
 import { ConfigError, loadStartupConfig } from "./config.js";
 import { ACCESS_TOKEN_ENV, accessToken } from "./access-token.js";
+import { Sessions } from "./sessions.js";
 import { DatabaseConnectError } from "./db/mysql.js";
 import { startDatabase } from "./db/startup.js";
 import { currentWorkspaceId, Hq, kuramotoHome, kuramotoPort, workDirFor, type ProjectRecord } from "./hq.js";
@@ -92,13 +93,15 @@ export type ServerDeps = {
   localHtmlRenderer?: Renderer;
   /**
    * 合言葉(ADR-0059)。API と画面のすべてで、localhost からも求める。
-   * URL の ?token= で一度渡すと Cookie(1 年)に入り、以後はそれで通る。Authorization: Bearer でも通る。
+   * URL の ?token= で一度渡すと、合言葉ではなくセッション ID が Cookie(8 時間・失効できる。ADR-0061)に入り、以後はそれで通る。Authorization: Bearer(合言葉)でも通る。
    * 担当(エージェント)のシェルは localhost の本体に届いてしまうので、閉じ込めの中から見えない合言葉でしか守れない。
    * 「localhost からなら合言葉なし」で合言葉を渡す道(HTML への埋め込み・API での配布)は作らない。
    */
   accessToken: string;
   /** 他の PC から見られるようにする(npm run start:public)。どの Host でも受ける(合言葉は同じく求める)。 */
   open?: boolean;
+  /** 画面に渡すセッション(ADR-0061)。Cookie には合言葉ではなくセッション ID を入れる。省くと、8 時間で切れる既定のものを作る。 */
+  sessions?: Sessions;
   /**
    * MySQL への接続の見張り(ADR-0041)。切れている間は、受信箱の見回りとエージェントの起動を止めて待ち、
    * 繋がり直したら再開する。画面にも出す。SQLite のときは無い。
@@ -127,8 +130,10 @@ export class KuramotoServer {
   private readonly github: GitHub;
   private readonly workspaceFor: (dataDir: string) => Workspace;
   private readonly mergePollMs: number;
+  private readonly sessions: Sessions;
 
   constructor(private readonly deps: ServerDeps) {
+    this.sessions = deps.sessions ?? new Sessions();
     this.harnesses = deps.harnesses ?? { "claude-agent-sdk": new ClaudeAgentSdkHarness() };
     this.github = deps.github ?? new GhCli();
     this.mergePollMs = deps.mergePollMs ?? MERGE_POLL_MS;
@@ -418,6 +423,7 @@ export class KuramotoServer {
       if (!this.allowed(req, url, res)) return;
       if (!url.pathname.startsWith("/api/")) return await this.serveStatic(url.pathname, res);
       if (req.method !== "GET" && req.headers["x-kuramoto"] !== "1") return send(res, 403, { error: "ヘッダーがありません" });
+      if (this.revokeSession(req, url, res)) return;
       const exp = req.method === "GET" && url.pathname.match(/^\/api\/projects\/(\d+)\/studio\/export$/);
       if (exp) return await this.sendExport(Number(exp[1]), res);
       const expZip = req.method === "GET" && url.pathname.match(/^\/api\/projects\/(\d+)\/studio\/export\.zip$/);
@@ -435,8 +441,8 @@ export class KuramotoServer {
   }
 
   /**
-   * 入ってよいか。だめなら応答を返して false。localhost からも合言葉(Cookie・Authorization: Bearer)を求める。
-   * 合言葉つきの URL で来たら Cookie に入れて、合言葉を外した URL へ送り直す。
+   * 入ってよいか。だめなら応答を返して false。localhost からも合言葉(セッションの Cookie・Authorization: Bearer)を求める。
+   * 合言葉つきの URL で来たら、合言葉ではなく新しいセッション ID を Cookie に入れて、合言葉を外した URL へ送り直す(ADR-0061)。
    * 先に Host を見て、open でなければ localhost 以外の名前(DNS rebinding など)を断る。
    */
   private allowed(req: IncomingMessage, url: URL, res: ServerResponse): boolean {
@@ -445,20 +451,43 @@ export class KuramotoServer {
       send(res, 403, { error: "localhost からだけ使えます" });
       return false;
     }
+    const cookies = parseCookies(req.headers.cookie);
     const given = url.searchParams.get("token");
     if (given !== null && sameSecret(given, token)) {
       url.searchParams.delete("token");
-      res.writeHead(303, { location: url.pathname + url.search, "set-cookie": `${TOKEN_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${TOKEN_COOKIE_MAX_AGE}` });
+      res.writeHead(303, { location: url.pathname + url.search, "set-cookie": [this.sessionCookie(this.sessions.issue()), ...legacyCookieClear(cookies)] });
       res.end();
       return false;
     }
-    const cookie = parseCookies(req.headers.cookie)[TOKEN_COOKIE];
     const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
-    if ((cookie && sameSecret(cookie, token)) || (bearer && sameSecret(bearer, token))) return true;
-    if (url.pathname.startsWith("/api/")) send(res, 401, { error: "合言葉(トークン)が要ります。Kuramoto を起動した端末に出ている URL を開いてください" });
-    else {
-      res.writeHead(401, { "content-type": "text/html; charset=utf-8" });
+    if (this.sessions.valid(cookies[SESSION_COOKIE]) || (bearer && sameSecret(bearer, token))) return true;
+    // 前の版が Cookie に入れていた合言葉は、もう通さない。ブラウザに残っていたら消す(漏れた疑いのある値を持たせない)
+    const clear = legacyCookieClear(cookies);
+    if (url.pathname.startsWith("/api/")) {
+      res.writeHead(401, { "content-type": "application/json; charset=utf-8", "x-kuramoto-build": BUILD_ID, ...(clear.length ? { "set-cookie": clear } : {}) });
+      res.end(JSON.stringify({ error: "合言葉(トークン)が要ります。Kuramoto を起動した端末に出ている URL を開いてください" }));
+    } else {
+      res.writeHead(401, { "content-type": "text/html; charset=utf-8", ...(clear.length ? { "set-cookie": clear } : {}) });
       res.end('<!doctype html><meta charset="utf-8"><title>Kuramoto</title><p style="font-family:sans-serif;padding:24px">Kuramoto を開くには、起動した端末に出ている「合言葉つきの URL」を開いてください。</p>');
+    }
+    return false;
+  }
+
+  private sessionCookie(id: string): string {
+    return `${SESSION_COOKIE}=${id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${this.sessions.maxAgeSeconds}`;
+  }
+
+  /** セッションの失効(ADR-0061)。DELETE /api/session はこのブラウザだけ、POST /api/session/revoke-all はすべて。 */
+  private revokeSession(req: IncomingMessage, url: URL, res: ServerResponse): boolean {
+    if (url.pathname === "/api/session" && req.method === "DELETE") {
+      this.sessions.revoke(parseCookies(req.headers.cookie)[SESSION_COOKIE]);
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8", "x-kuramoto-build": BUILD_ID, "set-cookie": `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0` });
+      res.end(JSON.stringify({ ok: true }));
+      return true;
+    }
+    if (url.pathname === "/api/session/revoke-all" && req.method === "POST") {
+      send(res, 200, { revoked: this.sessions.revokeAll() });
+      return true;
     }
     return false;
   }
@@ -987,9 +1016,14 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
-const TOKEN_COOKIE = "kuramoto_token";
-/** 合言葉の Cookie の有効期限(1 年)。 */
-const TOKEN_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+/** 画面に渡すセッション ID の Cookie(ADR-0061)。 */
+const SESSION_COOKIE = "kuramoto_session";
+/** 前の版が合言葉そのものを入れていた Cookie。もう通さず、ブラウザに残っていれば消す。 */
+const LEGACY_TOKEN_COOKIE = "kuramoto_token";
+
+function legacyCookieClear(cookies: Record<string, string>): string[] {
+  return LEGACY_TOKEN_COOKIE in cookies ? [`${LEGACY_TOKEN_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`] : [];
+}
 
 function sameSecret(a: string, b: string): boolean {
   const x = Buffer.from(a);
@@ -1001,7 +1035,13 @@ function parseCookies(header: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const part of (header ?? "").split(";")) {
     const i = part.indexOf("=");
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    if (i <= 0) continue;
+    const raw = part.slice(i + 1).trim();
+    try {
+      out[part.slice(0, i).trim()] = decodeURIComponent(raw);
+    } catch {
+      out[part.slice(0, i).trim()] = raw; // 壊れた % が来ても落ちない(どのみち通らない値)
+    }
   }
   return out;
 }
@@ -1060,8 +1100,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const server = createServer((req, res) => void app.handle(req, res));
   server.listen(port, open ? "0.0.0.0" : "127.0.0.1", () => {
     console.log(`Kuramoto: http://localhost:${port}`);
-    console.log("次の URL を開いてください(合言葉つき。一度開けば、そのブラウザでは 1 年間、以後合言葉なしで入れます):");
-    console.log(`  http://localhost:${port}/?token=${token}`);
+    console.log("次の URL を開いてください(合言葉つき。一度開けば、そのブラウザでは 8 時間、以後合言葉なしで入れます):");
+    console.log(`  http://127.0.0.1:${port}/?token=${token}`);
+    console.log("担当が動かした成果物(http://localhost:… の開発サーバーなど)は、この画面と別のホスト名(localhost)で開いてください。Cookie はポートで分けられず、同じホスト名で開くと担当のサーバーにも届きます(ADR-0061)。");
     if (!open) return;
     console.log("他の PC からは、次の URL を開いてください:");
     for (const u of lanUrls(port)) console.log(`  ${u}/?token=${token}`);

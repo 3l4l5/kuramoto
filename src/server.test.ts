@@ -14,6 +14,7 @@ import { addDevRule } from "./project/dev-rules.js";
 import { createTicket } from "./project/workflow.js";
 import { run } from "./db/sqlite.js";
 import { DbHealth } from "./db/mysql-health.js";
+import { Sessions } from "./sessions.js";
 
 const leadSaid = async (p: Project, text: string) => (await leadMessages(p)).some((m) => m.body.includes(text));
 
@@ -414,7 +415,7 @@ describe("ローカルサーバー", () => {
     expect(page.body).not.toContain(TOKEN); // 合言葉を渡す道は作らない
     expect((await rawGet(port, "/api/hq")).body).not.toContain(TOKEN);
     // 違う合言葉・Cookie も断る。合言葉の長さが違っても落ちない
-    for (const h of <Record<string, string>[]>[{ authorization: "Bearer wrong" }, { authorization: "Bearer" }, { cookie: "kuramoto_token=nope" }, { cookie: "kuramoto_token=" }]) {
+    for (const h of <Record<string, string>[]>[{ authorization: "Bearer wrong" }, { authorization: "Bearer" }, { cookie: "kuramoto_session=nope" }, { cookie: "kuramoto_session=" }, { cookie: `kuramoto_token=${TOKEN}` }, { cookie: "kuramoto_session=%E0%A4%A" }]) {
       expect((await rawGet(port, "/api/hq", h)).status).toBe(401);
     }
     expect((await rawGet(port, "/?token=wrong")).status).toBe(401);
@@ -422,24 +423,81 @@ describe("ローカルサーバー", () => {
     expect((await rawGet(port, "/api/projects", { authorization: `Bearer ${TOKEN}` }, "POST")).status).toBe(403);
   });
 
-  it("合言葉つきの URL を一度開くと Cookie(1 年・HttpOnly)に入り、以後は Cookie で通る。localhost も他の PC からも同じ", async () => {
+  /** 合言葉つきの URL を開いて、Cookie に入ったセッション ID(kuramoto_session=…)を返す。 */
+  const login = async (port: number, headers: Record<string, string> = {}) => {
+    const r = await rawGet(port, `/projects/1?token=${TOKEN}`, headers);
+    return { r, cookie: String(([] as string[]).concat(r.headers["set-cookie"] as string[])[0]) };
+  };
+
+  it("合言葉つきの URL を一度開くと、合言葉ではなくセッション ID が Cookie(8 時間・HttpOnly)に入り、以後はそれで通る。localhost も他の PC からも同じ(ADR-0061)", async () => {
     const { port } = await boot({ open: true });
-    const r = await rawGet(port, `/projects/1?token=${TOKEN}`);
+    const { r, cookie } = await login(port);
     expect(r.status).toBe(303);
     expect(r.headers.location).toBe("/projects/1"); // 合言葉は URL から外す
-    const cookie = String(r.headers["set-cookie"]);
-    expect(cookie).toContain(`kuramoto_token=${TOKEN}`);
+    expect(cookie).toMatch(/^kuramoto_session=[\w-]{40,};/);
+    expect(cookie).not.toContain(TOKEN); // Cookie に合言葉は入れない(担当の別ポートのサーバーに届いても、合言葉は漏れない)
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Strict");
-    expect(cookie).toContain(`Max-Age=${60 * 60 * 24 * 365}`);
-    // 以後は Cookie で通る(画面も API も)。Authorization: Bearer でも通る
-    expect((await rawGet(port, "/", { cookie: `kuramoto_token=${TOKEN}` })).status).toBe(200);
-    expect((await rawGet(port, "/api/hq", { cookie: `kuramoto_token=${TOKEN}` })).status).toBe(200);
+    expect(cookie).toContain(`Max-Age=${8 * 60 * 60}`);
+    const sid = cookie.split(";")[0]!;
+    // 以後はセッションの Cookie で通る(画面も API も)。Authorization: Bearer(合言葉)でも通る
+    expect((await rawGet(port, "/", { cookie: sid })).status).toBe(200);
+    expect((await rawGet(port, "/api/hq", { cookie: sid })).status).toBe(200);
     expect((await rawGet(port, "/api/hq", { authorization: `Bearer ${TOKEN}` })).status).toBe(200);
-    // 他の PC(Host が localhost 以外)も、open なら、合言葉があれば入れて、無ければ 401
+    // セッション ID を Bearer に入れても通らない(Bearer は合言葉だけ)
+    expect((await rawGet(port, "/api/hq", { authorization: `Bearer ${sid.split("=")[1]}` })).status).toBe(401);
+    // 他の PC(Host が localhost 以外)も、open なら、セッションがあれば入れて、無ければ 401
     const lan = { host: "192.168.1.20:4300" };
     expect((await rawGet(port, "/api/hq", lan)).status).toBe(401);
-    expect((await rawGet(port, "/api/hq", { ...lan, cookie: `kuramoto_token=${TOKEN}` })).status).toBe(200);
+    expect((await rawGet(port, "/api/hq", { ...lan, cookie: sid })).status).toBe(200);
+  });
+
+  it("開くたびに別のセッション ID を出す。前の版が Cookie に入れていた合言葉(kuramoto_token)は通さず、ブラウザから消させる", async () => {
+    const { port } = await boot();
+    const a = (await login(port)).cookie.split(";")[0];
+    const b = (await login(port)).cookie.split(";")[0];
+    expect(a).not.toBe(b);
+    const legacy = await rawGet(port, "/api/hq", { cookie: `kuramoto_token=${TOKEN}` });
+    expect(legacy.status).toBe(401);
+    expect(String(legacy.headers["set-cookie"])).toMatch(/kuramoto_token=; .*Max-Age=0/);
+    const page = await rawGet(port, "/", { cookie: `kuramoto_token=${TOKEN}` });
+    expect(page.status).toBe(401);
+    expect(String(page.headers["set-cookie"])).toMatch(/kuramoto_token=; .*Max-Age=0/);
+    // 合言葉つきの URL を開き直したときも、古い Cookie を消す
+    const re = await login(port, { cookie: `kuramoto_token=${TOKEN}` });
+    expect(([] as string[]).concat(re.r.headers["set-cookie"] as string[]).some((c) => /kuramoto_token=; .*Max-Age=0/.test(c))).toBe(true);
+  });
+
+  it("セッションは、ログアウトで 1 つ、revoke-all ですべて失効できる(合言葉は作り直さなくてよい)", async () => {
+    const { port } = await boot();
+    const a = (await login(port)).cookie.split(";")[0]!;
+    const b = (await login(port)).cookie.split(";")[0]!;
+    const c = (await login(port)).cookie.split(";")[0]!;
+    // 書き込みなので独自ヘッダーが要る
+    expect((await rawGet(port, "/api/session", { cookie: a }, "DELETE")).status).toBe(403);
+    const out = await rawGet(port, "/api/session", { cookie: a, "x-kuramoto": "1" }, "DELETE");
+    expect(out.status).toBe(200);
+    expect(String(out.headers["set-cookie"])).toContain("Max-Age=0");
+    expect((await rawGet(port, "/api/hq", { cookie: a })).status).toBe(401);
+    expect((await rawGet(port, "/api/hq", { cookie: b })).status).toBe(200);
+    // 合言葉なしでは失効もさせられない(担当が他人のセッションを止めることも、ID なしでは出来ない)
+    expect((await rawGet(port, "/api/session/revoke-all", { "x-kuramoto": "1" }, "POST")).status).toBe(401);
+    const all = await rawGet(port, "/api/session/revoke-all", { cookie: b, "x-kuramoto": "1" }, "POST");
+    expect(JSON.parse(all.body)).toEqual({ revoked: 2 }); // a は失効済みなので、残っていた b と c
+    for (const sid of [b, c]) expect((await rawGet(port, "/api/hq", { cookie: sid })).status).toBe(401);
+    // 合言葉は変わらないので、URL を開き直せば入れる
+    expect((await rawGet(port, "/api/hq", { authorization: `Bearer ${TOKEN}` })).status).toBe(200);
+  });
+
+  it("セッションは期限が来たら通らない(短期)", async () => {
+    let now = 1_000_000;
+    const { port } = await boot({ sessions: new Sessions(60_000, () => now) });
+    const sid = (await login(port)).cookie.split(";")[0]!;
+    expect((await rawGet(port, "/api/hq", { cookie: sid })).status).toBe(200);
+    now += 59_000;
+    expect((await rawGet(port, "/api/hq", { cookie: sid })).status).toBe(200);
+    now += 2_000;
+    expect((await rawGet(port, "/api/hq", { cookie: sid })).status).toBe(401);
   });
 
   it("open でないときは、合言葉があっても localhost 以外の Host は断る(403)", async () => {
