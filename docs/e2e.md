@@ -40,7 +40,7 @@ npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --break  # 
 npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --no-browser-server  # 設定なしの回(既定の振る舞いのログ)
 ```
 
-`--no-browser-server` は `KURAMOTO_E2E_CONFINED_BROWSER` を付けずに、同じ実行(`SandboxRunner`)で `npm test` を流します。Chrome が閉じ込めの中で起動できなければ `△ 設定なし: …(知らせて通った)`、起動できて E2E が流れれば `○ 設定なし: …` と出ます。終了コードは `npm test` が通れば 0、落ちたら 1。
+`--no-browser-server` は `KURAMOTO_E2E_CONFINED_BROWSER` を付けずに、同じ実行(`SandboxRunner`)で `npm test` を流します。Chrome が閉じ込めの中で起動できなければ `△ 設定なし: …(知らせて通った)`、起動できて E2E が流れれば `○ 設定なし: …`(終了コード 0 で、知らせが無く、「15 passed」が出力にあるときだけ)、それ以外は `? 設定なし: E2E が流れたか分からない` と出ます。終了コードは `npm test` が通れば 0、落ちたら 1。
 
 読み方(3 つとも通れば、チームの CI で `KURAMOTO_E2E_CONFINED_BROWSER=1` を有効にしてよい):
 
