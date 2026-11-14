@@ -41,3 +41,46 @@ test("画面を開いたあとで合言葉が通らなくなったら(401)、端
   await expect(page.getByRole("button", { name: "+ プロジェクトを作る" })).toBeVisible();
   await expect(page.getByRole("alert").filter({ hasText: "合言葉が通りません" })).toHaveCount(0);
 });
+
+test("本部の「ログアウト」で、このブラウザのセッションが止まり、案内が出る。合言葉つきの URL を開き直せば入れる", async ({ page }) => {
+  await page.goto(`/?token=${E2E_TOKEN}`);
+  await expect(page.getByRole("button", { name: "+ プロジェクトを作る" })).toBeVisible();
+  const panel = page.getByRole("region", { name: "アクセスの管理" });
+  await panel.getByRole("button", { name: "ログアウト", exact: true }).click();
+
+  await expect(page.getByRole("alert").filter({ hasText: "ログアウトしました" })).toBeVisible();
+  // セッションは失効し、Cookie も消えている
+  expect(await page.context().cookies()).toEqual([]);
+  expect((await page.request.get("/api/hq")).status()).toBe(401);
+
+  await page.goto(`/?token=${E2E_TOKEN}`);
+  await expect(page.getByRole("button", { name: "+ プロジェクトを作る" })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "ログアウトしました" })).toHaveCount(0);
+});
+
+test("本部の「すべてのセッションを失効」は、確認のあとに、ほかのセッションも含めて止める", async ({ page, browser }) => {
+  await page.goto(`/?token=${E2E_TOKEN}`);
+  await expect(page.getByRole("button", { name: "+ プロジェクトを作る" })).toBeVisible();
+
+  // もう 1 つ、別のブラウザのセッションを作る
+  const other = await browser.newContext({ baseURL: test.info().project.use.baseURL });
+  const otherPage = await other.newPage();
+  await otherPage.goto(`/?token=${E2E_TOKEN}`);
+  expect((await other.request.get("/api/hq")).status()).toBe(200);
+
+  await page.getByRole("button", { name: "すべてのセッションを失効" }).click();
+  const dialog = page.getByRole("dialog", { name: "すべてのセッションを失効" });
+  await expect(dialog.getByText("このブラウザも入れなくなります")).toBeVisible();
+
+  // やめるなら何も止まらない
+  await dialog.getByRole("button", { name: "やめる" }).click();
+  await expect(dialog).toBeHidden();
+  expect((await page.request.get("/api/hq")).status()).toBe(200);
+
+  await page.getByRole("button", { name: "すべてのセッションを失効" }).click();
+  await dialog.getByRole("button", { name: "失効する" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "ログアウトしました" })).toBeVisible();
+  expect((await page.request.get("/api/hq")).status()).toBe(401);
+  expect((await other.request.get("/api/hq")).status()).toBe(401);
+  await other.close();
+});

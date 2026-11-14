@@ -3,6 +3,7 @@ import { go, useAct, useHq } from "./hooks";
 import { STAGE_NAME, usd } from "./format";
 import { Btn } from "./ui";
 import { WorkSwitch } from "./WorkSwitch";
+import { SessionPanel } from "./SessionPanel";
 
 const KIND: Record<string, [string, string]> = { decide: ["判断", "var(--warn)"], merge: ["merge", "var(--ok)"], plan: ["企画", "var(--design)"] };
 
@@ -52,6 +53,7 @@ export function Home() {
           <ImportButton />
         </article>
       </div>
+      <SessionPanel />
     </section>
   );
 }

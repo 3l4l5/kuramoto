@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { isUnauthorized, post, subscribeUnauthorized } from "./api";
+import { getAuthState, post, subscribeAuth } from "./api";
 import { Home } from "./Home";
 import { go, useDbStatus, useProject, useRoute, useStudio } from "./hooks";
 import { NewProject } from "./NewProject";
@@ -80,16 +80,26 @@ export function App() {
   );
 }
 
-/** 合言葉が通らないとき(401)、どの画面でも一番上に出す。通るようになったら消える(ADR-0059)。 */
+/**
+ * 合言葉が通らないとき(401)と、この画面からログアウト・失効したあと、どの画面でも一番上に出す。
+ * 401 は通るようになったら消える(ADR-0059)。ログアウトのあとは、合言葉つきの URL を開き直すまで出す(ADR-0061)。
+ */
 function UnauthorizedBanner() {
-  const unauthorized = useSyncExternalStore(subscribeUnauthorized, isUnauthorized);
-  if (!unauthorized) return null;
+  const auth = useSyncExternalStore(subscribeAuth, getAuthState);
+  if (auth === "ok") return null;
   return (
     <div className="budgetalert" role="alert">
-      <p>
-        <b>合言葉が通りません。</b>
-        Kuramoto を起動した端末に出ている「合言葉つきの URL」を開いてください(一度開けば、このブラウザでは 8 時間通ります)。
-      </p>
+      {auth === "signed-out" ? (
+        <p>
+          <b>ログアウトしました。</b>
+          このブラウザのセッションは止まっています。もう一度使うには、Kuramoto を起動した端末に出ている「合言葉つきの URL」を開いてください。
+        </p>
+      ) : (
+        <p>
+          <b>合言葉が通りません。</b>
+          Kuramoto を起動した端末に出ている「合言葉つきの URL」を開いてください(一度開けば、このブラウザでは 8 時間通ります)。
+        </p>
+      )}
     </div>
   );
 }
