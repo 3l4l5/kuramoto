@@ -25,9 +25,11 @@ export function PhoneBar({ id, drawer, moveTo }: { id: number; drawer: Drawer | 
     setMenu(false);
     go(hash);
   };
-  const drawerTo = (d: Drawer) => {
+  // 引き出しはオフィスの画面にだけ描かれる。企画スタジオ・生産性・設定から開くときは、オフィスへ移ってから開く(移らないと、開いたことになっても何も見えない)
+  const drawerTo = (d: Drawer | null) => {
     setMenu(false);
     moveTo(d);
+    if (d && !onProject) go(`#/p/${id}`);
   };
   const cur = menu ? "menu" : drawer === "lead" ? "lead" : onProject && !drawer ? tab : null;
   const items: [string, string, string][] = [
@@ -47,8 +49,7 @@ export function PhoneBar({ id, drawer, moveTo }: { id: number; drawer: Drawer | 
             onClick={() => {
               if (k === "inbox" || k === "office") show(k);
               else if (k === "lead") {
-                setMenu(false);
-                moveTo(drawer === "lead" ? null : "lead");
+                drawerTo(drawer === "lead" ? null : "lead");
               } else setMenu(!menu);
             }}
           >
