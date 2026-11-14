@@ -233,6 +233,56 @@ describe("merge を通らずに終わったチケット(すでに main に入っ
     expect(ws.cleaned).toHaveLength(1);
   });
 
+  it("ownerMerge が done にしてから印を付けるまでの間に背景の片付けが走っても、作業場所を消すのは 1 回だけ", async () => {
+    const { p, t } = await mergeWaiting("MERGED");
+    const ws = new StaticWorkspace("/tmp/ws");
+    // done になったあと、後始末(片付け)に入る前に間が空く(event・flushFollowups・GitHub への問い合わせの代わり)
+    const event = p.event.bind(p);
+    p.event = (async (...a: Parameters<typeof p.event>) => {
+      if (a[1] === "merged") await new Promise((r) => setTimeout(r, 30));
+      return event(...a);
+    }) as typeof p.event;
+    const merging = ownerMerge(p, github("MERGED"), t.id, "team", { workspace: ws });
+    await new Promise((r) => setTimeout(r, 10));
+    expect((await p.ticket(t.id)).stage).toBe("done");
+    // 背景の片付けは、この間に done のチケットを拾う
+    const background = await releaseFinishedWorktrees(p, ws);
+    expect(await merging).toEqual({ result: "merged" });
+    expect(background).toBe(1);
+    expect(ws.cleaned).toEqual([{ repo: REPO, ticketNumber: t.number }]);
+    expect(await releaseFinishedWorktrees(p, ws)).toBe(0);
+  });
+
+  it("背景の片付けを同時に呼んでも、同じチケットは 1 回だけ消す", async () => {
+    const { p, t } = await devWithRun();
+    await dropTicket(p, t.id, { by: "lead", reason: "いらなくなった" });
+    const ws = new StaticWorkspace("/tmp/ws");
+    const remove = ws.removeTicketWorktrees!.bind(ws);
+    ws.removeTicketWorktrees = async (...a) => {
+      await new Promise((r) => setTimeout(r, 5));
+      return remove(...a);
+    };
+    const counts = await Promise.all([releaseFinishedWorktrees(p, ws), releaseFinishedWorktrees(p, ws)]);
+    expect(counts.sort()).toEqual([0, 1]);
+    expect(ws.cleaned).toEqual([{ repo: REPO, ticketNumber: t.number }]);
+  });
+
+  it("取りやめて片付けたあと、戻して merge まで進めたら、もう一度片付ける", async () => {
+    const { p, t } = await devWithRun();
+    const ws = new StaticWorkspace("/tmp/ws");
+    await dropTicket(p, t.id, { by: "lead", reason: "いらなくなった" });
+    await releaseFinishedWorktrees(p, ws);
+    await reopenTicket(p, t.id);
+    run(p.db, "UPDATE tickets SET stage = 'merge' WHERE id = ?", [t.id]);
+    const repoId = (await p.repos())[0]!.id;
+    run(p.db, "INSERT INTO pull_requests (ticket_id, repo_id, number, head, gh_state) VALUES (?, ?, 10, 'kuramoto/1', 'MERGED')", [t.id, repoId]);
+    expect(await ownerMerge(p, github("MERGED"), t.id, "owner", { workspace: ws })).toEqual({ result: "merged" });
+    expect(ws.cleaned).toEqual([
+      { repo: REPO, ticketNumber: t.number },
+      { repo: REPO, ticketNumber: t.number },
+    ]);
+  });
+
   it("取りやめを戻したチケットは、片付けたあとも続きから進められる(ブランチは残る)", async () => {
     const { p, t } = await devWithRun();
     const ws = new StaticWorkspace("/tmp/ws");
