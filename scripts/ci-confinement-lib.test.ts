@@ -35,6 +35,12 @@ describe("ci-confinement-lib.sh(閉じ込めの確かめの CI が、ログを�
     expect(r.out).toContain("✗ 閉じ込めに穴がある");
   });
 
+  it("need / forbid: ログに制御文字(色の ESC など)があっても、その先の行まで読む", () => {
+    const log = "○ 前の行\n\x1b[32m✓\x1b[39m 色つきの行 \x07\x08\nTests  12 passed (12)\n✗ 落ちた回: MySQL\n";
+    expect(run(log, 'need "$f" "Tests +[0-9]+ passed"').code).toBe(0);
+    expect(run(log, 'forbid "$f" "^✗ 落ちた回"').code).toBe(1);
+  });
+
   it("need_code: 終了コードが期待(既定 0)と違えば落とす", () => {
     expect(run("", 'need_code "手順" 0').code).toBe(0);
     expect(run("", 'need_code "手順" 2 2').code).toBe(0);
@@ -96,19 +102,17 @@ describe("ワークフロー confinement-check", () => {
     for (const p of ['"src/project/confine*"', '"scripts/check-*"', '"e2e/**"']) expect(wf).toContain(p);
   });
 
-  it("continue-on-error は、(a) のステップと (e) の npm test のステップにだけ(ジョブには付けない)。判定はゆるめない", () => {
+  it("continue-on-error は、(a) のステップだけ(ジョブには付けない)。(e) の MySQL の回は、落ちたらジョブを落とす。判定はゆるめない", () => {
     const lines = wf.split("\n");
     const at = lines.flatMap((l, i) => (/^\s*continue-on-error: true\s*$/.test(l) ? [i] : []));
-    expect(at).toHaveLength(2);
+    expect(at).toHaveLength(1);
     const stepName = (i: number) => lines.slice(0, i).reverse().find((l) => /^\s+- name:/.test(l)) ?? "";
     expect(stepName(at[0])).toContain("(a) 設定あり");
-    expect(stepName(at[1])).toContain("(e) MySQL の回(mysql-test に届いて通る)");
     // ステップの中(インデント 8)にあること = ジョブ直下(インデント 4)ではない
-    for (const i of at) expect(lines[i]).toMatch(/^ {8}continue-on-error: true$/);
-    // (e) が赤のときは、#116 の名前入りの ::warning:: を出す(赤を隠さない)
-    expect(wf).toContain("::warning title=(e) MySQL の回::$msg");
-    expect(wf).toContain("(e) MySQL の回は赤(#116 の既知の失敗)");
-    expect(wf).toContain("steps.e.outcome");
+    expect(lines[at[0]]).toMatch(/^ {8}continue-on-error: true$/);
+    // (e) は #116 で直った。既知の失敗として扱う仕組み(steps.e.outcome・::warning::)は残さない
+    expect(wf).not.toContain("steps.e.outcome");
+    expect(wf).not.toContain("#116 の既知の失敗");
     for (const n of ["need_code \"(a) check-confined-browser\"", "'^○ E2E [0-9]+ 件が通った'", "forbid \"$L/$D-a-confined.log\" '^✗'"]) {
       expect(wf, `(a) の判定 ${n}`).toContain(n);
     }

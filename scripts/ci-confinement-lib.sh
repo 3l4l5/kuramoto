@@ -30,17 +30,17 @@ sandbox_denies() {
     | grep -E 'Sandbox: ' | grep -v 'GamePolicyAgent' | sed -E 's/^.*Sandbox: //; s/\([0-9]+\)//' | grep -iE 'chrom|headless|node|playwright' | cut -c1-200 | sort | uniq -c | sort -rn
 }
 
-# need <ログ> <拡張正規表現>: その行が 1 つはあること
+# need <ログ> <拡張正規表現>: その行が 1 つはあること(grep -a: ログに色の制御文字や壊れたバイトがあっても、その先の行まで読む)
 need() {
-  if ! grep -Eq -- "$2" "$1"; then
+  if ! grep -aEq -- "$2" "$1"; then
     add_reason "$(basename "$1") に期待の行が無い: $2"
   fi
 }
 
 # forbid <ログ> <拡張正規表現>: その行が 1 つも無いこと
 forbid() {
-  if grep -Eq -- "$2" "$1"; then
-    add_reason "$(basename "$1") に出てはいけない行がある: $2 → $(grep -En -- "$2" "$1" | head -5 | cut -c1-300 | tr '\n' '|')"
+  if grep -aEq -- "$2" "$1"; then
+    add_reason "$(basename "$1") に出てはいけない行がある: $2 → $(grep -aEn -- "$2" "$1" | head -5 | cut -c1-300 | tr '\n' '|')"
   fi
 }
 

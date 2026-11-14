@@ -103,18 +103,18 @@ function viewOf(r: Row): PeriodicReview {
 }
 
 async function rowOf(p: Project, id: number): Promise<Row> {
-  const r = (await p.pdb.from("periodic_reviews").selectAll().where("id", "=", id).executeTakeFirst()) as Row | undefined;
+  const r = (await p.pdb.from("periodic_reviews").where("id", "=", id).executeTakeFirst()) as Row | undefined;
   if (!r) throw new Error(`定期レビュー ${id} はありません`);
   return r;
 }
 
 export async function listPeriodicReviews(p: Project): Promise<PeriodicReview[]> {
-  return ((await p.pdb.from("periodic_reviews").selectAll().orderBy("id").execute()) as Row[]).map(viewOf);
+  return ((await p.pdb.from("periodic_reviews").orderBy("id").execute()) as Row[]).map(viewOf);
 }
 
 /** 直近の実行の記録(新しい順)。reviewId があればその定義のもの。 */
 export async function listPeriodicRuns(p: Project, reviewId?: number, limit = 20): Promise<PeriodicReviewRun[]> {
-  let q = p.pdb.from("periodic_review_runs").selectAll();
+  let q = p.pdb.from("periodic_review_runs");
   if (reviewId !== undefined) q = q.where("review_id", "=", reviewId);
   const rows = await q.orderBy("id", "desc").limit(limit).execute();
   return rows.map((r) => ({

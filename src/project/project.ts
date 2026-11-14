@@ -129,6 +129,8 @@ export class Project {
 
   private async seed(): Promise<void> {
     await this.pdb.transaction(async () => {
+      // 企画の最初の行は、編成の有無とは別に確かめる(MySQL で、これを入れる前に作ったプロジェクトも、開き直せば埋まる)
+      await this.seedPlan();
       if (await this.pdb.from("formations").limit(1).executeTakeFirst()) return;
       await this.saveFormation(DEFAULT_FORMATION);
       for (const [role, p] of Object.entries(DEFAULT_POLICIES)) {
@@ -143,6 +145,18 @@ export class Project {
       await this.setSetting("max_attempts", "3");
       await this.setSetting("decision_timeout_sec", "3600");
     });
+  }
+
+  /**
+   * 企画の最初の行(段階 5 つ・要件の版 1・開発ルールの版 1)。SQLite のプロジェクト DB は最初のマイグレーションが入れるが、
+   * MySQL は 1 つの database に複数のプロジェクトが入り、マイグレーションはプロジェクトの行を作れないので、プロジェクトを開くときに入れる。
+   * SQLite では入っているので何もしない。
+   */
+  private async seedPlan(): Promise<void> {
+    if (await this.pdb.from("plan_stages").limit(1).executeTakeFirst()) return;
+    for (const stage of ["req", "infra", "flow", "screen", "model"]) await this.pdb.insert("plan_stages", { stage, mode: "agree", version: 1 }).execute();
+    await this.pdb.insert("requirements", { version: 1, created_at: "" }).execute();
+    await this.pdb.insert("dev_rule_versions", { version: 1, rules: "[]", created_at: "" }).execute();
   }
 
   // ---- 設定 ----

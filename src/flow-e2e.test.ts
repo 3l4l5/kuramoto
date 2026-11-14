@@ -77,7 +77,7 @@ async function boot(kind: Kind) {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as { port: number }).port;
   cleanups.push(async () => {
-    app.close();
+    await app.close();
     await new Promise((r) => server.close(r));
     hq.close();
     await db.close();

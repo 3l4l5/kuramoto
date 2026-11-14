@@ -188,7 +188,7 @@ jobs:
           retention-days: 30
 
   # (e) MySQL の回。macOS のランナーで brew の mysql を 3307 に立てて流す(理由は docs/e2e.md)。
-  # #116 が直るまでの間だけ、(e) の npm test のステップに continue-on-error: true(ジョブではなくステップ。ほかのステップには付けない)。判定(下の need / forbid)はゆるめず、e-mysql-rounds.log はそのまま出して artifact に入れる。直したら continue-on-error を外す。
+  # continue-on-error なし(MySQL の回が落ちたら、このジョブを落とす)。e-mysql-rounds.log は、赤でもそのまま出して artifact に入れる。
   mysql:
     runs-on: macos-latest
     timeout-minutes: 60
@@ -236,9 +236,10 @@ jobs:
           SQL
 
       - name: (e) MySQL の回(mysql-test に届いて通る)
-        id: e
-        # #116 が直ったら外す(この 1 行だけ。ジョブの check は、赤でも success になる。赤は下の「(e) の結果」のステップが ::warning: とサマリーに出す)
-        continue-on-error: true
+        env:
+          # vitest の出力に色の制御文字(ESC[...m)が混ざると、「Tests  N passed」の行を判定で読めない。色を付けない
+          NO_COLOR: "1"
+          FORCE_COLOR: "0"
         run: |
           . scripts/ci-confinement-lib.sh
           # E2E の回を飛ばした npm test(SQLite の回 → MySQL の回)を、閉じ込めの外で全文流して、MySQL の回の出力を残す。
@@ -251,33 +252,14 @@ jobs:
             echo "--- E2E の回を飛ばした npm test(閉じ込めの外・全文)の MySQL の回。終了コード: $rc"
             sed -n '/^=== MySQL の回/,$p' "$RUNNER_TEMP/npm-test-mysql.out"
           } 2>&1 | tee "$L/$D-e-mysql-rounds.log"
+          # vitest の要約の行を、注釈に残す(判定が読めなかったとき、色・書式の違いかどうかが、ログを開かずに分かる)
+          echo "::notice title=(e) vitest の要約::$(grep -a -E '(Test Files|Tests) ' "$L/$D-e-mysql-rounds.log" | cat -v | tr '\n' '|')"
           need_code "(e) npm test" "$rc"
           need "$L/$D-e-mysql-rounds.log" '^=== MySQL の回\(mysql-test の使い捨ての database'
           forbid "$L/$D-e-mysql-rounds.log" '(飛ばしました\(KURAMOTO_SKIP_MYSQL_TESTS|mysql-test\(127\.0\.0\.1:3307\)に繋がりません)'
           need "$L/$D-e-mysql-rounds.log" 'Tests +[0-9]+ passed'
           forbid "$L/$D-e-mysql-rounds.log" '^✗ 落ちた回'
           finish
-
-      # (e) の判定は変えない。(e) が赤のとき、#116 の既知の失敗であることを、注釈・ログ・サマリーに残す(赤を隠さない)
-      - name: (e) の結果(赤なら #116 の既知の失敗として残す)
-        if: ${{ !cancelled() }}
-        env:
-          E_OUTCOME: ${{ steps.e.outcome }}
-        run: |
-          echo "(e) MySQL の回の結果: $E_OUTCOME"
-          if [ "$E_OUTCOME" = "failure" ]; then
-            msg="(e) MySQL の回は赤(#116 の既知の失敗)"
-            echo "::warning title=(e) MySQL の回::$msg"
-            echo "--- $msg。判定は変えていない。#116 が直ったら continue-on-error を外す" >> "$L/$D-e-mysql-rounds.log"
-            {
-              echo "### (e) MySQL の回: 赤(#116 の既知の失敗)"
-              echo
-              echo "$msg。判定(need / forbid)はゆるめていません。ログは e-mysql-rounds.log(artifact: e2e-logs)。#116 が直ったら (e) のステップの continue-on-error を外します。"
-            } >> "$GITHUB_STEP_SUMMARY"
-          elif [ "$E_OUTCOME" != "success" ]; then
-            echo "::error::(e) のステップが流れなかった(結果: $E_OUTCOME)"
-            exit 1
-          fi
 
       - name: ログ(e)を artifact に上げる
         if: ${{ always() }}
@@ -313,7 +295,7 @@ jobs:
           {
             echo "### 閉じ込めの確かめのログ(artifact: e2e-logs)"
             echo
-            echo "- env・(a)〜(d): $CONFINEMENT / mysql ジョブ: $MYSQL((e) の赤は、ステップ単位の continue-on-error で #116 の既知の失敗として扱うので、ジョブは success になる。赤は mysql ジョブのサマリーと e-mysql-rounds.log の末尾に残る)"
+            echo "- env・(a)〜(d): $CONFINEMENT / mysql ジョブ: $MYSQL"
             echo
             echo "| ログ | 行数 |"
             echo "|---|---|"

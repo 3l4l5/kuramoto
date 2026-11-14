@@ -224,11 +224,13 @@ export const MYSQL_MIGRATIONS: MysqlMigration[] = [
   // 版の番号を SQLite と揃えるための印(ADR-0040)。
   { version: 22, statements: [] },
   // 23: github_issues(見回りが取ってきた GitHub の Issue と、リーダーの扱い。SQLite の版 23 と同じ。#79)
+  // (#116: body の DEFAULT ('') を、この版の中で直した。MySQL はまだ本番の DB ではない(ADR-0041)ので、版 23 を流し終えた MySQL の database は無い前提。
+  //  もしあれば、`ALTER TABLE github_issues ALTER COLUMN body SET DEFAULT ('')` を手で流すこと。版 24 の periodic_review_runs.looked_at も同じ)
   {
     version: 23,
     statements: [
       scoped("github_issues", [
-        ID, `repo ${S}`, "number INT NOT NULL", `title ${T}`, `body ${T}`, `url ${T}`,
+        ID, `repo ${S}`, "number INT NOT NULL", `title ${T}`, "body TEXT NOT NULL DEFAULT ('')", `url ${T}`,
         `status VARCHAR(191) NOT NULL DEFAULT 'new' ${enumCheck("status", ["new", "ticketed", "duplicate", "owner", "passed"])}`,
         "ticket_id BIGINT", "note TEXT", `fetched_at ${T}`, "handled_at TEXT",
         "UNIQUE KEY github_issues_project_issue (project_id, repo, number)", "KEY github_issues_project_status (project_id, status)", fk("ticket_id", "tickets"),
@@ -248,7 +250,7 @@ export const MYSQL_MIGRATIONS: MysqlMigration[] = [
       scoped("periodic_review_runs", [
         ID, `review_id ${BIG}`, `origin VARCHAR(191) NOT NULL ${enumCheck("origin", ["schedule", "manual"])}`,
         `status VARCHAR(191) NOT NULL DEFAULT 'queued' ${enumCheck("status", ["queued", "running", "done", "error"])}`,
-        "looked_at TEXT NOT NULL", "created_tickets TEXT NOT NULL DEFAULT ('[]')", "skipped_duplicates INT NOT NULL DEFAULT 0", "summary TEXT", "error TEXT",
+        "looked_at TEXT NOT NULL DEFAULT ('')", "created_tickets TEXT NOT NULL DEFAULT ('[]')", "skipped_duplicates INT NOT NULL DEFAULT 0", "summary TEXT", "error TEXT",
         `created_at ${T}`, "started_at TEXT", "ended_at TEXT",
         "KEY periodic_review_runs_project_review (project_id, review_id, id)", fk("review_id", "periodic_reviews"),
       ]),

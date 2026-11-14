@@ -121,8 +121,8 @@ for (const kind of ["sqlite", "mysql"] as const) {
       expect(first[0]).toContain("Issue #5(acme/shop): 課題 5");
       let t = (await p.tickets())[0]!;
       expect(JSON.parse(t.plan_refs)).toMatchObject({ issue: 5, issueUrl: "https://github.com/acme/shop/issues/5", issueRepo: "acme/shop" });
-      expect((await p.pdb.from("github_issues").selectAll().execute()).map((r) => [r.number, r.status, r.ticket_id])).toEqual([[5, "ticketed", t.id]]);
-      expect((await p.pdb.from("lead_messages").selectAll().execute()).some((m) => m.who === "lead" && m.body.includes("Issue #5") && m.body.includes(`チケット #${t.number}`))).toBe(true);
+      expect((await p.pdb.from("github_issues").execute()).map((r) => [r.number, r.status, r.ticket_id])).toEqual([[5, "ticketed", t.id]]);
+      expect((await p.pdb.from("lead_messages").execute()).some((m) => m.who === "lead" && m.body.includes("Issue #5") && m.body.includes(`チケット #${t.number}`))).toBe(true);
       expect(state.comments).toEqual([]); // 既定ではコメントを書かない
 
       // 立ち上げ直す(同じ DB を開き直す)。Issue はまだ GitHub で開いている
