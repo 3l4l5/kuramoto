@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import type { Confinement } from "../harness/types.js";
+import { denyLocalPorts, needsLocalPortDeny } from "./local-ports.js";
 
 /**
  * チームの CI の、画面(ブラウザ)の E2E のためのブラウザサーバー(#93)。
@@ -105,7 +106,9 @@ export const startConfinedBrowser: StartBrowser = async (cwd, conf) => {
       `export TMPDIR=${shq(profileDir)}`,
       `exec ${shq(process.execPath)} -e ${shq(SERVER_SCRIPT)}`,
     ].join("; ");
-    const wrapped = await SandboxManager.wrapWithSandbox(inner, undefined, browserSandboxConfig(cwd, conf, profileDir));
+    // ブラウザサーバーの閉じ込めも、全体の設定の localhost の許可を引き継ぐので、npm test と同じポートを断る(ADR-0059)
+    const raw = await SandboxManager.wrapWithSandbox(inner, undefined, browserSandboxConfig(cwd, conf, profileDir));
+    const wrapped = needsLocalPortDeny(conf.allowLocalSockets, conf.deniedLocalPorts) ? denyLocalPorts(raw, conf.deniedLocalPorts ?? []) : raw;
     const env: NodeJS.ProcessEnv = { ...process.env, ...conf.env, CI: "1" };
     for (const k of conf.hiddenEnv) delete env[k];
     const child = spawn("/bin/bash", ["-c", wrapped], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });

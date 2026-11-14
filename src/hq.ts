@@ -11,6 +11,11 @@ import { isRepoFullName } from "./domain/repo-name.js";
 import { Project } from "./project/project.js";
 import { pendingOwnerDecisions } from "./project/workflow.js";
 
+/** Kuramoto 本体(画面と API)が待ち受けるポート。KURAMOTO_PORT で変えられる(既定 4300)。閉じ込めの中からは届かせない(ADR-0059)。 */
+export function kuramotoPort(): number {
+  return Number(process.env.KURAMOTO_PORT ?? 4300);
+}
+
 /** データの置き場所。作業場のリポジトリの外(ADR-0004)。KURAMOTO_HOME で変えられる。 */
 export function kuramotoHome(): string {
   return process.env.KURAMOTO_HOME ?? join(homedir(), ".kuramoto");

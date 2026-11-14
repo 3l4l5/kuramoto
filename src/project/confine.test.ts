@@ -109,6 +109,24 @@ describe("作業場所への閉じ込め", () => {
     expect(confineOptions("/w", c).sandbox.network).not.toHaveProperty("allowAllUnixSockets");
   });
 
+  it("ソケットを許していても、Kuramoto 本体のポート(KURAMOTO_PORT。既定 4300)と、設定 sandbox_deny_local_ports のポートは、閉じ込めの中から断る(ADR-0059)", async () => {
+    const { confinementFor } = await import("./confine.js");
+    const p = await Project.open(":memory:", new ManualClock());
+    const saved = process.env.KURAMOTO_PORT;
+    try {
+      delete process.env.KURAMOTO_PORT;
+      expect((await confinementFor(p, { path: "/w", base: "main", gitDir: "/g" }, "qa")).deniedLocalPorts).toEqual([4300]);
+      process.env.KURAMOTO_PORT = "4311";
+      await p.setSetting("sandbox_deny_local_ports", "5432, 4311\n6379 abc 0 70000");
+      const c = await confinementFor(p, { path: "/w", base: "main", gitDir: "/g" }, "qa");
+      expect(c.allowLocalSockets).toBe(true);
+      expect(c.deniedLocalPorts).toEqual([4311, 5432, 6379]); // 重ならない。ポートでないものは捨てる
+    } finally {
+      if (saved === undefined) delete process.env.KURAMOTO_PORT;
+      else process.env.KURAMOTO_PORT = saved;
+    }
+  });
+
   it("作業場所(clone と worktree)は、エージェントに読ませないデータの置き場所の外に置く", async () => {
     const { workDirFor, kuramotoHome, kuramotoWorkHome } = await import("../hq.js");
     const { relative } = await import("node:path");

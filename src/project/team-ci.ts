@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Confinement } from "../harness/types.js";
 import { confinementFor } from "./confine.js";
 import { startConfinedBrowser, withBrowser, type StartBrowser } from "./confined-browser.js";
+import { denyLocalPorts, needsLocalPortDeny } from "./local-ports.js";
 import type { Project, TicketRow } from "./project.js";
 import type { Workspace } from "./workspace.js";
 
@@ -196,7 +197,9 @@ export class SandboxRunner implements CommandRunner {
     // 立てられなければ、宛先を渡さずに流す(閉じ込めの無いブラウザには切り替えない)
     const browser = await withBrowser(command, cwd, conf, this.startBrowser, forceBrowser);
     try {
-      const wrapped = await SandboxManager.wrapWithSandbox(command);
+      // localhost を許していても、Kuramoto 本体のポートなどには届かせない(ADR-0059)
+      const raw = await SandboxManager.wrapWithSandbox(command);
+      const wrapped = needsLocalPortDeny(conf.allowLocalSockets, conf.deniedLocalPorts) ? denyLocalPorts(raw, conf.deniedLocalPorts ?? []) : raw;
       const env: NodeJS.ProcessEnv = { ...process.env, ...conf.env, ...browser.env, CI: "1" };
       for (const k of conf.hiddenEnv) delete env[k];
       const r = await new Promise<{ code: number | null; output: string }>((resolve) => {

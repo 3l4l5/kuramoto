@@ -18,6 +18,7 @@
   - 環境変数のトークン(`GH_TOKEN` など)と、抜け道になる `SSH_AUTH_SOCK`・`DOCKER_HOST` はシェルに渡さない。`~/.docker`(Docker のソケットを含む)も読ませない。
   - テストを確かめられるように、ホームの下のツールの置き場所(`~/.npm`・`~/.cache`・`~/Library/Caches`・mise の状態と取り込み先など)には書ける。プロジェクトの設定 `sandbox_allow_write` で足せる。
   - テスト用のブラウザと e2e のために、Unix ソケットと localhost での待ち受けを許す(Chrome は起動のたびにプロファイルにソケットを作る)。設定 `sandbox_strict_sockets` を `1` にすると閉じる。
+  - チームの CI の閉じ込めでは、localhost を許したまま、Kuramoto 本体のポートと設定 `sandbox_deny_local_ports` のポートだけは断る(ADR-0059)。担当のシェルは、ポートを選べないので断れない。
   - mise は知らない場所の設定ファイルを信用しないので、`MISE_TRUSTED_CONFIG_PATHS` で作業場所の設定を信用させる。
   - 合意した試作の場所を、環境変数 `KURAMOTO_DESIGN_DIR`(作業場所の `.kuramoto/design`)で渡す。e2e などが試作とお手本の画像を読める。置き場所は作業場所の中なので、読める範囲は広がらない。
   - **ブラウザは作業場所の中では動かさない**。描画(スクリーンショット)は、サンドボックスの外のサーバが `render_page` で行う([ADR-0034](0034-design-system-and-visual-compare.md))。そのため、書ける場所・通信してよいドメインは増やさない(Playwright のブラウザの取得先 `cdn.playwright.dev` なども足さない)。
