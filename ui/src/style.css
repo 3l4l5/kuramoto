@@ -1368,8 +1368,7 @@ body { background: var(--bg); }
   .officefloor .of-filter .ds-seg__opt[aria-checked="true"] { background: var(--bg); }
   /* 島(駅)の箱: 試作どおり、箱は幅 160px の「路線が通る帯」だけ。メンバーは箱の上(上の段)と下(下の段)に立つ。
      路線は箱の中を通り(e2e: 路線は駅の中)、メンバー・吹き出しは路線・札・ラベルに重ならない(#78・#91) */
-  /* 島の箱の下の段(下のメンバー・吹き出しが立つ高さ)。チケット 113 のアーキテクトもこの段に立つ */
-  .officefloor { --of-below: 148px; }
+  /* 島の箱の下の段(下のメンバー・吹き出しが立つ高さ)は --of-below。値は Office.tsx の OF_BELOW(アーキテクトへの相談の線を、この段の下に通すのにも使う)が .of-map に渡す。チケット 113 のアーキテクトもこの段に立つ */
   .officefloor .of-islands { gap: calc(var(--sp-5) * 4); padding: 152px 0 var(--of-below); }
   /* 箱の幅は 160px を下限に、1 段に並ぶ人数(--per-row。Island が渡す)ぶんの席(76px + すき間)に合わせて広げる。人数の多い島でも、席が箱の外へはみ出して隣の島に重ならない */
   .officefloor .of-st > .of-island { flex: 0 0 max(160px, calc(var(--per-row, 2) * 84px)); min-width: 160px; }
@@ -1397,9 +1396,16 @@ body { background: var(--bg); }
   .officefloor .of-side > .of-donepile { margin-left: auto; }
   /* 床が横にあふれるとき(島が多いとき)も、床の下の段は島と同じ幅にする */
   .officefloor { display: flex; flex-direction: column; }
-  .officefloor .of-map { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: minmax(max-content, 1fr); align-content: start; padding-bottom: 72px; }
-  /* 凡例は床の中の左下に重ねる(試作。床の最小の高さまで地図を伸ばして、凡例を床の底に付ける)。右にメンバーの引き出しが開いているときは、その手前で止めて折り返し、重ならないよう下の余白を広げる(#72) */
-  .officefloor .of-legend { position: absolute; left: var(--sp-4); bottom: var(--sp-4); margin: 0; flex: none; max-width: calc(100% - var(--sp-4) * 2); z-index: 3; }
-  .officefloor:has(.of-drawer) .of-legend { max-width: calc(100% - 400px - var(--sp-4) * 3); }
-  .officefloor:has(.of-drawer) .of-map { padding-bottom: 128px; }
+  .officefloor .of-map { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: minmax(max-content, 1fr); align-content: start; }
+  /* 凡例: 既定は床の下の行(流れの中。受け口の真下のアーキテクトの下に折り返す)。右にメンバーの引き出しが開いているときは、その手前まで(#72) */
+  .officefloor .of-side { flex-wrap: wrap; }
+  .officefloor .of-legend { flex: 1 1 100%; order: 1; margin: var(--sp-2) 0 0; }
+  .officefloor:has(.of-drawer) .of-legend { margin-right: calc(400px + var(--sp-4)); }
+  .officefloor .of-map { padding-bottom: var(--sp-4); }
+}
+/* 幅が 1001px 以上で引き出しが閉じているときだけ、凡例を床の中の左下に重ねる(試作。床の最小の高さまで地図を伸ばして、凡例を床の底に付ける)。
+   狭い幅や引き出しが開いている間は、凡例が何行にも折り返してアーキテクト・吹き出しに重なるので、流れの中に置く */
+@media (min-width: 1001px) {
+  .officefloor:not(:has(.of-drawer)) .of-map { padding-bottom: 72px; }
+  .officefloor:not(:has(.of-drawer)) .of-legend { position: absolute; left: var(--sp-4); bottom: var(--sp-4); margin: 0; flex: none; max-width: calc(100% - var(--sp-4) * 2); z-index: 3; }
 }

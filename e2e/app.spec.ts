@@ -429,10 +429,13 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await drawer.getByRole("tab", { name: /連絡経路/ }).click();
     await drawer.getByRole("radiogroup", { name: "開発の島 と レビューの島の連絡" }).getByRole("radio", { name: "質問・相談できる" }).click();
     await drawer.getByRole("radiogroup", { name: "開発の島 と リーダーの連絡" }).getByRole("radio", { name: "質問・相談できる" }).click();
-    await expect(drawer.getByRole("tab", { name: /連絡経路/ })).toContainText("2");
+    // アーキテクトへの経路も 2 本(受け口の真下に立つアーキテクトまで、島の下の段の下を回って届く。#113)
+    await drawer.getByRole("radiogroup", { name: "開発の島 と アーキテクトの連絡" }).getByRole("radio", { name: "質問・相談できる" }).click();
+    await drawer.getByRole("radiogroup", { name: "レビューの島 と アーキテクトの連絡" }).getByRole("radio", { name: "質問・相談できる" }).click();
+    await expect(drawer.getByRole("tab", { name: /連絡経路/ })).toContainText("4");
     // 連絡経路タブを開いている間は、保存前の案がオフィスの床に点線で重なる(保存してある経路はまだ無い)
     const floor = page.getByRole("region", { name: "オフィスの床" });
-    await expect(floor.locator("path.of-route-draft")).toHaveCount(2);
+    await expect(floor.locator("path.of-route-draft")).toHaveCount(4);
     await expect(floor).toContainText("質問・相談できる経路(保存前の案を表示中)");
     await shot(page, "team-formation-routes");
     // 流れ: 引き出しの幅が広がる。バグ修正に専用の流れを作り、QA を開発の前へ
@@ -452,13 +455,39 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     await expect(drawer.getByRole("img", { name: /^流れの図/ })).toHaveAttribute("aria-label", "流れの図: QA→開発→レビュー→merge 待ち");
     await shot(page, "team-formation-flows");
     // 帯は 3 タブ共通。保存は 1 回で、版が 1 つ上がる
-    await expect(drawer).toContainText("保存してない変更: 連絡経路 2 · 流れ 1");
+    await expect(drawer).toContainText("保存してない変更: 連絡経路 4 · 流れ 1");
     await drawer.getByRole("button", { name: "保存して v3 にする" }).click();
     await expect(page.getByRole("status", { name: "お知らせ" })).toHaveText("編成 v3 を適用しました");
     await expect(drawer).toContainText("保存してない変更はありません");
     // 保存した経路は、案ではなく本当の経路として床に残る
-    await expect(floor.locator("path.of-route")).toHaveCount(2);
+    await expect(floor.locator("path.of-route")).toHaveCount(4);
     await expect(floor.locator("path.of-route-draft")).toHaveCount(0);
+    // アーキテクトへの経路は、見える長さがあり、メンバー・名札・吹き出しの上を通らない(受け口の真下にアーキテクトが立つので、線は島の下の段の下を回す。#113)
+    const archRoutes = floor.locator('path.of-route[data-route*="arch"]');
+    await expect(archRoutes).toHaveCount(2);
+    const crossings = await archRoutes.evaluateAll((paths) => {
+      const rects = [...document.querySelectorAll(".of-person, .of-bubble")].map((e) => e.getBoundingClientRect()).filter((r) => r.width > 0);
+      return paths.map((p) => {
+        const path = p as SVGPathElement;
+        const svg = path.ownerSVGElement!;
+        const ctm = path.getScreenCTM()!;
+        const len = path.getTotalLength();
+        let hits = 0;
+        for (let t = 0; t < len - 8; t += 4) {
+          const pt = svg.createSVGPoint();
+          const at = path.getPointAtLength(t);
+          pt.x = at.x;
+          pt.y = at.y;
+          const q = pt.matrixTransform(ctm);
+          if (rects.some((r) => q.x > r.left && q.x < r.right && q.y > r.top && q.y < r.bottom)) hits++;
+        }
+        return { len, hits };
+      });
+    });
+    for (const c of crossings) {
+      expect(c.len).toBeGreaterThan(120);
+      expect(c.hits).toBe(0);
+    }
     await expect(floor).not.toContainText("保存前の案を表示中");
     // 路線図: バグ修正だけ専用の流れ(QA → 開発 → レビュー、セキュリティは省略)なので、路線は既定線とバグ修正線の 2 本になる
     const rails = floor.getByRole("img", { name: /^路線図:/ });
