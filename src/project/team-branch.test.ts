@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -175,6 +175,44 @@ describe("GitWorkspace(実際の git)", () => {
       // ブランチを読むだけの場所(ブランチなし)も、設定したブランチ
       const chat = await ws.prepare({ ...req(3, "develop"), branch: "" });
       expect(f.git(chat.path, "rev-parse", "HEAD")).toBe(f.developSha);
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ブランチを作る: 既定のブランチの先頭から作って push する。既にあれば作らず、名前が不正でも作らない", async () => {
+    const f = fixture();
+    try {
+      const ws = new GitWorkspace(f.work);
+      expect(await ws.defaultBranchOf(REPO)).toBe("main");
+      expect(await ws.branchExists(REPO, "release")).toBe(false);
+      expect(await ws.createBranch(REPO, "release")).toBe("main");
+      expect(await ws.branchExists(REPO, "release")).toBe(true);
+      // origin に、既定のブランチ(main)の先頭と同じコミットで作られた
+      expect(f.git(join(f.dir, "origin.git"), "rev-parse", "refs/heads/release")).toBe(f.mainSha);
+      // 作ったブランチを起点に、worktree が切られる
+      const dev = await ws.prepare(req(1, "release"));
+      expect(dev.base).toBe("release");
+      expect(f.git(dev.path, "rev-parse", "HEAD")).toBe(f.mainSha);
+      // 既にある(develop)ものは作らない
+      await expect(ws.createBranch(REPO, "develop")).rejects.toThrow("もうあります");
+      expect(f.git(join(f.dir, "origin.git"), "rev-parse", "refs/heads/develop")).toBe(f.developSha);
+      // 名前が不正なら、origin に何も作らない
+      for (const bad of ["a b", "x..y", "-D", "a.lock"]) await expect(ws.createBranch(REPO, bad)).rejects.toThrow("ブランチ名");
+      expect(f.git(join(f.dir, "origin.git"), "for-each-ref", "--format=%(refname:short)", "refs/heads").split("\n").sort()).toEqual(["develop", "main", "release"]);
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ブランチを作れなければ(push が断られる)、理由つきで投げる", async () => {
+    const f = fixture();
+    try {
+      // push を断る origin(pre-receive で拒否)
+      writeFileSync(join(f.dir, "origin.git", "hooks", "pre-receive"), "#!/bin/sh\necho 'protected: no new branches' >&2\nexit 1\n", { mode: 0o755 });
+      const ws = new GitWorkspace(f.work);
+      await expect(ws.createBranch(REPO, "release")).rejects.toThrow(/release.*作れませんでした/);
+      expect(await ws.branchExists(REPO, "release")).toBe(false);
     } finally {
       rmSync(f.dir, { recursive: true, force: true });
     }

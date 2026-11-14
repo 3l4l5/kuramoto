@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSy
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import type { Role } from "../domain/roles.js";
+import { branchNameError } from "./team-branch.js";
 
 const exec = promisify(execFile);
 
@@ -69,8 +70,12 @@ export interface Workspace {
   prepareCheck?(req: { repo: string; ticketNumber: number; branch: string; base?: string }): Promise<CheckWorkspace>;
   /** origin のチームが使うブランチ(base。無ければ既定のブランチ)の今のコミット(merge の直前に、チームの CI を流し直すかを決める)。 */
   baseSha?(repo: string, base?: string): Promise<string>;
-  /** origin にそのブランチがあるか(設定で指定されたブランチの確かめ)。無ければその理由。 */
-  checkBranch?(repo: string, branch: string): Promise<string | undefined>;
+  /** origin にそのブランチがあるか(設定で指定されたブランチの確かめ)。確かめられなければ投げる。 */
+  branchExists?(repo: string, branch: string): Promise<boolean>;
+  /** リポジトリの既定のブランチ(origin/HEAD。無ければ main)。 */
+  defaultBranchOf?(repo: string): Promise<string>;
+  /** 既定のブランチの先頭から branch を作って origin に push する。作った元の既定のブランチを返す。作れなければ(権限・名前など)理由つきで投げる。 */
+  createBranch?(repo: string, branch: string): Promise<string>;
   /**
    * 終わったチケット(merge 済み)の作業場所を、すべての役割(開発・レビュー・QA・CI など)ぶん消す。
    * チケットの番号に結びついた worktrees/<番号>-* だけが対象で、リーダー用の plan-<役割> や、ほかのチケットのものには触らない。
@@ -331,14 +336,30 @@ export class GitWorkspace implements Workspace {
     return out.split(/\s/)[0] ?? "";
   }
 
-  async checkBranch(repo: string, branch: string): Promise<string | undefined> {
+  async branchExists(repo: string, branch: string): Promise<boolean> {
+    const clone = await this.ensureClone(repo);
+    return (await git(clone, "ls-remote", "--heads", "origin", `refs/heads/${branch}`)).trim() !== "";
+  }
+
+  async defaultBranchOf(repo: string): Promise<string> {
+    return defaultBranch(await this.ensureClone(repo));
+  }
+
+  async createBranch(repo: string, branch: string): Promise<string> {
+    const bad = branchNameError(branch);
+    if (bad) throw new Error(bad);
     try {
-      await exec("gh", ["api", `repos/${repo}/git/ref/heads/${branch}`, "--silent"]);
-      return undefined;
+      const clone = await this.ensureClone(repo);
+      // git 自身の決まりでも確かめる(refs/heads/ を付けた形)
+      await git(clone, "check-ref-format", `refs/heads/${branch}`).catch(() => {
+        throw new Error(`ブランチ名として使えません: ${branch}`);
+      });
+      if (await this.branchExists(repo, branch)) throw new Error(`${repo} には、ブランチ「${branch}」がもうあります`);
+      const from = await defaultBranch(clone);
+      await git(clone, "push", "origin", `refs/remotes/origin/${from}:refs/heads/${branch}`);
+      return from;
     } catch (e) {
-      const err = e as { stderr?: string; message?: string };
-      const text = (err.stderr || err.message || String(e)).trim();
-      return /404|Not Found/i.test(text) ? `${repo} に、ブランチ「${branch}」がありません` : `${repo} のブランチ「${branch}」を確かめられませんでした: ${text.slice(0, 200)}`;
+      throw new Error(`${repo} にブランチ「${branch}」を作れませんでした: ${errorText(e)}`);
     }
   }
 
@@ -389,17 +410,33 @@ export class StaticWorkspace implements Workspace {
   readonly published: PublishRequest[] = [];
   constructor(
     private readonly path: string,
-    private readonly opts: { prNumber?: (req: PublishRequest) => number; ready?: (path: string) => string | undefined; landed?: (commit: string) => string | undefined; ownCommits?: (since: string) => number | null; publishError?: () => string | undefined; github?: () => string | undefined; baseSha?: () => string; changes?: () => { commits?: string[]; files?: string[]; code?: string }; removeError?: () => string | undefined; branches?: string[] } = {},
-  ) {}
+    private readonly opts: { prNumber?: (req: PublishRequest) => number; ready?: (path: string) => string | undefined; landed?: (commit: string) => string | undefined; ownCommits?: (since: string) => number | null; publishError?: () => string | undefined; github?: () => string | undefined; baseSha?: () => string; changes?: () => { commits?: string[]; files?: string[]; code?: string }; removeError?: () => string | undefined; branches?: string[]; defaultBranch?: string; createBranchError?: () => string | undefined } = {},
+  ) {
+    this.branches = opts.branches ? [...opts.branches] : undefined;
+  }
   /** テスト用: prepareCheck に渡された base。 */
   readonly checks: { base?: string }[] = [];
   /** テスト用: baseSha・prepare に渡された base(呼ばれた順)。 */
   readonly baseShaCalls: (string | undefined)[] = [];
-  /** テスト用: checkBranch に渡されたもの。branches にあるものだけ「ある」ことにする(決めなければ何でもある)。 */
+  /** テスト用: origin にあるブランチ(決めなければ何でもある。createBranch で増える)。 */
+  private branches: string[] | undefined;
+  /** テスト用: branchExists で確かめたもの・createBranch で作ったもの(作った元の既定のブランチつき)。 */
   readonly checkedBranches: { repo: string; branch: string }[] = [];
-  async checkBranch(repo: string, branch: string): Promise<string | undefined> {
+  readonly createdBranches: { repo: string; branch: string; from: string }[] = [];
+  async branchExists(repo: string, branch: string): Promise<boolean> {
     this.checkedBranches.push({ repo, branch });
-    return this.opts.branches && !this.opts.branches.includes(branch) ? `${repo} に、ブランチ「${branch}」がありません` : undefined;
+    return !this.branches || this.branches.includes(branch);
+  }
+  async defaultBranchOf(): Promise<string> {
+    return this.opts.defaultBranch ?? "main";
+  }
+  async createBranch(repo: string, branch: string): Promise<string> {
+    const err = this.opts.createBranchError?.();
+    if (err) throw new Error(`${repo} にブランチ「${branch}」を作れませんでした: ${err}`);
+    const from = this.opts.defaultBranch ?? "main";
+    this.createdBranches.push({ repo, branch, from });
+    if (this.branches) this.branches.push(branch);
+    return from;
   }
   /** テスト用: チームの CI の場所は、決まった場所に PR のコミット(sha-<push の回数>)と main を合わせたものとする。 */
   async prepareCheck(req?: { base?: string }): Promise<CheckWorkspace> {

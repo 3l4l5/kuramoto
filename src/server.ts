@@ -27,7 +27,7 @@ import { patrolMinutes, setPatrolMinutes, startPatrol } from "./project/patrol.j
 import type { DbHealth, DbHealthState } from "./db/mysql-health.js";
 import { ciBlockAction, ciBlocked, githubDown } from "./project/outage.js";
 import { fetchGithubSnapshot, markExisting } from "./project/onboard.js";
-import { setTeamBranch, teamBranch } from "./project/team-branch.js";
+import { branchNameError, setTeamBranch, teamBranch } from "./project/team-branch.js";
 import { runTeamCi, SandboxRunner, teamCiEnabled, type CommandRunner } from "./project/team-ci.js";
 import { leadReply } from "./project/leadchat.js";
 import { FileDesignStore, imageRow, blockRenderPort, playwrightLocalHtmlRenderer, playwrightRenderer, playwrightUrlRenderer, referenceImage, type DesignStore, type Renderer, type UrlRenderer } from "./project/design-visual.js";
@@ -695,13 +695,20 @@ export class KuramotoServer {
     if (b === "settings" && method === "POST") {
       const budget = body.ticketBudgetUsd === undefined ? undefined : body.ticketBudgetUsd === null ? null : Number(body.ticketBudgetUsd);
       if (budget !== undefined && budget !== null && !(Number.isFinite(budget) && budget > 0)) throw new Error("チケット 1 枚の予算は 0 より大きい金額か、無制限にしてください");
-      const repos = (body.repos as { fullName: string; role: string }[] | undefined) ?? [];
-      const rec = await this.hq.updateProject(p, id, { name: String(body.name ?? ""), repos: repos.map((r) => ({ fullName: String(r.fullName).trim(), role: String(r.role) })) });
       const total = body.projectBudgetUsd === undefined ? undefined : body.projectBudgetUsd === null || body.projectBudgetUsd === "" ? null : Number(body.projectBudgetUsd);
       if (total !== undefined && total !== null && !(Number.isFinite(total) && total > 0)) throw new Error("全体の予算は 0 より大きい金額か、無制限にしてください");
+      // チームが使うブランチは、何かを保存する前に確かめる(無ければ作るかを聞き返し、作れなければ何も保存しない)
+      const wantBranch = typeof body.teamBranch === "string" ? body.teamBranch.trim() : undefined;
+      const branchChanged = wantBranch !== undefined && wantBranch !== ((await teamBranch(p)) ?? "");
+      if (branchChanged && wantBranch) {
+        const missing = await this.checkTeamBranch(p, id, wantBranch, body.createTeamBranch === true);
+        if (missing) return { needsBranch: missing };
+      }
+      const repos = (body.repos as { fullName: string; role: string }[] | undefined) ?? [];
+      const rec = await this.hq.updateProject(p, id, { name: String(body.name ?? ""), repos: repos.map((r) => ({ fullName: String(r.fullName).trim(), role: String(r.role) })) });
       if (budget !== undefined) await setDefaultTicketBudget(p, budget);
       if (total !== undefined) await setProjectBudget(p, total);
-      if (typeof body.teamBranch === "string" && body.teamBranch.trim() !== ((await teamBranch(p)) ?? "")) await this.saveTeamBranch(p, id, body.teamBranch.trim());
+      if (branchChanged) await setTeamBranch(p, wantBranch);
       if (typeof body.nonstop === "boolean") await p.setSetting("nonstop", body.nonstop ? "1" : "0");
       if (typeof body.autoMerge === "boolean") await p.setSetting("auto_merge", body.autoMerge ? "1" : "0");
       if (typeof body.resumeChecks === "boolean") await p.setSetting("resume_checks", body.resumeChecks ? "1" : "0");
@@ -729,16 +736,28 @@ export class KuramotoServer {
     return undefined;
   }
 
-  /** チームが使うブランチを保存する。空なら未設定に戻す。指定されたブランチが、どれかのリポジトリの origin に無ければ断る。 */
-  private async saveTeamBranch(p: Project, id: number, branch: string): Promise<void> {
-    if (branch) {
-      const workspace = this.workspaceFor(this.record(id).data_dir);
-      for (const r of await p.repos()) {
-        const err = await workspace.checkBranch?.(r.full_name, branch);
-        if (err) throw new Error(err);
-      }
+  /**
+   * チームが使うブランチを、保存する前に確かめる(何も保存しない)。
+   * - 名前が git のブランチ名として使えなければ投げる(GitHub や git に問い合わせる前に断る)
+   * - どのリポジトリの origin にもあれば undefined(そのまま保存してよい)
+   * - 無いリポジトリがあれば、create が true のときは、そのリポジトリの既定のブランチの先頭から作って push する(失敗したら理由つきで投げる)。
+   *   false のときは、作るかどうかを利用者に確かめるための情報(ブランチ名と、無いリポジトリごとの既定のブランチ)を返す
+   */
+  private async checkTeamBranch(p: Project, id: number, branch: string, create: boolean): Promise<{ branch: string; repos: { repo: string; defaultBranch: string }[] } | undefined> {
+    const err = branchNameError(branch);
+    if (err) throw new Error(err);
+    const workspace = this.workspaceFor(this.record(id).data_dir);
+    if (!workspace.branchExists) return undefined;
+    const missing: { repo: string; defaultBranch: string }[] = [];
+    for (const r of await p.repos()) {
+      if (await workspace.branchExists(r.full_name, branch)) continue;
+      missing.push({ repo: r.full_name, defaultBranch: (await workspace.defaultBranchOf?.(r.full_name)) ?? "main" });
     }
-    await setTeamBranch(p, branch);
+    if (!missing.length) return undefined;
+    if (!create) return { branch, repos: missing };
+    if (!workspace.createBranch) throw new Error("この環境では、ブランチを作れません");
+    for (const m of missing) await workspace.createBranch(m.repo, branch);
+    return undefined;
   }
 
   private async studioRoute(p: Project, id: number, method: string, parts: string[], body: Record<string, unknown>): Promise<unknown> {
