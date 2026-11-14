@@ -26,6 +26,9 @@ async function expectLegendBeforeDrawer(floor: Locator, drawer: Locator, when: s
   });
   if (!scrolls) expect(rowRight, `${when}: 凡例の行の右端が床の右端に収まる`).toBeLessThanOrEqual(fl.x + fl.width + 1);
   expect(lg.x + lg.width, `${when}: 引き出しが開いている間の凡例の右端が引き出しの左端より左`).toBeLessThanOrEqual(dr.x);
+  // 凡例は自分だけの行にいる(アーキテクト・merge 済みの山の隣に入ると、余白を吸われて右端が引き出しの下に潜る)
+  const aboveLegend = await legend.evaluate((e) => Math.max(...[...e.parentElement!.children].filter((c) => c !== e).map((c) => c.getBoundingClientRect()).filter((r) => r.width > 0).map((r) => r.bottom)));
+  expect(lg.y, `${when}: 凡例の上端が、床の下の行の他の要素(アーキテクト・merge 済みの山)の下端より下`).toBeGreaterThanOrEqual(aboveLegend - 1);
 }
 
 test("プロジェクトを作り、企画スタジオで 5 段階を決めてチームに渡し、オフィスで merge まで進む", async ({ page }) => {
