@@ -1,3 +1,4 @@
+import { teamBranchLabel } from "./team-branch.js";
 import { sql, type SqlBool } from "kysely";
 import { pipelineOf } from "../domain/formation.js";
 import type { CiDetail, GitHub, PrStatus } from "../github/github.js";
@@ -63,7 +64,7 @@ async function mergeTicket(p: Project, gh: GitHub, ticketId: number, by: "owner"
         await addMerge(p, pr.id, "conflict", checked);
         await backToOwnerForConflict(p, ticket, pr, null);
       });
-      return { result: "conflict", reason: "main が先に進み、衝突しています" };
+      return { result: "conflict", reason: `${await teamBranchLabel(p)} が先に進み、衝突しています` };
     }
     const reason =
       s.state !== "OPEN" ? `PR が ${s.state} です` : team ? (reviewGap.length ? `確認が済んでいません: ${reviewGap.join("・")}` : s.mergeable === "UNKNOWN" ? "GitHub が merge できるかをまだ計算中です" : null) : s.ci === "failure" ? await onCiFailure(p, gh, ticket, pr) : s.ci === "pending" ? "CI がまだ終わっていません" : reviewGap.length ? `確認が済んでいません: ${reviewGap.join("・")}` : s.mergeable === "UNKNOWN" ? "GitHub が merge できるかをまだ計算中です" : null;
@@ -90,7 +91,7 @@ async function mergeTicket(p: Project, gh: GitHub, ticketId: number, by: "owner"
         await p.pdb.transaction(() => backToOwnerForConflict(p, ticket, pr, null));
         return { result: "conflict", reason: r.conflict };
       }
-      const reason = r.noCommands ? "チームの CI で流すコマンドが決まっていません(プロジェクトの設定で決めてください)" : `新しい main と合わせると、チームの CI(${r.results.filter((x) => !x.ok).map((x) => x.command).join("・")})が落ちます`;
+      const reason = r.noCommands ? "チームの CI で流すコマンドが決まっていません(プロジェクトの設定で決めてください)" : `新しい ${await teamBranchLabel(p)} と合わせると、チームの CI(${r.results.filter((x) => !x.ok).map((x) => x.command).join("・")})が落ちます`;
       await p.event("system", "merge_blocked", ticket.id, { reason });
       if (!r.noCommands) await p.pdb.transaction(async () => await enterStage(p, ticket, "dev", { payload: { ci: true, team: true, sha: r.sha, findings: teamCiFindings(r) } }));
       return { result: "blocked", reason };

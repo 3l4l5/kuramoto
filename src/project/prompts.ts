@@ -8,6 +8,7 @@ import type { MessageRow } from "./inbox.js";
 import type { PolicyRow, Project, TicketRow } from "./project.js";
 import { requirements } from "./planning.js";
 import { inScope } from "../db/count.js";
+import { teamBranchLabel } from "./team-branch.js";
 import { decision, nonstop, type DecisionOption } from "./workflow.js";
 
 /**
@@ -72,11 +73,12 @@ export async function systemPromptFor(p: Project, role: Role, policy: PolicyRow,
 async function teamCiNote(p: Project, repo?: string): Promise<string> {
   if (!await teamCiEnabled(p) || !repo) return "";
   const cmds = await configuredCommands(p, repo);
-  return `\nsubmit_pr のあと、Kuramoto がチームの CI(PR を最新の main と合わせて${cmds ? `、${cmds.map((c) => `\`${c}\``).join(" → ")} を流す` : "、lint・型・テストを流す"})で確かめ、通ったものだけをレビューに回します。報告の前に、手元で同じ確認を通しておいてください。`;
+  return `\nsubmit_pr のあと、Kuramoto がチームの CI(PR を最新の ${await teamBranchLabel(p)} と合わせて${cmds ? `、${cmds.map((c) => `\`${c}\``).join(" → ")} を流す` : "、lint・型・テストを流す"})で確かめ、通ったものだけをレビューに回します。報告の前に、手元で同じ確認を通しておいてください。`;
 }
 
 export async function promptFor(p: Project, msg: MessageRow, ticket: TicketRow | null, ctx: { branch?: string; base?: string; repo?: string; prNumber?: number }): Promise<string> {
-  const base = `origin/${ctx.base ?? "main"}`;
+  const branch = ctx.base ?? await teamBranchLabel(p);
+  const base = `origin/${branch}`;
   const payload = JSON.parse(msg.payload) as Record<string, unknown>;
   const notes = ticket ? await p.notes(ticket.id) : [];
   // 開発より前の確認(R17)が残した申し送りは、メモとは分けて載せる。開発は読んでから着手する
@@ -105,7 +107,7 @@ export async function promptFor(p: Project, msg: MessageRow, ticket: TicketRow |
       const from = ROLE_LABEL[(payload.from as Role) ?? "review"];
       return `${head}
 
-${payload.team ? `あなたが出した PR #${ctx.prNumber ?? "?"}(リポジトリは ${ctx.repo}、ブランチは ${ctx.branch})を、Kuramoto がチームの CI で確かめたところ、落ちました。レビューにはまだ回していません。\n${extra}\n\n## チームの CI の直し方\n- チームの CI は、PR のコミットを最新の main(${base})と合わせた状態で、上のコマンドを順に流しています(あなたと同じ閉じ込めの中です)。\n- 出力から原因を見つけて直し、手元で git merge ${base} をしてから同じコマンドを流して、通ることを確かめてからコミットします。\n- 何も変えずに出し直しても、同じように落ちて戻ってきます。\n` : payload.ci ? `あなたが出した PR #${ctx.prNumber ?? "?"}(リポジトリは ${ctx.repo}、ブランチは ${ctx.branch})の CI が落ちて、merge できませんでした。\n${extra}\n\n## CI の直し方\n- あなたの作業場所からは GitHub(Actions のログ・PR の Checks)は見えません。上のログは Kuramoto が取ってきたものです。もっと見たいときは ci_status・ci_run・ci_settings で Kuramoto に取ってきてもらえます。ログから原因を見つけて直し、手元で同じコマンドを動かして確かめてからコミットします。\n- この PR の変更と関係のない失敗に見えるなら、git merge ${base} で main を取り込んでから確かめます(main 側で直っていることがあります)。\n- 何も変えずに出し直しても、同じように落ちて戻ってきます。ログが届くのを待つことはしません(要るものは道具で取れます)。\n` : `あなたが出した PR #${ctx.prNumber ?? "?"}(リポジトリは ${ctx.repo}、ブランチは ${ctx.branch})が${from}から差し戻されました。${extra ? `\n${extra}\n` : ""}`}
+${payload.team ? `あなたが出した PR #${ctx.prNumber ?? "?"}(リポジトリは ${ctx.repo}、ブランチは ${ctx.branch})を、Kuramoto がチームの CI で確かめたところ、落ちました。レビューにはまだ回していません。\n${extra}\n\n## チームの CI の直し方\n- チームの CI は、PR のコミットを最新の ${base} と合わせた状態で、上のコマンドを順に流しています(あなたと同じ閉じ込めの中です)。\n- 出力から原因を見つけて直し、手元で git merge ${base} をしてから同じコマンドを流して、通ることを確かめてからコミットします。\n- 何も変えずに出し直しても、同じように落ちて戻ってきます。\n` : payload.ci ? `あなたが出した PR #${ctx.prNumber ?? "?"}(リポジトリは ${ctx.repo}、ブランチは ${ctx.branch})の CI が落ちて、merge できませんでした。\n${extra}\n\n## CI の直し方\n- あなたの作業場所からは GitHub(Actions のログ・PR の Checks)は見えません。上のログは Kuramoto が取ってきたものです。もっと見たいときは ci_status・ci_run・ci_settings で Kuramoto に取ってきてもらえます。ログから原因を見つけて直し、手元で同じコマンドを動かして確かめてからコミットします。\n- この PR の変更と関係のない失敗に見えるなら、git merge ${base} で ${branch} を取り込んでから確かめます(${branch} 側で直っていることがあります)。\n- 何も変えずに出し直しても、同じように落ちて戻ってきます。ログが届くのを待つことはしません(要るものは道具で取れます)。\n` : `あなたが出した PR #${ctx.prNumber ?? "?"}(リポジトリは ${ctx.repo}、ブランチは ${ctx.branch})が${from}から差し戻されました。${extra ? `\n${extra}\n` : ""}`}
 ## 必須の指摘(すべてに返事をする)
 ${must.map(threadText).join("\n") || "(なし)"}
 
@@ -142,10 +144,10 @@ ${ticket ? await openTicketsBlock(p, ticket) : ""}
       if (recheck && !prior.length) {
         return `${head}
 
-${ctx.repo} の PR #${ctx.prNumber} は、確認がすべて済んで merge を待っていましたが、その後に変更が入りました(main との衝突の解消や、CI の失敗の直しなど)。
+${ctx.repo} の PR #${ctx.prNumber} は、確認がすべて済んで merge を待っていましたが、その後に変更が入りました(${branch} との衝突の解消や、CI の失敗の直しなど)。
 前に承認されたコミット ${recheck} のあとに、このブランチ自身が足した変更だけを確かめてください。全体を見直す必要はありません。
 
-- 変更は git log --no-merges -p ${recheck}..HEAD ^${base} で見られます(main から取り込んだものは除かれます)。
+- 変更は git log --no-merges -p ${recheck}..HEAD ^${base} で見られます(${branch} から取り込んだものは除かれます)。
 - その変更で、受け入れ条件を満たさなくなっていないか・セキュリティの問題や不具合が入っていないかを見ます。問題が無ければ承認します。承認すると、ほかの確認はやり直さずに merge 待ちに戻ります。
 - 結果は submit_review で報告してください。
 

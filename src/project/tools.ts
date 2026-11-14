@@ -144,16 +144,16 @@ export function toolsFor(kind: MessageKind, report: RunReport, ctx: ToolContext 
   const alreadyDone = defineTool({
     name: "report_already_done",
     description:
-      "このチケットでやるべき変更が、すでに main に入っていて、やることが無いときに使う(別のチケットや PR で先に入った・重複していた)。Kuramoto が、そのコミットが main に入っていることと、ブランチに main に無い変更が残っていないことを確かめて、チケットを完了にする。submit_pr の代わりに呼ぶ。",
+      "このチケットでやるべき変更が、すでにチームのブランチ(main など)に入っていて、やることが無いときに使う(別のチケットや PR で先に入った・重複していた)。Kuramoto が、そのコミットがチームのブランチに入っていることと、作業のブランチにそこに無い変更が残っていないことを確かめて、チケットを完了にする。submit_pr の代わりに呼ぶ。",
     input: {
-      commit: z.string().min(4).describe("このチケットの変更が入った main 上のコミット(SHA)"),
+      commit: z.string().min(4).describe("このチケットの変更が入ったチームのブランチ上のコミット(SHA)"),
       reason: z.string().min(1).describe("何がどこで入っていたか(受け入れ条件を満たしていることも含めて)"),
     },
     handler: async ({ commit, reason }) => {
       const problem = await ctx.checkLanded?.(commit);
       if (problem) return problem;
       report.alreadyDone = { commit, reason };
-      return "確かめました。このチケットは、すでに main に入っているものとして完了にします。";
+      return "確かめました。このチケットは、すでにチームのブランチに入っているものとして完了にします。";
     },
   });
 

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FakeHarness } from "./harness/fake.js";
 import { Hq } from "./hq.js";
+import { teamBranch } from "./project/team-branch.js";
 import { StaticWorkspace } from "./project/workspace.js";
 import { KuramotoServer } from "./server.js";
 import { leadMessages } from "./project/leadchat.js";
@@ -115,6 +116,98 @@ describe("ローカルサーバー", () => {
     hq.removeDataDir(join(home, "acme", "web"));
     expect(existsSync(join(home, "acme"))).toBe(false);
     hq.removeDataDir(join(home, "acme", "web")); // もう無くても通る
+  });
+
+  describe("設定: チームが使うブランチ", () => {
+    const repos = [{ fullName: "acme/shop", role: "API" }];
+    async function start(w: StaticWorkspace) {
+      const { call, app } = await boot({ workspaceFor: () => w });
+      const { json: created } = await call("POST", "/api/projects", { name: "お試し", repos });
+      const url = `/api/projects/${created.id}/settings`;
+      const p = app.project(created.id);
+      return { call, url, p, save: (body: object) => call("POST", url, { name: "お試し", repos, ...body }), view: async () => (await call("GET", url)).json };
+    }
+
+    it("見られて変えられる。既にあるブランチは作らずに使い、空にすると未設定に戻る", async () => {
+      const w = new StaticWorkspace("/tmp/ws", { branches: ["main", "develop"] });
+      const { save, view, p } = await start(w);
+      expect((await view()).teamBranch).toBe("");
+      const r = await save({ teamBranch: " develop " });
+      expect(r.json).toEqual({ name: "お試し" });
+      expect((await view()).teamBranch).toBe("develop");
+      expect(await teamBranch(p)).toBe("develop");
+      expect(w.checkedBranches).toContainEqual({ repo: "acme/shop", branch: "develop" });
+      expect(w.createdBranches).toEqual([]); // あるので作らない
+      // 変えていなければ確かめ直さない・送らなければ変わらない
+      const n = w.checkedBranches.length;
+      await save({ teamBranch: "develop" });
+      await save({});
+      expect(w.checkedBranches.length).toBe(n);
+      expect((await view()).teamBranch).toBe("develop");
+      await save({ teamBranch: "" });
+      expect((await view()).teamBranch).toBe("");
+    });
+
+    it("無いブランチは、勝手に作らず、既定のブランチを添えて聞き返す。何も保存しない", async () => {
+      const w = new StaticWorkspace("/tmp/ws", { branches: ["trunk"], defaultBranch: "trunk" });
+      const { save, view } = await start(w);
+      const r = await save({ name: "名前を変える", teamBranch: "develop" });
+      expect(r.status).toBe(200);
+      expect(r.json).toEqual({ needsBranch: { branch: "develop", repos: [{ repo: "acme/shop", defaultBranch: "trunk" }] } });
+      expect(w.createdBranches).toEqual([]);
+      const v = await view();
+      expect(v.teamBranch).toBe("");
+      expect(v.name).toBe("お試し"); // ほかの設定も保存していない
+    });
+
+    it("作ると選ぶと、既定のブランチから作って保存する。起点と PR の向き先にも使われる", async () => {
+      const w = new StaticWorkspace("/tmp/ws", { branches: ["trunk"], defaultBranch: "trunk" });
+      const { call, url, save, view, p } = await start(w);
+      const r = await save({ teamBranch: "develop", createTeamBranch: true });
+      expect(r.json).toEqual({ name: "お試し" });
+      expect(w.createdBranches).toEqual([{ repo: "acme/shop", branch: "develop", from: "trunk" }]);
+      expect((await view()).teamBranch).toBe("develop");
+      expect(await teamBranch(p)).toBe("develop");
+      // 作ったあとは、あるブランチとして扱う(もう聞き返さず、作り直さない)
+      await save({ teamBranch: "" });
+      await save({ teamBranch: "develop" });
+      expect(w.createdBranches).toHaveLength(1);
+      expect((await view()).teamBranch).toBe("develop");
+      // 新しく始めるチケットは、そのブランチから切られ、PR もそのブランチ向きに出る
+      const id = Number(url.split("/")[3]);
+      await call("POST", `/api/projects/${id}/tickets`, { title: "CSV" });
+      await call("POST", `/api/projects/${id}/run`, { running: true });
+      for (let i = 0; i < 100 && w.published.length === 0; i++) await new Promise((res) => setTimeout(res, 20));
+      expect(w.published.map((x) => x.base)).toEqual(["develop"]);
+      const tickets = w.prepared.filter((x) => x.ticketNumber > 0); // 企画の担当(チケットなし)は、保存より前に動き出していることがある
+      expect(tickets.length).toBeGreaterThan(0);
+      expect(tickets.every((x) => x.base === "develop")).toBe(true);
+    });
+
+    it("作るのに失敗したら、理由を返して、何も保存しない", async () => {
+      const w = new StaticWorkspace("/tmp/ws", { branches: ["main"], createBranchError: () => "permission denied" });
+      const { save, view } = await start(w);
+      const r = await save({ name: "名前を変える", teamBranch: "develop", createTeamBranch: true });
+      expect(r.status).toBeGreaterThanOrEqual(400);
+      expect(JSON.stringify(r.json)).toContain("permission denied");
+      expect(JSON.stringify(r.json)).toContain("develop");
+      const v = await view();
+      expect(v.teamBranch).toBe("");
+      expect(v.name).toBe("お試し");
+    });
+
+    it("ブランチ名として使えない形は、リポジトリに問い合わせる前に断る", async () => {
+      const w = new StaticWorkspace("/tmp/ws", { branches: ["main"] });
+      const { save, view } = await start(w);
+      for (const bad of ["-D", "a b", "a?b", "a..b"]) {
+        const r = await save({ teamBranch: bad, createTeamBranch: true });
+        expect(r.status, bad).toBeGreaterThanOrEqual(400);
+        expect(JSON.stringify(r.json)).toContain("ブランチ名");
+      }
+      expect(w.checkedBranches).toEqual([]);
+      expect(w.createdBranches).toEqual([]);
+      expect((await view()).teamBranch).toBe("");
+    });
   });
 
   it("作業場所を消せなくても(投げても)DB の削除は進み、ログに残す", async () => {

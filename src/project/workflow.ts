@@ -1,3 +1,4 @@
+import { teamBranchLabel } from "./team-branch.js";
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { isExhausted } from "./budget.js";
@@ -183,7 +184,7 @@ async function applyDev(p: Project, ticket: TicketRow, memberId: number, report:
   if (!report.pr) return "submit_pr が呼ばれませんでした";
   // CI が落ちたコミットのまま出し直しても、同じように落ちて戻ってくるだけ(ADR-0027)。失敗として扱い、続けばリーダーが手助けする
   if (payload.ci && payload.sha && report.pr.sha === payload.sha)
-    return `CI が落ちたコミット(${payload.sha.slice(0, 7)})から何も変わっていません。渡したログから原因を直すか、git merge origin/main で main を取り込んでから出し直してください`;
+    return `CI が落ちたコミット(${payload.sha.slice(0, 7)})から何も変わっていません。渡したログから原因を直すか、git merge origin/${await teamBranchLabel(p)} で取り込んでから出し直してください`;
   if (payload.rules && payload.sha && report.pr.sha === payload.sha)
     return `開発ルールに反したコミット(${payload.sha.slice(0, 7)})から何も変わっていません。ルールを守るように直してから出し直してください`;
   const repo = (await p.repos()).find((r) => r.full_name === report.pr!.repo);
@@ -776,7 +777,7 @@ export async function closeAlreadyDone(p: Project, ticket: TicketRow, a: { commi
     await p.pdb.update("messages", { status: "done" }).where("ticket_id", "=", ticket.id).where("status", "=", "pending").execute();
     await p.setStage(ticket.id, "merge"); // 完了の時刻を入れる
     await p.setStage(ticket.id, "done");
-    await p.addNote(ticket.id, `【すでに main に入っていました】${a.reason}(コミット ${a.commit})`, "lead");
+    await p.addNote(ticket.id, `【すでに ${await teamBranchLabel(p)} に入っていました】${a.reason}(コミット ${a.commit})`, "lead");
     await flushFollowups(p, ticket);
     await p.event(a.by, "already_done", ticket.id, { commit: a.commit, reason: a.reason });
   });

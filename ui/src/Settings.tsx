@@ -1,22 +1,23 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, post } from "./api";
-import { useAct } from "./hooks";
+import { useAct, useToast } from "./hooks";
 import { Btn } from "./ui";
 import { PeriodicReviews } from "./PeriodicReviews";
 import { DeleteProjectDialog } from "./DeleteProjectDialog";
-import { Checkbox, Input, Select, Textarea } from "./ds";
+import { Button, Checkbox, Input, Notice, Select, Textarea } from "./ds";
 import { BudgetInput, budgetOk as totalOk } from "./BudgetInput";
 import { usd } from "./format";
 
 const REPO_ROLES = ["フロント", "API", "インフラ", "その他"];
 const repoOk = (r: string) => /^(?!\.{1,2}\/)(?!.*\/\.{1,2}$)[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r);
-type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean; resumeChecks: boolean; patrolMin: number; issueComment: boolean; planWeb: boolean; planWebDomains: string; ciMode: "team" | "github"; ciCommands: Record<string, string> };
+type Settings = { name: string; dataDir: string; repos: { fullName: string; role: string }[]; ticketBudgetUsd: number | null; projectBudgetUsd: number | null; projectSpentUsd: number; nonstop: boolean; autoMerge: boolean; resumeChecks: boolean; patrolMin: number; issueComment: boolean; planWeb: boolean; planWebDomains: string; teamBranch: string; ciMode: "team" | "github"; ciCommands: Record<string, string> };
 
 /** プロジェクトの設定: 名前とリポジトリ(足す・外す・役割を変える)。 */
 export function SettingsPage({ id }: { id: number }) {
   const { data } = useQuery({ queryKey: ["settings", id], queryFn: () => api<Settings>("GET", `/projects/${id}/settings`) });
   const act = useAct();
+  const toast = useToast();
   const [name, setName] = useState("");
   const [repos, setRepos] = useState<{ r: string; role: string }[]>([]);
   const [budget, setBudget] = useState<number | null>(null);
@@ -26,6 +27,9 @@ export function SettingsPage({ id }: { id: number }) {
   const [resumeOn, setResume] = useState(true);
   const [issueCommentOn, setIssueComment] = useState(false);
   const [patrolMin, setPatrolMin] = useState("5");
+  const [branch, setBranch] = useState("");
+  // 指定したブランチが origin に無いとき、作るかどうかを利用者に確かめる(作るまで何も保存しない)
+  const [missing, setMissing] = useState<{ branch: string; repos: { repo: string; defaultBranch: string }[] } | null>(null);
   const [ciMode, setCiMode] = useState<"team" | "github">("github");
   const [planWeb, setPlanWeb] = useState(true);
   const [planWebDomains, setPlanWebDomains] = useState("");
@@ -41,6 +45,8 @@ export function SettingsPage({ id }: { id: number }) {
     setIssueComment(data.issueComment);
     setResume(data.resumeChecks);
     setPatrolMin(String(data.patrolMin));
+    setBranch(data.teamBranch);
+    setMissing(null);
     setCiMode(data.ciMode);
     setPlanWeb(data.planWeb);
     setPlanWebDomains(data.planWebDomains);
@@ -55,10 +61,16 @@ export function SettingsPage({ id }: { id: number }) {
   const set = (i: number, patch: Partial<{ r: string; role: string }>) => setRepos(repos.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const list = repos.filter((x) => x.r).map((x) => ({ fullName: x.r, role: x.role }));
   const budgetOk = totalOk(budget);
-  const changed = name !== data.name || JSON.stringify(list) !== JSON.stringify(data.repos) || budget !== data.ticketBudgetUsd || total !== data.projectBudgetUsd || nonstopOn !== data.nonstop || autoMergeOn !== data.autoMerge || resumeOn !== data.resumeChecks || patrolMin !== String(data.patrolMin) || issueCommentOn !== data.issueComment || planWeb !== data.planWeb || planWebDomains !== data.planWebDomains || ciMode !== data.ciMode || JSON.stringify(ciCommands) !== JSON.stringify(data.ciCommands);
+  const changed = name !== data.name || JSON.stringify(list) !== JSON.stringify(data.repos) || budget !== data.ticketBudgetUsd || total !== data.projectBudgetUsd || nonstopOn !== data.nonstop || autoMergeOn !== data.autoMerge || resumeOn !== data.resumeChecks || patrolMin !== String(data.patrolMin) || issueCommentOn !== data.issueComment || planWeb !== data.planWeb || planWebDomains !== data.planWebDomains || branch.trim() !== data.teamBranch || ciMode !== data.ciMode || JSON.stringify(ciCommands) !== JSON.stringify(data.ciCommands);
   const patrolOk = /^\d+$/.test(patrolMin);
   const invalid = !name.trim() || !list.length || list.some((x) => !repoOk(x.fullName)) || !budgetOk || !totalOk(total) || !patrolOk;
-  const save = () => act(() => post(`/projects/${id}/settings`, { name: name.trim(), repos: list, ticketBudgetUsd: budget, projectBudgetUsd: total, nonstop: nonstopOn, autoMerge: autoMergeOn, resumeChecks: resumeOn, patrolMin: Number(patrolMin), issueComment: issueCommentOn, planWeb, planWebDomains, ciMode, ciCommands }), "プロジェクトの設定を保存しました");
+  const save = async (createTeamBranch = false) => {
+    setMissing(null);
+    const r = await act(() => post<{ name?: string; needsBranch?: NonNullable<typeof missing> }>(`/projects/${id}/settings`, { name: name.trim(), repos: list, ticketBudgetUsd: budget, projectBudgetUsd: total, nonstop: nonstopOn, autoMerge: autoMergeOn, resumeChecks: resumeOn, patrolMin: Number(patrolMin), issueComment: issueCommentOn, planWeb, planWebDomains, teamBranch: branch.trim(), ...(createTeamBranch ? { createTeamBranch: true } : {}), ciMode, ciCommands }));
+    // 失敗(作れなかったときも)は、理由が出て、何も保存されていない
+    if (r?.needsBranch) setMissing(r.needsBranch);
+    else if (r) toast("プロジェクトの設定を保存しました");
+  };
 
   return (
     <section aria-label="プロジェクトの設定">
@@ -142,6 +154,37 @@ export function SettingsPage({ id }: { id: number }) {
             </>
           )}
         </fieldset>
+        <div>
+          <label className="h" htmlFor="ps-branch">
+            チームが使うブランチ
+          </label>
+          <div className="hint" style={{ marginBottom: 6 }}>
+            担当が作業を始める起点のブランチで、PR の向き先にもなります(merge 済みの判定と、このブランチの CI の見張りも同じものを使います)。空なら、リポジトリの既定のブランチ(origin/HEAD。無ければ main)です。変えても、すでに出した PR の向き先は変わりません。保存するとき、登録したすべてのリポジトリにそのブランチがあるかを確かめます。
+          </div>
+          <Input id="ps-branch" className="font-mono" placeholder="main" value={branch} onChange={(e) => { setBranch(e.target.value); setMissing(null); }} />
+          {missing && (
+            <div style={{ marginTop: 8 }}>
+              <Notice tone="warn" title="このブランチはまだありません">
+                <div>
+                  {missing.repos.map((m) => (
+                    <div key={m.repo}>
+                      {m.repo} に「{missing.branch}」はまだありません。既定のブランチ({m.defaultBranch})から作りますか?
+                    </div>
+                  ))}
+                </div>
+                <div className="hint">作ると、既定のブランチの先頭からブランチを作って origin に push し、そのまま設定を保存します。作らないときは、何も保存しません。</div>
+                <div className="btns" style={{ marginTop: 8 }}>
+                  <Button variant="primary" size="sm" onClick={() => void save(true)}>
+                    作って保存する
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => setMissing(null)}>
+                    作らない
+                  </Button>
+                </div>
+              </Notice>
+            </div>
+          )}
+        </div>
         <fieldset className="runmode">
           <legend className="h">CI</legend>
           <Select aria-label="CI の扱い"value={ciMode} onChange={(e) => setCiMode(e.target.value as "team" | "github")}>
@@ -149,7 +192,7 @@ export function SettingsPage({ id }: { id: number }) {
             <option value="github">GitHub Actions の CI を待つ</option>
           </Select>
           <div className="hint">
-            チームの CI では、担当が PR を出すたびに Kuramoto がこの PC で(エージェントと同じ閉じ込めの中で)、PR を最新の main と合わせて確認のコマンドを流します。通ったものだけをレビューに回し、merge の直前にも main が進んでいれば流し直します。GitHub の CI を待たないので速く、Actions の利用枠も使いません。切り替えると、リポジトリの GitHub Actions を止めます(戻すと動かします)。ブランチ保護で CI の確認を必須にしていると merge できないので、そのときは必須を外してください。
+            チームの CI では、担当が PR を出すたびに Kuramoto がこの PC で(エージェントと同じ閉じ込めの中で)、PR をチームが使うブランチの最新と合わせて確認のコマンドを流します。通ったものだけをレビューに回し、merge の直前にもそのブランチが進んでいれば流し直します。GitHub の CI を待たないので速く、Actions の利用枠も使いません。切り替えると、リポジトリの GitHub Actions を止めます(戻すと動かします)。ブランチ保護で CI の確認を必須にしていると merge できないので、そのときは必須を外してください。
           </div>
           {ciMode === "team" &&
             list.map((x) => (
@@ -203,7 +246,7 @@ export function SettingsPage({ id }: { id: number }) {
         </div>
         <div className="hint">データの置き場所: {data.dataDir}(リポジトリを変えても移りません)</div>
         <div className="btns">
-          <Btn kind="solid-fill" disabled={!changed || invalid} onClick={save}>
+          <Btn kind="solid-fill" disabled={!changed || invalid} onClick={() => void save()}>
             保存する
           </Btn>
           {changed && (
