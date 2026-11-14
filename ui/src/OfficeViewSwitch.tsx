@@ -1,6 +1,5 @@
 import { go } from "./hooks";
 import { setPhoneNav, usePhoneNav, type OfficeView } from "./phoneNav";
-import { Btn } from "./ui";
 import { SegmentNav, SegmentNavButton } from "./ds";
 
 export const OFFICE_VIEWS: Record<OfficeView, string> = { floor: "オフィス", board: "ボード", tree: "ツリー" };
@@ -11,21 +10,13 @@ export const OFFICE_VIEWS: Record<OfficeView, string> = { floor: "オフィス",
 export function OfficeViewSwitch({ className }: { className: string }) {
   const { view } = usePhoneNav();
   return (
-    <div role="group" aria-label="オフィスの見方" className={className}>
+    <SegmentNav label="オフィスの見方" className={className}>
       {(Object.keys(OFFICE_VIEWS) as OfficeView[]).map((v) => (
-        <Btn
-          key={v}
-          kind={view === v ? "solid-fill" : "outline"}
-          size="sm"
-          aria-pressed={view === v}
-          onClick={() => {
-            setPhoneNav({ view: v });
-          }}
-        >
+        <SegmentNavButton key={v} on={view === v} onClick={() => setPhoneNav({ view: v })}>
           {OFFICE_VIEWS[v]}
-        </Btn>
+        </SegmentNavButton>
       ))}
-    </div>
+    </SegmentNav>
   );
 }
 

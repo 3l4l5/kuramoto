@@ -515,7 +515,6 @@ body { background: var(--bg); }
 .dads-bar .brand b { font-size: var(--fs-xl); letter-spacing: .02em; }
 .dads-bar .crumb { gap: 2px; }
 .dads-bar .crumb [aria-current="page"] { text-decoration: none; color: var(--ink); font-weight: 700; }
-.dads-bar .tabs { display: inline-flex; gap: 4px; padding: 0; border: 0; background: transparent; }
 .dads-bar .eff { font-size: var(--fs-base); color: var(--muted); }
 /* 共通ヘッダーの行き先は、どの画面でも同じ形・同じ位置の切り替えスイッチ(ds の SegmentNav。外枠が白、選んでいるのが灰) */
 .dads-bar .navsw { flex: none; }
@@ -1188,8 +1187,8 @@ body { background: var(--bg); }
 
 /* ---- 見方の切り替え(オフィス / ボード / ツリー)。パソコンでは右寄せの並び ---- */
 .viewhead { display: flex; align-items: center; gap: var(--sp-2); }
-/* パソコンの幅では、オフィス/ボード/ツリーの切り替えは共通ヘッダー(.viewtabs)に出す。枠の上のは、スマホの幅だけ */
-.viewsw { display: none; gap: var(--sp-1); margin-left: auto; }
+/* パソコンの幅では、オフィス/ボード/ツリーの切り替えは共通ヘッダー(.navsw)に出す。枠の上のは、スマホの幅だけ */
+.viewhead .viewsw { display: none; margin-left: auto; }
 .stagetabs, .tk-tabs, .phonebar, .phonemenu, .tk-phone, .tk-short, .tk-kindsheet { display: none; }
 /* 共通ヘッダーの引き出しのボタン: 包みは並びに影響させず、親(.bar)の gap でそのまま並べる */
 .drawerbtns { display: contents; }
@@ -1198,7 +1197,7 @@ body { background: var(--bg); }
 @media (max-width: 700px) {
   body { background: var(--bg); }
   /* スマホの試作(phone-home・phone-office・phone-board)は、ヘッダーが白い帯で、灰色の地の上に部品が白 */
-  .dads-bar { margin: calc(-1 * var(--sp-4)) calc(-1 * var(--sp-4)) 0; padding: var(--sp-3) var(--sp-4); background: var(--surface); border-bottom: 1px solid var(--line); }
+  .dads-bar { margin: calc(-1 * var(--sp-3)) calc(-1 * var(--sp-4)) 0; padding: var(--sp-3) var(--sp-4); background: var(--surface); border-bottom: 1px solid var(--line); }
   .app { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
   /* 上の行は「Kuramoto / プロジェクト名 / 稼働の状態」だけ。画面の切り替えと引き出しは、下のタブとメニューへ移す */
   .bar .tabs, .bar .navsw, .bar .drawerbtns, .bar .spacer, .bar .crumb .sep:first-of-type, .bar .crumb > .ds-btn:first-child { display: none; }
@@ -1239,8 +1238,9 @@ body { background: var(--bg); }
   /* ボード: 工程を上のタブ(件数つき、横にすべる)にして、1 列ずつ見る */
   .officepanel { background: none; border: 0; padding: 0; }
   .viewhead h2 { display: none; }
-  .viewsw { display: flex; flex: 1; margin-left: 0; padding: 3px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
-  .viewsw > .ds-btn { flex: 1 1 0; min-width: 0; }
+  /* 試作(phone-board)どおり、幅いっぱいに均等に並ぶ切り替え(外枠が灰、選んでいるのが白) */
+  .viewhead .viewsw { display: flex; flex: 1; margin-left: 0; }
+  .viewhead .viewsw > .ds-seg__opt { flex: 1 1 0; min-width: 0; padding-inline: var(--sp-1); }
   .board-wrap { overflow-x: visible; }
   .kindbar .kindnote { display: none; }
   .stagetabs { display: flex; gap: var(--sp-4); overflow-x: auto; margin: 0 calc(-1 * var(--sp-4)) var(--sp-3); padding: 0 var(--sp-4); border-bottom: 1px solid var(--line); }
