@@ -35,8 +35,16 @@ describe("DB への道の検査", () => {
     expect(bad).toEqual([]);
   });
 
-  it("pdb.from(表) はもう全部の列を選んでいる。続けて .selectAll() を書かない(MySQL は `select *, *` を構文エラーにする)", () => {
-    const bad = files.filter((f) => /\.from\("[a-z_]+"\)\s*\.selectAll\(\)/.test(readFileSync(f, "utf8"))).map(rel);
+  it("pdb.from(表) はもう全部の列を選んでいる。続けて .selectAll() を書かない(MySQL は `select *, *` を構文エラーにする)。MySQL の回で流れる試験も含め、src の全部を見る", () => {
+    const all: string[] = [];
+    const walk = (d: string) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        if (e.isDirectory()) walk(join(d, e.name));
+        else if (e.name.endsWith(".ts")) all.push(join(d, e.name));
+      }
+    };
+    walk(ROOT);
+    const bad = all.filter((f) => /\.from\("[a-z_]+"\)\s*\.selectAll\(\)/.test(readFileSync(f, "utf8"))).map(rel);
     expect(bad).toEqual([]);
   });
 });

@@ -129,6 +129,8 @@ export class Project {
 
   private async seed(): Promise<void> {
     await this.pdb.transaction(async () => {
+      // 企画の最初の行は、編成の有無とは別に確かめる(MySQL で、これを入れる前に作ったプロジェクトも、開き直せば埋まる)
+      await this.seedPlan();
       if (await this.pdb.from("formations").limit(1).executeTakeFirst()) return;
       await this.saveFormation(DEFAULT_FORMATION);
       for (const [role, p] of Object.entries(DEFAULT_POLICIES)) {
@@ -137,7 +139,6 @@ export class Project {
       for (const m of FIXED_CAST) {
         await this.pdb.insert("members", { unit_id: null, name: m.name, look: m.role, is_base: 1, joined_at: this.now() }).execute();
       }
-      await this.seedPlan();
       // ノンストップで進めるため、チケット 1 枚の予算は無制限から始める(歯止めは全体の予算・島の予算で掛ける。ADR-0022)
       await this.setSetting("ticket_budget_usd", "unlimited");
       await this.setSetting("run_budget_usd", "2");
