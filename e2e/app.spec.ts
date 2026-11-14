@@ -211,6 +211,7 @@ test("プロジェクトを作り、企画スタジオで 5 段階を決めて�
     // 床の中身(凡例の行)が床の箱より横に広がっているとき(CI のランナーは日本語のフォントの幅が違う)は、凡例の右端が箱を基準にした引き出しと比べられないので、見送って注釈に残す
     const rowRight = await legend.evaluate((e) => e.parentElement!.getBoundingClientRect().right);
     const floorRight = fl.x + fl.width;
+    if (rowRight > floorRight + 1) console.log(`[e2e-skip] 凡例と引き出しの確かめを見送った: 凡例の行の右端 ${Math.round(rowRight)} が床の右端 ${Math.round(floorRight)} より右`);
     if (rowRight > floorRight + 1) test.info().annotations.push({ type: "凡例の確かめを見送った", description: `凡例の行の右端 ${Math.round(rowRight)} が床の右端 ${Math.round(floorRight)} より右(床の中身が箱より広い)` });
     else expect(lgOpen.x + lgOpen.width, "引き出しが開いている間の凡例の右端").toBeLessThanOrEqual(dr.x);
     await idleDrawer.getByRole("button", { name: "閉じる" }).click();
@@ -575,7 +576,8 @@ test("編成と方針を変えると版が上がり、その版で動いたこ�
     const [c1, c2] = boxes as [(typeof boxes)[number], (typeof boxes)[number]];
     expect(c1.r <= c2.l || c2.r <= c1.l || c1.b <= c2.t || c2.b <= c1.t).toBe(true);
     // 札を押すと、その版で変えたことが出る
-    await trend.locator('g.mark[data-version="3"]').click();
+    // <g> の真ん中は、点線(線の上だけが当たる)の途中で、押せる面ではない。札の四角を押す(押しは <g> に伝わる)
+    await trend.locator('g.mark[data-version="3"] rect').click();
     await expect(page.getByRole("status").filter({ hasText: "v3 で変えたこと" })).toContainText("流れ:");
     // 日ごとの推移に切り替えても、グラフと表のどちらでも、この図は残る
     await page.getByRole("tab", { name: "日ごとの推移" }).click();
