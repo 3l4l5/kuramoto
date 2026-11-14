@@ -65,7 +65,7 @@ grep -n -i "mysql\|KURAMOTO_TEST_DB\|Tests " $L/$D-a-confined.log $L/$D-c-no-bro
 
 | ログ | 想定 |
 |---|---|
-| (a) | `--- npm test の終了コード: 0`・E2E が通った行(`○ E2E 15 件が通った`)・(iii) の行がすべて `○`(`~/.kuramoto`・`~/.ssh` へのシンボリックリンク経由の読み取りが断られる行を含む)。終了コード 0。`e2e/auth.spec.ts` の行が `✓` で出ている。**`e2e/auth.spec.ts` が main に入っていて E2E の件数が 15 件より増えているときは、`△ npm test は通ったが「15 passed」が…` になる**(`scripts/check-confined-browser.ts` が件数 15 を決め打ちしているため)。そのときは出力の「N passed」と `npm test` の終了コード 0 を見て、件数の決め打ちを直すのを、実機の流しのチケットの中でやる |
+| (a) | `--- E2E の試験の件数(playwright test --list): N`・`--- npm test の終了コード: 0`・E2E が通った行(`○ E2E N 件が通った(playwright test --list の件数と一致)`。お手本の画像(`KURAMOTO_DESIGN_DIR/office.png`)が無い環境では、`app.spec.ts` のオフィスの床の 1 件が飛ぶので `○ E2E N-1 件が通った・1 件は飛ばした(…一致)` になる。passed + skipped が `--list` の N と合っていれば `○`)・(iii) の行がすべて `○`(`~/.kuramoto`・`~/.ssh` へのシンボリックリンク経由の読み取りが断られる行を含む)。終了コード 0。`e2e/auth.spec.ts` の行が `✓` で出ている。件数は決め打ちではなく、流す前に `playwright test --list` で数える。`△ …件数…が合わない` なら一部が流れていないので、出力の「N passed」「N skipped」と `npm test` の終了コードを見る。`--- playwright test --list が失敗した` が出ていたら、件数の突き合わせは効いていない(理由はその行) |
 | (b) | `○ 入口を壊すと落ちた`。`git status --short` に差分が出ない |
 | (c) | `△ 設定なし: …(知らせて通った)` か `○ 設定なし: …` |
 | (d) | `○ 断るポート…: BLOCKED`(`--denied-port` を渡したポートも BLOCKED)・`○ ほかのポート…: REACHED`・`○ mysql-test…: REACHED`・`○ 対照…: REACHED`・最後が `○ 断るポートだけが BLOCKED になった`(終了コード 0)。`? 閉じ込めを使えなかった`(終了コード 2)なら、閉じ込めの外から流せていない。vitest の「断るポート」の試験が `✓`(`↓` = スキップならやり直し) |

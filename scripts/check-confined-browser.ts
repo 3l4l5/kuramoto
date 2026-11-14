@@ -8,6 +8,7 @@ import { Project } from "../src/project/project.js";
 import { confinementFor } from "../src/project/confine.js";
 import { SandboxRunner } from "../src/project/team-ci.js";
 import { kuramotoHome } from "../src/hq.js";
+import { describeE2eCount, judgeE2eCount, parseListTotal } from "./e2e-count.js";
 
 /**
  * チームの CI のブラウザサーバー(ブラウザ専用の狭い閉じ込め)の確かめ(#93)。Kuramoto のサーバー(Chrome が動く場所)で流す。
@@ -146,6 +147,20 @@ function plantLinks(repo: string, canary: string, files: { label: string; path: 
   return { dir, links, control: { path: control } };
 }
 
+/** E2E の試験の件数(`playwright test --list`。閉じ込めの外で数える)。数えられなければ null(理由は 1 行出す)。 */
+function countE2eTests(cwd: string): number | null {
+  try {
+    const total = parseListTotal(execFileSync("npx", ["playwright", "test", "--list"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000 }));
+    if (total === null) console.log("--- playwright test --list の出力に「Total: N tests」が無く、件数を数えられなかった");
+    return total;
+  } catch (e) {
+    const err = e as { stderr?: Buffer | string; message?: string };
+    const reason = String(err.stderr || err.message || e).trim().split("\n").find((l) => l.trim()) ?? "不明";
+    console.log(`--- playwright test --list が失敗した(件数の突き合わせはしない): ${reason}`);
+    return null;
+  }
+}
+
 async function main(): Promise<number> {
   const p = await Project.open(":memory:");
   let gitDir = join(repo, ".git");
@@ -156,6 +171,8 @@ async function main(): Promise<number> {
   }
   const conf = await confinementFor(p, { path: repo, base: "main", gitDir }, "qa");
   const runner = new SandboxRunner();
+  const expectedE2e = countE2eTests(repo);
+  console.log(`--- E2E の試験の件数(playwright test --list): ${expectedE2e ?? "数えられなかった"}`);
   let code = 0;
   try {
     // ---- (i) / (ii): npm test を、チームの CI と同じ実行(SandboxRunner)で流す ----
@@ -173,14 +190,15 @@ async function main(): Promise<number> {
       if (NO_BROWSER_SERVER) {
         // 設定なしの回: ブラウザサーバーは立たず、E2E は「起動できなければ知らせて通す」。通ること・知らせが出たかを残す
         const skipped = r.output.includes("ブラウザを起動できなかったので、画面の確かめは流していません");
-        // ○ は、npm test が通り、知らせが無く、E2E の件数(「15 passed」)が出力にあるときだけ。それ以外は E2E が流れたか分からない(E2E の回より前で落ちた・回ごと飛ばした、など)
-        const ran = r.code === 0 && !skipped && /\b15 passed\b/.test(r.output);
+        // ○ は、npm test が通り、知らせが無く、E2E の通った件数が試験の件数と合っているときだけ。それ以外は E2E が流れたか分からない(E2E の回より前で落ちた・回ごと飛ばした、など)
+        const count = judgeE2eCount(r.output, expectedE2e);
+        const ran = r.code === 0 && !skipped && count.kind === "ok";
         console.log(
           skipped
             ? "△ 設定なし: Chrome が起動できず、画面の E2E は流れていない(知らせて通った)"
             : ran
-              ? "○ 設定なし: 閉じ込めの中で Chrome が起動でき、E2E 15 件が流れた"
-              : "? 設定なし: E2E が流れたか分からない(npm test の終了コードか、出力に「15 passed」が無い。E2E の回より前で落ちた・回ごと飛ばした・件数が変わった可能性。上の出力を見る)",
+              ? `○ 設定なし: 閉じ込めの中で Chrome が起動でき、E2E ${count.kind === "ok" ? count.passed : ""} 件が流れた`
+              : "? 設定なし: E2E が流れたか分からない(npm test の終了コードか、出力の「N passed」が無い、または試験の件数と合わない。E2E の回より前で落ちた・回ごと飛ばした可能性。上の出力を見る)",
         );
         return r.code === 0 ? 0 : 1;
       }
@@ -194,7 +212,7 @@ async function main(): Promise<number> {
         return r.code === 0 ? 1 : 0;
       }
       if (r.code !== 0) return 1;
-      console.log(/\b15 passed\b/.test(r.output) ? "○ E2E 15 件が通った" : "△ npm test は通ったが「15 passed」が出力に見つからない(件数が変わったか、E2E が流れていない)");
+      console.log(describeE2eCount(judgeE2eCount(r.output, expectedE2e)));
     } finally {
       if (BREAK) writeFileSync(phoneBar, original);
     }

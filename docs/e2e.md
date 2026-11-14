@@ -41,11 +41,11 @@ npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --break  # 
 npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --no-browser-server  # 設定なしの回(既定の振る舞いのログ)
 ```
 
-`--no-browser-server` は `KURAMOTO_E2E_CONFINED_BROWSER` を付けずに、同じ実行(`SandboxRunner`)で `npm test` を流します。Chrome が閉じ込めの中で起動できなければ `△ 設定なし: …(知らせて通った)`、起動できて E2E が流れれば `○ 設定なし: …`(終了コード 0 で、知らせが無く、「15 passed」が出力にあるときだけ)、それ以外は `? 設定なし: E2E が流れたか分からない` と出ます。終了コードは `npm test` が通れば 0、落ちたら 1。
+`--no-browser-server` は `KURAMOTO_E2E_CONFINED_BROWSER` を付けずに、同じ実行(`SandboxRunner`)で `npm test` を流します。Chrome が閉じ込めの中で起動できなければ `△ 設定なし: …(知らせて通った)`、起動できて E2E が流れれば `○ 設定なし: …`(終了コード 0 で、知らせが無く、E2E の「N passed」が出力にあり、飛ばした件数を足して、事前に `playwright test --list` で数えた件数と合うときだけ)、それ以外は `? 設定なし: E2E が流れたか分からない` と出ます。終了コードは `npm test` が通れば 0、落ちたら 1。
 
 読み方(3 つとも通れば、チームの CI で `KURAMOTO_E2E_CONFINED_BROWSER=1` を有効にしてよい):
 
-1. **(i) E2E が通る**: 出力の末尾に `--- npm test の終了コード: 0` と `○ E2E 15 件が通った` が出る。「15 passed」が見つからないと `△`(件数が変わったか、E2E が流れていない)。
+1. **(i) E2E が通る**: 出力の末尾に `--- npm test の終了コード: 0` と `○ E2E N 件が通った` が出る(N は `playwright test --list` で数えた件数で、スクリプトが流す前に出す。試験を足しても決め打ちは直さなくてよい)。出力に Playwright の「N passed」が無い、または通った件数に飛ばした件数(`N skipped`。お手本の画像が無い環境では、`app.spec.ts` のオフィスの床の 1 件が飛ぶ)と flaky を足しても数えた件数と合わないと `△`(E2E が流れていない・一部が流れていない)。飛ばした件数は `○ E2E 16 件が通った・1 件は飛ばした(…一致)` のように出る。
 2. **(ii) 入口を壊すと落ちる**(`--break`): `ui/src/PhoneBar.tsx` の `drawerTo("policy")` を `drawerTo(null)` にして同じ実行をし、`○ 入口を壊すと落ちた` が出る(終わったら元に戻す)。`✗ 入口を壊したのに通った` なら、E2E が画面を確かめていない。
 3. **(iii) 接続した側からの攻撃がどれも失敗する**: 次の行がすべて `○` になる。
    - `file://` で `~/.kuramoto` の確かめ用ファイルと `~/.kuramoto/access-token`、`~/.ssh` の鍵を開けない
