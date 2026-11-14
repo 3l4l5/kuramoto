@@ -63,17 +63,17 @@ npx tsx scripts/check-confined-browser.ts [リポジトリのパス] --no-browse
 
 ### 確かめの記録
 
-実機で流した出力の全文は [`docs/e2e-logs/`](e2e-logs/README.md) に置き、流した日・環境(OS・Chrome の版・Kuramoto のコミット)とログのファイルを、ここの表に書きます。**まだ流していません。** 作業場所は閉じ込めの中で、Chrome も入れ子の閉じ込めも動かせないため、実機で流す作業は**別チケット**(実機で (a)〜(e) と `e2e/auth.spec.ts` を流してログを置き、表を埋め、既定を設定ありにするかを決める。#96・#98・#101 から引き継いだ確かめを含む)で、責任者が Kuramoto のサーバーで流します。実行手順とログのファイル名は [`docs/e2e-logs/README.md`](e2e-logs/README.md) にあります。
+流した出力の全文は [`docs/e2e-logs/`](e2e-logs/README.md) に置き、流した日・環境(OS・Chrome の版・Kuramoto のコミット)・流した場所(実機 / CI)とログのファイルを、ここの表に書きます。**まだ流していません。** 作業場所は閉じ込めの中で、Chrome も入れ子の閉じ込めも動かせないため、(a)〜(e) と `e2e/auth.spec.ts` を流す作業は**別チケット**です。ログは、**#114 の CI(GitHub Actions の macOS ランナー)の artifact から取り**(責任者が実機で流す形ではありません)、取れたら表を埋めて、既定を設定ありにするかを決めます(#96・#98・#101 から引き継いだ確かめを含む)。実行手順・ログのファイル名・ログを見るときの照合の手順は [`docs/e2e-logs/README.md`](e2e-logs/README.md) にあります。
 
 ログが無い行は「未実施」のままにします(想像で埋めない)。**既定は動かしません**(上の「既定を『設定なし』のままにする判断」。この表の (i)(ii)(iii) がすべて通ってから、別チケットで決める)。
 
-| 回 | コマンド | 結果 | 日 | OS | Chrome の版 | コミット | ログのファイル | 流すチケット |
-|---|---|---|---|---|---|---|---|---|
-| 設定あり (i)(iii) | `check-confined-browser.ts <repo>`(E2E 全件・`e2e/auth.spec.ts` を含む) | 未実施 | | | | | | 別チケット(実機の流し) |
-| 設定あり (ii) | `check-confined-browser.ts <repo> --break` | 未実施 | | | | | | 別チケット(実機の流し) |
-| 設定なし | `check-confined-browser.ts <repo> --no-browser-server` | 未実施 | | | | | | 別チケット(実機の流し) |
-| 断るポート(ADR-0059・0060) | `check-denied-ports.ts --denied-port <Kuramoto 自身の MySQL のポート>` と、`team-ci.test.ts` の「断るポート」の試験 | 未実施 | | | | | | 別チケット(実機の流し) |
-| mysql-test | (a)(c) のログの、MySQL の回(127.0.0.1:3307) | 未実施 | | | | | | 別チケット(実機の流し) |
+| 回 | コマンド | 結果 | 日 | 流した場所(実機 / CI) | OS | Chrome の版 | コミット | ログのファイル | 流すチケット |
+|---|---|---|---|---|---|---|---|---|---|
+| 設定あり (i)(iii) | `check-confined-browser.ts <repo>`(E2E 全件・`e2e/auth.spec.ts` を含む) | 未実施 | | | | | | | 別チケット(#114 の CI の流し) |
+| 設定あり (ii) | `check-confined-browser.ts <repo> --break` | 未実施 | | | | | | | 別チケット(#114 の CI の流し) |
+| 設定なし | `check-confined-browser.ts <repo> --no-browser-server` | 未実施 | | | | | | | 別チケット(#114 の CI の流し) |
+| 断るポート(ADR-0059・0060) | `check-denied-ports.ts --denied-port <Kuramoto 自身の MySQL のポート>` と、`team-ci.test.ts` の「断るポート」の試験 | 未実施 | | | | | | | 別チケット(#114 の CI の流し) |
+| mysql-test | (a)(c) のログの、MySQL の回(127.0.0.1:3307) | 未実施 | | | | | | | 別チケット(#114 の CI の流し) |
 
 ## ファイルの分け方
 
