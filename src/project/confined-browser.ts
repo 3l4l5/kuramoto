@@ -116,7 +116,9 @@ export const startConfinedBrowser: StartBrowser = async (cwd, conf) => {
     const wrapped = needsLocalPortDeny(conf.allowLocalSockets, conf.deniedLocalPorts) ? denyLocalPorts(raw, conf.deniedLocalPorts ?? []) : raw;
     const env: NodeJS.ProcessEnv = { ...process.env, ...conf.env, CI: "1" };
     for (const k of conf.hiddenEnv) delete env[k];
-    const child = spawn("/bin/bash", ["-c", wrapped], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+    // カレントディレクトリは、閉じ込めの中で読める・書ける profileDir にする。リポジトリ(ホームの下)のままだと、ホームを読めない閉じ込めの中で
+    // process.cwd() が「EPERM: uv_cwd」で落ちる(macOS ランナーで起きた)。スクリプトはリポジトリを絶対パスで読むので、cwd は要らない
+    const child = spawn("/bin/bash", ["-c", wrapped], { cwd: profileDir, env, stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     const endpoint = await new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => fail(new Error(`${START_TIMEOUT_MS / 1000} 秒たってもブラウザサーバーが立ちませんでした`)), START_TIMEOUT_MS);
