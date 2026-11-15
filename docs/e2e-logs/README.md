@@ -17,7 +17,7 @@
 作業場所からは artifact も `git fetch origin` も使えず、確実に届くのは main だけです。そのため、ワークフローが**ログを main に入れる PR を自分で開きます**。
 
 1. 手で流す(Actions の「Run workflow」、または `gh workflow run confinement-check --ref <ブランチ>`)。入力 `publish_logs` は既定で `true`。ログを出さずに流したいときだけ `false` にする。**PR の CI(`pull_request`)では、ログの PR は出ません**(PR が増えすぎないように、手で流したときだけ)。
-2. 最後のジョブ(`logs`)が、artifact `e2e-logs` に上げたものと同じ 7 本を、**中身を変えずに** `docs/e2e-logs/run-<run_id>/` に置き、ブランチ `e2e-logs/run-<run_id>` に commit して push し、main への PR を開く(`scripts/publish-e2e-logs.sh`)。タイトルに run_id、本文に実行の URL とログの一覧・行数が入る。ブランチは main の最新から切るので、PR の差分はログだけ。7 本が揃わなかった実行でも、あるぶんを出す(足りないログは artifact にも無い。上の「ログの取り方」の 3 と同じ見方)。
+2. 最後のジョブ(`logs`)が、artifact `e2e-logs` に上げたものと同じ 7 本を、**中身を変えずに** `docs/e2e-logs/run-<run_id>/` に置き、ブランチ `e2e-logs/run-<run_id>` に commit して push し、main への PR を開く(`scripts/publish-e2e-logs.sh`)。タイトルに run_id、本文に実行の URL とログの一覧・行数が入る。ブランチは main の最新から切るので、PR の差分はログだけ。7 本が揃わなかった実行でも、集まったぶんを出す(その場合、まとめの artifact `e2e-logs` は上がらないので、この PR が唯一の受け渡しになる。足りないログの見方は上の「ログの取り方」の 3)。
 3. 責任者がその PR を merge する。
 4. #115 が、main の `docs/e2e-logs/run-<run_id>/` を読んで、[../e2e.md の「確かめの記録」](../e2e.md) を埋める。
 
