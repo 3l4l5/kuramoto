@@ -35,6 +35,12 @@ describe("ci-confinement-lib.sh(閉じ込めの確かめの CI が、ログを�
     expect(r.out).toContain("✗ 閉じ込めに穴がある");
   });
 
+  it("need / forbid: ログに制御文字(色の ESC など)があっても、その先の行まで読む", () => {
+    const log = "○ 前の行\n\x1b[32m✓\x1b[39m 色つきの行 \x07\x08\nTests  12 passed (12)\n✗ 落ちた回: MySQL\n";
+    expect(run(log, 'need "$f" "Tests +[0-9]+ passed"').code).toBe(0);
+    expect(run(log, 'forbid "$f" "^✗ 落ちた回"').code).toBe(1);
+  });
+
   it("need_code: 終了コードが期待(既定 0)と違えば落とす", () => {
     expect(run("", 'need_code "手順" 0').code).toBe(0);
     expect(run("", 'need_code "手順" 2 2').code).toBe(0);
@@ -66,10 +72,18 @@ describe("ci-confinement-lib.sh(閉じ込めの確かめの CI が、ログを�
     const r = run("%\n✗ 落ちた回: X\n[browser-server] FATAL: Check failed\n○ ok\n", 'show_reasons "$f"');
     expect(r.out).toMatch(/^::error title=1 ✗△\?---\(x\.log\)::✗ 落ちた回: X/m);
     expect(r.out).toMatch(/^::error title=2 Chrome の落ちた理由\(x\.log\)::.*FATAL/m);
-    expect(r.out).toMatch(/^::error title=3 ブラウザサーバーの先頭/m);
+    expect(r.out).toMatch(/^::error title=3 ブラウザサーバーの先頭と末尾/m);
     expect(r.out).not.toMatch(/title=5 落ちた E2E/);
     expect(r.out).toMatch(/title=6 末尾\(x\.log\)::.*%25.*%0A/);
     for (const l of r.out.split("\n")) if (l.startsWith("::error")) expect(l.length).toBeLessThan(900);
+  });
+
+  it("show_reasons: 接続した側の「参考:」の行を、1 つの短い注釈に出す(判定の行ではない)", () => {
+    const lines = Array.from({ length: 8 }, (_, i) => `参考: 診断 ${i + 1}: 開けた`).join("\n");
+    const r = run(`✗ 落ちた回: X\n${lines}\n`, 'show_reasons "$f"');
+    expect(r.out).toMatch(/^::error title=10 接続した側の参考\(x\.log\)::診断 1: 開けた.*診断 5: 開けた/m);
+    expect(r.out.split("\n").find((l) => l.startsWith("::error title=10 "))).not.toMatch(/診断 6/);
+    expect(r.out).not.toMatch(/title=1 ✗△\?---\(x\.log\)::[^\n]*参考/);
   });
 
   it("どれか 1 つでも落ちれば、あとの確かめが通っても、最後は落ちる", () => {
@@ -96,19 +110,11 @@ describe("ワークフロー confinement-check", () => {
     for (const p of ['"src/project/confine*"', '"scripts/check-*"', '"e2e/**"']) expect(wf).toContain(p);
   });
 
-  it("continue-on-error は、(a) のステップと (e) の npm test のステップにだけ(ジョブには付けない)。判定はゆるめない", () => {
-    const lines = wf.split("\n");
-    const at = lines.flatMap((l, i) => (/^\s*continue-on-error: true\s*$/.test(l) ? [i] : []));
-    expect(at).toHaveLength(2);
-    const stepName = (i: number) => lines.slice(0, i).reverse().find((l) => /^\s+- name:/.test(l)) ?? "";
-    expect(stepName(at[0])).toContain("(a) 設定あり");
-    expect(stepName(at[1])).toContain("(e) MySQL の回(mysql-test に届いて通る)");
-    // ステップの中(インデント 8)にあること = ジョブ直下(インデント 4)ではない
-    for (const i of at) expect(lines[i]).toMatch(/^ {8}continue-on-error: true$/);
-    // (e) が赤のときは、#116 の名前入りの ::warning:: を出す(赤を隠さない)
-    expect(wf).toContain("::warning title=(e) MySQL の回::$msg");
-    expect(wf).toContain("(e) MySQL の回は赤(#116 の既知の失敗)");
-    expect(wf).toContain("steps.e.outcome");
+  it("continue-on-error は、どのステップ・ジョブにも付けない((a) は #118、(e) の MySQL の回は #116)。判定はゆるめない", () => {
+    expect(wf).not.toMatch(/^\s*continue-on-error:/m);
+    // (e) は #116 で直った。既知の失敗として扱う仕組み(steps.e.outcome・::warning::)は残さない
+    expect(wf).not.toContain("steps.e.outcome");
+    expect(wf).not.toContain("#116 の既知の失敗");
     for (const n of ["need_code \"(a) check-confined-browser\"", "'^○ E2E [0-9]+ 件が通った'", "forbid \"$L/$D-a-confined.log\" '^✗'"]) {
       expect(wf, `(a) の判定 ${n}`).toContain(n);
     }

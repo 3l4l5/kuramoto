@@ -814,7 +814,7 @@ export class Dispatcher {
       await complete(p, msg.id);
       return;
     }
-    const run = (await p.pdb.from("periodic_review_runs").selectAll().where("id", "=", payload.runId).executeTakeFirst());
+    const run = (await p.pdb.from("periodic_review_runs").where("id", "=", payload.runId).executeTakeFirst());
     if (!run || run.status === "done" || run.status === "error") {
       await complete(p, msg.id);
       return;

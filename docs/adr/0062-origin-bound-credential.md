@@ -26,7 +26,7 @@ ID が漏れると、8 時間か失効(`revoke-all`・再起動)まで、担当�
 - ヘッダーを付けられない読み込みは、次だけ(`EventSource`・`WebSocket` は使っていない)。
   - 画面のファイル: `index.html`・JS・CSS・フォント(`serveStatic`。今は合言葉の対象)。
   - `<img src="/api/projects/:id/design-images/:id">`(`ui/src/Ticket.tsx` の 2 か所)。
-  - `<a href="/api/projects/:id/studio/export(.zip)" download>`(`ui/src/studio/Studio.tsx` の 2 か所)。
+  - `<a href="/api/projects/:id/studio/export(.zip)" download>`(`ui/src/studio/Studio.tsx` の 2 か所)。→ #120 で、ボタン+ `fetch`(`ui/src/api.ts` の `download()`)→ Blob 保存に替えた。Cookie に頼らない。
 - 画面は React で、`dangerouslySetInnerHTML`・`innerHTML` を使っていない(XSS で JS を実行される入り口が今は無い)。Content-Security-Policy も出していない。
 - 画面の URL の `#` 以降は、画面のルーティング(`#/p/:id` など)が使っている。
 - 本体には、セッションの発行・失効の土台(`src/sessions.ts`、`DELETE /api/session`、`POST /api/session/revoke-all`)が既にある。

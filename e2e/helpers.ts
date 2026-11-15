@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { expect, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 /**
  * E2E の共通の道具。どのテストも、ここの「プロジェクトを作る」「画面の幅」「引き出し・下のタブの場所」を使う
@@ -23,6 +23,61 @@ export async function createProject(page: Page, name: string, repo: string) {
   await page.getByLabel("リポジトリ 1").fill(repo);
   await page.getByRole("button", { name: "次へ: 企画スタジオ" }).click();
   await expect(page.getByText(`${name} · 企画スタジオ`)).toBeVisible();
+}
+
+/**
+ * 企画スタジオのチャットで、担当に「直してほしい・相談する」を送る(中身に反映してもらう)。
+ * 送り方の既定は「質問する(中身は変えない)」で、送るボタンの名前も「質問する」になる(10569ca)。企画の中身を書かせたいときは、送り方を切り替えてから送る。
+ */
+export async function sendToPlanner(page: Page, text: string) {
+  await page.getByRole("radiogroup", { name: "送り方" }).getByRole("radio", { name: "直してほしい・相談する" }).check();
+  await page.getByLabel("メッセージ").fill(text);
+  await page.getByRole("button", { name: "送る", exact: true }).click();
+}
+
+/**
+ * 設計書(Markdown)の「エクスポート」ボタンを押して、画面が fetch(Authorization つき。Cookie には頼らない)で取り、
+ * 名前と中身の正しいファイルを保存しようとすることを確かめて、名前と中身を返す。
+ * ブラウザの「ダウンロード」の動き(ファイルに書く)は通さず、保存の最後の一押し(download の印つきの a.click())だけ、そこで止めて名前を記録する。
+ * 理由: 閉じ込めの中のブラウザは、ダウンロードのファイルを書くときに、書ける場所の外(ユーザーの一時ディレクトリ /private/var/folders/…/T/.org.chromium.Chromium.*)へ
+ * 書こうとして sandbox に断られ、ダウンロードが canceled で失敗する(run 43609097616)。この許可は足さない(閉じ込めを広げない)。
+ */
+export async function fetchExport(page: Page, name: string): Promise<{ filename: string; body: Buffer }> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __saved?: string[] };
+    if (w.__saved) return;
+    w.__saved = [];
+    const orig = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      if (this.hasAttribute("download")) w.__saved!.push(this.download);
+      else orig.call(this);
+    };
+  });
+  const [res] = await Promise.all([
+    page.waitForResponse((r) => new URL(r.url()).pathname.endsWith("/studio/export")),
+    page.getByRole("button", { name: "設計書をエクスポート(Markdown)" }).click(),
+  ]);
+  expect(res.status()).toBe(200);
+  const disposition = res.headers()["content-disposition"] ?? "";
+  expect(disposition).toMatch(/^attachment;/);
+  const m = /filename\*=UTF-8''([^;]+)/.exec(disposition);
+  const filename = m ? decodeURIComponent(m[1]!) : "";
+  expect(filename).toBe(`${name}-設計書.md`);
+  // 画面が、その名前で保存しようとした
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __saved?: string[] }).__saved?.at(-1))).toBe(filename);
+  return { filename, body: await res.body() };
+}
+
+/**
+ * 長いテストの手順(test.step)を、始まった時刻(テストの始めからの秒)つきで標準出力に残す。確かめの CI(閉じ込めの中のブラウザ)で、
+ * 90 秒の時間切れが「止まった手順があった」のか「全体が遅かった」のかを、ログから見分けるため(scripts/ci-confinement-lib.sh が [e2e-time] の行を注釈に出す)。
+ */
+export function timedSteps() {
+  const t0 = Date.now();
+  return <T>(title: string, body: () => Promise<T>) => {
+    console.log(`[e2e-time] ${Math.round((Date.now() - t0) / 1000)}s ▶ ${title.slice(0, 24)}`);
+    return test.step(title, body);
+  };
 }
 
 /** いま開いているプロジェクトの番号(アドレスの #/p/<番号> から)。 */

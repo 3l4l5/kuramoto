@@ -2,6 +2,8 @@ import type { DbStatusView, DevRulesView, HqView, LeadChatView, MemberChatView, 
 
 export type { DbStatusView, DevRulesView, HqView, LeadChatView, MemberChatView, MemberNow, MemberView, OfficeView, PeriodicReviewsView, ProductivityView, ProjectView, StudioView, TeamView, TicketView, UnitView };
 
+import { filenameFromDisposition, saveBlob } from "./download";
+
 let build: string | null = null;
 
 /**
@@ -48,6 +50,22 @@ export async function api<T = unknown>(method: "GET" | "POST" | "DELETE", path: 
   const json = (await res.json()) as T & { error?: string };
   if (!res.ok) throw new Error(json.error ?? res.statusText);
   return json;
+}
+
+/**
+ * ファイルを取って保存する(設計書のエクスポートなど)。<a href download> のリンクはブラウザが Authorization を付けないので、
+ * API と同じ道(fetch)で取って Blob で保存する。合言葉・セッションを fetch に付ける道を替えるときは、api() とここの 2 か所だけを見ればよい。
+ */
+export async function download(path: string, fallbackName: string): Promise<string> {
+  const res = await fetch(`/api${path}`);
+  setAuthState(res.status === 401 ? "unauthorized" : "ok");
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(json.error ?? res.statusText);
+  }
+  const name = filenameFromDisposition(res.headers.get("content-disposition"), fallbackName);
+  saveBlob(await res.blob(), name);
+  return name;
 }
 
 export const del = <T = unknown>(path: string) => api<T>("DELETE", path);

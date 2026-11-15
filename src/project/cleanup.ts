@@ -7,14 +7,22 @@ import type { Workspace } from "./workspace.js";
  * 消すのは Kuramoto の後始末であって merge の成否には関係しないので、何があっても投げない。消せなかったものは events に残して先へ進む。
  * 作業中のチケットや、リーダー用(plan-<役割>)の作業場所は、Workspace.removeTicketWorktrees が番号で絞っているので触らない。
  */
-export async function releaseWorktrees(p: Project, workspace: Workspace | undefined, ticket: TicketRow, repos: string[]): Promise<void> {
+export async function releaseWorktrees(p: Project, workspace: Workspace | undefined, ticket: TicketRow, repos: string[]): Promise<boolean> {
+  // 片付けた印を、消す前に条件つきで取る。ownerMerge(done にしたあとの後始末)と背景の releaseFinishedWorktrees(done・dropped を拾う)が
+  // 同じチケットを同時に片付けようとしても、印を入れられた 1 つだけが消す(消せなかったときも、出来事に残すので印は付いたまま)。
+  // 印を取れなかったとき(DB の不調など)は、片付けそびれるよりは、重ねて消すほうを選ぶ(消し直すだけで害はない)
+  const claimed = await p.claimSetting(releasedKey(ticket.id), undefined, "1").catch((e: unknown) => {
+    console.error(`#${ticket.number} の片付けの印を付けられませんでした: ${errorText(e)}`);
+    return true;
+  });
+  if (!claimed) return false;
   try {
     // 消した作業場所を指したままにしない。作業場所が無い環境(workspace なし)でも記録は外す
     await p.pdb.update("sessions", { worktree_path: null }).where("ticket_id", "=", ticket.id).execute();
   } catch (e) {
     console.error(`#${ticket.number} の worktree_path を外せませんでした: ${errorText(e)}`);
   }
-  if (!workspace?.removeTicketWorktrees) return;
+  if (!workspace?.removeTicketWorktrees) return true;
   for (const repo of new Set(repos)) {
     try {
       const r = await workspace.removeTicketWorktrees(repo, ticket.number);
@@ -23,12 +31,16 @@ export async function releaseWorktrees(p: Project, workspace: Workspace | undefi
       await log(p, ticket, { repo, failed: [{ path: "", error: errorText(e) }] });
     }
   }
-  // 片付けた印。releaseFinishedWorktrees が同じチケットを何度も拾わないようにする(消せなかったときも、出来事に残したので印は付ける)
-  await p.setSetting(releasedKey(ticket.id), "1").catch((e: unknown) => console.error(`#${ticket.number} の片付けの印を付けられませんでした: ${errorText(e)}`));
+  return true;
 }
 
 const RELEASED_PREFIX = "worktrees_released:";
 const releasedKey = (ticketId: number) => `${RELEASED_PREFIX}${ticketId}`;
+
+/** 取りやめを戻したチケットは、作業場所をまた作るので、片付けた印を外す(次に done・dropped になったときに、もう一度片付けられるように)。 */
+export async function clearReleasedMark(p: Project, ticketId: number): Promise<void> {
+  await p.pdb.deleteFrom("settings").where("key", "=", releasedKey(ticketId)).execute();
+}
 
 /**
  * merge を通らずに終わったチケット(すでに main に入っていた=closeAlreadyDone・取りやめ=dropTicket)の作業場所を片付ける。
@@ -58,8 +70,7 @@ export async function releaseFinishedWorktrees(p: Project, workspace: Workspace 
   for (const { id } of todo) {
     const ticket = await p.ticket(id);
     if (ticket.stage !== "done" && ticket.stage !== "dropped") continue;
-    await releaseWorktrees(p, workspace, ticket, repos);
-    n++;
+    if (await releaseWorktrees(p, workspace, ticket, repos)) n++;
   }
   return n;
 }

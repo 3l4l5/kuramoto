@@ -151,12 +151,12 @@ describe("DbHealth(切れたかの見張り)", () => {
 });
 
 /** 流れた文を記録するだけの Kysely(MySQL の文の形を見る) */
-function recording(respond: (sql: string) => Partial<QueryResult<any>>) {
+function recording(respond: (sql: string, params: readonly unknown[]) => Partial<QueryResult<any>>) {
   const log: string[] = [];
   const conn: DatabaseConnection = {
     async executeQuery(q) {
       log.push(q.sql);
-      return { rows: [], ...respond(q.sql) } as QueryResult<any>;
+      return { rows: [], ...respond(q.sql, q.parameters) } as QueryResult<any>;
     },
     async *streamQuery() {},
   };
@@ -184,18 +184,54 @@ function recording(respond: (sql: string) => Partial<QueryResult<any>>) {
 describe("MySQL の方言の文の形", () => {
   const candidate = (k: Kysely<any>) => k.selectFrom("messages as m").select("m.id").where("m.status", "=", "pending").orderBy("m.id").limit(1);
 
-  it("受信箱の取り出し: トランザクションの中で SELECT … FOR UPDATE SKIP LOCKED → UPDATE(status = 'pending' も見る)→ SELECT", async () => {
-    const { k, log } = recording((s) => (/^select .* for update/.test(s) ? { rows: [{ id: 7, project_id: 3 }] } : /^update/.test(s) ? { numAffectedRows: 1n, numChangedRows: 1n } : /^select/.test(s) ? { rows: [{ id: 7, status: "claimed" }] } : {}));
+  /** 候補を読む文(ロックなし)・ロックの文・更新・読み直し、のどれに当たるかで返事を分ける */
+  const claimResponder = (over: { candidates?: { id: number; project_id: number }[]; lockable?: (id: number) => boolean; updated?: bigint } = {}) => (s: string, params: readonly unknown[] = []) => {
+    if (/for update skip locked$/.test(s)) return { rows: over.lockable?.(Number(params[0])) === false ? [] : [{ id: params[0], project_id: 3 }] };
+    if (/^update/.test(s)) return { numAffectedRows: over.updated ?? 1n, numChangedRows: over.updated ?? 1n };
+    if (/from `messages` as `m`/.test(s)) return { rows: over.candidates ?? [{ id: 7, project_id: 3 }] };
+    if (/^select/.test(s)) return { rows: [{ id: 7, status: "claimed" }] };
+    return {};
+  };
+
+  it("受信箱の取り出し: トランザクションの中で、候補をロックなしで読む → 取る 1 行だけ FOR UPDATE SKIP LOCKED → UPDATE(status = 'pending' も見る)→ SELECT", async () => {
+    const { k, log } = recording(claimResponder());
     const row = await mysqlDialect.claimMessage(k, candidate(k), "2026-11-13");
     expect(row).toEqual({ id: 7, status: "claimed" });
     expect(log[0]).toBe("BEGIN");
-    expect(log[1]).toMatch(/^select `m`\.`id`, `m`\.`project_id` from `messages` as `m` where .* limit \? for update skip locked$/);
-    expect(log[2]).toMatch(/^update `messages` set `status` = \?, `claimed_at` = \?, `attempts` = attempts \+ 1 where `id` = \? and `project_id` = \? and `status` = \?$/);
-    expect(log[4]).toBe("COMMIT");
+    // 候補の読みにロックは付かない(ORDER BY 付きで FOR UPDATE すると、読んだ行が全部ロックされて、同時の取り出しが 1 通も取れない)
+    expect(log[1]).toMatch(/^select `m`\.`id`, `m`\.`project_id` from `messages` as `m` where .* order by .* limit \?$/);
+    expect(log[1]).not.toMatch(/for update/);
+    expect(log[2]).toMatch(/^select `id`, `project_id` from `messages` where `id` = \? and `project_id` = \? and `status` = \? for update skip locked$/);
+    expect(log[3]).toMatch(/^update `messages` set `status` = \?, `claimed_at` = \?, `attempts` = attempts \+ 1 where `id` = \? and `project_id` = \? and `status` = \?$/);
+    expect(log[5]).toBe("COMMIT");
+  });
+
+  it("ほかの取り出しがロックしている行は飛ばして、次の候補を取る", async () => {
+    const { k, log } = recording(claimResponder({ candidates: [{ id: 1, project_id: 3 }, { id: 2, project_id: 3 }, { id: 3, project_id: 3 }], lockable: (id) => id === 3 }));
+    expect(await mysqlDialect.claimMessage(k, candidate(k), "now")).toEqual({ id: 7, status: "claimed" });
+    expect(log.filter((s) => /for update skip locked$/.test(s))).toHaveLength(3);
+    expect(log.filter((s) => /^update/.test(s))).toHaveLength(1);
+  });
+
+  it("候補が全部ロックされていれば、取れなかったことにする(UPDATE しない)", async () => {
+    const { k, log } = recording(claimResponder({ candidates: [{ id: 1, project_id: 3 }, { id: 2, project_id: 3 }], lockable: () => false }));
+    expect(await mysqlDialect.claimMessage(k, candidate(k), "now")).toBeUndefined();
+    expect(log.some((s) => /^update/.test(s))).toBe(false);
+  });
+
+  it("先頭の候補がすべてロックされていたら、その先の候補を読み進める", async () => {
+    const first = Array.from({ length: 16 }, (_, i) => ({ id: i + 1, project_id: 3 }));
+    let reads = 0;
+    const respond = claimResponder({ lockable: (id) => id > 16 });
+    const { k, log } = recording((s, params) => (/from `messages` as `m`/.test(s) && !/for update/.test(s) ? { rows: reads++ === 0 ? first : [{ id: 17, project_id: 3 }] } : respond(s, params)));
+    expect(await mysqlDialect.claimMessage(k, candidate(k), "now")).toEqual({ id: 7, status: "claimed" });
+    // 2 回目の候補の読みは、もう試した id を除く
+    const second = log.filter((s) => /from `messages` as `m`/.test(s))[1]!;
+    expect(second).toMatch(/`m`\.`id` not in \(/);
   });
 
   it("更新できた件数が 1 でなければ(ほかに取られた)取れなかったことにする", async () => {
-    const { k } = recording((s) => (/^select .* for update/.test(s) ? { rows: [{ id: 7, project_id: 3 }] } : /^update/.test(s) ? { numAffectedRows: 0n, numChangedRows: 0n } : {}));
+    const { k } = recording(claimResponder({ updated: 0n }));
     expect(await mysqlDialect.claimMessage(k, candidate(k), "now")).toBeUndefined();
   });
 
@@ -206,7 +242,7 @@ describe("MySQL の方言の文の形", () => {
   });
 
   it("すでにトランザクションの中なら、その上で流す(入れ子にしない)", async () => {
-    const { k, log } = recording((s) => (/for update/.test(s) ? { rows: [{ id: 1, project_id: 1 }] } : /^update/.test(s) ? { numAffectedRows: 1n } : { rows: [{ id: 1 }] }));
+    const { k, log } = recording(claimResponder());
     await k.transaction().execute((trx) => mysqlDialect.claimMessage(trx, candidate(trx), "now"));
     expect(log.filter((s) => s === "BEGIN")).toHaveLength(1);
   });

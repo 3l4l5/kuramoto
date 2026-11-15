@@ -22,8 +22,9 @@ import { describeE2eCount, judgeE2eCount, parseListTotal } from "./e2e-count.js"
  * (iii) 接続した側から、次がどれも失敗する(外のブラウザサーバーの閉じ込めが効いている)
  *       - file:// で ~/.kuramoto の中のファイル(access-token など)と ~/.ssh の中のファイルを開く
  *       - 読める場所(リポジトリの node_modules)の中に置いた、~/.kuramoto・~/.ssh へのシンボリックリンク(ファイル・ディレクトリ)経由で、同じファイルを開く(許した場所がリンクで広がらない)
- *       - newContext({ proxy }) を使った外への通信 / newRequest(ローカルの playwright と、ブラウザ側の context.request)で外の URL を取る
- *       対照として、リポジトリの package.json と localhost の確かめ用サーバーには繋がる(ブラウザそのものが壊れて「失敗」しているのではないことを見るため)
+ *       - newContext({ proxy }) を使った外への通信 / newRequest(ローカルの playwright と、ブラウザ側の context.request)/ ブラウザの goto で、外の公開の URL(example.com)を取る
+ *         「外」はこの機械の外。この機械の LAN の IP は seatbelt では localhost と同じ扱いで通る(#118 の runner の記録)ので、外には使わない。閉じ込めの外から example.com に届くことを対照にする
+ *       対照として、リポジトリの package.json・node_modules の中のリンク(許した場所を指す)・localhost の確かめ用サーバーには繋がる(ブラウザそのものが壊れて「失敗」しているのではないことを見るため)。確かめごとに新しいページで開く
  * 終了コード: 0 = 通った / 1 = 落ちた(閉じ込めの穴・E2E の失敗) / 2 = 確かめられなかった(ブラウザが起動できなかったなど)
  */
 
@@ -42,55 +43,72 @@ const PROBE = `
 const { chromium, request } = require("@playwright/test");
 const t = JSON.parse(process.env.PROBE_TARGETS);
 const out = (name, ok, detail) => console.log("PROBE " + JSON.stringify({ name, ok, detail: String(detail).slice(0, 200) }));
+const net = require("net");
+const info = (s) => console.log("INFO " + String(s).replace(/\\s+/g, " ").slice(0, 190));
 const body = async (page, url) => {
   const r = await page.goto(url, { timeout: 15000 }).catch((e) => ({ error: String(e.message).split("\\n")[0] }));
   if (r && r.error) return { error: r.error, text: "" };
   return { error: null, text: await page.evaluate(() => document.body ? document.body.innerText : "").catch(() => "") };
 };
+const tcp = (host, port) => new Promise((res) => { const s = net.connect({ host, port, timeout: 5000 }); s.on("connect", () => { s.destroy(); res("繋がった"); }); s.on("timeout", () => { s.destroy(); res("時間切れ"); }); s.on("error", (e) => res("失敗 " + (e.code || e.message))); });
 (async () => {
   if (!process.env.KURAMOTO_E2E_WS_ENDPOINT) return; // ブラウザサーバーが渡されなかった(起動できなかった)。確かめない
   const browser = await chromium.connect(process.env.KURAMOTO_E2E_WS_ENDPOINT, { timeout: 60000 });
-  const page = await browser.newPage();
+  // 確かめごとに新しいページで開く(前の確かめで出たエラーのページに引きずられない)
+  const fresh = async (url) => { const p = await browser.newPage(); try { return await body(p, url); } finally { await p.close().catch(() => {}); } };
   // 対照: 繋がる
-  let r = await body(page, "file://" + t.cwd + "/package.json");
+  let r = await fresh("file://" + t.cwd + "/package.json");
   out("対照: リポジトリの package.json を開ける", r.text.includes('"name"'), r.error || "開けた");
-  r = await body(page, "http://127.0.0.1:" + t.port + "/");
+  r = await fresh("http://127.0.0.1:" + t.port + "/");
   out("対照: localhost の確かめ用サーバーに繋がる", r.text.includes("CANARY-NET"), r.error || "繋がった");
   // (iii) ファイル
   for (const f of t.files) {
-    r = await body(page, "file://" + f.path);
+    r = await fresh("file://" + f.path);
     out("file:// で " + f.label + " を開けない", !r.text.includes(f.marker), r.error || (r.text.includes(f.marker) ? "中身が読めた" : "開いたが中身は無い"));
   }
   // (iii) シンボリックリンク(読める node_modules の中に置いたリンク)経由
-  r = await body(page, "file://" + t.linkControl.path);
+  r = await fresh("file://" + t.linkControl.path);
   out("対照: node_modules の中のリンクが、許した場所(package.json)を指すなら開ける", r.text.includes('"name"'), r.error || "開けた");
   for (const f of t.links) {
-    r = await body(page, "file://" + f.path);
+    r = await fresh("file://" + f.path);
     out("node_modules 内のシンボリックリンク経由で " + f.label + " を開けない", !r.text.includes(f.marker), r.error || (r.text.includes(f.marker) ? "中身が読めた(リンクで読める場所が広がっている)" : "開いたが中身は無い"));
   }
-  // (iii) 外への通信
-  if (!t.lanIp) out("外への通信を確かめる LAN の IP", false, "非 loopback の IPv4 が無いので確かめられない");
+  // (iii) 外への通信。「外」は、この機械の外の公開の URL(t.external)。この機械の LAN の IP は、macOS の seatbelt では localhost と同じ扱いで通る(runner の記録: LAN の IP には繋がり、1.1.1.1:80 は EPERM)ので、外としては使わない
+  const ext = t.external;
+  if (!ext.reachable) out("外への通信を確かめる対照(閉じ込めの外から " + ext.url + " に届く)", false, "閉じ込めの外からも届かないので、外へ出られないことを確かめられない");
   else {
-    const url = "http://" + t.lanIp + ":" + t.port + "/";
-    r = await body(page, url);
-    out("LAN の IP(localhost の外)へ goto できない", !r.text.includes("CANARY-NET"), r.error || "繋がった");
-    const ctx = await browser.newContext({ proxy: { server: url } });
+    out("対照: 閉じ込めの外からは " + ext.url + " に届く", true, "届いた");
+    r = await fresh(ext.url);
+    out("ブラウザで外の URL を開けない", !r.text.includes(ext.marker), r.error || "繋がった");
+    const ctx = await browser.newContext({ proxy: { server: ext.proxy } });
     const p2 = await ctx.newPage();
     r = await body(p2, "http://example.invalid/");
-    out("newContext({proxy}) で外のプロキシ経由の通信ができない", !r.text.includes("CANARY-NET"), r.error || "繋がった");
+    out("newContext({proxy}) で外のプロキシ経由の通信ができない", !!r.error, r.error || "繋がった(外のプロキシが応えた)");
     await ctx.close();
     const viaCtx = await browser.newContext();
-    const a = await viaCtx.request.get(url, { timeout: 15000 }).then((x) => x.text(), (e) => "ERR " + String(e.message).split("\\n")[0]);
-    out("context.request(ブラウザ側)で外の URL を取れない", !a.includes("CANARY-NET"), a);
+    const a = await viaCtx.request.get(ext.url, { timeout: 15000 }).then((x) => x.text(), (e) => "ERR " + String(e.message).split("\\n")[0]);
+    out("context.request(ブラウザ側)で外の URL を取れない", !a.includes(ext.marker), a);
     await viaCtx.close();
     const local = await request.newContext();
-    const b = await local.get(url, { timeout: 15000 }).then((x) => x.text(), (e) => "ERR " + String(e.message).split("\\n")[0]);
-    out("request.newContext(ローカルの playwright)で外の URL を取れない", !b.includes("CANARY-NET"), b);
+    const c = await local.get(ext.url, { timeout: 15000 }).then((x) => x.text(), (e) => "ERR " + String(e.message).split("\\n")[0]);
+    out("request.newContext(ローカルの playwright)で外の URL を取れない", !c.includes(ext.marker), c);
     await local.dispose();
   }
+  // 参考(判定には入れない): この機械の LAN の IP への通信は、localhost と同じ扱いで通る(外ではない)ことの記録
+  const attempt = async (label, fn) => { try { info(label + ": " + (await fn())); } catch (e) { info(label + ": 例外 " + String(e.message).split("\\n")[0]); } };
+  await attempt("tcp(playwright 側の node から)", async () => "127.0.0.1=" + (await tcp("127.0.0.1", t.port)) + " LAN=" + (t.lanIp ? await tcp(t.lanIp, t.port) : "IP なし") + " 1.1.1.1:80=" + (await tcp("1.1.1.1", 80)));
+  if (t.lanIp) await attempt("ブラウザで LAN の IP へ goto", async () => { const x = await fresh("http://" + t.lanIp + ":" + t.port + "/"); return x.error ? "失敗 " + x.error.slice(0, 100) : x.text.includes("CANARY-NET") ? "開けた" : "開いたが中身が違う"; });
   await browser.close();
 })().catch((e) => { out("接続した側の確かめが最後まで動いた", false, e.message); process.exit(0); });
 `;
+
+/** 「外」の公開の URL(この機械の外)と、閉じ込めの外(この確かめのプロセス)から届くか。届かなければ、閉じ込めが断ったのか、そもそも外に出られないのか見分けられない。 */
+async function externalTarget(): Promise<{ url: string; marker: string; proxy: string; reachable: boolean }> {
+  const url = "http://example.com/";
+  const marker = "Example Domain";
+  const reachable = await fetch(url, { signal: AbortSignal.timeout(15_000) }).then((x) => x.text(), () => "").then((t) => t.includes(marker));
+  return { url, marker, proxy: "http://example.com:80", reachable };
+}
 
 function lanIp(): string | undefined {
   for (const list of Object.values(networkInterfaces()))
@@ -234,7 +252,8 @@ async function main(): Promise<number> {
       writeFileSync(probeFile, PROBE);
       const files = secretFiles(canary);
       const planted = plantLinks(repo, canary, files);
-      const targets = { cwd: repo, port: (server.address() as AddressInfo).port, lanIp: lanIp(), files, links: planted.links, linkControl: planted.control };
+      const ext = await externalTarget();
+      const targets = { external: ext, cwd: repo, port: (server.address() as AddressInfo).port, lanIp: lanIp(), files, links: planted.links, linkControl: planted.control };
       const r = await runner.run("node node_modules/.kuramoto-probe.cjs", repo, { ...conf, env: { ...conf.env, PROBE_TARGETS: JSON.stringify(targets) } }, 5 * 60_000, true);
       const probes = r.output.split("\n").filter((l) => l.startsWith("PROBE ")).map((l) => JSON.parse(l.slice(6)) as Probe);
       if (!probes.length) {
@@ -242,6 +261,7 @@ async function main(): Promise<number> {
         return 2;
       }
       for (const x of probes) console.log(`${x.ok ? "○" : "✗"} ${x.name}: ${x.detail}`);
+      for (const l of r.output.split("\n")) if (l.startsWith("INFO ")) console.log(`参考: ${l.slice(5)}`);
       code = probes.every((x) => x.ok) ? 0 : 1;
       console.log(code === 0 ? "○ 接続した側からの攻撃は、どれも失敗した" : "✗ 閉じ込めに穴がある");
     } finally {

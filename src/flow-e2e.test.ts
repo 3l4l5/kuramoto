@@ -77,7 +77,7 @@ async function boot(kind: Kind) {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const port = (server.address() as { port: number }).port;
   cleanups.push(async () => {
-    app.close();
+    await app.close();
     await new Promise((r) => server.close(r));
     hq.close();
     await db.close();
@@ -149,7 +149,10 @@ for (const kind of ["sqlite", "mysql"] as const) {
       const { github, ws, p, ticketId } = await toMergeWait(kind);
       github.state = "MERGED";
       await p.setSetting("patrol_pr_check_at", ""); // 始業の見回りがもう 1 回確かめているので、間隔の制限を外す
-      expect(await refreshMergedWaits(p, github as unknown as GitHub, { workspace: ws })).toBe(1);
+      // 始業したディスパッチャの背景の見回りも、この隙に同じ merge 待ちを拾いうる。取り合いは 1 つだけが勝つので、直の呼び出しの戻り値は 1(こちらが勝った)か 0(背景が勝った)のどちらか。
+      // どちらが勝っても、done になり、作業場所の片付けがちょうど 1 回走る(勝った側がまだ途中のことがあるので、片付けが済むまで待つ)
+      expect([0, 1]).toContain(await refreshMergedWaits(p, github as unknown as GitHub, { workspace: ws }));
+      for (let i = 0; i < 400 && ws.cleaned.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
       expect((await p.ticket(ticketId)).stage).toBe("done");
       expect(ws.cleaned.map((c) => c.repo)).toEqual(["acme/shop"]);
       expect((await worktreePaths(p)).every((w) => w === null)).toBe(true);

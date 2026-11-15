@@ -129,6 +129,8 @@ export class Project {
 
   private async seed(): Promise<void> {
     await this.pdb.transaction(async () => {
+      // 企画の最初の行は、編成の有無とは別に確かめる(MySQL で、これを入れる前に作ったプロジェクトも、開き直せば埋まる)
+      await this.seedPlan();
       if (await this.pdb.from("formations").limit(1).executeTakeFirst()) return;
       await this.saveFormation(DEFAULT_FORMATION);
       for (const [role, p] of Object.entries(DEFAULT_POLICIES)) {
@@ -145,6 +147,18 @@ export class Project {
     });
   }
 
+  /**
+   * 企画の最初の行(段階 5 つ・要件の版 1・開発ルールの版 1)。SQLite のプロジェクト DB は最初のマイグレーションが入れるが、
+   * MySQL は 1 つの database に複数のプロジェクトが入り、マイグレーションはプロジェクトの行を作れないので、プロジェクトを開くときに入れる。
+   * SQLite では入っているので何もしない。
+   */
+  private async seedPlan(): Promise<void> {
+    if (await this.pdb.from("plan_stages").limit(1).executeTakeFirst()) return;
+    for (const stage of ["req", "infra", "flow", "screen", "model"]) await this.pdb.insert("plan_stages", { stage, mode: "agree", version: 1 }).execute();
+    await this.pdb.insert("requirements", { version: 1, created_at: "" }).execute();
+    await this.pdb.insert("dev_rule_versions", { version: 1, rules: "[]", created_at: "" }).execute();
+  }
+
   // ---- 設定 ----
 
   async setting(key: string): Promise<string | undefined> {
@@ -159,6 +173,26 @@ export class Project {
   async setSetting(key: string, value: string): Promise<void> {
     // 版 22 で settings の主キーは (project_id, key)。project_id は pdb.insert が入れる
     await this.pdb.dialect.upsert(this.pdb.insert("settings", { key, value }), ["project_id", "key"], ["value"]).execute();
+  }
+
+  /**
+   * 設定を、読んだ値(expected。まだ無ければ undefined)のままのときだけ value に書き換える(条件つき更新)。
+   * 読んで・書くまでの間にほかの処理が書き換えていたら false を返し、何も書かない。同時に走る処理のうち 1 つだけが true を受ける(取り合いに使う)。
+   * 前提: value は expected と違う値にする(MySQL は値が変わらない更新を 0 件と数える)。
+   */
+  async claimSetting(key: string, expected: string | undefined, value: string): Promise<boolean> {
+    if (expected === undefined) {
+      // まだ行が無い: 主キー(project_id, key)の衝突で、先に入れた 1 つだけが勝つ
+      try {
+        await this.pdb.insert("settings", { key, value }).execute();
+        return true;
+      } catch (e) {
+        if ((await this.setting(key)) !== undefined) return false;
+        throw e;
+      }
+    }
+    const r = await this.pdb.update("settings", { value }).where("key", "=", key).where("value", "=", expected).executeTakeFirst();
+    return Number(r.numUpdatedRows) === 1;
   }
 
   async addRepo(fullName: string, role: string): Promise<number> {

@@ -11,6 +11,7 @@ import type { Project, TicketRow } from "./project.js";
 import type { Finding, Followup, Question, RunReport } from "./tools.js";
 import { comment, lastReviewer, mustResolve, setStatus, threadText } from "./review.js";
 import { teamCiFindings } from "./team-ci.js";
+import { clearReleasedMark } from "./cleanup.js";
 import { openViolations, markListed, reviewFindingsFor } from "./dev-rules.js";
 
 /**
@@ -861,6 +862,7 @@ export async function reopenTicket(p: Project, ticketId: number, by: "owner" | "
     // 取りやめの前のメッセージが残っていても、取り出したときに捨てられているので、新しく頼み直す
     await p.pdb.update("messages", { status: "done" }).where("ticket_id", "=", ticketId).where("status", "in", ["pending", "claimed"]).execute();
     await p.setStage(ticketId, "dev");
+    await clearReleasedMark(p, ticketId);
     await p.pdb.update("tickets", { dropped_by: null, dropped_reason: null, dropped_at: null }).where("id", "=", ticketId).execute();
     if (ticket.owner_member_id) {
       await send(p, {

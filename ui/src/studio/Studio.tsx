@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { post, type StudioView } from "../api";
+import { download, post, type StudioView } from "../api";
 import { duration, useAct, useNow, useStudio } from "../hooks";
 import { QuietText } from "../Project";
 import { StageWork, type Ui } from "./Work";
-import { Btn, LinkBtn } from "../ui";
+import { Btn } from "../ui";
 import { Input } from "../ds";
 
 export type Stage = StudioView["stages"][number];
@@ -26,6 +26,9 @@ const whoOf = (c: Cast, who: string): [string, string] =>
 /** 企画スタジオ(docs/design.md 6.2)。 */
 export function Studio({ id }: { id: number }) {
   const { data } = useStudio(id);
+  const act = useAct();
+  // 取れなかったときは、お知らせ(トースト)に出す。成功してもデータは変わらないので、act の再読み込みは無害
+  const save = (path: string, fallback: string) => act(() => download(path, fallback));
   const [ui, setUiState] = useState<Ui>({ stage: null, scr: null, node: null, commentMode: false, pin: null, ask: null });
   const setUi = (patch: Partial<Ui>) => setUiState((u) => ({ ...u, ...patch }));
   useEffect(() => {
@@ -40,12 +43,12 @@ export function Studio({ id }: { id: number }) {
         <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
           <h2 style={{ margin: 0, fontFamily: "var(--f-body)", fontSize: "var(--fs-lg)" }}>{data.project.name} · 企画スタジオ</h2>
           <span style={{ fontSize: "var(--fs-sm)", color: "var(--muted)" }}>段階ごとに合意した版を残し、すべて終わったらチームに渡します</span>
-          <LinkBtn kind="outline" size="sm" className="exportbtn" href={`/api/projects/${id}/studio/export`} download>
+          <Btn kind="outline" size="sm" className="exportbtn" onClick={() => void save(`/projects/${id}/studio/export`, "design.md")}>
             設計書をエクスポート(Markdown)
-          </LinkBtn>
-          <LinkBtn kind="outline" size="sm" href={`/api/projects/${id}/studio/export.zip`} download title="設計書と、画面ごとのお手本の画像(実際の端末の幅で描いたもの)をまとめた zip。GitHub などに置いても画面の絵が出ます">
+          </Btn>
+          <Btn kind="outline" size="sm" onClick={() => void save(`/projects/${id}/studio/export.zip`, "design.zip")} title="設計書と、画面ごとのお手本の画像(実際の端末の幅で描いたもの)をまとめた zip。GitHub などに置いても画面の絵が出ます">
             設計書と画面の画像(zip)
-          </LinkBtn>
+          </Btn>
           <PauseButton pid={id} paused={!!data.paused} />
         </div>
         {data.paused && (

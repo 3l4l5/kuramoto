@@ -89,8 +89,15 @@ const { chromium } = require(${JSON.stringify(join(resolve(cwd), "node_modules/@
   if (process.env.KURAMOTO_E2E_BROWSER_DEBUG === "1") {
     opts.logger = { isEnabled: (name) => name === "browser", log: (name, severity, message) => { if (name === "browser") process.stderr.write("[pw:browser] " + String(message).slice(0, 300) + "\\n"); } };
   }
+  const ts = () => new Date().toISOString().slice(11, 23);
   const server = await chromium.launchServer({ channel: "chrome", ...opts }).catch((e) => { process.stderr.write("[pw:browser] channel chrome の起動に失敗: " + String((e && e.message) || e).split("\\n")[0].slice(0, 300) + "\\n"); return chromium.launchServer(opts); });
-  server.on("close", () => process.stderr.write("[pw:browser] ブラウザサーバーが閉じた(ブラウザが終わった)\\n"));
+  server.on("close", () => process.stderr.write("[pw:browser] " + ts() + " ブラウザサーバーが閉じた(ブラウザが終わった)\\n"));
+  // 確かめの CI だけ: ブラウザのプロセスが、いつ・どう終わったか(終了コード・シグナル)と、その標準エラー(Chrome の落ちた理由)を、時刻つきで残す
+  if (process.env.KURAMOTO_E2E_BROWSER_DEBUG === "1") {
+    const proc = server.process();
+    proc.on("exit", (code, sig) => process.stderr.write("[pw:browser] " + ts() + " ブラウザのプロセスが終わった: 終了コード " + code + " シグナル " + sig + "\\n"));
+    if (proc.stderr) proc.stderr.on("data", (b) => { for (const l of String(b).split("\\n")) if (l.trim() && !/^DevTools listening/.test(l)) process.stderr.write("[pw:browser] " + ts() + " chrome: " + l.slice(0, 300) + "\\n"); });
+  }
   process.stdout.write("KURAMOTO_WS " + server.wsEndpoint() + "\\n");
   const stop = () => server.close().catch(() => {}).then(() => process.exit(0));
   process.stdin.on("end", stop);

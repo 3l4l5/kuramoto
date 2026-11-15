@@ -116,7 +116,7 @@ describe("リーダーの応答(#79)", () => {
     expect(JSON.parse(t.plan_refs)).toMatchObject({ issue: 5, issueUrl: "https://github.com/acme/shop/issues/5", issueRepo: "acme/shop" });
     const view = await ticketView(p, t.id);
     expect(view.issue).toEqual({ number: 5, url: "https://github.com/acme/shop/issues/5" });
-    const row = (await p.pdb.from("github_issues").selectAll().where("number", "=", 5).executeTakeFirst())!;
+    const row = (await p.pdb.from("github_issues").where("number", "=", 5).executeTakeFirst())!;
     expect(row).toMatchObject({ status: "ticketed", ticket_id: t.id });
     expect((await newIssues(p)).map((i) => i.number)).toEqual([6]);
     expect((await leadMessages(p)).some((m) => m.who === "lead" && m.body.includes("Issue #5") && m.body.includes("チケット #1"))).toBe(true);
@@ -160,7 +160,7 @@ describe("リーダーの応答(#79)", () => {
     await pollIssues(p, gh);
     const tools = issueTools(p, { github: gh });
     expect(await call(tool(tools, "issue_to_owner"), { issue: 6, lean: "decline", reason: "仕様の外です" })).toContain("責任者に回しました");
-    const row = (await p.pdb.from("github_issues").selectAll().where("number", "=", 6).executeTakeFirst())!;
+    const row = (await p.pdb.from("github_issues").where("number", "=", 6).executeTakeFirst())!;
     expect(row.status).toBe("owner");
     expect(await p.tickets()).toEqual([]);
     const said = (await leadMessages(p)).find((m) => m.body.includes("Issue #6"))!;
@@ -170,7 +170,7 @@ describe("リーダーの応答(#79)", () => {
     expect((await newIssues(p)).map((i) => i.number)).toEqual([5]);
     // 責任者が「やる」と言えば、チャットの create_ticket で Issue をひも付けてチケットにできる
     await call(tool(leadChatTools(p, { github: gh }), "create_ticket"), { title: "課題 6", body: "x", kind: "feature", issue: 6 });
-    expect((await p.pdb.from("github_issues").selectAll().where("number", "=", 6).executeTakeFirst())!.status).toBe("ticketed");
+    expect((await p.pdb.from("github_issues").where("number", "=", 6).executeTakeFirst())!.status).toBe("ticketed");
   });
 
   it("何も選ばれなかった Issue は、見回りを終えると見送りになり、二度は見せない。見回りが落ちたとき(終えていない)は残って、次に見せる。サーバーを立ち上げ直しても同じ", async () => {
@@ -189,7 +189,7 @@ describe("リーダーの応答(#79)", () => {
     clock.advance(5 * 60_000);
     expect(await pollIssues(p, gh)).toBe(0);
     // 表に残っているので、立ち上げ直しても(別の Project インスタンスから見ても)覚えている
-    expect((await p.pdb.from("github_issues").selectAll().execute()).map((r) => r.status)).toEqual(["passed", "passed"]);
+    expect((await p.pdb.from("github_issues").execute()).map((r) => r.status)).toEqual(["passed", "passed"]);
     state.issues.push(issue(8));
     clock.advance(5 * 60_000);
     expect(await pollIssues(p, gh)).toBe(1);

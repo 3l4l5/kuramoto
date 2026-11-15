@@ -539,7 +539,7 @@ body { background: var(--bg); }
 .compose-hint { padding: 8px 12px 0; }
 .pinform { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .swork .agree { margin-left: auto; }
-.exportbtn { margin-left: auto; text-decoration: none; }
+.exportbtn { margin-left: auto; }
 .scrlist { display: flex; gap: 6px; flex-wrap: wrap; }
 .scrlist .d { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 6px; }
 .issue .acts, .skipask .acts { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -1399,12 +1399,27 @@ body { background: var(--bg); }
   .officefloor .of-map { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: minmax(max-content, 1fr); align-content: start; }
   /* 凡例: 既定は床の下の行(流れの中。受け口の真下のアーキテクトの下に折り返す)。右にメンバーの引き出しが開いているときは、その手前まで(#72) */
   .officefloor .of-side { flex-wrap: wrap; }
+  /* 床の下の行(凡例を含む)の「中身の幅」は、地図の列の幅に数えない(width: 0 + min-width: 100%)。数えると、凡例が 1 行に並んだ幅(引き出しの余白も足して)まで列が広がり、
+     行が床の箱より横に出て、凡例の右端が引き出しの左端より右に出る(チケット 122)。列の幅は島の並びで決まり、行はその幅に収まって折り返す */
+  .officefloor .of-side { width: 0; min-width: 100%; box-sizing: border-box; }
   .officefloor .of-legend { flex: 1 1 100%; order: 1; margin: var(--sp-2) 0 0; }
-  .officefloor:has(.of-drawer) .of-legend { margin-right: calc(400px + var(--sp-4)); }
+  /* 引き出しが開いている間: 凡例の幅は「見えている地図の幅 − 引き出し(400px + 余白)」。列の幅(島の並び。狭い幅では床より広く、地図が横にスクロールする)からは引かない。
+     引くと、列が床より広いとき(720px など)に凡例が引き出しの下まで伸びる(チケット 125)。cqw は .of-map(横幅だけを container にする)の中身の幅。
+     外側の幅(幅 100% + margin)は列の幅より大きいままにして、凡例が自分だけの行に落ちるようにする(max-width で切ると、アーキテクト・merge 済みの山の隣に入り、引き出しの下に潜る)。
+     margin の % は .of-side の幅(= 列の幅)に対して決まるので、margin-right = 列の幅 − 見えている幅 + 引き出し分 → 凡例の幅 = 見えている幅 − 引き出し分 */
+  .officefloor:has(.of-drawer) .of-map { container-type: inline-size; }
+  .officefloor:has(.of-drawer) .of-legend { margin-right: calc(100% - 100cqw + 400px + var(--sp-4)); }
   .officefloor .of-map { padding-bottom: var(--sp-4); }
 }
 /* 幅が 1001px 以上で引き出しが閉じているときだけ、凡例を床の中の左下に重ねる(試作。床の最小の高さまで地図を伸ばして、凡例を床の底に付ける)。
    狭い幅や引き出しが開いている間は、凡例が何行にも折り返してアーキテクト・吹き出しに重なるので、流れの中に置く */
+/* 701〜1000px で引き出しが開いている間は、凡例に残る幅が「床の幅 − 416px」(720px で 270px 前後)まで狭くなる。
+   横に並べて折り返すと、凡例の span が細切れになって何行にも崩れるので、1 行 1 項目の縦並びにして、span の中だけが折り返すようにする(チケット 125) */
+@media (min-width: 701px) and (max-width: 1000px) {
+  .officefloor:has(.of-drawer) .of-legend { min-width: 0; flex-direction: column; align-items: flex-start; gap: var(--sp-1); border-radius: var(--r-md); }
+  .officefloor:has(.of-drawer) .of-legend > span { min-width: 0; max-width: 100%; }
+  .officefloor:has(.of-drawer) .of-legend-links { margin-left: 0; flex-wrap: wrap; }
+}
 @media (min-width: 1001px) {
   .officefloor:not(:has(.of-drawer)) .of-map { padding-bottom: 72px; }
   .officefloor:not(:has(.of-drawer)) .of-legend { position: absolute; left: var(--sp-4); bottom: var(--sp-4); margin: 0; flex: none; max-width: calc(100% - var(--sp-4) * 2); z-index: 3; }
