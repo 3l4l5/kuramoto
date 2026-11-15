@@ -104,6 +104,11 @@ jobs:
           need "$L/$D-a-confined.log" '^○ 接続した側からの攻撃は、どれも失敗した'
           need "$L/$D-a-confined.log" 'node_modules 内のシンボリックリンク経由で ~/\.kuramoto'
           need "$L/$D-a-confined.log" 'node_modules 内のシンボリックリンク経由で ~/\.ssh'
+          # この機械の LAN の IP:断るポート(deniedLocalPorts)に、ブラウザの goto・node の tcp で届かない(#123)。対照(LAN の IP:断らないポートには繋がる)も ○
+          need "$L/$D-a-confined.log" '^○ 対照: ブラウザで LAN の IP\(.*\)の、断らないポートに繋がる'
+          need "$L/$D-a-confined.log" '^○ ブラウザで LAN の IP\(.*\)経由で、断るポートに届かない'
+          need "$L/$D-a-confined.log" '^○ 対照: playwright 側の node から LAN の IP\(.*\)の、断らないポートに繋がる'
+          need "$L/$D-a-confined.log" '^○ playwright 側の node から LAN の IP\(.*\)経由で、断るポートに繋がらない'
           forbid "$L/$D-a-confined.log" '^✗'
           forbid "$L/$D-a-confined.log" '^△'
           forbid "$L/$D-a-confined.log" '^--- (確かめられなかった|接続した側の確かめが動かなかった|playwright test --list が失敗した)'
@@ -167,6 +172,10 @@ jobs:
           need "$f" '^○ ほかのポート.*REACHED'
           need "$f" '^○ mysql-test\(127\.0\.0\.1:3307\): REACHED'
           need "$f" '^○ 断るポート\(--denied-port。Kuramoto 自身が使っているもの\)\(127\.0\.0\.1:3306\): BLOCKED'
+          # LAN の IP:断るポートが BLOCKED、対照(LAN の IP:ほかのポート・断りを空にした LAN の IP:同じポート)が REACHED(#123)
+          need "$f" '^○ LAN の IP 経由の、断るポート\([0-9.]+:[0-9]+\): BLOCKED'
+          need "$f" '^○ 対照: LAN の IP の、ほかのポート\([0-9.]+:[0-9]+\): REACHED'
+          need "$f" '^○ 対照: 断るポートを空にした設定の、LAN の IP の同じポート\([0-9.]+:[0-9]+\): REACHED'
           need "$f" '^○ 対照: .*REACHED'
           need "$f" '^○ 断るポートだけが BLOCKED になった'
           forbid "$f" '^(✗|\?|- )'
