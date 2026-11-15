@@ -23,7 +23,7 @@
 
 - 権限は `logs` ジョブだけに `contents: write` と `pull-requests: write` を付ける(ほかのジョブとワークフロー全体は `contents: read`)。push するのは `e2e-logs/run-<数字>` のブランチだけ(スクリプトが run_id を数字に限る)。
 - 同じ実行の再実行(Re-run)では、同じブランチを上書きし、すでに PR が開いていれば新しい PR は開かない。
-- この手順が失敗しても、`confinement-check` の成否は変わらない(`continue-on-error`。警告の注釈が出る)。ログは artifact に残る。
+- この手順が失敗しても、`confinement-check` の成否は変わらない(手順の中で終了コードを 0 にして、警告の注釈を出す。`continue-on-error` は、このワークフローではどこにも付けない決まり)。ログは artifact に残る。
 - **リポジトリの設定が要る**: Settings > Actions > General の「Allow GitHub Actions to create and approve pull requests」が有効でないと、PR を開く `gh pr create` が断られる(ブランチへの push までは通る。そのときは、警告の注釈が出る)。
 - ログの PR は `GITHUB_TOKEN` で開くので、その PR では CI が走らない(ログだけを足す PR で、走らせる必要も無い)。
 - 試験は `scripts/publish-e2e-logs.test.ts`(本物の bare リポジトリを remote にして、`gh` だけ台本に置き換えている。中身がバイト単位で同じこと・main から切ること・main 以外のブランチへ push しないこと・再実行を含む)。
