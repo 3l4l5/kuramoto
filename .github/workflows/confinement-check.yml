@@ -6,6 +6,13 @@ name: confinement-check
 
 on:
   workflow_dispatch:
+    inputs:
+      # 手で流したときだけ、ログ 7 本を main への PR として自分で出す(#126)。ログを出さずに流したいときは false にする。
+      # push / schedule / pull_request の実行では、この入力が無いので、ログの PR は出ない
+      publish_logs:
+        description: "ログ 7 本を docs/e2e-logs/run-<run_id>/ に置く PR(ブランチ e2e-logs/run-<run_id>)を開く"
+        type: boolean
+        default: true
   pull_request:
     paths:
       - ".github/workflows/confinement-check.yml"
@@ -281,7 +288,13 @@ jobs:
     needs: [confinement, mysql]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
+    # ログの PR(最後の手順)のためだけに、このジョブだけに書き込みを付ける。ほかのジョブは contents: read のまま
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
+      # ダウンロードより前に置く(checkout は未追跡のファイルを消す)。最後の手順(ログの PR)が、main から切るために使う
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: e2e-logs-*
@@ -314,3 +327,16 @@ jobs:
           path: e2e-logs/*.log
           if-no-files-found: error
           retention-days: 30
+      # ログ 7 本を main に入れる道(#126)。workflow_dispatch で、入力 publish_logs が true のときだけ(取り消した実行では出さない)。
+      # 上の artifact に上がったログ(中身は加工しない)を、docs/e2e-logs/run-<run_id>/ に置き、e2e-logs/run-<run_id> ブランチに push して、main への PR を開く。
+      # 実行の成否の判定は変えない: この手順が失敗しても(リポジトリの設定で PR の作成が許されていないなど)、ジョブは落とさず、警告に出す
+      # (continue-on-error は、どのステップにも付けない決まり。scripts/ci-confinement-lib.test.ts。手順の中で終了コードを 0 にする)。
+      - name: ログを main に入れる PR を開く
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.publish_logs }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          bash scripts/publish-e2e-logs.sh e2e-logs || echo "::warning title=ログの PR を開けなかった::scripts/publish-e2e-logs.sh が失敗した。リポジトリの設定(Actions > General > 「Allow GitHub Actions to create and approve pull requests」)と、このジョブのログを見る。ログ自体は artifact e2e-logs にある"
