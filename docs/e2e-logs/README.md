@@ -1,18 +1,32 @@
 # 閉じ込めの確かめのログ(#100・#114)
 
-チームの CI の閉じ込めの中でブラウザ E2E が起動・通過すること、閉じ込めの制限が効いていること、localhost の「断るポート」(ADR-0059・ADR-0060)が効いていることを、**#114 の CI(`confinement-check`)の macOS ランナー(Chrome と `sandbox-exec` がある)で流し、`e2e-logs/run-<run_id>` ブランチ(と artifact `e2e-logs`)から取った**出力の全文を置く場所です。取り方は `git fetch origin e2e-logs/run-<run_id>` → `git checkout origin/e2e-logs/run-<run_id> -- docs/e2e-logs/`。表は [../e2e.md の「確かめの記録」](../e2e.md) にあります。
+チームの CI の閉じ込めの中でブラウザ E2E が起動・通過すること、閉じ込めの制限が効いていること、localhost の「断るポート」(ADR-0059・ADR-0060)が効いていることを、**#114 の CI(`confinement-check`)の macOS ランナー(Chrome と `sandbox-exec` がある)で流し、ワークフローが開くログの PR(下の「ログが main に入る流れ」。ブランチ `e2e-logs/run-<run_id>`)と artifact `e2e-logs` から取った**出力の全文を置く場所です。表は [../e2e.md の「確かめの記録」](../e2e.md) にあります。
 
-**ログは、ワークフロー `confinement-check`(`.github/workflows/confinement-check.yml`。#114)の artifact `e2e-logs`(と、ブランチ `e2e-logs/run-<run_id>`)から取ります。責任者の手で流す手順はありません。** ワークフローが (a)〜(e) と `e2e/auth.spec.ts` を流し、下の 7 本のログを artifact に上げ、main への push と手動の実行のときは、同じ 7 本を専用ブランチ `e2e-logs/run-<run_id>` にも push します(PR の実行では push しません)。どれか 1 つでも期待どおりでなければジョブが落ちます(期待は下の「照合の手順」と同じ行)。**いまは、このディレクトリにログを置いていません**(別チケット(#127)が、ブランチ `e2e-logs/run-<run_id>` から取ってここに置き、表を埋めます)。
+**ログは、ワークフロー `confinement-check`(`.github/workflows/confinement-check.yml`。#114)の artifact `e2e-logs` から取ります。責任者の手で流す手順はありません。** ワークフローが (a)〜(e) と `e2e/auth.spec.ts` を流し、下の 7 本のログを artifact に上げます。どれか 1 つでも期待どおりでなければジョブが落ちます(期待は下の「照合の手順」と同じ行)。**ログは、ワークフローが開く PR(下の「ログが main に入る流れ」)を責任者が merge すると、`run-<run_id>/` の下に入ります**。別チケット #115(#112 の残り)は、main に入ったログを読んで、表を埋めます。
 
 ログは流した出力をそのまま置きます(手で書き換えない・想像で補わない)。
 
 ## ログの取り方
 
 1. Actions の `confinement-check` の実行を開く。PR の CI(閉じ込め・認証まわりを触る PR で動く)か、手動の実行(Actions の画面の「Run workflow」、または `gh workflow run confinement-check --ref <ブランチ>`)。
-2. 取る(いずれか):
-   - **ブランチから(作業場所から取れる道)**: main への push か手動の実行でできる `e2e-logs/run-<run_id>` を、`git fetch origin e2e-logs/run-<run_id>` で取り、`git checkout origin/e2e-logs/run-<run_id> -- docs/e2e-logs/` で置く。ブランチは、履歴の無い 1 コミットで、`docs/e2e-logs/` の 7 本だけが入る。コミットメッセージに run id と、流したコミット(`github.sha`)の完全な SHA が書いてある。ワークフローが書くのはこのブランチだけで、main や他のブランチには書かない。7 本が揃わなかった実行でも、あるものはブランチに入る(足りない名前は実行のログに `::error::` で出る。補わない)。
-   - 実行ページの「Artifacts」の `e2e-logs` を落とす、または `gh run download <run-id> -n e2e-logs -D docs/e2e-logs`(`gh run list --workflow confinement-check` で run-id を探す)。
+2. 取る: 実行ページの「Artifacts」の `e2e-logs` を落とす、または `gh run download <run-id> -n e2e-logs -D docs/e2e-logs`(`gh run list --workflow confinement-check` で run-id を探す)。
 3. 7 本(下の表)が揃っているか見る。足りないときは、その手順の前でジョブが止まっている(実行ページの該当の手順の出力を見る)。
+
+## ログが main に入る流れ(#126)
+
+作業場所からは artifact も `git fetch origin` も使えず、確実に届くのは main だけです。そのため、ワークフローが**ログを main に入れる PR を自分で開きます**。
+
+1. 手で流す(Actions の「Run workflow」、または `gh workflow run confinement-check --ref <ブランチ>`)。入力 `publish_logs` は既定で `true`。ログを出さずに流したいときだけ `false` にする。**PR の CI(`pull_request`)では、ログの PR は出ません**(PR が増えすぎないように、手で流したときだけ)。
+2. 最後のジョブ(`logs`)が、artifact `e2e-logs` に上げたものと同じ 7 本を、**中身を変えずに** `docs/e2e-logs/run-<run_id>/` に置き、ブランチ `e2e-logs/run-<run_id>` に commit して push し、main への PR を開く(`scripts/publish-e2e-logs.sh`)。タイトルに run_id、本文に実行の URL とログの一覧・行数が入る。ブランチは main の最新から切るので、PR の差分はログだけ。7 本が揃わなかった実行でも、集まったぶんを出す(その場合、まとめの artifact `e2e-logs` は上がらないので、この PR が唯一の受け渡しになる。足りないログの見方は上の「ログの取り方」の 3)。
+3. 責任者がその PR を merge する。
+4. #115 が、main の `docs/e2e-logs/run-<run_id>/` を読んで、[../e2e.md の「確かめの記録」](../e2e.md) を埋める。
+
+- 権限は `logs` ジョブだけに `contents: write` と `pull-requests: write` を付ける(ほかのジョブとワークフロー全体は `contents: read`)。push するのは `e2e-logs/run-<数字>` のブランチだけ(スクリプトが run_id を数字に限る)。
+- 同じ実行の再実行(Re-run)では、同じブランチを上書きし、すでに PR が開いていれば新しい PR は開かない。
+- この手順が失敗しても、`confinement-check` の成否は変わらない(手順の中で終了コードを 0 にして、警告の注釈を出す。`continue-on-error` は、このワークフローではどこにも付けない決まり)。ログは artifact に残る。
+- **リポジトリの設定が要る**: Settings > Actions > General の「Allow GitHub Actions to create and approve pull requests」が有効でないと、PR を開く `gh pr create` が断られる(ブランチへの push までは通る。そのときは、警告の注釈が出る)。
+- ログの PR は `GITHUB_TOKEN` で開くので、その PR では CI が走らない(ログだけを足す PR で、走らせる必要も無い)。
+- 試験は `scripts/publish-e2e-logs.test.ts`(本物の bare リポジトリを remote にして、`gh` だけ台本に置き換えている。中身がバイト単位で同じこと・main から切ること・main 以外のブランチへ push しないこと・再実行を含む)。
 
 ## ログのファイル名
 
@@ -86,7 +100,7 @@ sed -n '/^=== MySQL の回/,$p' /tmp/npm-test-mysql.out | tee $L/$D-e-mysql-roun
 | (a) | `--- E2E の試験の件数(playwright test --list): N`・`--- npm test の終了コード: 0`・E2E が通った行(`○ E2E N 件が通った(playwright test --list の件数と一致)`。お手本の画像(`KURAMOTO_DESIGN_DIR/office.png`)が無い環境では、`app.spec.ts` のオフィスの床の 1 件が飛ぶので `○ E2E N-1 件が通った・1 件は飛ばした(…一致)` になる。passed + skipped が `--list` の N と合っていれば `○`)・(iii) の行がすべて `○`(`~/.kuramoto`・`~/.ssh` へのシンボリックリンク経由の読み取りが断られる行を含む)。終了コード 0。`e2e/auth.spec.ts` の行が `✓` で出ている。件数は決め打ちではなく、流す前に `playwright test --list` で数える。`△ …件数…が合わない` なら一部が流れていないので、出力の「N passed」「N skipped」と `npm test` の終了コードを見る。`--- playwright test --list が失敗した` が出ていたら、件数の突き合わせは効いていない(理由はその行) |
 | (b) | `○ 入口を壊すと落ちた`。`git status --short` に差分が出ない |
 | (c) | `△ 設定なし: …(知らせて通った)` か `○ 設定なし: …` |
-| (d) | `○ 断るポート…: BLOCKED`(`--denied-port` を渡したポートも BLOCKED)・`○ ほかのポート…: REACHED`・`○ mysql-test…: REACHED`・`○ 対照…: REACHED`・最後が `○ 断るポートだけが BLOCKED になった`(終了コード 0)。`? 閉じ込めを使えなかった`(終了コード 2)なら、閉じ込めの外から流せていない。vitest の「断るポート」の試験が `✓`(`↓` = スキップならやり直し) |
+| (d) | `○ 断るポート…: BLOCKED`(`--denied-port` を渡したポートも BLOCKED)・`○ ほかのポート…: REACHED`・`○ mysql-test…: REACHED`・`○ 対照…: REACHED`・LAN の IP(#123)の `○ LAN の IP 経由の、断るポート(<IP>:<番号>): BLOCKED`・`○ 対照: LAN の IP の、ほかのポート(…): REACHED`・`○ 対照: 断るポートを空にした設定の、LAN の IP の同じポート(…): REACHED`・最後が `○ 断るポートだけが BLOCKED になった`(終了コード 0)。`✗ LAN の IP 経由の、断るポート(…): REACHED` は、localhost の断りが LAN の IP に効いていない穴。`- この機械に LAN の IP が無いので、LAN の IP 経由では見ていない` が出ていたら、LAN の IP は確かめていない。`? 閉じ込めを使えなかった`(終了コード 2)なら、閉じ込めの外から流せていない。vitest の「断るポート」の試験が `✓`(`↓` = スキップならやり直し) |
 | (e) | npm test の MySQL の回が通っている(落ちていたら `docker compose ps` で mysql-test が healthy か見る) |
 
 想定と違う結果は、原因を書いて直すか、別のチケットにします。ログが揃うまで、既定(`confinedBrowserEnabled` は設定なし)は動かしません。
@@ -103,7 +117,7 @@ sed -n '/^=== MySQL の回/,$p' /tmp/npm-test-mysql.out | tee $L/$D-e-mysql-roun
 | (a) E2E の行 | `○ E2E N 件が通った(playwright test --list の件数と一致)` | **この行**。お手本の画像が無い環境では `○ E2E N-1 件が通った・1 件は飛ばした(playwright test --list の件数と一致)` でもよい(passed + skipped が上の N と合う)。`・M 件は再試行で通った(flaky)` が付いたら、flaky の件数を表に書く | `△ npm test は通ったが、E2E の「N passed」が出力に見つからない` = E2E が流れていない。`△ … 件数(通った …)が試験の件数(N)と合わない` = 一部が流れていない。`(件数を事前に数えられなかったので、出力の「N passed」だけで見た)` は、突き合わせ無しの `○` なので、件数の突き合わせは未確認と書く |
 | (a) 狭い閉じ込めで起動できたか | `--- 確かめられなかった: 狭い閉じ込めの中でブラウザを起動できなかった` | **この行が無い**(終了コード 2 で止まっていない) | 出ていたら (a) は未確認(Chrome が閉じ込めの中で起動していない)。理由は上の出力にある |
 | (a) `e2e/auth.spec.ts` | `grep -n "auth.spec"`。#110(PR #96)の新しい流れの 4 本: ①合言葉なしで `/` が 200 で開き、API(`/api/hq`)は 401 で、画面が案内「端末に出ている「合言葉つきの URL」を開いてください」を出す。`?token=` つきで開けば、合言葉が URL から外れ、API が 200 になり、Cookie は `kuramoto_session` だけ(合言葉そのものは入らない)/ ②開いたあとで Cookie を消す(401 になる)と「合言葉が通りません」の案内が出て、つきの URL を開き直すと消える / ③「ログアウト」/ ④「すべてのセッションを失効」 | 4 本とも `✓` | 1 本でも `✘` なら、その行と、その後ろのエラーを書く。**4 本分の行が出ていなければ**、`check-confined-browser.ts` が `npm test` の出力の最後の 60 行だけを出す(`slice(-60)`)ので、出力から切れている可能性がある。`○ E2E N 件が通った(…一致)` が出ていれば `auth.spec.ts` も通った件数に入っているが、行を確かめられたことにはならない。表には「行は出力から切れていた」と書き、行が見える形(出力の全文)で取り直してもらう |
-| (a) (iii) | `○`・`✗` で始まる行 | `○ 対照: …`(2 本)・`○ 対照: node_modules の中のリンクが、許した場所(package.json)を指すなら開ける`・`○ file:// で … を開けない`・`○ node_modules 内のシンボリックリンク経由で … を開けない`(`~/.kuramoto` と `~/.ssh` の分。ファイルとディレクトリのリンクの両方)・`○ 対照: 閉じ込めの外からは http://example.com/ に届く`・`○ ブラウザで外の URL を開けない`・`○ newContext({proxy}) で外のプロキシ経由の通信ができない`・`○ context.request(ブラウザ側)で外の URL を取れない`・`○ request.newContext(ローカルの playwright)で外の URL を取れない`・最後が `○ 接続した側からの攻撃は、どれも失敗した` | `✗` が 1 本でもあれば `✗ 閉じ込めに穴がある`(終了コード 1)。既定は反転しない。`外への通信を確かめる対照` の `✗` は、閉じ込めの外から example.com に届かない環境(確かめられなかった)なので、穴ではなく取り直し。`参考:` で始まる行は、判定に入らない記録(この機械の LAN の IP への tcp・goto は、seatbelt では localhost と同じ扱いで通る)。`--- 接続した側の確かめが動かなかった` は終了コード 2(確かめられなかった) |
+| (a) (iii) | `○`・`✗` で始まる行 | `○ 対照: …`(2 本)・`○ 対照: node_modules の中のリンクが、許した場所(package.json)を指すなら開ける`・`○ file:// で … を開けない`・`○ node_modules 内のシンボリックリンク経由で … を開けない`(`~/.kuramoto` と `~/.ssh` の分。ファイルとディレクトリのリンクの両方)・`○ 対照: 閉じ込めの外からは http://example.com/ に届く`・`○ ブラウザで外の URL を開けない`・`○ newContext({proxy}) で外のプロキシ経由の通信ができない`・`○ context.request(ブラウザ側)で外の URL を取れない`・`○ request.newContext(ローカルの playwright)で外の URL を取れない`・LAN の IP(この機械の内部でない IPv4 の口ごと。#123)の `○ 対照: ブラウザで LAN の IP(…)の、断らないポートに繋がる`・`○ ブラウザで LAN の IP(…)経由で、断るポートに届かない`・`○ 対照: playwright 側の node から LAN の IP(…)の、断らないポートに繋がる`・`○ playwright 側の node から LAN の IP(…)経由で、断るポートに繋がらない`・最後が `○ 接続した側からの攻撃は、どれも失敗した` | `✗` が 1 本でもあれば `✗ 閉じ込めに穴がある`(終了コード 1)。既定は反転しない。`外への通信を確かめる対照` の `✗` は、閉じ込めの外から example.com に届かない環境(確かめられなかった)なので、穴ではなく取り直し。`経由で、断るポートに届かない`・`経由で、断るポートに繋がらない` の `✗` は、localhost の断り(deniedLocalPorts)が LAN の IP に効いていない穴(seatbelt の規則を直す)。`対照: … LAN の IP(…)の、断らないポートに繋がる` の `✗` は、LAN の IP が通らない環境で、断りが効いているのか見分けられない(穴ではなく取り直し)。`参考:` で始まる行は、判定に入らない記録(この機械の LAN の IP への tcp・goto は、seatbelt では localhost と同じ扱いで通る)。`--- 接続した側の確かめが動かなかった` は終了コード 2(確かめられなかった) |
 | (b) | `--- わざと壊した: ui/src/PhoneBar.tsx の drawerTo("policy") → drawerTo(null)`・`--- npm test の終了コード: 0 以外`・`○ 入口を壊すと落ちた`。そのあとの `git status --short` が空 | 4 つとも | `✗ 入口を壊したのに通った` は、E2E が入口を見ていない(穴)。`git status --short` に `ui/src/PhoneBar.tsx` が出たら、壊したままなので `git checkout ui/src/PhoneBar.tsx` で戻して書く。`--- 確かめられなかった` なら (b) は未確認 |
 | (c) | `○ 設定なし: 閉じ込めの中で Chrome が起動でき、E2E N 件が流れた` か `△ 設定なし: Chrome が起動できず、画面の E2E は流れていない(知らせて通った)`。`--- npm test の終了コード: 0` | どちらでも、終了コード 0 なら、既定の振る舞い(通って知らせる)のとおり。**画面の E2E が流れたかは `○` のときだけ言える** | `? 設定なし: E2E が流れたか分からない` は、E2E の回より前で落ちたか、件数が合わない。終了コードが 0 以外なら落ちている |
 | (d) 断るポート | `断るポート: <番号>(Kuramoto 本体の API の代わり)` に続く行 | `○ 断るポート(127.0.0.1:<番号>): BLOCKED(想定 BLOCKED)`・`○ ほかのポート(テストが立てるサーバーの代わり)(…): REACHED(想定 REACHED)`・`○ mysql-test(127.0.0.1:3307): REACHED(想定 REACHED)`・`○ 断るポート(--denied-port。Kuramoto 自身が使っているもの)(127.0.0.1:<MySQL のポート>): BLOCKED(想定 BLOCKED)`・`○ 対照: 断るポートを空にした設定の、同じポート(…): REACHED(想定 REACHED)`・最後が `○ 断るポートだけが BLOCKED になった` | `✗ … (想定 …)` は想定と違う(`✗ 想定と違う`、終了コード 1)。**`- mysql-test(127.0.0.1:3307)は立っていないので、見ていない` が出ていたら、3307 の REACHED は確かめていない**(`docker compose up -d mysql-test` のあとで取り直す)。`- ポート <番号> では何も待ち受けていないので、見ていない` が出ていたら、Kuramoto 自身の MySQL の BLOCKED は確かめていない。`? 閉じ込めを使えなかった` は終了コード 2(閉じ込めの外から流せていない) |

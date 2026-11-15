@@ -2,12 +2,13 @@ import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { homedir, networkInterfaces } from "node:os";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { Project } from "../src/project/project.js";
 import { confinementFor } from "../src/project/confine.js";
 import { SandboxRunner } from "../src/project/team-ci.js";
 import { kuramotoHome } from "../src/hq.js";
+import { lanIps } from "./lan-ips.js";
 import { describeE2eCount, judgeE2eCount, parseListTotal } from "./e2e-count.js";
 
 /**
@@ -24,6 +25,8 @@ import { describeE2eCount, judgeE2eCount, parseListTotal } from "./e2e-count.js"
  *       - 読める場所(リポジトリの node_modules)の中に置いた、~/.kuramoto・~/.ssh へのシンボリックリンク(ファイル・ディレクトリ)経由で、同じファイルを開く(許した場所がリンクで広がらない)
  *       - newContext({ proxy }) を使った外への通信 / newRequest(ローカルの playwright と、ブラウザ側の context.request)/ ブラウザの goto で、外の公開の URL(example.com)を取る
  *         「外」はこの機械の外。この機械の LAN の IP は seatbelt では localhost と同じ扱いで通る(#118 の runner の記録)ので、外には使わない。閉じ込めの外から example.com に届くことを対照にする
+ *       - この機械の LAN の IP:断るポート(deniedLocalPorts。#123)に、ブラウザの goto・playwright 側の node の tcp で届かない(localhost を断っていても、LAN の IP 経由で Kuramoto 本体や MySQL に届かない)
+ *         対照として、同じ LAN の IP の、断らないポートには繋がる(LAN の IP が通らない環境で、何もかも「届かない」になっているだけではないことを見るため)
  *       対照として、リポジトリの package.json・node_modules の中のリンク(許した場所を指す)・localhost の確かめ用サーバーには繋がる(ブラウザそのものが壊れて「失敗」しているのではないことを見るため)。確かめごとに新しいページで開く
  * 終了コード: 0 = 通った / 1 = 落ちた(閉じ込めの穴・E2E の失敗) / 2 = 確かめられなかった(ブラウザが起動できなかったなど)
  */
@@ -94,10 +97,23 @@ const tcp = (host, port) => new Promise((res) => { const s = net.connect({ host,
     out("request.newContext(ローカルの playwright)で外の URL を取れない", !c.includes(ext.marker), c);
     await local.dispose();
   }
+  // (iii) この機械の LAN の IP 経由で、断るポート(deniedLocalPorts)に届かない(#123)。LAN の IP は seatbelt では localhost と同じ扱いで通る(#118)ので、localhost の断りが LAN の IP にも効いているかを見る。
+  // 対照として、同じ LAN の IP の、断らないポートには繋がる(繋がらないなら、断りが効いているのか、LAN の IP が通らないのか見分けられないので、✗ にする)
+  if (!t.lanIps.length) info("この機械に LAN の IP が無いので、LAN の IP 経由で断るポートに届かないかは見ていない");
+  for (const ip of t.lanIps) {
+    r = await fresh("http://" + ip + ":" + t.port + "/");
+    out("対照: ブラウザで LAN の IP(" + ip + ")の、断らないポートに繋がる", r.text.includes("CANARY-NET"), r.error || "繋がった");
+    r = await fresh("http://" + ip + ":" + t.deniedPort + "/");
+    out("ブラウザで LAN の IP(" + ip + ")経由で、断るポートに届かない", !r.text.includes("CANARY-DENIED"), r.error || (r.text.includes("CANARY-DENIED") ? "届いた(localhost の断りが LAN の IP に効いていない)" : "開いたが中身は無い"));
+    const open = await tcp(ip, t.port);
+    out("対照: playwright 側の node から LAN の IP(" + ip + ")の、断らないポートに繋がる", open === "繋がった", open);
+    const denied = await tcp(ip, t.deniedPort);
+    out("playwright 側の node から LAN の IP(" + ip + ")経由で、断るポートに繋がらない", denied !== "繋がった", denied === "繋がった" ? "繋がった(localhost の断りが LAN の IP に効いていない)" : denied);
+  }
   // 参考(判定には入れない): この機械の LAN の IP への通信は、localhost と同じ扱いで通る(外ではない)ことの記録
   const attempt = async (label, fn) => { try { info(label + ": " + (await fn())); } catch (e) { info(label + ": 例外 " + String(e.message).split("\\n")[0]); } };
-  await attempt("tcp(playwright 側の node から)", async () => "127.0.0.1=" + (await tcp("127.0.0.1", t.port)) + " LAN=" + (t.lanIp ? await tcp(t.lanIp, t.port) : "IP なし") + " 1.1.1.1:80=" + (await tcp("1.1.1.1", 80)));
-  if (t.lanIp) await attempt("ブラウザで LAN の IP へ goto", async () => { const x = await fresh("http://" + t.lanIp + ":" + t.port + "/"); return x.error ? "失敗 " + x.error.slice(0, 100) : x.text.includes("CANARY-NET") ? "開けた" : "開いたが中身が違う"; });
+  await attempt("tcp(playwright 側の node から)", async () => "127.0.0.1=" + (await tcp("127.0.0.1", t.port)) + " LAN=" + (t.lanIps[0] ? await tcp(t.lanIps[0], t.port) : "IP なし") + " 1.1.1.1:80=" + (await tcp("1.1.1.1", 80)));
+  if (t.lanIps[0]) await attempt("ブラウザで LAN の IP へ goto", async () => { const x = await fresh("http://" + t.lanIps[0] + ":" + t.port + "/"); return x.error ? "失敗 " + x.error.slice(0, 100) : x.text.includes("CANARY-NET") ? "開けた" : "開いたが中身が違う"; });
   await browser.close();
 })().catch((e) => { out("接続した側の確かめが最後まで動いた", false, e.message); process.exit(0); });
 `;
@@ -108,12 +124,6 @@ async function externalTarget(): Promise<{ url: string; marker: string; proxy: s
   const marker = "Example Domain";
   const reachable = await fetch(url, { signal: AbortSignal.timeout(15_000) }).then((x) => x.text(), () => "").then((t) => t.includes(marker));
   return { url, marker, proxy: "http://example.com:80", reachable };
-}
-
-function lanIp(): string | undefined {
-  for (const list of Object.values(networkInterfaces()))
-    for (const a of list ?? []) if (a.family === "IPv4" && !a.internal) return a.address;
-  return undefined;
 }
 
 /** 読めてはいけないファイル(~/.kuramoto の access-token・~/.ssh の中の鍵)と、その中身の目印。 */
@@ -246,6 +256,10 @@ async function main(): Promise<number> {
     writeFileSync(canary, `SECRET-${Math.random().toString(36).slice(2)}-${Date.now()}`);
     const server = createServer((_req, res) => res.end("CANARY-NET"));
     await new Promise<void>((ok) => server.listen(0, "0.0.0.0", ok));
+    // 断るポート(Kuramoto 本体・MySQL の代わり)。本物と同じ 0.0.0.0 で待ち受けて、LAN の IP からも届く作りにする(#123)
+    const deniedServer = createServer((_req, res) => res.end("CANARY-DENIED"));
+    await new Promise<void>((ok) => deniedServer.listen(0, "0.0.0.0", ok));
+    const deniedPort = (deniedServer.address() as AddressInfo).port;
     const probeFile = join(repo, "node_modules/.kuramoto-probe.cjs");
     const linkDir = join(repo, "node_modules", ".kuramoto-probe-links");
     try {
@@ -253,8 +267,8 @@ async function main(): Promise<number> {
       const files = secretFiles(canary);
       const planted = plantLinks(repo, canary, files);
       const ext = await externalTarget();
-      const targets = { external: ext, cwd: repo, port: (server.address() as AddressInfo).port, lanIp: lanIp(), files, links: planted.links, linkControl: planted.control };
-      const r = await runner.run("node node_modules/.kuramoto-probe.cjs", repo, { ...conf, env: { ...conf.env, PROBE_TARGETS: JSON.stringify(targets) } }, 5 * 60_000, true);
+      const targets = { external: ext, cwd: repo, port: (server.address() as AddressInfo).port, lanIps: lanIps(), deniedPort, files, links: planted.links, linkControl: planted.control };
+      const r = await runner.run("node node_modules/.kuramoto-probe.cjs", repo, { ...conf, deniedLocalPorts: [...(conf.deniedLocalPorts ?? []), deniedPort], env: { ...conf.env, PROBE_TARGETS: JSON.stringify(targets) } }, 5 * 60_000, true);
       const probes = r.output.split("\n").filter((l) => l.startsWith("PROBE ")).map((l) => JSON.parse(l.slice(6)) as Probe);
       if (!probes.length) {
         console.log(`--- 接続した側の確かめが動かなかった(終了コード ${r.code})\n${r.output.split("\n").slice(-30).join("\n")}`);
@@ -266,6 +280,7 @@ async function main(): Promise<number> {
       console.log(code === 0 ? "○ 接続した側からの攻撃は、どれも失敗した" : "✗ 閉じ込めに穴がある");
     } finally {
       server.close();
+      deniedServer.close();
       rmSync(canary, { force: true });
       rmSync(probeFile, { force: true });
       rmSync(linkDir, { recursive: true, force: true });

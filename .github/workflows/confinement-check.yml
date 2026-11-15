@@ -1,34 +1,19 @@
 # 閉じ込めの実機の確かめ(docs/e2e-logs/README.md の (a)〜(e))と e2e/auth.spec.ts を、macOS のランナー(sandbox-exec と Chrome がある)で流す(#114)。
 # 各手順の出力は、README のファイル名どおり(<日付>-env / a-confined / b-break / c-no-browser-server / d-denied-ports / d-team-ci-test / e-mysql-rounds の .log)に残し、
 # artifact「e2e-logs」に上げる。どれか 1 つでも期待どおりでなければ、ジョブを落とす。責任者の手で流す手順は無い。手動でも流せる(workflow_dispatch)。
-# main への push と手動の実行では、同じ 7 本を専用ブランチ e2e-logs/run-<run_id> にも push する(logs ジョブ。PR では push しない)。
 # 読み方・照合の手順: docs/e2e-logs/README.md。
 name: confinement-check
 
 on:
   workflow_dispatch:
+    inputs:
+      # 手で流したときだけ、ログ 7 本を main への PR として自分で出す(#126)。ログを出さずに流したいときは false にする。
+      # push / schedule / pull_request の実行では、この入力が無いので、ログの PR は出ない
+      publish_logs:
+        description: "ログ 7 本を docs/e2e-logs/run-<run_id>/ に置く PR(ブランチ e2e-logs/run-<run_id>)を開く"
+        type: boolean
+        default: true
   pull_request:
-    paths:
-      - ".github/workflows/confinement-check.yml"
-      - "e2e/**"
-      - "playwright.config.ts"
-      - "scripts/check-*"
-      - "scripts/ci-confinement-lib.sh"
-      - "scripts/e2e-count*"
-      - "scripts/run-tests*"
-      - "src/project/confine*"
-      - "src/project/team-ci*"
-      - "src/project/confined-browser*"
-      - "src/project/local-ports*"
-      - "src/server.ts"
-      - "ui/src/App.tsx"
-      - "ui/src/SessionPanel.tsx"
-      - "ui/src/api.ts"
-      - "src/access-token*"
-      - "src/sessions*"
-  # main に入ったあと、ログを専用ブランチ e2e-logs/run-<run_id> に push するため(logs ジョブ)。PR では push しない
-  push:
-    branches: [main]
     paths:
       - ".github/workflows/confinement-check.yml"
       - "e2e/**"
@@ -126,6 +111,11 @@ jobs:
           need "$L/$D-a-confined.log" '^○ 接続した側からの攻撃は、どれも失敗した'
           need "$L/$D-a-confined.log" 'node_modules 内のシンボリックリンク経由で ~/\.kuramoto'
           need "$L/$D-a-confined.log" 'node_modules 内のシンボリックリンク経由で ~/\.ssh'
+          # この機械の LAN の IP:断るポート(deniedLocalPorts)に、ブラウザの goto・node の tcp で届かない(#123)。対照(LAN の IP:断らないポートには繋がる)も ○
+          need "$L/$D-a-confined.log" '^○ 対照: ブラウザで LAN の IP\(.*\)の、断らないポートに繋がる'
+          need "$L/$D-a-confined.log" '^○ ブラウザで LAN の IP\(.*\)経由で、断るポートに届かない'
+          need "$L/$D-a-confined.log" '^○ 対照: playwright 側の node から LAN の IP\(.*\)の、断らないポートに繋がる'
+          need "$L/$D-a-confined.log" '^○ playwright 側の node から LAN の IP\(.*\)経由で、断るポートに繋がらない'
           forbid "$L/$D-a-confined.log" '^✗'
           forbid "$L/$D-a-confined.log" '^△'
           forbid "$L/$D-a-confined.log" '^--- (確かめられなかった|接続した側の確かめが動かなかった|playwright test --list が失敗した)'
@@ -189,6 +179,10 @@ jobs:
           need "$f" '^○ ほかのポート.*REACHED'
           need "$f" '^○ mysql-test\(127\.0\.0\.1:3307\): REACHED'
           need "$f" '^○ 断るポート\(--denied-port。Kuramoto 自身が使っているもの\)\(127\.0\.0\.1:3306\): BLOCKED'
+          # LAN の IP:断るポートが BLOCKED、対照(LAN の IP:ほかのポート・断りを空にした LAN の IP:同じポート)が REACHED(#123)
+          need "$f" '^○ LAN の IP 経由の、断るポート\([0-9.]+:[0-9]+\): BLOCKED'
+          need "$f" '^○ 対照: LAN の IP の、ほかのポート\([0-9.]+:[0-9]+\): REACHED'
+          need "$f" '^○ 対照: 断るポートを空にした設定の、LAN の IP の同じポート\([0-9.]+:[0-9]+\): REACHED'
           need "$f" '^○ 対照: .*REACHED'
           need "$f" '^○ 断るポートだけが BLOCKED になった'
           forbid "$f" '^(✗|\?|- )'
@@ -289,22 +283,18 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # ログ 7 本を 1 つの artifact(e2e-logs)にまとめる。さらに、main への push と手動の実行のときだけ、同じ 7 本を専用ブランチ e2e-logs/run-<run_id> に push する
-  # (作業場所からは artifact も gh も使えず、origin のブランチだけが見えるため。取り方は docs/e2e-logs/README.md)。
+  # ログ 7 本を 1 つの artifact(e2e-logs)にまとめる。#112・#115 は、この artifact を取る。
   logs:
     needs: [confinement, mysql]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
-    # このジョブだけ書く。ワークフロー全体は contents: read のまま。書く先は下の push の手順の、e2e-logs/run-<run_id> だけ
+    # ログの PR(最後の手順)のためだけに、このジョブだけに書き込みを付ける。ほかのジョブは contents: read のまま
     permissions:
       contents: write
+      pull-requests: write
     steps:
-      # push の条件のときだけ。作業ツリーは repo/ に分け、下の e2e-logs/(ログ)と混ざらないようにする
+      # ダウンロードより前に置く(checkout は未追跡のファイルを消す)。最後の手順(ログの PR)が、main から切るために使う
       - uses: actions/checkout@v4
-        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-        with:
-          path: repo
-          fetch-depth: 1
       - uses: actions/download-artifact@v4
         with:
           pattern: e2e-logs-*
@@ -337,37 +327,16 @@ jobs:
           path: e2e-logs/*.log
           if-no-files-found: error
           retention-days: 30
-
-      # ログを、中身を変えずに、履歴の無い(orphan)コミットにして e2e-logs/run-<run_id> へ push する。main・ほかのブランチには書かない。
-      # 7 本が揃わなくても、あるものは push する(足りない名前は上の手順が ::error:: で出し、ジョブを落とす。補わない)。
-      # PR(pull_request)では、この手順は飛ばす
-      - name: ログをブランチ e2e-logs/run-${{ github.run_id }} に push する
-        if: ${{ always() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+      # ログ 7 本を main に入れる道(#126)。workflow_dispatch で、入力 publish_logs が true のときだけ(取り消した実行では出さない)。
+      # 上の artifact に上がったログ(中身は加工しない)を、docs/e2e-logs/run-<run_id>/ に置き、e2e-logs/run-<run_id> ブランチに push して、main への PR を開く。
+      # 実行の成否の判定は変えない: この手順が失敗しても(リポジトリの設定で PR の作成が許されていないなど)、ジョブは落とさず、警告に出す
+      # (continue-on-error は、どのステップにも付けない決まり。scripts/ci-confinement-lib.test.ts。手順の中で終了コードを 0 にする)。
+      - name: ログを main に入れる PR を開く
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.publish_logs }}
         env:
+          GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
-          RUN_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          set -eu
-          if ! ls e2e-logs/*.log > /dev/null 2>&1; then
-            echo "::error::e2e-logs/ にログが 1 本も無いので、push しない"
-            exit 1
-          fi
-          branch="e2e-logs/run-${RUN_ID}"
-          cd repo
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout --orphan "$branch"
-          git rm -rf -q --ignore-unmatch .
-          mkdir -p docs/e2e-logs
-          cp ../e2e-logs/*.log docs/e2e-logs/
-          git add docs/e2e-logs
-          git commit -q -m "e2e-logs: confinement-check run ${RUN_ID} のログ(${RUN_SHA})" \
-            -m "workflow: confinement-check / run id: ${RUN_ID} / 流したコミット(github.sha): ${RUN_SHA}" \
-            -m "ログは artifact e2e-logs の中身を変えずに置いた。"
-          # このブランチだけ。同じ run の再実行(同じ run id)なら、このブランチを上書きする
-          git push --force origin "HEAD:refs/heads/${branch}"
-          echo "push した: ${branch}(${RUN_SHA} で流したログ $(ls docs/e2e-logs | wc -l | tr -d ' ') 本)"
-          {
-            echo
-            echo "ログのブランチ: \`${branch}\`(取り方: \`git fetch origin ${branch}\` → \`git checkout origin/${branch} -- docs/e2e-logs/\`)"
-          } >> "$GITHUB_STEP_SUMMARY"
+          bash scripts/publish-e2e-logs.sh e2e-logs || echo "::warning title=ログの PR を開けなかった::scripts/publish-e2e-logs.sh が失敗した。リポジトリの設定(Actions > General > 「Allow GitHub Actions to create and approve pull requests」)と、このジョブのログを見る。ログ自体は artifact e2e-logs にある"

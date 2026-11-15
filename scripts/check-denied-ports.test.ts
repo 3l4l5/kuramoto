@@ -6,12 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Confinement } from "../src/harness/types.js";
+import { lanIps } from "./lan-ips.js";
 import { checkDeniedPorts, main, parseDeniedPorts, readVerdict, type Deps } from "./check-denied-ports.js";
 
 /** 閉じ込めの代わり。決めた台本で、ポートごとに REACHED / BLOCKED を返す(断るポートに入っていれば BLOCKED)。 */
-function fake(opts: { leak?: boolean; unreadable?: boolean; throws?: boolean; busy?: number[] } = {}) {
+function fake(opts: { leak?: boolean; unreadable?: boolean; throws?: boolean; busy?: number[]; lan?: string[]; lanLeak?: boolean; lanClosed?: boolean } = {}) {
   const lines: string[] = [];
-  const asked: { port: number; denied: number[] }[] = [];
+  const asked: { host: string; port: number; denied: number[] }[] = [];
   let next = 40_000;
   let closed = 0;
   let runnerClosed = false;
@@ -19,14 +20,20 @@ function fake(opts: { leak?: boolean; unreadable?: boolean; throws?: boolean; bu
     cwd: "/tmp/x",
     log: (l) => lines.push(l),
     listen: async () => ({ port: next++, close: () => void closed++ }),
+    lanIps: opts.lan ? () => opts.lan! : undefined,
     inUse: async (p) => (opts.busy ?? []).includes(p),
     runner: {
       run: async (cmd: string, _cwd: string, conf: Confinement) => {
         if (opts.throws) throw new Error("sandbox-exec が使えない");
-        const port = Number(/127\.0\.0\.1 (\d+)/.exec(cmd)![1]);
-        asked.push({ port, denied: conf.deniedLocalPorts ?? [] });
+        const m = /-w 3 (\S+) (\d+)/.exec(cmd)!;
+        const host = m[1]!;
+        const port = Number(m[2]);
+        asked.push({ host, port, denied: conf.deniedLocalPorts ?? [] });
         if (opts.unreadable) return { code: 0, output: "nc: ???" };
-        const blocked = (conf.deniedLocalPorts ?? []).includes(port) && !opts.leak;
+        const lan = host !== "127.0.0.1";
+        // LAN の IP:LAN の IP が通らない環境(lanClosed)では、どのポートにも届かない。断りが LAN の IP に効かない環境(lanLeak)では、断るポートにも届く
+        if (lan && opts.lanClosed) return { code: 0, output: "BLOCKED\n" };
+        const blocked = (conf.deniedLocalPorts ?? []).includes(port) && !opts.leak && !(lan && opts.lanLeak);
         return { code: 0, output: blocked ? "BLOCKED\n" : "REACHED\n" };
       },
       close: async () => void (runnerClosed = true),
@@ -74,9 +81,42 @@ describe("check-denied-ports: 確かめの流れ(閉じ込めは台本)", () => 
     expect(out).toContain("○ mysql-test(127.0.0.1:3307): REACHED(想定 REACHED)");
     expect(out).toContain("○ 対照: 断るポートを空にした設定の、同じポート(127.0.0.1:40000): REACHED(想定 REACHED)");
     expect(out).toContain("○ 断るポートだけが BLOCKED になった");
-    expect(f.asked.at(-1)).toEqual({ port: 40000, denied: [] }); // 対照は、断るポートを空にして流す
+    expect(f.asked.at(-1)).toEqual({ host: "127.0.0.1", port: 40000, denied: [] }); // 対照は、断るポートを空にして流す
     expect(f.closed()).toBe(2);
     expect(f.runnerClosed()).toBe(true);
+  });
+
+  it("LAN の IP も見る: LAN の IP:断るポートは BLOCKED、LAN の IP:ほかのポートと、断りを空にした LAN の IP の同じポートは REACHED のとき、終了コード 0。口が複数あれば全部見る", async () => {
+    const f = fake({ lan: ["192.168.1.18", "192.168.1.22"] });
+    expect(await checkDeniedPorts([], f.deps)).toBe(0);
+    const out = f.lines.join("\n");
+    expect(out).toContain("○ LAN の IP 経由の、断るポート(192.168.1.18:40000): BLOCKED(想定 BLOCKED)");
+    expect(out).toContain("○ LAN の IP 経由の、断るポート(192.168.1.22:40000): BLOCKED(想定 BLOCKED)");
+    expect(out).toContain("○ 対照: LAN の IP の、ほかのポート(192.168.1.18:40001): REACHED(想定 REACHED)");
+    expect(out).toContain("○ 対照: 断るポートを空にした設定の、LAN の IP の同じポート(192.168.1.18:40000): REACHED(想定 REACHED)");
+    expect(f.asked.find((a) => a.host === "192.168.1.22" && a.port === 40000)!.denied).toEqual([40000]);
+    expect(f.asked.find((a) => a.host === "192.168.1.18" && a.port === 40000 && a.denied.length === 0)).toBeDefined();
+  });
+
+  it("LAN の IP が無ければ「見ていない」と出して数えない(終了コードは 0 のまま)", async () => {
+    const f = fake({ lan: [] });
+    expect(await checkDeniedPorts([], f.deps)).toBe(0);
+    expect(f.lines.join("\n")).toContain("この機械に LAN の IP が無いので、LAN の IP 経由では見ていない");
+    expect(f.asked.every((a) => a.host === "127.0.0.1")).toBe(true);
+  });
+
+  it("断りが LAN の IP に効かず、LAN の IP:断るポートに届いたら、✗ と終了コード 1(localhost は BLOCKED のまま)", async () => {
+    const f = fake({ lan: ["192.168.1.18"], lanLeak: true });
+    expect(await checkDeniedPorts([], f.deps)).toBe(1);
+    const out = f.lines.join("\n");
+    expect(out).toContain("✗ LAN の IP 経由の、断るポート(192.168.1.18:40000): REACHED(想定 BLOCKED)");
+    expect(out).toContain("○ 断るポート(127.0.0.1:40000): BLOCKED(想定 BLOCKED)");
+  });
+
+  it("LAN の IP がどのポートにも届かない環境では、断りが効いているのか見分けられないので、対照が ✗ になり終了コード 1", async () => {
+    const f = fake({ lan: ["192.168.1.18"], lanClosed: true });
+    expect(await checkDeniedPorts([], f.deps)).toBe(1);
+    expect(f.lines.join("\n")).toContain("✗ 対照: LAN の IP の、ほかのポート(192.168.1.18:40001): BLOCKED(想定 REACHED)");
   });
 
   it("mysql-test が立っていなければ「見ていない」と出して数えない(終了コードは 0 のまま)", async () => {
@@ -146,12 +186,13 @@ describe("check-denied-ports: 実際の閉じ込め(入れ子の閉じ込めの�
     const dir = mkdtempSync(join(tmpdir(), "kuramoto-ports-test-"));
     const listen = async () => {
       const s = createServer((c) => c.end());
-      await new Promise<void>((ok) => s.listen(0, "127.0.0.1", ok));
+      await new Promise<void>((ok) => s.listen(0, "0.0.0.0", ok));
       return { port: (s.address() as AddressInfo).port, close: () => void s.close() };
     };
     try {
-      const code = await checkDeniedPorts([], { runner: new SandboxRunner(), listen, inUse: async () => false, log: (l) => lines.push(l), cwd: dir });
+      const code = await checkDeniedPorts([], { runner: new SandboxRunner(), listen, lanIps, inUse: async () => false, log: (l) => lines.push(l), cwd: dir });
       expect(lines.join("\n")).toContain("BLOCKED(想定 BLOCKED)");
+      if (lanIps().length) expect(lines.join("\n")).toMatch(/○ LAN の IP 経由の、断るポート\(\d+\.\d+\.\d+\.\d+:\d+\): BLOCKED/);
       expect(code).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });

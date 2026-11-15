@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import type { AddressInfo } from "node:net";
-import { homedir, tmpdir } from "node:os";
+import { homedir, networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ManualClock } from "../clock.js";
@@ -170,7 +170,7 @@ describe("チームの CI(ADR-0028)", () => {
     const dir = mkdtempSync(join(tmpdir(), "kuramoto-srt-"));
     const listen = async () => {
       const s = createServer((c) => c.end());
-      await new Promise<void>((ok) => s.listen(0, "127.0.0.1", ok));
+      await new Promise<void>((ok) => s.listen(0, "0.0.0.0", ok)); // 本体・Docker の MySQL と同じく、LAN の IP からも届く
       return { s, port: (s.address() as AddressInfo).port };
     };
     const api = await listen(); // Kuramoto 本体の API の代わり
@@ -178,11 +178,20 @@ describe("チームの CI(ADR-0028)", () => {
     try {
       const conf: Confinement = { readable: [], writable: [], hidden: [], allowedDomains: ["registry.npmjs.org"], hiddenEnv: [], allowLocalSockets: true, deniedLocalPorts: [api.port], env: {} };
       const r = new SandboxRunner();
-      const probe = (port: number) => `/usr/bin/nc -z -w 3 127.0.0.1 ${port} && echo REACHED || echo BLOCKED`;
+      const probe = (port: number, host = "127.0.0.1") => `/usr/bin/nc -z -w 3 ${host} ${port} && echo REACHED || echo BLOCKED`;
       expect((await r.run(probe(other.port), dir, conf, 60_000)).output).toContain("REACHED");
       const blocked = (await r.run(probe(api.port), dir, conf, 60_000)).output;
       expect(blocked).toContain("BLOCKED");
       expect(blocked).not.toContain("REACHED");
+      // この機械の LAN の IP 経由でも、断るポートには届かない(seatbelt は LAN の IP を localhost と同じに扱う。#123)。対照: 同じ IP の、ほかのポートには届く
+      for (const list of Object.values(networkInterfaces()))
+        for (const a of list ?? []) {
+          if (a.family !== "IPv4" || a.internal) continue;
+          expect((await r.run(probe(other.port, a.address), dir, conf, 60_000)).output).toContain("REACHED");
+          const viaLan = (await r.run(probe(api.port, a.address), dir, conf, 60_000)).output;
+          expect(viaLan).toContain("BLOCKED");
+          expect(viaLan).not.toContain("REACHED");
+        }
       // 断るポートが無ければ、どちらにも届く(今までと同じ)
       expect((await r.run(probe(api.port), dir, { ...conf, deniedLocalPorts: [] }, 60_000)).output).toContain("REACHED");
       await r.close();
