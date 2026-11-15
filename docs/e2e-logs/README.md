@@ -1,6 +1,6 @@
 # 閉じ込めの確かめのログ(#100・#114)
 
-チームの CI の閉じ込めの中でブラウザ E2E が起動・通過すること、閉じ込めの制限が効いていること、localhost の「断るポート」(ADR-0059・ADR-0060)が効いていることを、**GitHub Actions の macOS ランナー(Chrome と `sandbox-exec` がある)で実際に流した**出力の全文を置く場所です。表は [../e2e.md の「確かめの記録」](../e2e.md) にあります。
+チームの CI の閉じ込めの中でブラウザ E2E が起動・通過すること、閉じ込めの制限が効いていること、localhost の「断るポート」(ADR-0059・ADR-0060)が効いていることを、**#114 の CI(`confinement-check`)の macOS ランナー(Chrome と `sandbox-exec` がある)で流し、ワークフローが開くログの PR(下の「ログが main に入る流れ」。ブランチ `e2e-logs/run-<run_id>`)と artifact `e2e-logs` から取った**出力の全文を置く場所です。表は [../e2e.md の「確かめの記録」](../e2e.md) にあります。
 
 **ログは、ワークフロー `confinement-check`(`.github/workflows/confinement-check.yml`。#114)の artifact `e2e-logs` から取ります。責任者の手で流す手順はありません。** ワークフローが (a)〜(e) と `e2e/auth.spec.ts` を流し、下の 7 本のログを artifact に上げます。どれか 1 つでも期待どおりでなければジョブが落ちます(期待は下の「照合の手順」と同じ行)。**ログは、ワークフローが開く PR(下の「ログが main に入る流れ」)を責任者が merge すると、`run-<run_id>/` の下に入ります**。別チケット #115(#112 の残り)は、main に入ったログを読んで、表を埋めます。
 
