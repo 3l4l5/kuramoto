@@ -1,15 +1,17 @@
 # 閉じ込めの確かめのログ(#100・#114)
 
-チームの CI の閉じ込めの中でブラウザ E2E が起動・通過すること、閉じ込めの制限が効いていること、localhost の「断るポート」(ADR-0059・ADR-0060)が効いていることを、**GitHub Actions の macOS ランナー(Chrome と `sandbox-exec` がある)で実際に流した**出力の全文を置く場所です。表は [../e2e.md の「確かめの記録」](../e2e.md) にあります。
+チームの CI の閉じ込めの中でブラウザ E2E が起動・通過すること、閉じ込めの制限が効いていること、localhost の「断るポート」(ADR-0059・ADR-0060)が効いていることを、**#114 の CI(`confinement-check`)の macOS ランナー(Chrome と `sandbox-exec` がある)で流し、`e2e-logs/run-<run_id>` ブランチ(と artifact `e2e-logs`)から取った**出力の全文を置く場所です。取り方は `git fetch origin e2e-logs/run-<run_id>` → `git checkout origin/e2e-logs/run-<run_id> -- docs/e2e-logs/`。表は [../e2e.md の「確かめの記録」](../e2e.md) にあります。
 
-**ログは、ワークフロー `confinement-check`(`.github/workflows/confinement-check.yml`。#114)の artifact `e2e-logs` から取ります。責任者の手で流す手順はありません。** ワークフローが (a)〜(e) と `e2e/auth.spec.ts` を流し、下の 7 本のログを artifact に上げます。どれか 1 つでも期待どおりでなければジョブが落ちます(期待は下の「照合の手順」と同じ行)。**いまは、このディレクトリにログを置いていません**(別チケット #115(#112 の残り)が、artifact から取ってここに置き、表を埋めます)。
+**ログは、ワークフロー `confinement-check`(`.github/workflows/confinement-check.yml`。#114)の artifact `e2e-logs`(と、ブランチ `e2e-logs/run-<run_id>`)から取ります。責任者の手で流す手順はありません。** ワークフローが (a)〜(e) と `e2e/auth.spec.ts` を流し、下の 7 本のログを artifact に上げ、main への push と手動の実行のときは、同じ 7 本を専用ブランチ `e2e-logs/run-<run_id>` にも push します(PR の実行では push しません)。どれか 1 つでも期待どおりでなければジョブが落ちます(期待は下の「照合の手順」と同じ行)。**いまは、このディレクトリにログを置いていません**(別チケット(#127)が、ブランチ `e2e-logs/run-<run_id>` から取ってここに置き、表を埋めます)。
 
 ログは流した出力をそのまま置きます(手で書き換えない・想像で補わない)。
 
 ## ログの取り方
 
 1. Actions の `confinement-check` の実行を開く。PR の CI(閉じ込め・認証まわりを触る PR で動く)か、手動の実行(Actions の画面の「Run workflow」、または `gh workflow run confinement-check --ref <ブランチ>`)。
-2. 取る: 実行ページの「Artifacts」の `e2e-logs` を落とす、または `gh run download <run-id> -n e2e-logs -D docs/e2e-logs`(`gh run list --workflow confinement-check` で run-id を探す)。
+2. 取る(いずれか):
+   - **ブランチから(作業場所から取れる道)**: main への push か手動の実行でできる `e2e-logs/run-<run_id>` を、`git fetch origin e2e-logs/run-<run_id>` で取り、`git checkout origin/e2e-logs/run-<run_id> -- docs/e2e-logs/` で置く。ブランチは、履歴の無い 1 コミットで、`docs/e2e-logs/` の 7 本だけが入る。コミットメッセージに run id と、流したコミット(`github.sha`)の完全な SHA が書いてある。ワークフローが書くのはこのブランチだけで、main や他のブランチには書かない。7 本が揃わなかった実行でも、あるものはブランチに入る(足りない名前は実行のログに `::error::` で出る。補わない)。
+   - 実行ページの「Artifacts」の `e2e-logs` を落とす、または `gh run download <run-id> -n e2e-logs -D docs/e2e-logs`(`gh run list --workflow confinement-check` で run-id を探す)。
 3. 7 本(下の表)が揃っているか見る。足りないときは、その手順の前でジョブが止まっている(実行ページの該当の手順の出力を見る)。
 
 ## ログのファイル名

@@ -113,4 +113,50 @@ describe("ワークフロー confinement-check", () => {
       expect(wf, `(a) の判定 ${n}`).toContain(n);
     }
   });
+
+  describe("ログを専用ブランチへ push する(logs ジョブ)", () => {
+    const lines = wf.split("\n");
+    const logsStart = lines.findIndex((l) => /^ {2}logs:\s*$/.test(l));
+    const logsJob = lines.slice(logsStart).join("\n");
+    const cond = "github.event_name == 'push' || github.event_name == 'workflow_dispatch'";
+
+    it("main への push で起動し、contents: write は logs ジョブだけ(全体は read のまま)", () => {
+      expect(wf).toMatch(/^ {2}push:\n {4}branches: \[main\]/m);
+      expect(wf).toMatch(/^permissions:\n {2}contents: read\n/m);
+      expect(wf.match(/contents: write/g)).toHaveLength(1);
+      expect(logsStart).toBeGreaterThan(0);
+      expect(logsJob).toMatch(/^ {4}permissions:\n {6}contents: write$/m);
+    });
+
+    it("push の手順は always() で、push(main)と workflow_dispatch のときだけ(PR からは書かない)", () => {
+      const step = logsJob.slice(logsJob.indexOf("- name: ログをブランチ"));
+      expect(step).toContain(`if: \${{ always() && (${cond}) }}`);
+      expect(step).not.toContain("pull_request");
+      // 7 本の有無を確かめる手順より後ろ(足りなくても、ある分は push する)
+      expect(logsJob.indexOf("- name: ログ 7 本が揃っているか")).toBeLessThan(logsJob.indexOf("- name: ログをブランチ"));
+    });
+
+    it("書く先は e2e-logs/run-<run_id> だけ。ログを中身を変えずに docs/e2e-logs/ に置き、run id と github.sha を commit に書く", () => {
+      const pushes = logsJob.split("\n").filter((l) => /git push/.test(l) && !/^\s*#/.test(l));
+      expect(pushes).toHaveLength(1);
+      expect(pushes[0]).toContain('"HEAD:refs/heads/${branch}"');
+      expect(logsJob).toContain('branch="e2e-logs/run-${RUN_ID}"');
+      expect(logsJob).toContain("RUN_ID: ${{ github.run_id }}");
+      expect(logsJob).toContain("RUN_SHA: ${{ github.sha }}");
+      expect(logsJob).toContain("git checkout --orphan");
+      expect(logsJob).toContain("cp ../e2e-logs/*.log docs/e2e-logs/");
+      expect(logsJob).toContain("run id: ${RUN_ID}");
+      expect(logsJob).toContain("github.sha): ${RUN_SHA}");
+    });
+
+    it("足りない名前は ::error:: で出して落とす(補わない)", () => {
+      expect(logsJob).toContain('::error::*-$n.log が無い');
+      expect(logsJob).toContain("exit $missing");
+    });
+
+    it("README が、ブランチからの取り方を書いている", () => {
+      expect(readme).toContain("git fetch origin e2e-logs/run-<run_id>");
+      expect(readme).toContain("git checkout origin/e2e-logs/run-<run_id> -- docs/e2e-logs/");
+    });
+  });
 });
